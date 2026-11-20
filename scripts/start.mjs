@@ -291,6 +291,11 @@ async function runStep(dash, id, fn, { canSkip = false } = {}) {
 }
 
 const OUT_DIR = { chrome: 'chrome-mv3', firefox: 'firefox-mv3', safari: 'safari-mv3' };
+/**
+ * The demo is the in-browser mock whatever the .env files say (`npm run setup` writes .env.production for a deployment,
+ * and every plain build reads it): process env beats .env files in WXT and Vite. It's part of the build's stamp.
+ */
+const DEMO_ENV = { WXT_BACKEND: 'mock' };
 /** Forgets (undefined) or records the fingerprint of what's in .output/<dir>. */
 const rememberBuild = (dir, stamp) => {
   const builds = { ...readPrefs().builds };
@@ -614,7 +619,7 @@ async function main() {
       ],
       choiceLabel(mode, browser),
     );
-    if ((await runStep(dash, 'prepare', prepareStep(dash, browser, mode))) && (await runStep(dash, 'build', buildStep(dash, browser)))) await openAndControl(dash, browser);
+    if ((await runStep(dash, 'prepare', prepareStep(dash, browser, mode))) && (await runStep(dash, 'build', buildStep(dash, browser, DEMO_ENV)))) await openAndControl(dash, browser);
     finish(dash);
   }
 

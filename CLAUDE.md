@@ -46,7 +46,10 @@ and the infra job cfn-lints `infra/player-role/player-role.yaml`.
   whatever those files import must also compile as NodeNext ESM in `server/`.
 - **The backend is picked at build time** (`createBackend`, `src/backend/index.ts`): `WXT_BACKEND=aws` is the local server,
   `hosted` is the deployed one with Cognito sign-in, and anything else (or a hosted build in "Play the demo") is
-  `MockBackend`, the in-browser demo. Both implement `AgentBackend`.
+  `MockBackend`, the in-browser demo. Both implement `AgentBackend`. `npm run setup` writes `.env.production` (hosted), which
+  every plain build reads; the launcher's demo and `npm run smoke` force `WXT_BACKEND=mock`. A store build
+  (`WXT_STORE_BUILD=true`: no manifest key, no `window.awsCity`, brand off) that is `hosted` fails when a `WXT_*` setting
+  is missing (`wxt.config.ts` → `scripts/release-check.mjs`) instead of falling back to the demo.
 - **Entrypoints** (`src/entrypoints/`): `sidepanel/` (`mount('panel')`; WXT turns it into Firefox's sidebar) and `city/`
   (`mount('full')`, the tab) run the same app (`src/app/mount.tsx` → `App.tsx`). `practice/` is the practice console,
   `console.content.ts` is the Console Copilot on console pages and `background.ts` is the service worker.
@@ -367,8 +370,10 @@ When a change touches a decision, update its entry and run its Proof.
   (`terrainFor`, no `rng()` calls so nothing else moves). Generic impressions only: no trademarked or protected buildings,
   flags, religious, political or military sites. The one brand allowed is Amazon Air (the airport hub's name and the
   jets' "PRIME AIR" livery), the player's choice, behind one switch: `shared/brand.json` `amazon` (`src/world/brand.ts`
-  `branded`); a store build sets it to false and the generic names (`nameUnbranded`, "AIR CARGO") show. The world map draws each city's signature as a tiny skyline, lit while
-  it's night there (`isNightAt`, solar time from the longitude, redrawn each minute). Proof: `npx vitest run tests/signatures.test.ts`.
+  `branded`). A store build (`WXT_STORE_BUILD=true`) turns the names off at build time (`brandOn` reads
+  `import.meta.env.WXT_STORE_BUILD`; other builds follow the file) and the generic names (`nameUnbranded`) show; the
+  jets' livery and the hangar's sign are baked by `npm run art` from the file itself ("AIR CARGO" once it says false). The world map draws each city's signature as a tiny skyline, lit while
+  it's night there (`isNightAt`, solar time from the longitude, redrawn each minute). Proof: `npx vitest run tests/signatures.test.ts tests/clients.test.ts`.
 - **Learning visibly grows the city.** Every activity names the building it grew and how far (`growthOf`/`growthLine`,
   `src/state/growth.ts`): under each flashcard, on every game's end card, in the puzzle result. Each landmark grows a
   **knowledge tower** shaped by its service on the back of its lot: `tw_<id>` beside its front building `lm_<id>` in
@@ -425,6 +430,7 @@ When a change touches a decision, update its entry and run its Proof.
   place with the cursor hidden; any key skips) and ends on the exact still picture (`STILL_T`); `--no-intro` skips it (`introPlays`).
   The scene and the panel sit at the left edge at every width (`sceneLayout` has no offset). Later runs say "Play again?" (`startPlan`), and the build is
   skipped when `sourceStamp` (`src/`, `shared/`, `public/`, config, WXT env) matches `.cache/launcher.json` (`--rebuild`).
+  The demo always builds with `WXT_BACKEND=mock` (`DEMO_ENV`), which beats the `.env.production` `npm run setup` writes.
   A window already holding the browser profile is named (`lockPid`, `ALREADY_OPEN`, `k` closes it). Proof:
   `npx vitest run tests/launcher.test.ts tests/launcher-skyline.test.ts`.
 - **Hands-on workshops, step by step** (contract v2.10, `shared/workshops.json`, `src/ui/Workshop.tsx`). Each step is a

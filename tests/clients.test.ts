@@ -4,7 +4,8 @@ import { readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Progress } from '@/backend/contract';
 import { mergeProgress } from '@/state/progress';
-import { branded } from '@/world/brand';
+import { BRAND_AMAZON, brandOn, branded } from '@/world/brand';
+import brandJson from '../shared/brand.json' with { type: 'json' };
 import {
   ALL_TASKS,
   CLIENTS,
@@ -224,6 +225,15 @@ describe('City Clients content (shared/clients.json)', () => {
     expect(branded(air, true)).toBe('Amazon Air Hub');
     expect(branded(air, false)).toBe(air.nameUnbranded);
     for (const b of CLIENTS.filter((x) => x.id !== 'airport')) expect(branded(b, false), b.id).toBe(b.name);
+  });
+
+  it('a store build (WXT_STORE_BUILD=true) has the brand off; other builds follow shared/brand.json', () => {
+    expect(brandOn({ amazon: true }, undefined)).toBe(true);
+    expect(brandOn({ amazon: true }, 'false')).toBe(true);
+    expect(brandOn({ amazon: true }, 'true')).toBe(false);
+    expect(brandOn({ amazon: false }, undefined)).toBe(false);
+    // This (test) build isn't a store build, so the brand follows the file.
+    expect(BRAND_AMAZON).toBe(brandJson.amazon);
   });
 });
 

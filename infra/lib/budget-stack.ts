@@ -5,7 +5,7 @@ import * as sns from 'aws-cdk-lib/aws-sns';
 import * as subs from 'aws-cdk-lib/aws-sns-subscriptions';
 import { ack } from './nag.js';
 import type { Construct } from 'constructs';
-import { type EnvConfig, taskRoleName } from './config.js';
+import { costTags, type EnvConfig, taskRoleName } from './config.js';
 
 /**
  * Cost guard rails (we pay for Bedrock): alerts at 50% and 80% of the monthly budget and when the month is
@@ -38,8 +38,17 @@ export class BudgetStack extends Stack {
       // Bedrock billing lags by hours: warn early when the month is on track to overrun.
       { notificationType: 'FORECASTED', threshold: 100 },
     ];
+    // What this environment's budget counts: its own tagged resources, plus spend that has no `app` tag at all. Claude
+    // on Bedrock lands there (the server calls system geo inference profiles, which can't carry tags), and the cut-off
+    // exists for it, so it must never be filtered out. Each environment's budget leaves out the other one's resources
+    // and anything tagged as another app; Bedrock spend counts in both environments of a shared account. Until `app`
+    // and `env` are activated as cost allocation tags no cost carries them, and the budget counts the whole account,
+    // as before (docs/runbook.md).
+    const tags = costTags(env);
+    const tag = (key: keyof typeof tags): budgets.CfnBudget.ExpressionProperty => ({ tags: { key, values: [tags[key]], matchOptions: ['EQUALS'] } });
+    const filterExpression: budgets.CfnBudget.ExpressionProperty = { or: [{ and: [tag('app'), tag('env')] }, { tags: { key: 'app', matchOptions: ['ABSENT'] } }] };
     new budgets.CfnBudget(this, 'Monthly', {
-      budget: { budgetName, budgetType: 'COST', timeUnit: 'MONTHLY', budgetLimit: { amount: env.monthlyBudgetUsd, unit: 'USD' } },
+      budget: { budgetName, budgetType: 'COST', timeUnit: 'MONTHLY', budgetLimit: { amount: env.monthlyBudgetUsd, unit: 'USD' }, filterExpression },
       notificationsWithSubscribers: alerts.map(({ notificationType, threshold }) => ({
         notification: { notificationType, comparisonOperator: 'GREATER_THAN', threshold, thresholdType: 'PERCENTAGE' },
         subscribers: [subscriber],

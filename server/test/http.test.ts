@@ -7,9 +7,10 @@ import type { Approvals } from '../src/contract/approvals.js';
 import type { Orchestrator } from '../src/contract/orchestrator.js';
 import { createProgressStore } from '../src/contract/progress.js';
 import { createUploadStore } from '../src/contract/uploads.js';
-import { createHttpServer, rateLimiter } from '../src/http.js';
+import { createHttpServer, health, rateLimiter } from '../src/http.js';
 import type { Poller } from '../src/state/poller.js';
-import type { ServerEvent } from '../src/world.js';
+import { CONTRACT_VERSION, type ServerEvent } from '../src/world.js';
+import pkg from '../package.json' with { type: 'json' };
 import { snapshot } from './fixtures.js';
 import { bearerSubprotocols } from '../../src/backend/contract.js';
 
@@ -92,8 +93,13 @@ describe('HTTP/WebSocket guards', () => {
         s.on('end', () => resolve(data));
       });
     expect(await raw('/progress')).toMatch(/^HTTP\/1.1 421/);
-    // Load balancer health checks use the task's IP as Host; /health reveals nothing.
+    // Load balancer health checks use the task's IP as Host; /health says only which build answers.
     expect(await raw('/health')).toMatch(/^HTTP\/1.1 200/);
+  });
+
+  it('/health names the server version and contract, and fails while draining', async () => {
+    expect(await (await fetch(`${base}/health`)).json()).toEqual({ status: 'ok', version: pkg.version, contract: CONTRACT_VERSION });
+    expect(health(true)).toEqual({ status: 503, body: { status: 'draining', version: pkg.version, contract: CONTRACT_VERSION } });
   });
 
   it('WebSocket: token or pinned origin required, then welcome + contract events', async () => {

@@ -1,4 +1,4 @@
 {
-  "about": "One switch for real brand names and liveries (src/world/brand.ts). true: the Amazon Air hub and its livery; a store build that can't use them sets it to false and the generic names show.",
+  "about": "One switch for real brand names and liveries (src/world/brand.ts). true: the Amazon Air hub and its livery. A store build (WXT_STORE_BUILD=true) shows the generic names whatever this says; the jets' livery and the hangar sign follow this file when npm run art runs.",
   "amazon": true
 }

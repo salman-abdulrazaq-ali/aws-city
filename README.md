@@ -287,20 +287,25 @@ contains no secrets):
 | Monthly budget | At 100% the AI switches off automatically; everything else keeps working. | 300 (prod) / 50 (staging) |
 | SES sender | Optional: your own "from" address for sign-up emails (Cognito's default sends ~50/day). | Skip |
 | Allow the local (unpacked) build | Lets the extension you build on this computer sign in. On by default for staging, off for prod. | Default |
-| Chrome Web Store id | Only after you publish ([guide](docs/chrome-web-store.md)). Re-run setup to add it. | Leave empty |
-| GitHub deploys | Optional CI/CD with GitHub OIDC (no stored keys). | Skip |
+| Chrome Web Store id, Edge Add-ons id | Only after you publish ([guide](docs/chrome-web-store.md)). Edge Add-ons gives the same zip an id of its own, so it has its own question. Re-run setup to add them. | Leave empty |
+| GitHub deploys | Optional CI/CD with GitHub OIDC (no stored keys). The repo is pre-filled from this clone's `origin` and you confirm it: its `staging` and `prod` environments can then deploy into your account. | Skip |
 
 **What it does for you:**
 1. Asks before every change to AWS.
 2. Bootstraps CDK.
 3. Deploys the stacks, which takes about 15–25 minutes the first time.
 4. Smoke-tests the live API.
-5. Writes `.env.production` and builds the extension, plus a store-ready zip.
+5. Writes `.env.production` and builds the store zips (`WXT_STORE_BUILD=true`: no manifest key, so each store
+   assigns its id), plus a copy to try in `.output/chrome-mv3-<env>` when the local build may sign in.
 
 **When it's done:**
-- **Try it (staging):** in `chrome://extensions`, click **Load unpacked** and pick `.output/chrome-mv3`.
-- **Publish:** upload `.output/*-chrome.zip` to the Chrome Web Store
-  ([guide](docs/chrome-web-store.md)), then run `npm run setup` again and enter the store id.
+- **Try it (staging):** in `chrome://extensions`, click **Load unpacked** and pick `.output/chrome-mv3-staging`.
+- **Publish:** upload `.output/*-chrome.zip` to the Chrome Web Store (and, if you like, Edge Add-ons)
+  ([guide](docs/chrome-web-store.md)), then run `npm run setup` again and enter the store ids.
+- **Builds from now on:** plain builds (`npm run build`, `zip`, `zip:firefox`, `safari:xcode`) read `.env.production`,
+  so they build for your server; `npm start`'s demo, `npm run smoke` and `smoke:copilot` always build the demo
+  (`WXT_BACKEND=mock`). For a store, add `WXT_STORE_BUILD=true`: it leaves out the manifest key and the `awsCity`
+  DevTools handles, shows the generic names of branded places, and fails if a `WXT_*` setting is missing.
 
 **Other commands:**
 - `npm run setup -- --dry-run`: see every question and check without changing anything in AWS (it still

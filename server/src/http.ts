@@ -15,7 +15,8 @@ import { verifyStep } from './workshops/checks.js';
 import { isBoard, memorySocial, socialFor } from './social.js';
 import type { Poller } from './state/poller.js';
 import type { Tenant, TenantHub } from './tenants.js';
-import { CLOSE_CODES, type ServerEvent } from './world.js';
+import { CLOSE_CODES, CONTRACT_VERSION, type ServerEvent } from './world.js';
+import pkg from '../package.json' with { type: 'json' };
 
 const JSON_LIMIT = 64 * 1024;
 const MAX_TASKS_PER_SOCKET = 2;
@@ -182,6 +183,15 @@ const readJson = async (req: IncomingMessage): Promise<unknown> => {
   }
 };
 
+/** This server's version (server/package.json; esbuild inlines it into the bundle). */
+export const SERVER_VERSION: string = pkg.version;
+
+/**
+ * The load balancer's health check: 200 while serving, 503 while draining (so it stops sending new connections).
+ * The body says which build answers: the server's version and the contract version it speaks.
+ */
+export const health = (draining: boolean) => ({ status: draining ? 503 : 200, body: { status: draining ? 'draining' : 'ok', version: SERVER_VERSION, contract: CONTRACT_VERSION } });
+
 const send = (res: ServerResponse, status: number, body?: unknown): void => {
   if (body === undefined) res.writeHead(status).end();
   else res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
@@ -245,7 +255,10 @@ export const createHttpServer = (deps: Deps) => {
 
   const handle = async (req: IncomingMessage, res: ServerResponse) => {
     // Load balancer health checks come from the private network with the task IP as Host.
-    if (req.method === 'GET' && req.url === '/health') return send(res, draining ? 503 : 200, { status: draining ? 'draining' : 'ok' });
+    if (req.method === 'GET' && req.url === '/health') {
+      const h = health(draining);
+      return send(res, h.status, h.body);
+    }
     const url = guard(req);
     if (req.headers.origin) {
       res.setHeader('access-control-allow-origin', req.headers.origin);

@@ -17,7 +17,7 @@ export interface EnvConfig {
   hostedZoneId: string;
   zoneName: string;
   cognitoDomainPrefix: string;
-  /** Chrome extension ids (store + dev): Cognito callbacks and the server's EXTENSION_ORIGIN. */
+  /** Chrome/Edge extension ids (Chrome Web Store, Edge Add-ons, the local build): Cognito callbacks and the server's EXTENSION_ORIGIN. */
   extensionIds: string[];
   /** Firefox add-on id (gecko.id, wxt.config.ts); empty/absent = no Firefox sign-in. */
   firefoxAddonId?: string;
@@ -58,6 +58,12 @@ export const loadEnv = (app: App): EnvConfig => {
     models: modelsFor(region),
   };
 };
+
+/**
+ * The tags every resource carries (bin/app.ts). The budget filters on them (lib/budget-stack.ts), which works only
+ * once they are activated as cost allocation tags in Billing (docs/runbook.md).
+ */
+export const costTags = (env: Pick<EnvConfig, 'name'>) => ({ app: 'aws-city', env: env.name });
 
 /**
  * Role names, one set per environment, so staging and prod can share an account. Players' role

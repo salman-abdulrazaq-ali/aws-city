@@ -331,6 +331,14 @@ export class ServiceStack extends Stack {
     alarm('ModelCallSpike', app('ModelCalls'), env.globalDailyModelCalls / 24, 2);
     // Bedrock said "slow down" (429) even after the SDK's retries: players are seeing "the AI is busy".
     alarm('ModelThrottled', app('ModelThrottled'), 10, 2);
+    // Every failure the server logs is a JSON line with level "error" (server/src/log.ts; publicError adds the `ref`
+    // players quote), WebSocket failures included, which the load balancer's 5xx count never sees.
+    const loggedErrors = logGroup
+      .addMetricFilter('ErrorLines', { filterPattern: logs.FilterPattern.stringValue('$.level', '=', 'error'), metricNamespace: 'AWSCity', metricName: 'LoggedErrors', metricValue: '1' })
+      .metric({ statistic: 'Sum', period: Duration.minutes(5) });
+    alarm('LoggedErrors', loggedErrors, 20, 3);
+    // A promise nobody handled (server/src/main.ts logs it and keeps serving): always a bug.
+    alarm('UnhandledRejections', app('UnhandledRejections'), 1, 1);
     alarm('TableThrottled', deps.table.metricThrottledRequestsForOperations({
         // The operations the server uses (server/src/store/dynamo.ts); an alarm takes at most 10 metrics.
         operations: [dynamodb.Operation.GET_ITEM, dynamodb.Operation.PUT_ITEM, dynamodb.Operation.UPDATE_ITEM, dynamodb.Operation.DELETE_ITEM, dynamodb.Operation.QUERY, dynamodb.Operation.BATCH_WRITE_ITEM],
@@ -356,6 +364,11 @@ export class ServiceStack extends Stack {
           new cloudwatch.GraphWidget({ title: 'Model calls / quota', left: [app('ModelCalls'), app('QuotaRejected'), app('GlobalQuotaRejected')] }),
           new cloudwatch.GraphWidget({ title: 'ALB', left: [service.loadBalancer.metrics.activeConnectionCount(), service.loadBalancer.metrics.httpCodeTarget(elbv2.HttpCodeTarget.TARGET_5XX_COUNT)] }),
           new cloudwatch.GraphWidget({ title: 'Service', left: [service.service.metricCpuUtilization(), service.service.metricMemoryUtilization()] }),
+        ],
+        [
+          new cloudwatch.GraphWidget({ title: 'Errors', left: [loggedErrors, app('UnhandledRejections')] }),
+          new cloudwatch.GraphWidget({ title: 'Model throttles / refusals', left: [app('ModelThrottled'), app('Refusals')] }),
+          new cloudwatch.GraphWidget({ title: 'Tokens', left: [app('InputTokens'), app('OutputTokens'), app('CacheReadTokens')] }),
         ],
       ],
     });

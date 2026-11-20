@@ -14,7 +14,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 24, cache: npm }
+      - name: The tag is package.json's version
+        run: node scripts/release-check.mjs --tag "$GITHUB_REF_NAME"
       - run: npm ci && npm run check
+      # wxt.config.ts fails this step if a WXT_* variable is missing (a store build never falls back to the demo).
       - name: Build against the hosted backend
         run: npm run zip && npm run zip:firefox
         env:
@@ -24,6 +27,8 @@ jobs:
           WXT_AWS_API_URL: ${{ vars.WXT_AWS_API_URL }}
           WXT_COGNITO_DOMAIN: ${{ vars.WXT_COGNITO_DOMAIN }}
           WXT_COGNITO_CLIENT_ID: ${{ vars.WXT_COGNITO_CLIENT_ID }}
+      - name: The built manifests carry that version and no key
+        run: node scripts/release-check.mjs --tag "$GITHUB_REF_NAME" .output/chrome-mv3/manifest.json .output/firefox-mv3/manifest.json
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |

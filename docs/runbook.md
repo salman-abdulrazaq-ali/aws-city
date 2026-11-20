@@ -38,23 +38,34 @@ evidence is in `docs/well-architected.md`.
    permissions boundary:
    `npx cdk bootstrap aws://<acct>/<region> --cloudformation-execution-policies arn:aws:iam::<acct>:policy/AWSCityCdkExecution --custom-permissions-boundary AWSCityBoundary`
    The deploy role only assumes the default-qualifier roles (`cdk-hnb659fds-*`, `infra/lib/ci-stack.ts`).
-4. GitHub → Settings → Environments: create `staging` and `prod` (prod: required reviewers). Set variables
+4. The wizard's GitHub question is pre-filled from this clone's `origin` and asks you to confirm the repo: only that
+   repo's `staging` and `prod` environments can assume the deploy role. GitHub → Settings → Environments: create
+   `staging` and `prod` (prod: required reviewers). Set variables
    `AWS_DEPLOY_ROLE_ARN` (the `AWSCityGitHubDeploy` role from the CI stack) and `AWS_REGION`, and on `prod`
    also `WXT_AWS_WS_URL`, `WXT_AWS_API_URL`, `WXT_COGNITO_DOMAIN`, `WXT_COGNITO_CLIENT_ID` (stack outputs).
    From then on: merge to `main` → CI → staging deploys the exact commit CI tested; the staging run's summary
    shows the **prod `cdk diff`**; a reviewer approves → prod.
 5. One-time account settings CDK doesn't manage:
    - **Amazon Inspector** ECR scanning for the CDK assets repository: `aws inspector2 enable --resource-types ECR`.
-   - **Cost allocation tags**: activate `env` and `app` in Billing → Cost allocation tags (lets you split
-     staging and prod spend; the budgets currently count the whole account).
-6. Release the extension: tag `v1.2.3` → the `release` workflow attaches the zip → upload it in the Chrome
-   Web Store dashboard with `docs/store-listing.md` and `docs/privacy-policy.md`.
+   - **Cost allocation tags**: activate `app` and `env` in Billing → Cost allocation tags (from the management
+     account in an AWS Organization). **The budget filter only works once they are active:** each environment's budget
+     counts its own resources (`app=aws-city` and `env=<env>`) plus all spend with no `app` tag, and until activation no
+     cost carries the tags, so both budgets count the whole account. Tags take up to 24 hours to appear and another 24
+     to apply, and aren't retroactive. Claude on Bedrock always counts in both budgets of a shared account: the server
+     calls system geo inference profiles, which can't be tagged, and the cut-off is there for that spend
+     (`infra/lib/budget-stack.ts`). If you also activate them as **IAM principal** tags (they appear after the task
+     role's first Bedrock call), Cost Explorer can split Bedrock spend by environment too.
+6. Release the extension: bump `version` in `package.json`, tag `v<that version>` → the `release` workflow attaches the
+   zips → upload them in the Chrome Web Store dashboard (the same zip goes to Edge Add-ons) with
+   `docs/store-listing.md` and `docs/privacy-policy.md`. The workflow stops if the tag isn't `v` + the package version,
+   if a `WXT_*` variable is missing (a store build never falls back to the demo: `wxt.config.ts`), or if a built
+   manifest has another version or a `key` (`scripts/release-check.mjs`).
 
 ## Kill switch / budget
 
 - **Manual, instant (~30 s):** `aws ssm put-parameter --name /aws-city/<env>/ai-enabled --value false --overwrite`
   (players see "the city's AI is resting"; everything else works). Turn back on with `--value true`.
-- **Automatic:** at 100% of the monthly budget, AWS Budgets attaches `AWSCityDenyBedrock-<env>` to
+- **Automatic:** at 100% of the monthly budget (what it counts: *Cost allocation tags* above), AWS Budgets attaches `AWSCityDenyBedrock-<env>` to
   `AWSCityTaskRole-<env>`. This exists even without an alarm email (Budgets notifies an SNS topic). You're
   warned earlier at 50%, 80% and when the month is *forecast* to overrun. Re-enable after review:
   `aws iam detach-role-policy --role-name AWSCityTaskRole-<env> --policy-arn arn:aws:iam::<acct>:policy/AWSCityDenyBedrock-<env>`
@@ -68,13 +79,16 @@ evidence is in `docs/well-architected.md`.
 |---|---|
 | Http5xx | ECS service events, the server log group (JSON lines; `level=error`, each with a `ref` players can quote). A deploy that trips it is **rolled back automatically**. |
 | Unhealthy / TasksBelowMinimum | ECS service events (crash loop? capacity?), `UnhandledRejections` metric |
+| LoggedErrors | 20+ `level=error` log lines in 5 minutes, three times running (a metric filter on the server log group; WebSocket failures too, which Http5xx never sees). Search the log group for `{ $.level = "error" }`; each line's `ref` is what players quote |
+| UnhandledRejections | Any promise nobody handled (the server logs it and keeps serving): a bug. The log line `unhandled rejection` names the error |
 | ModelThrottled | Bedrock 429s after retries: raise the Bedrock quota (Service Quotas) or lower `globalDailyModelCalls` |
 | TableThrottled | DynamoDB throttling on the player table (on-demand: usually a hot key or a burst) |
 | GlobalCap / ModelCallSpike | Dashboard `aws-city-<env>`; consider the kill switch |
 | QuotaRejections | Normal at scale; raise `dailyModelCalls` if players are unhappy |
 
 Metrics in the `AWSCity` namespace also include `InputTokens`, `OutputTokens`, `CacheReadTokens` and
-`Refusals` (what the Bedrock bill is made of, and whether prompt caching works).
+`Refusals` (what the Bedrock bill is made of, and whether prompt caching works). The dashboard `aws-city-<env>` graphs
+them with errors (`LoggedErrors`, `UnhandledRejections`) and model throttles.
 
 ## Security events
 
@@ -88,7 +102,9 @@ Metrics in the `AWSCity` namespace also include `InputTokens`, `OutputTokens`, `
 
 ## Deploys and restarts
 
-Rolling deploys are safe: a stopping task fails `/health`, tells players "the city is updating", waits up
+`/health` answers `{ "status": "ok", "version": "<server package.json version>", "contract": "<CONTRACT_VERSION>" }` (the
+startup log line carries both too), so `curl https://<api>/health` tells which build is live. Rolling deploys are safe: a
+stopping task fails `/health` (503, `"status": "draining"`), tells players "the city is updating", waits up
 to 100 s for running agent turns, then closes sockets with 1012; the extension reconnects with jitter to a
 healthy task. The circuit breaker and the 5xx deployment alarm roll back a bad image automatically.
 

@@ -110,8 +110,13 @@ describe('infrastructure guarantees', () => {
     t.data.hasResourceProperties('AWS::Backup::BackupSelection', { BackupSelection: Match.objectLike({ Resources: Match.anyValue() }) });
   });
 
-  it('alarms cover throttling and missing tasks, and a bad deploy rolls back on the 5xx alarm', () => {
-    for (const metric of ['ModelThrottled', 'RunningTaskCount']) t.svc.hasResourceProperties('AWS::CloudWatch::Alarm', { MetricName: metric });
+  it('alarms cover throttling, missing tasks, logged errors and unhandled rejections, and a bad deploy rolls back on the 5xx alarm', () => {
+    for (const metric of ['ModelThrottled', 'RunningTaskCount', 'LoggedErrors', 'UnhandledRejections']) t.svc.hasResourceProperties('AWS::CloudWatch::Alarm', { MetricName: metric });
+    // server/src/log.ts writes {"level":"error",…} lines; the filter turns them into AWSCity/LoggedErrors.
+    t.svc.hasResourceProperties('AWS::Logs::MetricFilter', {
+      FilterPattern: '{ $.level = "error" }',
+      MetricTransformations: [Match.objectLike({ MetricNamespace: 'AWSCity', MetricName: 'LoggedErrors', MetricValue: '1' })],
+    });
     t.svc.hasResourceProperties('AWS::ECS::Service', { DeploymentConfiguration: Match.objectLike({ Alarms: Match.objectLike({ Enable: true, Rollback: true }) }) });
   });
 
@@ -157,6 +162,19 @@ describe('infrastructure guarantees', () => {
     t.budget.hasResourceProperties('AWS::Budgets::BudgetsAction', { ActionType: 'APPLY_IAM_POLICY', ApprovalModel: 'AUTOMATIC', ActionThreshold: { Type: 'PERCENTAGE', Value: 100 } });
     t.budget.hasResourceProperties('AWS::Budgets::Budget', {
       NotificationsWithSubscribers: Match.arrayWith([Match.objectLike({ Notification: Match.objectLike({ NotificationType: 'FORECASTED' }) })]),
+    });
+  });
+
+  it("each budget counts its environment's tagged resources and untagged spend (Claude on Bedrock), not the other environment's", () => {
+    t.budget.hasResourceProperties('AWS::Budgets::Budget', {
+      Budget: Match.objectLike({
+        FilterExpression: {
+          Or: [
+            { And: [{ Tags: { Key: 'app', Values: ['aws-city'], MatchOptions: ['EQUALS'] } }, { Tags: { Key: 'env', Values: [env.name], MatchOptions: ['EQUALS'] } }] },
+            { Tags: { Key: 'app', MatchOptions: ['ABSENT'] } },
+          ],
+        },
+      }),
     });
   });
 
