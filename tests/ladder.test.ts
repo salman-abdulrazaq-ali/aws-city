@@ -87,6 +87,8 @@ describe('the unlock ladder', () => {
     expect(ladder(input({ progress: p({ quests: doneQuest }) })).tabs.has('deploy')).toBe(true);
     expect(ladder(input({ linked: true })).tabs.has('deploy')).toBe(true);
     expect(ladder(input({ hasDeploys: true })).tabs.has('deploy')).toBe(true);
+    // A hosted player who hasn't linked an account yet: Deploy is where it connects, so it's open from the start.
+    expect(ladder(input({ canConnect: true })).tabs.has('deploy')).toBe(true);
   });
 
   it('Peek at everything opens every area, and what it opened stays open', () => {

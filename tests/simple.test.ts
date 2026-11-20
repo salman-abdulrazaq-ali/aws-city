@@ -67,6 +67,8 @@ describe('shows(feature, prefs)', () => {
     expect(shows('deployTab', SIMPLE, { steps: ['deploy'] })).toBe(true);
     expect(shows('deployTab', SIMPLE, { linked: true })).toBe(true);
     expect(shows('deployTab', SIMPLE, { deployWaiting: true })).toBe(true);
+    // A hosted player who can connect an AWS account: Deploy is where it happens.
+    expect(shows('deployTab', SIMPLE, { canConnect: true })).toBe(true);
     // The Drawing board only for a design step.
     expect(shows('drawingBoard', SIMPLE, { steps: ['cards'] })).toBe(false);
     expect(shows('drawingBoard', SIMPLE, { steps: ['design'] })).toBe(true);

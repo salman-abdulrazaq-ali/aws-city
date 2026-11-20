@@ -35,7 +35,7 @@ import { Navigator } from '@/ui/Navigator';
 import { Icon, type IconName } from '@/ui/icons';
 import { CoachTips, Tour } from '@/ui/Tour';
 import { WorldIntro } from '@/ui/WorldIntro';
-import { useLadder } from '@/ui/useLadder';
+import { useCanConnect, useLadder } from '@/ui/useLadder';
 import { FindingCard } from '@/ui/FindingCard';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { SoundCaptions } from '@/ui/SoundCaptions';
@@ -111,7 +111,8 @@ export function App({ layout }: { layout: Layout }) {
   const steps = useCity((s) => activeSteps(s.progress).map((x) => x.kind).join());
   const linked = useCity((s) => s.account.linked);
   const deployWaiting = useCity((s) => Object.values(s.deploys).some((d) => d.status === 'preview' && !d.findingId));
-  const simpleCtx = { steps: steps.split(','), linked, deployWaiting };
+  const canConnect = useCanConnect();
+  const simpleCtx = { steps: steps.split(','), linked, deployWaiting, canConnect };
   const deployShown = shows('deployTab', prefs, simpleCtx);
   /** The tabs this player has earned and this mode shows (a new one gets the unlock toast). */
   const earned = useMemo(() => new Set([...l.tabs].filter((t) => t !== 'deploy' || deployShown)), [l.tabs, deployShown]);
