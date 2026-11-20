@@ -6,7 +6,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { ResourceExplorer2Client } from '@aws-sdk/client-resource-explorer-2';
 import { ResourceGroupsTaggingAPIClient } from '@aws-sdk/client-resource-groups-tagging-api';
 import { S3ControlClient } from '@aws-sdk/client-s3-control';
-import { EC2Client } from '@aws-sdk/client-ec2';
+import { EC2Client, type EC2ClientConfig } from '@aws-sdk/client-ec2';
 import { LambdaClient } from '@aws-sdk/client-lambda';
 import { RDSClient } from '@aws-sdk/client-rds';
 import { S3Client } from '@aws-sdk/client-s3';
@@ -15,6 +15,7 @@ import { fromIni, fromNodeProviderChain, fromTemporaryCredentials } from '@aws-s
 import { createHash } from 'node:crypto';
 import type { AwsCredentialIdentityProvider } from '@smithy/types';
 import type { Config } from './config.js';
+import { GUARD_DENIED, guard, type GateContext } from './guard/gate.js';
 
 /**
  * Re-reads the profile from ~/.aws/credentials every minute, so refreshed workshop keys
@@ -57,14 +58,30 @@ export const SDK_DEFAULTS = {
   requestHandler: { connectionTimeout: 3_000, requestTimeout: 10_000, throwOnRequestTimeout: true },
 } as const;
 
-export const createAwsClients = (config: Config) => clientsFor({ region: config.region, credentials: refreshingProfile(config.awsProfile) });
+/** The workshop profile (local mode); `accountId` is the account it acts in, once the server has asked STS. */
+export const createAwsClients = (config: Config, accountId?: () => string | undefined) =>
+  clientsFor({ region: config.region, credentials: refreshingProfile(config.awsProfile), accountId });
 
 /** Cost Explorer has one endpoint, in us-east-1, whatever the account's home Region. */
 export const COST_EXPLORER_REGION = 'us-east-1';
 
-export const clientsFor = (opts: { region: string; credentials: AwsCredentialIdentityProvider }) => {
-  const base = { ...SDK_DEFAULTS, ...opts };
-  const ec2 = new EC2Client(base);
+/**
+ * The player's AWS clients. Every one, the lazily made ones included, goes through the gate (server/src/guard): a
+ * command it doesn't list, another Region or a write without its grant is refused before the request is signed. The
+ * credentials themselves aren't handed out, so nothing can build an ungated client from these.
+ */
+export const clientsFor = (opts: {
+  region: string;
+  credentials: AwsCredentialIdentityProvider;
+  /** The account the credentials act in, once known (bucket names and fixes are checked against it). */
+  accountId?: () => string | undefined;
+  /** Test seam: where requests go (a stub that records them, never the network). */
+  requestHandler?: EC2ClientConfig['requestHandler'];
+}) => {
+  const { accountId, ...sdk } = opts;
+  const base = { ...SDK_DEFAULTS, ...sdk };
+  const gate: GateContext = { home: opts.region, accountId };
+  const ec2 = guard(new EC2Client(base), gate);
   /** Read-only EC2 clients for other Regions (their AZ maps), same credentials, made on first use. */
   const ec2ByRegion = new Map<string, EC2Client>([[opts.region, ec2]]);
   let ce: CostExplorerClient | undefined;
@@ -73,29 +90,28 @@ export const clientsFor = (opts: { region: string; credentials: AwsCredentialIde
     ec2,
     ec2For(region: string): EC2Client {
       let c = ec2ByRegion.get(region);
-      if (!c) ec2ByRegion.set(region, (c = new EC2Client({ ...base, region })));
+      if (!c) ec2ByRegion.set(region, (c = guard(new EC2Client({ ...base, region }), gate)));
       return c;
     },
     /** Cost Explorer (the bill, only while the player has it on): $0.01 per request. */
     costExplorer(): CostExplorerClient {
-      return (ce ??= new CostExplorerClient({ ...base, region: COST_EXPLORER_REGION }));
+      return (ce ??= guard(new CostExplorerClient({ ...base, region: COST_EXPLORER_REGION }), gate));
     },
     /** CloudWatch in the home Region (live traffic, only while the player has it on): GetMetricData only. */
     cloudwatch(): CloudWatchClient {
-      return (cw ??= new CloudWatchClient(base));
+      return (cw ??= guard(new CloudWatchClient(base), gate));
     },
-    dynamodb: new DynamoDBClient(base),
-    s3: new S3Client(base),
-    lambda: new LambdaClient(base),
-    rds: new RDSClient(base),
-    apigw: new ApiGatewayV2Client(base),
-    sts: new STSClient(base),
+    dynamodb: guard(new DynamoDBClient(base), gate),
+    s3: guard(new S3Client(base), gate),
+    lambda: guard(new LambdaClient(base), gate),
+    rds: guard(new RDSClient(base), gate),
+    apigw: guard(new ApiGatewayV2Client(base), gate),
+    sts: guard(new STSClient(base), gate),
     // Read-only, for the city's mirror of the account and its Well-Architected checks.
-    s3control: new S3ControlClient(base),
-    cloudtrail: new CloudTrailClient(base),
-    explorer: new ResourceExplorer2Client(base),
-    tagging: new ResourceGroupsTaggingAPIClient(base),
-    credentials: opts.credentials,
+    s3control: guard(new S3ControlClient(base), gate),
+    cloudtrail: guard(new CloudTrailClient(base), gate),
+    explorer: guard(new ResourceExplorer2Client(base), gate),
+    tagging: guard(new ResourceGroupsTaggingAPIClient(base), gate),
   };
 };
 
@@ -107,7 +123,8 @@ export const getAccountId = async (clients: AwsClients): Promise<string> => {
   return id.Account;
 };
 
-const DENIED = new Set(['AccessDenied', 'AccessDeniedException', 'UnauthorizedOperation', 'AuthorizationError']);
+/** IAM's refusals, and the city's own gate's (server/src/guard). */
+const DENIED = new Set(['AccessDenied', 'AccessDeniedException', 'UnauthorizedOperation', 'AuthorizationError', GUARD_DENIED]);
 const EXPIRED = new Set(['ExpiredToken', 'ExpiredTokenException', 'InvalidClientTokenId', 'UnrecognizedClientException', 'RequestExpired']);
 
 export type AwsErrorKind = 'denied' | 'expired' | 'other';

@@ -9,6 +9,15 @@ const template = readFileSync(new URL('../../infra/player-role/player-role.yaml'
 const source = ['../src/state/poller.ts', '../src/state/inventory.ts', '../src/state/bill.ts', '../src/state/flow.ts', '../src/agents/executor.ts', '../src/agents/fixes.ts'].map((f) => readFileSync(new URL(f, import.meta.url), 'utf8')).join('\n');
 /** The opt-in aws-city-fix policy (only created when AllowFixes=true). */
 const fixPolicy = template.slice(template.indexOf('- FixesOn'), template.indexOf('- !Ref AWS::NoValue'));
+/** The aws-city-build policy (everything the role lets the city create, change or delete, fixes aside). */
+const buildPolicy = template.slice(template.indexOf('PolicyName: aws-city-build'), template.indexOf('- FixesOn'));
+/** Every SDK command the server's player-facing code constructs. */
+const used = [...new Set([...source.matchAll(/new ([A-Z][A-Za-z0-9]+Command)\(/g)].map((m) => m[1]!))];
+/** IAM actions a policy section grants: `Action: x`, `Action: [x, y]` or a `- x` list under `Action:`. */
+const actionsIn = (text: string) =>
+  [...text.matchAll(/Action:[ \t]*\[([^\]]*)\]|Action:[ \t]*([a-z0-9-]+:[A-Za-z]+)|Action:[ \t]*\n((?:[ \t]+- [a-z0-9-]+:[A-Za-z]+[ \t]*\n)+)/g)].flatMap((m) =>
+    (m[1] ?? m[2] ?? m[3]!).split(/[,\n]/).map((a) => a.replace(/^\s*-\s*/, '').trim()).filter(Boolean),
+  );
 
 const IAM_FOR: Record<string, string> = {
   DescribeInstancesCommand: 'ec2:DescribeInstances',
@@ -58,7 +67,6 @@ const IAM_FOR: Record<string, string> = {
 
 describe('player role template', () => {
   it('allows every AWS call the server makes for a player', () => {
-    const used = [...new Set([...source.matchAll(/new ([A-Z][A-Za-z0-9]+Command)\(/g)].map((m) => m[1]!))];
     expect(used.length).toBeGreaterThan(10);
     for (const cmd of used) {
       const action = IAM_FOR[cmd];
@@ -108,6 +116,30 @@ describe('player role template', () => {
     expect(template).toMatch(/Sid: LiveTraffic[\s\S]*?Action: cloudwatch:GetMetricData[\s\S]*?'aws:RequestedRegion': !Ref 'AWS::Region'/);
     const { FLOW_QUERIES } = await import('../src/state/flow.js');
     for (const q of FLOW_QUERIES) expect(q.expression, q.id).toMatch(/^SELECT SUM\(/);
+  });
+
+  it("agrees with the gate's command table (server/src/guard/rules.ts) both ways", async () => {
+    const { RULES } = await import('../src/guard/rules.js');
+    const { FIXES } = await import('../src/agents/fixes.js');
+    const rules = Object.entries(RULES).flatMap(([client, commands]) => Object.entries(commands).map(([command, rule]) => ({ name: `${client}.${command}`, command, kind: rule.kind, iam: [...rule.iam] })));
+    // Every guarded command's IAM actions are in the role (GetCallerIdentity needs none).
+    for (const r of rules) {
+      if (r.command !== 'GetCallerIdentityCommand') expect(r.iam.length, `${r.name} names no IAM action`).toBeGreaterThan(0);
+      for (const action of r.iam) expect(template, `${r.name} needs ${action}, missing from player-role.yaml`).toContain(action);
+    }
+    // Every write the role grants is a guarded write, and every fix a guarded fix: nothing it allows bypasses a grant.
+    const iamOf = (kind: string) => [...new Set(rules.filter((r) => r.kind === kind).flatMap((r) => r.iam))].sort();
+    expect(actionsIn(buildPolicy).length).toBeGreaterThan(8);
+    expect([...new Set(actionsIn(buildPolicy))].sort()).toEqual(iamOf('write'));
+    expect([...new Set(actionsIn(fixPolicy))].sort()).toEqual(iamOf('fix'));
+    expect(Object.values(FIXES).map((d) => d.iamAction).sort()).toEqual(iamOf('fix'));
+    // Every command the server sends is in the table, under the IAM action IAM_FOR names, and the table holds nothing IAM_FOR doesn't.
+    const ALIASES: Record<string, string> = { GetAccountPublicAccessBlockCommand: 'GetPublicAccessBlockCommand' };
+    for (const cmd of used) {
+      const hits = rules.filter((r) => r.command === (ALIASES[cmd] ?? cmd) && r.iam.includes(IAM_FOR[cmd]!));
+      expect(hits, `${cmd} isn't in the gate's table (server/src/guard/rules.ts)`).toHaveLength(1);
+    }
+    for (const r of rules) if (r.iam.length) expect(Object.values(IAM_FOR), `${r.name} isn't in IAM_FOR`).toContain(r.iam[0]);
   });
 
   it('role name matches what account linking expects', async () => {

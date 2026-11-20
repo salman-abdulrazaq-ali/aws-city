@@ -1,6 +1,7 @@
 import citizensJson from '../../../shared/citizens.json' with { type: 'json' };
 import { classifyAwsError, type AwsClients } from '../aws.js';
 import type { Approvals } from '../contract/approvals.js';
+import { GuardDeniedError } from '../guard/gate.js';
 import { log } from '../log.js';
 import { enrich, inventoryEvent, readGeo, readInventory } from '../state/inventory.js';
 import { forgetSetting } from '../state/poller.js';
@@ -134,6 +135,8 @@ export const createCityCare = (deps: {
       }
       if (err instanceof LockLostError) return emit({ type: 'deploy.status', deployId, status: 'failed', message: err.message });
       log.warn('fix failed', { fix: fix.fixId, err: (err as Error).name });
+      // The city's own gate refused it: not an IAM problem, so don't send the player to their stack.
+      if (err instanceof GuardDeniedError) return emit({ type: 'deploy.status', deployId, status: 'failed', message: err.publicMessage });
       const denied = classifyAwsError(err) === 'denied';
       emit({ type: 'deploy.status', deployId, status: 'failed', message: denied ? 'AWS said no. To let the citizens make fixes, update your AWSCity stack in CloudFormation and set AllowFixes to true.' : 'The change didn’t go through. Nothing else was touched.' });
     }

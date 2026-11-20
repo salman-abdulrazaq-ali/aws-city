@@ -7,6 +7,8 @@ import { checkAction, describeAction } from './policy.js';
 import { memoryLocks } from '../store/local.js';
 import type { AccountLocks } from '../store/types.js';
 import { log } from '../log.js';
+import { withGrant } from '../guard/gate.js';
+import { actionGrant } from '../guard/grants.js';
 
 export type SubmitOutcome =
   | { status: 'done'; result: ExecutionResult }
@@ -69,7 +71,10 @@ export const createActionService = (deps: {
       if (decision.verdict === 'deny') return { status: 'denied', reason: decision.reason };
       if (decision.verdict === 'confirm') return { status: 'denied', reason: NEEDS_APPROVAL_REASON };
 
-      const result = await executeAction(action, deps.clients, snapshot, deps.region, lease);
+      // Past policy and the player's approval: the gate lets through exactly this action's writes, once each.
+      const grant = confirmed ? actionGrant(action, snapshot.accountId) : undefined;
+      const execute = () => executeAction(action, deps.clients, snapshot, deps.region, lease);
+      const result = await (grant ? withGrant(grant, execute) : execute());
       await remember(action, result);
       if (result.ok && !READ_ONLY.has(action.type)) {
         const refresh = () => void deps.poller.refresh().catch((err) => log.warn('refresh after write failed', { err: (err as Error).name })); // the next scheduled poll retries

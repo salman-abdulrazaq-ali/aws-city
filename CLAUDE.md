@@ -118,6 +118,13 @@ When a change touches a decision, update its entry and run its Proof.
 - **Every AWS write needs the player's approval** (contract v2 `deploy.preview` → `deploy.approve`).
   With no approval channel, writes are refused (only reads run). Proof: `server/test/approvals.test.ts`,
   `server/test/service.test.ts` ("refuses every write without an approval channel").
+- **A deterministic gate sits between the server and AWS** (`server/src/guard/`). One SDK middleware on every client with a
+  player's credentials (`clientsFor`, lazy ones too; link.ts's STS) refuses, before signing: a command not in `RULES`
+  (`guard/rules.ts`: as the SDK names it, `read`/`write`/`fix`, its IAM actions; the role agrees both ways); a request outside
+  the home Region (AZ/Region lists anywhere, Cost Explorer us-east-1); a write or fix not shaped exactly as the server sends it,
+  grant or not; and one without a grant (`withGrant`) naming its command and exact target, once. Only ActionService (after
+  policy and approval) and fixes.ts (after approval and its re-read) mint grants. Refusals are `GuardDeniedError` ("The city's
+  safety gate stopped this: …"), logged without account ids. Proof: `cd server && npx vitest run test/guard.test.ts test/player-role.test.ts test/service.test.ts test/fixes.test.ts`.
 - **Linking an AWS account, approving a write and applying a fix need MFA (step-up).** Hosted players must have TOTP
   on for `account.link`/`account.verify`, `deploy.approve` and `finding.fix` (Google sign-ins are exempt); prod Cognito runs Plus with threat protection.
   A "TOTP is on" answer is cached 60 s at most. Proof: `cd server && npx vitest run test/hosted.test.ts -t "MFA"`

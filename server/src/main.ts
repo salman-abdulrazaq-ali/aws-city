@@ -37,8 +37,8 @@ const ours = { ...SDK_DEFAULTS, region: config.region, credentials: serviceCrede
 // ── The player's AWS: the workshop profile (local) or their own linked account (hosted) ──
 let awsFor: Parameters<typeof createTenants>[0]['awsFor'];
 if (config.awsMode === 'profile') {
-  const clients = createAwsClients(config);
-  let accountId: string;
+  let accountId: string | undefined;
+  const clients = createAwsClients(config, () => accountId);
   try {
     accountId = await getAccountId(clients);
   } catch (err) {

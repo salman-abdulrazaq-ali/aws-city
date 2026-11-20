@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { GetCallerIdentityCommand, STSClient } from '@aws-sdk/client-sts';
 import type { AwsCredentialIdentityProvider } from '@smithy/types';
 import { assumedRole, SDK_DEFAULTS } from '../aws.js';
+import { guard } from '../guard/gate.js';
 import type { AccountRecord, AccountStore } from '../store/types.js';
 
 /** The player role's fixed name (infra/player-role/player-role.yaml): players only need their account id. */
@@ -31,7 +32,9 @@ export const createAccountLinker = (deps: {
   whoAmI?: (region: string, credentials: AwsCredentialIdentityProvider) => Promise<{ Account?: string; Arn?: string }>;
 }) => {
   const credentialsFor = deps.credentialsFor ?? assumedRole;
-  const whoAmI = deps.whoAmI ?? ((region, credentials) => new STSClient({ ...SDK_DEFAULTS, region, credentials }).send(new GetCallerIdentityCommand({})));
+  // Gated like every client with a player's credentials: this one can send GetCallerIdentity and nothing else.
+  const whoAmI =
+    deps.whoAmI ?? ((region, credentials) => guard(new STSClient({ ...SDK_DEFAULTS, region, credentials }), { home: region }).send(new GetCallerIdentityCommand({})));
 
   const quickCreateUrl = (region: string, externalId: string) => {
     const params = new URLSearchParams({
