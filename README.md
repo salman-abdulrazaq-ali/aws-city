@@ -362,7 +362,7 @@ flowchart LR
 - **Console Copilot runs only when you start it, only on console pages.** It never clicks
   delete / IAM / billing controls and never reads secret fields; press Esc to stop.
 - **Costs are capped.** Each player has a daily AI quota, and there's a kill switch
-  (`/aws-city/<env>/ai-enabled`). At 100% of the budget, AI is cut off automatically.
+  (`/cloud-city/<env>/ai-enabled`). At 100% of the budget, AI is cut off automatically.
 - **Architecture:** [docs/well-architected.md](docs/well-architected.md) is our Well-Architected
   review with evidence. Infra passes the cdk-nag AWS Solutions checks.
 
