@@ -3,7 +3,70 @@
 An MV3 browser extension for Chrome/Edge, Firefox and Safari (WXT + React 19 + Phaser 4 + zustand): an isometric AWS learning city.
 The frontend is complete against a mock backend; the AWS backend plugs in through one contract.
 
+## Commands
+
+Node 24 (`engines` `>=24` in `package.json`; proof: `npm pkg get engines.node`). 24.15+ is recommended: the launcher
+(`scripts/launcher/require-node.mjs`) stops below 24 and prints a one-line note on 24.0–24.14, which still works.
+There are three npm projects, each with its own lockfile: the extension (root), `server/` and `infra/`. Run `npm ci` in each one
+you touch. The root `tsc` and ESLint skip `server/` and `infra/`.
+
+```
+npm start         # the guided launcher: demo / real AWS / deploy (scripts/launcher/boot.mjs → scripts/start.mjs)
+npm start -- --demo --browser cft   # the same, no prompts (on stage); --help lists the flags
+npm run check     # tsc --noEmit && vitest run (tests/**/*.test.{ts,tsx}; React components render under jsdom)
+npx vitest run tests/ladder.test.ts              # one test file (the form every Proof below uses)
+npx vitest run tests/ladder.test.ts -t "<name>"  # one test by name
+npm run lint      # ESLint: rules of hooks + jsx-a11y (CI: --max-warnings 10)
+npm run smoke     # build + Playwright Chromium demo run; screenshots in .output/smoke; must print "no page errors"
+npm run smoke:copilot  # the 8 Console Copilot flows on the practice console (practice.html) + the demo Lookout; must print "no page errors"
+npm run dev       # WXT dev with Chrome for Testing (`npx playwright install chromium` once; branded Chrome opens blank)
+npm run live      # local server with real AWS (workshop profile) + the extension wired to it
+npm run dev:firefox / npm run live -- --browser firefox|safari   # other browsers
+npm run lint:firefox && npm run build:safari   # Firefox (Mozilla linter, 0 errors) and Safari builds
+npm run safari:xcode   # Xcode project for Safari (.cache/safari)
+npm run art       # regenerate the sprites in public/assets (runs `python3` with Pillow)
+npm run assets    # refetch Kenney packs into .cache/ and copy the listed files into public/assets/kenney
+
+cd server && npx tsc --noEmit && npm test       # server types + tests (tsc also catches contract drift)
+cd server && npx vitest run test/hosted.test.ts -t "MFA"   # one server test
+cd server && npm run build:bundle               # esbuild → dist/main.js, what the Docker image runs
+cd infra && npx tsc --noEmit && npm test && npx cdk synth -q   # hosting; cdk-nag must pass (CI synths -c env=staging and -c env=prod)
+```
+
+CI (`.github/workflows/ci.yml`) has one job per project, each starting with `npm ci` and `npm audit --omit=dev
+--audit-level=high`. The extension job also runs both smokes under xvfb, the server job builds the arm64 Docker image,
+and the infra job cfn-lints `infra/player-role/player-role.yaml`.
+
+## Architecture
+
+- **Three projects, one protocol.** The extension (`src/`, WXT `srcDir`), the server (`server/`: `tsx` in dev, an
+  esbuild bundle in the image) and the CDK app (`infra/`: stacks in `lib/`, the deploy wizard `setup/setup.mjs` that the root's
+  `npm run setup` runs, the role players install in `player-role/`). `server/src/world.ts` re-exports the extension's `src/backend/contract.ts`,
+  `src/world/taxonomy.ts` and `src/world/places.ts` (`server/src/contract/console.ts` imports `src/console/risk.ts`), so
+  whatever those files import must also compile as NodeNext ESM in `server/`.
+- **The backend is picked at build time** (`createBackend`, `src/backend/index.ts`): `WXT_BACKEND=aws` is the local server,
+  `hosted` is the deployed one with Cognito sign-in, and anything else (or a hosted build in "Play the demo") is
+  `MockBackend`, the in-browser demo. Both implement `AgentBackend`.
+- **Entrypoints** (`src/entrypoints/`): `sidepanel/` (`mount('panel')`; WXT turns it into Firefox's sidebar) and `city/`
+  (`mount('full')`, the tab) run the same app (`src/app/mount.tsx` → `App.tsx`). `practice/` is the practice console,
+  `console.content.ts` is the Console Copilot on console pages and `background.ts` is the service worker.
+- **Layers in `src/`:** `state/` (the zustand store, the bus, and pure rule modules over `Progress`: ladder, wallet, srs,
+  next, simple…), `world/` (the pure city model built from `shared/`: taxonomy, plan, zoning, terrain, park, airport, clients),
+  `learning/` (pure game logic: spaced repetition, puzzle scoring, the practice terminal, station reducers, daily pay),
+  `game/` (Phaser 4: `createGame.ts`, scenes in `game/scenes/` (Boot, World, City, Interior, mini-games)), `ui/` (React 19)
+  and `console/` (the Copilot: page snapshot, risk checks, acting on the page). Most `tests/` target the pure modules directly.
+- **Determinism.** A Region's terrain and props come from `mulberry32(hashCode(region))` (`src/world/terrain.ts`;
+  `mulberry32` is in `src/game/rng.ts`) drawn in a fixed order. A new placement uses a hash and adds no `rng()` call, or every later prop moves.
+- **Generated files.** `shared/region-facts.json`, `prices.json`, `aws-catalog.json`, `aws-icons.json` and `city-maps/` come
+  from `scripts/fetch-*.mjs` (`npm run region-facts|prices|aws-catalog|icons|city-maps`), which read the curated
+  `shared/regions.json` and `shared/city-centres.json`. `public/assets/city` and `public/assets/characters` come from
+  `npm run art`. Change the generator or its curated input and re-run it; don't edit the output.
+- **Playtest personas** in `.claude/agents/` (`auditor`, `fun-tester`, `newcomer`) are subagents that run in demo mode only
+  and never edit the repo. The auditor also checks for drift between this file and the code.
+
 ## Decisions (each with the command that proves it)
+
+When a change touches a decision, update its entry and run its Proof.
 
 - **Backend: `server/`** (Node + TS, Claude on Bedrock). It runs locally against the workshop
   account, which denies CloudFormation and `iam:CreateRole`, or hosted in our own account via `infra/`.
@@ -596,27 +659,6 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   (no identity API). Firefox/Safari origins are random per install, so the server allows them by scheme, and a
   wildcard never authenticates by Origin alone. Proof: `npm run lint:firefox && npm run build:safari`,
   `cd server && npx vitest run test/http.test.ts -t "origins"`, `npx vitest run tests/auth.test.ts`.
-
-## Commands
-
-Node 24 (`engines` `>=24` in `package.json`; proof: `npm pkg get engines.node`). 24.15+ is recommended: the launcher
-(`scripts/launcher/require-node.mjs`) stops below 24 and prints a one-line note on 24.0–24.14, which still works.
-
-```
-npm start         # the guided launcher: demo / real AWS / deploy (scripts/launcher/boot.mjs → scripts/start.mjs)
-npm start -- --demo --browser cft   # the same, no prompts (on stage); --help lists the flags
-npm run check     # tsc --noEmit && vitest run (tests/**/*.test.{ts,tsx}; React components render under jsdom)
-npm run lint      # ESLint: rules of hooks + jsx-a11y (CI allows at most 10 warnings)
-npm run smoke     # build + Playwright Chromium demo run; screenshots in .output/smoke; must print "no page errors"
-npm run dev       # WXT dev with Chrome
-npm run live      # local server with real AWS (workshop profile) + the extension wired to it
-npm run dev:firefox / npm run live -- --browser firefox|safari   # other browsers
-npm run lint:firefox && npm run build:safari   # Firefox (Mozilla linter, 0 errors) and Safari builds
-npm run safari:xcode   # Xcode project for Safari (.cache/safari)
-npm run smoke:copilot  # the 8 Console Copilot flows on the practice console (practice.html) + the demo Lookout; must print "no page errors"
-cd infra && npx cdk synth -q   # hosting (must pass cdk-nag)
-npm run assets    # refetch Kenney packs into .cache/ and copy the listed files into public/assets/kenney
-```
 
 ## Gotchas found the hard way
 
