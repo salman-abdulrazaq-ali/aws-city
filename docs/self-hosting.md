@@ -131,11 +131,11 @@ models. Then it asks a few questions:
 | Region | Where you signed in, e.g. `eu-west-2` |
 | Web address | **No domain** (free HTTPS from CloudFront) |
 | Sign-in page name | Accept the suggestion |
-| Google sign-in | Skip (email and password always work) |
+| Google sign-in | Skip (email and password always work). If you add it, **Publish app** in Google's consent screen, or only the test users you list can use it |
 | Alarm email | Your email |
 | Monthly budget | 50 for staging (the AI switches off at 100%) |
-| SES sender | Skip for staging |
-| Allow the local build | Yes for staging |
+| SES sender | Skip until SES has production access (a new account's SES only emails addresses you verify) |
+| Allow the local build | **Yes** until your Chrome Web Store listing is live (otherwise nothing can sign in) |
 | Chrome Web Store id | Leave empty |
 | GitHub deploys | Skip |
 
@@ -157,8 +157,13 @@ domain you own: a free address (outlook.com, gmail.com…) sent through SES is o
 ## 9. After the deploy
 
 1. Open the email from **AWS Notifications** and click **Confirm subscription**, so alarms and budget alerts reach you.
-2. In Chrome, open `chrome://extensions` → **Developer mode** → **Load unpacked** → pick `.output/chrome-mv3`.
+2. In Chrome, open `chrome://extensions` → **Developer mode** → **Load unpacked** → pick `.output/chrome-mv3`. (This
+   works if you answered **Yes** to "Allow the local build"; otherwise only your Chrome Web Store build can sign in.)
 3. In the city: **⋯ → Sign in to save your city** → sign up with your email → turn on MFA when asked.
+
+The **Server** and **Sign-in** addresses setup prints aren't web pages. The extension uses them. Opened in a browser,
+the server only says what it is, and the sign-in address shows `Missing Authentication Token`. Both are normal. To check
+the server, open `<Server>/health`: it shows `{"status":"ok"}`.
 4. **Link your AWS account:** follow the in-game link to create the small, read-mostly role in *the same Region*, then
    paste your 12-digit account ID.
 5. Ask an agent something, and approve one change. Every change waits for your **Approve**.

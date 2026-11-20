@@ -296,6 +296,8 @@ const askAll = async (was, kept) => {
         `3. Authorised JavaScript origins:  https://${cognitoHost}`,
         `4. Authorised redirect URIs:       https://${cognitoHost}/oauth2/idpresponse`,
         '5. Create → copy the Client ID and Client secret.',
+        '6. Google Auth Platform → Audience → Publish app. While it says Testing, only the test users you list',
+        '   can sign in with Google (basic sign-in scopes need no Google review).',
       ].join('\n'),
       'Google Cloud Console (2 minutes)',
     );
@@ -317,29 +319,42 @@ const askAll = async (was, kept) => {
   if (!alarmEmail && !emailOptional) bye('prod needs alarmEmail (alarms and the budget cut-off notify it).');
   if (!alarmEmail) p.log.warn('No alarm email: the AI still switches off at 100% of the budget, but nobody is told. Add one before going live.');
   const monthlyBudgetUsd = Number(await ask('text', { message: 'Monthly AWS budget in USD (AI switches off at 100%)', initialValue: String(was.monthlyBudgetUsd ?? (envName === 'prod' ? 300 : 50)), validate: (v) => (Number(v) > 0 ? undefined : 'a number') }, was.monthlyBudgetUsd));
-  if (sesSandbox && !was.sesFromEmail)
-    p.log.info('Amazon SES in this account is still in its sandbox: it would only email addresses you verify one by one, so players couldn’t sign up. Skip it for now; request production access in the SES console before using it.');
-  const useSes = await ask('confirm', { message: 'Send sign-up emails from your own address with Amazon SES? (otherwise Cognito’s default sender, ~50/day)', initialValue: Boolean(was.sesFromEmail) }, Boolean(was.sesFromEmail));
+  // SES starts in a sandbox (only verified recipients), so while it's there the question defaults to No, even when an
+  // earlier run said Yes: otherwise players never get their sign-up code. --yes runs keep the saved answer.
+  if (sesSandbox)
+    p.log.info(
+      was.sesFromEmail
+        ? `Amazon SES in this account is still in its sandbox: sign-up emails from ${was.sesFromEmail} only reach addresses you verified one by one, so other players can’t sign up. Answer No to use Cognito’s own sender (any address, about 50 a day) until SES has production access.`
+        : 'Amazon SES in this account is still in its sandbox: it would only email addresses you verify one by one, so players couldn’t sign up. Skip it for now; request production access in the SES console before using it.',
+    );
+  const useSes = await ask('confirm', { message: 'Send sign-up emails from your own address with Amazon SES? (otherwise Cognito’s default sender, ~50/day)', initialValue: Boolean(was.sesFromEmail) && !sesSandbox }, Boolean(was.sesFromEmail));
   let sesFromEmail = '';
   if (useSes) {
     sesFromEmail = await ask('text', { message: 'From address (e.g. noreply@yourdomain.com)', initialValue: was.sesFromEmail, validate: (v) => (/^\S+@\S+\.\S+$/.test(v) ? undefined : 'an email address') }, was.sesFromEmail);
     if (isFreeMail(sesFromEmail)) p.log.warn(`${sesFromEmail} is a free email address: mail sent "from" it through SES is often filtered as spoofed. Use an address on a domain you own, or skip SES.`);
   }
 
-  // Chrome extension ids. The local build's id comes from a public key in this repo, so ANY unpacked extension could
-  // claim it: fine for staging; for prod it's opt-in (it lets that id sign in and talk to your server).
+  // Chrome extension ids. The local build's id comes from a public key in this repo, so ANY unpacked copy built from it
+  // can sign in (only as the person signing in: the server still checks every request). Until there's a store id it's
+  // the only way to try the city, so it's the default then; with a store id, prod keeps the previous answer.
   const storeId = await ask('text', { message: 'Chrome Web Store extension id (leave empty until you have one)', initialValue: (was.extensionIds ?? []).find((i) => i !== DEV_EXTENSION_ID) ?? '', validate: (v) => (!v || /^[a-p]{32}$/.test(v) ? undefined : '32 letters a–p') }, (was.extensionIds ?? []).find((i) => i !== DEV_EXTENSION_ID) ?? '');
   const hadDev = (was.extensionIds ?? []).includes(DEV_EXTENSION_ID);
   const allowDev = await ask(
     'confirm',
     {
-      message: `Allow the local (unpacked) build to sign in? ${envName === 'prod' ? '(not recommended for prod: anyone can build an extension with this id)' : '(handy for testing)'}`,
-      initialValue: was.extensionIds ? hadDev : envName !== 'prod',
+      message: `Allow the local (unpacked) build to sign in? ${
+        envName !== 'prod'
+          ? '(handy for testing)'
+          : storeId
+            ? '(No once your store listing is live: any copy of this repo’s build could sign in)'
+            : '(Yes to try it before your Chrome Web Store listing is live. Any copy of this repo’s build could sign in, but only as the person signing in.)'
+      }`,
+      initialValue: !storeId || (was.extensionIds ? hadDev : envName !== 'prod'),
     },
     was.extensionIds ? hadDev : envName !== 'prod',
   );
   const extensionIds = [...(allowDev ? [DEV_EXTENSION_ID] : []), ...(storeId ? [storeId] : [])];
-  if (!extensionIds.length) p.log.warn('No extension can sign in yet: publish to the Chrome Web Store and re-run setup with its id (or allow the local build).');
+  if (!extensionIds.length) p.log.warn('No extension can sign in, so you won’t be able to try the city: allow the local build, or publish to the Chrome Web Store and run setup again with its id.');
   // Chrome/Edge are always on; Firefox and Safari players sign in with the same accounts when enabled.
   const browsers = await ask(
     'multiselect',
@@ -405,7 +420,7 @@ for (;;) {
   if (next === 'go') break;
   was = { ...A, extensionIds: A.extensionIds };
 }
-const { hostedZoneId, zoneName, domainName, cognitoDomainPrefix, googleClientId, alarmEmail, monthlyBudgetUsd, sesFromEmail, extensionIds, allowDev, firefoxAddonId, safari, githubRepo } = A;
+const { hostedZoneId, zoneName, domainName, cognitoDomainPrefix, googleClientId, alarmEmail, monthlyBudgetUsd, sesFromEmail, extensionIds, allowDev, storeId, firefoxAddonId, safari, githubRepo } = A;
 
 // ── 10. Now, and only now, the changes: the Google secret, SES, the saved answers ────────────────────────────
 if (A.googleSecret && (await approve(`store the Google client secret in Secrets Manager as "${GOOGLE_SECRET}"`))) {
@@ -481,10 +496,16 @@ if (safari) run('npx', ['wxt', 'build', '-b', 'safari', '--mode', 'production'])
 
 p.note(
   [
-    `Server:   ${pick('Service', 'ApiUrl')}`,
-    `Sign-in:  ${pick('Auth', 'CognitoDomain')}`,
+    allowDev
+      ? 'Try it now: chrome://extensions → Developer mode → Load unpacked → .output/chrome-mv3, then ⋯ → Sign in.'
+      : storeId
+        ? 'Players sign in with the Chrome Web Store build (the local build is not allowed to).'
+        : 'No extension can sign in yet: run setup again and allow the local build, or publish (below).',
     '',
-    allowDev ? `Try it now: chrome://extensions → Developer mode → Load unpacked → .output/chrome-mv3 (id ${DEV_EXTENSION_ID}).` : 'The local build is not allowed to sign in (prod); use the store build.',
+    // Neither address is a web page: opened in a browser, the sign-in domain shows "Missing Authentication Token".
+    `Server:    ${pick('Service', 'ApiUrl')}  (for the extension; ${pick('Service', 'ApiUrl')}/health shows {"status":"ok"})`,
+    `Sign-in:   ${pick('Auth', 'CognitoDomain')}  (the extension's Sign in button opens it)`,
+    '',
     'Publish:   upload .output/*-chrome.zip in the Chrome Web Store dashboard (docs/chrome-web-store.md),',
     '           then run setup again with the store id so store users can sign in too.',
     firefoxAddonId ? 'Firefox:   upload .output/*-firefox.zip (+ the -sources.zip) to addons.mozilla.org (docs/firefox-addons.md).' : '',
