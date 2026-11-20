@@ -13,7 +13,7 @@ so fix this doc. Both backends import or mirror that file:
 |---|---|---|---|
 | `mock` (default) | `src/backend/MockBackend.ts`, runs in the browser | none | Simulated curated templates |
 | `aws` | **`server/`**, the team's local Node server with a real account and Claude on Bedrock | WebSocket `/ws` + REST `/progress`, `/screenshots`; the Origin allowlist is `EXTENSION_ORIGIN` | **Guarded actions** (EC2 t4g, DynamoDB, S3); every write needs the player's approval |
-| `hosted` | **`server/`** deployed by `infra/` (ECS Fargate): players sign in with Cognito (JWT in `Sec-WebSocket-Protocol`, `Authorization: Bearer` on REST) and link their own AWS account | Same as `aws` | Guarded actions in the **player's own account** through `AWSCityPlayerRole-<region>` (ExternalId), each needing approval |
+| `hosted` | **`server/`** deployed by `infra/` (ECS Fargate): players sign in with Cognito (JWT in `Sec-WebSocket-Protocol`, `Authorization: Bearer` on REST) and link their own AWS account | Same as `aws`; `GET /` (no sign-in) says what the server is, for anyone opening its address in a browser | Guarded actions in the **player's own account** through `AWSCityPlayerRole-<region>` (ExternalId), each needing approval |
 
 The workshop account denies CloudFormation and `iam:CreateRole`, so `aws` is the backend in use.
 

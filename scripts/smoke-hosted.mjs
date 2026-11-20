@@ -26,6 +26,10 @@ for (let i = 0; ; i++) {
 }
 ok('health');
 
+const root = await fetch(`${api}/`).then((r) => (r.ok ? r.json() : undefined)).catch(() => undefined);
+if (root?.service !== 'AWS City') fail(`${api}/ doesn't say what it is (opened in a browser it should)`);
+ok('root says what it is');
+
 const noToken = await fetch(`${api}/progress`, { headers: { origin: 'chrome-extension://smoke' } });
 if (noToken.status !== 403 && noToken.status !== 401) fail(`/progress without a token answered ${noToken.status}`);
 const forged = await fetch(`${api}/progress`, { headers: { authorization: 'Bearer not-a-jwt' } });
