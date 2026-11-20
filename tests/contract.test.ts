@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { mergeProgress } from '@/state/progress';
 import { MockBackend } from '@/backend/MockBackend';
 import { bearerSubprotocols, CONTRACT_VERSION, isServerEvent, type AwsHealthEvent, type CityFinding, type ServerEvent } from '@/backend/contract';
@@ -32,11 +32,14 @@ describe('MockBackend speaks the contract', () => {
   });
 
   it('chat.ask streams chat.answer chunks ending with done=true', async () => {
+    // Fake time: each streamed word is a timer, and a real one lasts a whole OS tick (~15.6 ms on Windows).
+    vi.useFakeTimers();
+    onTestFinished(() => void vi.useRealTimers());
     const mock = new MockBackend({ speed: 200 });
     const events: ServerEvent[] = [];
     mock.onEvent((e) => events.push(e));
     mock.send({ action: 'chat.ask', requestId: 'r1', districtId: 'storage', question: 'When should I use EFS?', context: {} });
-    await new Promise((r) => setTimeout(r, 400));
+    await vi.advanceTimersByTimeAsync(400);
     const chunks = events.filter((e) => e.type === 'chat.answer');
     expect(chunks.length).toBeGreaterThan(3);
     expect(chunks.at(-1)).toMatchObject({ done: true, districtId: 'storage', agentId: 'efs' });

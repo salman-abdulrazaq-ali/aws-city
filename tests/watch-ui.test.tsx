@@ -2,7 +2,7 @@
 // Round 3's currencies and stories, rendered for real: Watch it done (TaskCard before, during, after), the building
 // card's "Ask a question" / "Watch it done", the Drawing board's intro and coin pay, and My City as the progress hub.
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { Progress } from '@/backend/contract';
 
 vi.mock('@/ui/Portrait', () => ({ Portrait: () => <span data-testid="portrait" />, agentColor: () => '#fff' }));
@@ -164,6 +164,10 @@ describe('the Drawing board', () => {
 
 describe('My City, the progress hub', () => {
   it('shows ⭐, 🪙, 💡 and crowns, then City Lights, the season road, City Hall and the Service Codex', () => {
+    // The day after the fixture's last learning day: later, the missed days spend the held freeze (lightsView).
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 20, 12));
+    onTestFinished(() => void vi.useRealTimers());
     // Everything on (Simple mode's My City shows buildings, stars and coins only: tests/simple-ui.test.tsx).
     useCity.setState({ prefs: { ...useCity.getState().prefs, simple: false }, progress: { ...base(), wallet: { earned: 50, spent: 8 }, streak: { days: 3, last: '2026-10-19', best: 5 }, lights: { days: ['2026-10-18', '2026-10-19'], total: 2, freezes: 1 } } });
     act(() => useCity.getState().openCollection(true));

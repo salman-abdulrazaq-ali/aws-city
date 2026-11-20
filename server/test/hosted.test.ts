@@ -364,6 +364,10 @@ describe('hosted server: Cognito players and tenants', () => {
       if (token === 'jwt-bob') return { sub: 'bob' };
       if (token === 'jwt-carol') return { sub: 'carol' };
       if (token === 'jwt-frank') return { sub: 'frank' };
+      // The socket-cap tests count one player's tabs: each has its own player, so a tab an earlier test closed
+      // (the server frees its slot a moment later) can't take a slot.
+      if (token === 'jwt-erin') return { sub: 'erin' };
+      if (token === 'jwt-gus') return { sub: 'gus' };
       // A token that expires the moment the socket opens.
       if (token === 'jwt-dave') return { sub: 'dave', exp: Math.floor(Date.now() / 1000) };
       throw new Error('bad');
@@ -413,21 +417,21 @@ describe('hosted server: Cognito players and tenants', () => {
   });
 
   it('per-player socket cap holds even when tabs connect at the same instant', async () => {
-    const all = await Promise.all(Array.from({ length: 8 }, () => open('jwt-alice')));
+    const all = await Promise.all(Array.from({ length: 8 }, () => open('jwt-erin')));
     const opened = all.filter((r) => r.ws);
     expect(opened.length).toBe(4);
     expect(all.filter((r) => r.status === 429).length).toBe(4);
     for (const r of opened) r.ws!.close();
     await new Promise((r) => setTimeout(r, 100));
     // Slots are given back on close.
-    const again = await open('jwt-alice');
+    const again = await open('jwt-erin');
     expect(again.ws).toBeDefined();
     again.ws!.close();
   });
 
   it('clients that drop mid-handshake give their slot back', async () => {
     const { connect } = await import('node:net');
-    const b64 = Buffer.from('jwt-alice').toString('base64url');
+    const b64 = Buffer.from('jwt-gus').toString('base64url');
     for (let i = 0; i < 6; i++) {
       await new Promise<void>((resolve) => {
         const s = connect(port, '127.0.0.1', () => {
@@ -439,7 +443,7 @@ describe('hosted server: Cognito players and tenants', () => {
       });
     }
     await new Promise((r) => setTimeout(r, 200));
-    const tabs = await Promise.all(Array.from({ length: 4 }, () => open('jwt-alice')));
+    const tabs = await Promise.all(Array.from({ length: 4 }, () => open('jwt-gus')));
     expect(tabs.every((t) => t.ws)).toBe(true);
     for (const t of tabs) t.ws!.close();
     await new Promise((r) => setTimeout(r, 100));

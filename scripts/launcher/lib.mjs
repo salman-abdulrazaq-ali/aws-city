@@ -18,7 +18,7 @@ export const detectBrowsers = (exists, { platform = process.platform, appDirs = 
     if (b.id === 'cft') return true;
     // Outside macOS, offer Firefox when its command exists; Chrome-family browsers use the AWS City browser.
     if (platform !== 'darwin') return b.id === 'firefox' && exists('firefox');
-    return appDirs.some((d) => exists(path.join(d, b.app)));
+    return appDirs.some((d) => exists(path.posix.join(d, b.app))); // macOS paths, whatever the host
   });
 
 /** Where Chrome-family browsers list extensions (for the "Load unpacked" steps). */
