@@ -489,8 +489,12 @@ const envFile = [
 ].join('\n');
 writeFileSync(`${ROOT}.env.production`, `${envFile}\n`);
 if (!existsSync(`${ROOT}node_modules`)) run('npm', ['ci']);
-run('npx', ['wxt', 'build', '--mode', 'production']);
+// The store zip first: it builds into .output/chrome-mv3 too, without the manifest key (the store assigns its own id).
+// The local build goes last, so the folder you load unpacked keeps the fixed id that Cognito lets sign in.
 run('npx', ['wxt', 'zip', '--mode', 'production'], ROOT, { WXT_STORE_BUILD: 'true' });
+run('npx', ['wxt', 'build', '--mode', 'production']);
+const unpacked = JSON.parse(readFileSync(`${ROOT}.output/chrome-mv3/manifest.json`, 'utf8'));
+if (allowDev && !unpacked.key) bye('.output/chrome-mv3 was built without its key, so it would get a random id and couldn’t sign in. Run: npx wxt build --mode production');
 if (firefoxAddonId) run('npx', ['wxt', 'zip', '-b', 'firefox', '--mode', 'production']);
 if (safari) run('npx', ['wxt', 'build', '-b', 'safari', '--mode', 'production']);
 
