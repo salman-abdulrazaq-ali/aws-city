@@ -267,7 +267,7 @@ const safari = browsers.includes('safari');
 let githubRepo = saved.githubRepo ?? '';
 const wantCi = await ask('confirm', { message: 'Set up GitHub Actions deploys (OIDC, no stored keys)?', initialValue: Boolean(githubRepo) }, Boolean(githubRepo));
 if (wantCi) {
-  githubRepo = await ask('text', { message: 'GitHub repo (owner/name)', initialValue: githubRepo || 'iloveclouduk/AWS-North-Hackathon', validate: (v) => (/^[\w.-]+\/[\w.-]+$/.test(v) ? undefined : 'owner/name') }, githubRepo);
+  githubRepo = await ask('text', { message: 'GitHub repo (owner/name)', initialValue: githubRepo || 'salman-abdulrazaq-ali/aws-city', validate: (v) => (/^[\w.-]+\/[\w.-]+$/.test(v) ? undefined : 'owner/name') }, githubRepo);
   const providers = offline ? [] : await aws(IAMClient).send(new ListOpenIDConnectProvidersCommand({})).then((r) => r.OpenIDConnectProviderList ?? [], () => []);
   if (providers.some((x) => x.Arn?.endsWith('token.actions.githubusercontent.com'))) {
     p.log.warn('This account already has a GitHub OIDC provider, so the CI stack is skipped (it would clash). Point your existing deploy role at the CDK bootstrap roles instead.');
