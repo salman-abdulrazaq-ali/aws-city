@@ -73,8 +73,10 @@ export const parsePastedKeys = (text) => {
 const ACCOUNT_VERIFYING =
   'Your AWS account is still being verified (new accounts: usually under 2 hours). Try again later; after 2 hours, write to aws-verification@amazon.com.';
 const CLAUDE_FORM ="Claude on Bedrock isn't enabled yet: in the Bedrock console, open the Model catalog, pick a Claude model and submit Anthropic's one-time use-case form.";
+// Service Quotas refuses a request at or below the default (30M tokens a minute for Opus 5.5), so a new account held
+// at 0 can't ask there: it waits for AWS to verify it, then asks AWS Support.
 const CLAUDE_QUOTA =
-  'Claude has no quota left on this account (new accounts often start at 0). In Service Quotas → Amazon Bedrock, request an increase for "Cross-region model inference tokens per minute for Anthropic Claude Opus 5.5" and "… Sonnet 5.5".';
+  "Claude has no quota on this account right now. New accounts start at 0 until AWS verifies them: try again in a few hours. If it stays at 0, open an AWS Support case (Service limit increase → Amazon Bedrock).";
 
 /**
  * The server's Claude models in local mode: the Region's inference-profile ids (`modelsFor` in infra/lib/models.ts, so
