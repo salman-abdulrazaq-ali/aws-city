@@ -37,8 +37,17 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   the Lookout with its screenshot, the Console Copilot's step) run as fresh Strands Agents through `pick` (one tool,
   offered and never forced; a missing or invalid call keeps the route's fallback) and `say` (streamed text), in
   `server/src/agents/once.ts`. Locally: `npm run live -- --model nova` (the launcher checks Nova with Converse and passes
-  the ids as env). Hosted deploys still configure Claude (`infra/lib/models.ts` `modelsFor`) until the wizard offers the
-  choice. Proof: `cd server && npx vitest run test/nova.test.ts`, `npx vitest run tests/launcher.test.ts`.
+  the ids as env). Hosted: the setup wizard asks (Nova recommended; saved as `modelChoice`, `loadEnv` →
+  `modelsForChoice`); the task role may invoke exactly the two Nova foundation models in its Region (`bedrockResources`:
+  no wildcard, no cdk-nag acknowledgement; Claude keeps its profile + wildcard), and the budget's deny covers both.
+  Proof: `cd server && npx vitest run test/nova.test.ts`, `npx vitest run tests/launcher.test.ts`, `cd infra && npm test`.
+- **A new account is walked through, not left to guess** (`docs/self-hosting.md`): root MFA, the Paid plan (upgraded as
+  root; a Free plan account closes when its credits run out), an admin user with MFA, `aws login` as that user, Nova or
+  Claude, and a new account's Bedrock hold (verifying, 0 tokens a day, Free plan, use-case form, each with its fix and a
+  support-case text). The setup wizard checks the same before asking anything else: it warns on root (`sts` ARN), stops
+  on the Free plan (`GetAccountPlanState`, `@aws-sdk/client-freetier`), and names the Bedrock wall (`explainAwsError`),
+  each linking the guide's step. Proof: `npm run setup -- --dry-run` (changes nothing in AWS),
+  `npx vitest run tests/launcher.test.ts`; every link in the guide opens (checked when it changes).
 - **AWS's public status and news reach every player, read once by the server** (`server/src/news/`, contract v2.6 `aws.health`/`aws.news`).
   The sources are the public Health Dashboard JSON (UTF-16 with a BOM), with the status RSS as fallback, and What's New. Hosts are
   allow-listed, there are no redirects, a size cap and a timeout, and a failure backs off. Feed text is untrusted data (neutralised,
@@ -81,7 +90,7 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   on for `account.link`/`account.verify`, `deploy.approve` and `finding.fix` (Google sign-ins are exempt); prod Cognito runs Plus with threat protection.
   A "TOTP is on" answer is cached 60 s at most. Proof: `cd server && npx vitest run test/hosted.test.ts -t "MFA"`
   (includes "MFA step-up for writes"), `cd infra && npm test`.
-- **Hosted deploys only run in Regions with a Claude geo inference profile** (`infra/lib/models.ts`: `us`, `eu`, `au`,
+- **Hosted deploys with Claude only run in Regions with a Claude geo inference profile** (Amazon Nova: any Region that offers it on demand) (`infra/lib/models.ts`: `us`, `eu`, `au`,
   `in`; there is no `apac` profile, so e.g. Tokyo is refused). Each geo gets the newest pair with a profile there for
   both models (`GEO_MODELS`, from the Bedrock model cards): Claude Opus 5.5 / Sonnet 5.5 in `us`/`eu`/`au`; India has no
   5.5 profile and keeps Opus 5 / Sonnet 5. Model ids and their IAM ARNs derive from the Region; synth and the setup

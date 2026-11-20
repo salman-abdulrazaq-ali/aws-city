@@ -58,3 +58,20 @@ export const modelsForChoice = (region: string, choice: ModelChoice): { main: st
 
 /** The foundation model behind a profile id: us.anthropic.claude-opus-5-5 → anthropic.claude-opus-5-5. */
 export const foundationModel = (profileId: string) => profileId.replace(/^[a-z]+\.(?=anthropic\.)/, '');
+
+/** A geo inference profile id (`us.`, `eu.`…) routes across Regions; an on-demand id (Amazon Nova) stays in its own. */
+export const isProfileId = (id: string) => /^[a-z]+\.(?=anthropic\.)/.test(id);
+
+/**
+ * What the server's task role may invoke for these models (bedrock:InvokeModel and InvokeModelWithResponseStream, the
+ * same two actions for InvokeModel and Converse). A geo profile: the profile in this Region, plus the foundation model in
+ * every Region it routes to (a wildcard, acknowledged in cdk-nag). An on-demand model (Amazon Nova): exactly that model
+ * in this Region, no wildcard.
+ */
+export const bedrockResources = (region: string, account: string, models: readonly string[]) => [
+  ...models.filter(isProfileId).map((m) => `arn:aws:bedrock:${region}:${account}:inference-profile/${m}`),
+  ...models.map((m) => (isProfileId(m) ? `arn:aws:bedrock:*::foundation-model/${foundationModel(m)}*` : `arn:aws:bedrock:${region}::foundation-model/${m}`)),
+];
+
+/** The wildcard resources in `bedrockResources` (each needs a cdk-nag acknowledgement). */
+export const bedrockWildcards = (models: readonly string[]) => models.filter(isProfileId).map((m) => `arn:aws:bedrock:*::foundation-model/${foundationModel(m)}*`);

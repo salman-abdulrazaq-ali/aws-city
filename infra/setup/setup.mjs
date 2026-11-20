@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import * as p from '@clack/prompts';
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 import { CloudFormationClient, DescribeStacksCommand } from '@aws-sdk/client-cloudformation';
+import { FreeTierClient, GetAccountPlanStateCommand } from '@aws-sdk/client-freetier';
 import { CognitoIdentityProviderClient, DescribeUserPoolDomainCommand } from '@aws-sdk/client-cognito-identity-provider';
 import { IAMClient, ListOpenIDConnectProvidersCommand } from '@aws-sdk/client-iam';
 import { ListHostedZonesCommand, Route53Client } from '@aws-sdk/client-route-53';
@@ -28,13 +29,15 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const INFRA = fileURLToPath(new URL('../', import.meta.url));
 const CONFIG = `${ROOT}aws-city.config.json`;
 // Claude's inference-profile ids follow the Region (us./eu./au./in.): one table for the wizard and the CDK app.
-const { SUPPORTED_REGIONS, geoFor, modelsFor, unsupportedRegionMessage } = await import(new URL('../lib/models.ts', import.meta.url));
+const { SUPPORTED_REGIONS, geoFor, modelsForChoice, unsupportedRegionMessage } = await import(new URL('../lib/models.ts', import.meta.url));
 const GOOGLE_SECRET = 'aws-city/google-oauth';
 
 const args = process.argv.slice(2);
 const flag = (f) => args.includes(f);
 const opt = (f) => (args.includes(f) ? args[args.indexOf(f) + 1] : undefined);
 const DRY = flag('--dry-run');
+/** The step-by-step guide for a new account (root MFA, the Paid plan, an admin user, models, Bedrock's new-account hold). */
+const GUIDE = 'https://github.com/salman-abdulrazaq-ali/aws-city/blob/main/docs/self-hosting.md';
 const YES = flag('--yes');
 
 const saved = existsSync(CONFIG) ? JSON.parse(readFileSync(CONFIG, 'utf8')) : {};
@@ -71,10 +74,10 @@ p.intro(' AWS City setup ');
 p.note(
   [
     'This deploys AWS City into YOUR AWS account:',
-    '  CloudFront/ALB → ECS Fargate server → DynamoDB, S3, Amazon Bedrock (Claude), Cognito sign-in.',
+    '  CloudFront/ALB → ECS Fargate server → DynamoDB, S3, Amazon Bedrock (Amazon Nova or Claude), Cognito sign-in.',
     'Rough cost while idle: prod ~$60–85/month (2 small Fargate tasks, load balancer, WAF, logs);',
     'staging ~$45–60/month (1 task). Check the AWS Pricing Calculator for your region.',
-    'Claude on Bedrock is pay-per-use and capped by a daily quota + a budget kill switch.',
+    'The AI on Bedrock is pay-per-use and capped by a daily quota + a budget kill switch.',
     'The server image is built for you in AWS CodeBuild (a few cents per deploy): no Docker needed.',
     'You can remove everything later with: npm run setup -- --destroy',
   ].join('\n'),
@@ -89,10 +92,34 @@ if (major < 24) bye(`Node ${process.versions.node} is too old: install Node 24 o
 const envName = opt('--env') ?? (await ask('select', { message: 'Which environment?', options: [{ value: 'prod', label: 'prod', hint: 'the real one players use' }, { value: 'staging', label: 'staging', hint: 'a test copy' }], initialValue: saved.lastEnv ?? 'prod' }, saved.lastEnv));
 const prev = saved[envName] ?? {};
 
-// Only Regions where the server's Claude models have a Bedrock geo inference profile (infra/lib/models.ts).
-const region = await ask('text', { message: 'AWS Region to deploy in', placeholder: 'us-west-2', initialValue: prev.region ?? process.env.AWS_REGION ?? 'us-west-2', validate: (v) => (geoFor(v) ? undefined : `Claude needs one of: ${SUPPORTED_REGIONS.join(', ')}`) }, prev.region);
-if (!geoFor(region)) bye(unsupportedRegionMessage(region)); // a saved --yes answer skips validate
-const { main: MAIN_MODEL, light: LIGHT_MODEL } = modelsFor(region);
+// The agents' models (infra/lib/models.ts): Amazon Nova, on demand in the Region and run on Strands Agents' Bedrock model,
+// or Claude through a geo inference profile. A saved answer from before this question existed (--yes) keeps Claude.
+const modelChoice = await ask(
+  'select',
+  {
+    message: 'Which AI models should the city’s agents run on?',
+    options: [
+      { value: 'nova', label: 'Amazon Nova (recommended)', hint: 'Amazon’s own models: the lowest cost, billed like any AWS service' },
+      { value: 'claude', label: 'Claude', hint: 'Anthropic’s models on Bedrock: needs the one-time use-case form and the Paid plan' },
+    ],
+    initialValue: prev.modelChoice ?? 'nova',
+  },
+  prev.modelChoice ?? (YES ? 'claude' : undefined),
+);
+const REGION_RE = /^[a-z]{2}(-[a-z]+)+-\d$/;
+// Claude needs a Region with a Bedrock geo inference profile; Nova is checked by calling it there (step 2).
+const region = await ask(
+  'text',
+  {
+    message: 'AWS Region to deploy in',
+    placeholder: 'eu-west-2',
+    initialValue: prev.region ?? process.env.AWS_REGION ?? 'us-west-2',
+    validate: (v) => (!REGION_RE.test(v ?? '') ? 'an AWS Region, e.g. eu-west-2' : modelChoice === 'nova' || geoFor(v) ? undefined : `Claude needs one of: ${SUPPORTED_REGIONS.join(', ')}`),
+  },
+  prev.region,
+);
+if (modelChoice === 'claude' && !geoFor(region)) bye(unsupportedRegionMessage(region)); // a saved --yes answer skips validate
+const { main: MAIN_MODEL, light: LIGHT_MODEL } = modelsForChoice(region, modelChoice);
 const MODELS = [MAIN_MODEL, LIGHT_MODEL];
 const credentials = fromNodeProviderChain({ profile: process.env.AWS_PROFILE });
 const aws = (C) => new C({ region, credentials });
@@ -104,6 +131,13 @@ try {
   const id = await aws(STSClient).send(new GetCallerIdentityCommand({}));
   account = id.Account;
   s.stop(`Signed in to AWS account ${account} as ${id.Arn?.split(':').pop()}`);
+  // Root can do everything and can't be limited: AWS's advice is an admin user with MFA for everyday work.
+  if (id.Arn?.endsWith(':root')) {
+    p.log.warn(
+      `You're signed in as the account's root user. Keep root for billing; deploy as an admin user with MFA instead.\nHow: ${GUIDE}#4-create-an-admin-user-with-mfa, then aws login again as that user.`,
+    );
+    if (!YES && !DRY && !(await ask('confirm', { message: 'Continue as root anyway?', initialValue: false }))) bye('Sign in as your admin user, then run setup again.');
+  }
 } catch (err) {
   s.stop('Not signed in to AWS', 1);
   p.log.error(err.message ?? String(err));
@@ -112,6 +146,25 @@ try {
   p.log.warn('[dry run] continuing without AWS: checks are skipped, nothing is written to AWS.');
 }
 const offline = account === '000000000000';
+
+// ── 1b. The account's plan: hosting needs the Paid plan ──────────────────────
+// A Free plan account expires once its credits are used up (AWS Free Tier terms), and the city's server would go with
+// it. Upgrading keeps the remaining credits. The plan API answers in us-east-1; an unreadable plan isn't a stop.
+if (!offline) {
+  try {
+    const plan = await new FreeTierClient({ region: 'us-east-1', credentials }).send(new GetAccountPlanStateCommand({}));
+    if (plan.accountPlanType === 'FREE') {
+      p.log.error('This account is on the AWS Free plan.');
+      p.note(
+        `Hosting needs the Paid plan: AWS closes a Free plan account once its credits run out, and the city's\nserver would close with it. Upgrade as the root user (Billing → Upgrade plan); your remaining credits stay.\nHow: ${GUIDE}#3-upgrade-to-the-paid-plan-as-root`,
+        'Upgrade to the Paid plan',
+      );
+      if (!DRY) bye();
+    } else if (plan.accountPlanType) p.log.success(`Account plan: ${plan.accountPlanType === 'PAID' ? 'Paid' : plan.accountPlanType}`);
+  } catch (err) {
+    p.log.info(`Couldn't read the account's plan (${err.name ?? 'error'}); carrying on.`);
+  }
+}
 
 if (flag('--destroy')) {
   p.log.warn(`This deletes the ${envName} stacks in ${account} (${region}). The table and buckets are kept (retained) so no player data is lost by accident.`);
@@ -122,7 +175,7 @@ if (flag('--destroy')) {
 }
 
 // ── 2. Bedrock model access ──────────────────────────────────────────────────
-s.start('Checking Claude on Amazon Bedrock');
+s.start(`Checking ${modelChoice === 'nova' ? 'Amazon Nova' : 'Claude'} on Amazon Bedrock`);
 const missing = [];
 const failures = [];
 for (const modelId of offline ? [] : MODELS) {
@@ -141,13 +194,18 @@ if (missing.length) {
   // console's deep links aren't documented, so we point at the guide and name the console steps it gives.
   const verifying = failures.find((e) => /being verified|account.{0,40}verif/i.test(String(e?.message)));
   const quota = failures.some((e) => /Throttl|ServiceQuotaExceeded|too many (tokens|requests)|quota/i.test(`${e?.name} ${e?.message}`));
+  const unavailable = failures.find((e) => /not available for this account/i.test(String(e?.message)));
   p.note(
     verifying
       ? explainAwsError(verifying)
+      : unavailable
+      ? `${explainAwsError(unavailable)}\nHow: ${GUIDE}#3-upgrade-to-the-paid-plan-as-root`
+      : modelChoice === 'nova' && !quota
+      ? `${explainAwsError(failures[0])}\nAmazon Nova on Bedrock: https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html · ${GUIDE}#7-a-new-accounts-bedrock-hold`
       : quota
-      ? `${explainAwsError({ name: 'ServiceQuotaExceededException' })}\nSee your Claude quotas (Region ${region}): https://${region}.console.aws.amazon.com/servicequotas/home/services/bedrock/quotas\nAWS Support: https://support.console.aws.amazon.com/support/home#/case/create. Then run setup again.`
+      ? `${explainAwsError({ name: 'ServiceQuotaExceededException' })}\nSee your Bedrock quotas (Region ${region}): https://${region}.console.aws.amazon.com/servicequotas/home/services/bedrock/quotas\nAWS Support: https://support.console.aws.amazon.com/support/home#/case/create. Then run setup again.`
       : `In the Amazon Bedrock console (Region ${region}), open the Model catalog, pick an Anthropic Claude model and\nsubmit the one-time use-case form (once per account or organization). How-to:\nhttps://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html\nThe first call also needs aws-marketplace:Subscribe and a valid payment method. Access can take a few minutes; then run setup again.`,
-    verifying ? 'Wait for AWS to verify the account' : quota ? 'Raise the Claude quota' : 'Enable Claude on Bedrock',
+    verifying ? 'Wait for AWS to verify the account' : unavailable ? 'Upgrade to the Paid plan' : quota ? 'Bedrock has no quota yet' : modelChoice === 'nova' ? 'Amazon Nova isn’t answering' : 'Enable Claude on Bedrock',
   );
   if (!DRY) bye();
 } else s.stop(offline ? '[dry run] Bedrock check skipped' : `${MAIN_MODEL} and ${LIGHT_MODEL} are available`);
@@ -286,7 +344,7 @@ if (wantCi) {
 
 // ── 9. Save the answers (no secrets) ─────────────────────────────────────────
 const envConfig = {
-  region, domainName, hostedZoneId: zone ? zoneChoice : '', zoneName, cognitoDomainPrefix, extensionIds, firefoxAddonId, safari, googleClientId, sesFromEmail, alarmEmail,
+  modelChoice, region, domainName, hostedZoneId: zone ? zoneChoice : '', zoneName, cognitoDomainPrefix, extensionIds, firefoxAddonId, safari, googleClientId, sesFromEmail, alarmEmail,
   monthlyBudgetUsd, dailyModelCalls: prev.dailyModelCalls ?? 100, globalDailyModelCalls: prev.globalDailyModelCalls ?? (envName === 'prod' ? 20000 : 5000),
   minTasks: prev.minTasks ?? (envName === 'prod' ? 2 : 1), maxTasks: prev.maxTasks ?? (envName === 'prod' ? 10 : 3),
 };
