@@ -427,7 +427,7 @@ p.note(
     firefoxAddonId ? 'Firefox:   upload .output/*-firefox.zip (+ the -sources.zip) to addons.mozilla.org (docs/firefox-addons.md).' : '',
     safari ? 'Safari:    npm run safari:xcode, then build and submit the app in Xcode (docs/safari.md).' : '',
     alarmEmail ? `Confirm:   click the AWS Notification emails sent to ${alarmEmail}.` : '',
-    aiEnabled ? '' : `AI:        off for now. Once Bedrock answers, run npm run setup again (or: aws ssm put-parameter --name /aws-city/${envName}/ai-enabled --value true --overwrite).`,
+    aiEnabled ? '' : `AI:        off for now. Once Bedrock answers, run npm run setup again (or: aws ssm put-parameter --name /cloud-city/${envName}/ai-enabled --value true --overwrite).`,
     githubRepo ? `GitHub:    add AWS_DEPLOY_ROLE_ARN (see the AWSCity-CI stack) + AWS_REGION=${region} to the ${envName} environment.` : '',
     'Kill switch / runbook: docs/runbook.md',
   ]

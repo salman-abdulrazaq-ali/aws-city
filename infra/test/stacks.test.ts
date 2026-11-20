@@ -278,10 +278,21 @@ describe('Amazon Nova: on demand in the deploy Region (Converse, Strands Agents)
   });
 });
 
+describe('SSM parameter names AWS accepts', () => {
+  it('no parameter starts with a reserved prefix ("aws" or "ssm", any case), in either environment or model family', () => {
+    for (const over of [{}, { name: 'prod' as const }, { region: 'eu-west-2', modelChoice: 'nova' as const, models: modelsForChoice('eu-west-2', 'nova') }]) {
+      const t = build(over);
+      const names = [t.data, t.auth, t.svc, t.budget].flatMap((x) => Object.values(x.findResources('AWS::SSM::Parameter')).map((r) => String((r as { Properties: { Name?: unknown } }).Properties.Name)));
+      expect(names.length).toBeGreaterThan(0);
+      for (const n of names) expect(n.replace(/^\//, ''), n).not.toMatch(/^(aws|ssm)/i);
+    }
+  });
+});
+
 describe('deploying before the account\'s Bedrock is ready', () => {
   it('starts the kill switch off when the wizard deploys without AI, and on otherwise', () => {
-    build().svc.hasResourceProperties('AWS::SSM::Parameter', { Name: '/aws-city/staging/ai-enabled', Value: 'true' });
-    build({ aiEnabled: false }).svc.hasResourceProperties('AWS::SSM::Parameter', { Name: '/aws-city/staging/ai-enabled', Value: 'false' });
+    build().svc.hasResourceProperties('AWS::SSM::Parameter', { Name: '/cloud-city/staging/ai-enabled', Value: 'true' });
+    build({ aiEnabled: false }).svc.hasResourceProperties('AWS::SSM::Parameter', { Name: '/cloud-city/staging/ai-enabled', Value: 'false' });
   });
 });
 

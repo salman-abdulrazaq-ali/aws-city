@@ -76,7 +76,9 @@ export class ServiceStack extends Stack {
     const cluster = new ecs.Cluster(this, 'Cluster', { vpc, containerInsightsV2: ecs.ContainerInsights.ENABLED });
 
     this.killSwitch = new ssm.StringParameter(this, 'AiEnabled', {
-      parameterName: `/aws-city/${env.name}/ai-enabled`,
+      // Not "/aws-city/…": SSM reserves parameter names that start with "aws" or "ssm" (any case), and refuses them at
+      // deploy ("No access to reserved parameter name"). "cloud-city" is the name the Cognito domain uses for the same reason.
+      parameterName: `/cloud-city/${env.name}/ai-enabled`,
       // Off when the account's Bedrock wasn't ready at deploy time (the setup wizard asks); setup turns it on again.
       stringValue: env.aiEnabled === false ? 'false' : 'true',
       description: 'Set to "false" to switch every AI call off within ~30 s (manual kill switch).',
