@@ -18,6 +18,7 @@ Check behaviour against these before guessing. Re-fetch whenever the installed v
 | aws/aws-durable-execution-docs | main (2026-10-17) | `~/.opensrc/repos/github.com/aws/aws-durable-execution-docs/main` | Apache-2.0. The durable-functions workshop (`docs/getting-started/quickstart.md`, `key-concepts.md`: replay must be deterministic). |
 | aws/aws-security-services-best-practices | main (2026-10-17) | `~/.opensrc/repos/github.com/aws/aws-security-services-best-practices/main` | MIT-0. The Security Agent pen-test workshop (`docs/en/guides/security-agent/index.md`: domain verification, target vs accessible URLs, out-of-scope paths). |
 | aws-samples/amazon-dynamodb-labs | master (2026-10-17) | `~/.opensrc/repos/github.com/aws-samples/amazon-dynamodb-labs/master` | Apache-2.0 (NOTICE). DynamoDB CLI lab text and its taught errors (`content/hands-on-labs/explore-cli/`). |
+| uqr | 0.1.3 | `~/.opensrc/repos/github.com/unjs/uqr/0.1.3` | **Installed** (pinned, MIT, no dependencies) for the authenticator QR code (`src/ui/QrCode.tsx`). `encode(text, { ecc, border })` returns `data: boolean[][]` with the border already added (`src/encode.ts:60-82`: `size + border * 2`); we draw it as one SVG path, no innerHTML. |
 | web-ext | 10.7.0 | — (npm) | Firefox runner/linter for `npm run dev:firefox`, `lint:firefox`, `live -- --browser firefox`; WXT 0.21.4 peer-depends on `>=9.2.0`. |
 
 Not cached (plain web platform): `chrome.sidePanel`, `chrome.tabs.captureVisibleTab`. See

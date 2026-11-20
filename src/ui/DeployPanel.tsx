@@ -9,6 +9,7 @@ import { useCopy } from './feedback';
 import { costLine, offlineReason } from './logic';
 import { usePending } from './usePending';
 import { useCanConnect } from './useLadder';
+import { QrCode } from './QrCode';
 import { ForLearners } from './Term';
 import { Plain } from './Term';
 
@@ -53,7 +54,9 @@ function PendingButton({ pending, busyLabel, children, className = 'btn', disabl
   title?: string;
 }) {
   return (
-    <button ref={buttonRef} className={className} disabled={disabled || pending} aria-busy={pending} onClick={onClick} title={title}>
+    // type="button": inside the account-number form a default (submit) button ran verify twice per click (onClick and
+    // the form's submit). Enter in the form's one text field still submits it.
+    <button ref={buttonRef} type="button" className={className} disabled={disabled || pending} aria-busy={pending} onClick={onClick} title={title}>
       {pending ? (
         <>
           <span className="spinner" aria-hidden="true" /> {busyLabel}
@@ -66,6 +69,9 @@ function PendingButton({ pending, busyLabel, children, className = 'btn', disabl
 }
 
 /** A numbered step: done (✓), current (lit) or still to come. */
+/** What the player typed in step 3: the console shows an account id as 1234-5678-9012, so dashes and spaces go. */
+export const accountInput = (raw: string) => (/^[\d\s-]+$/.test(raw.trim()) ? raw.replace(/\D/g, '') : raw.trim());
+
 function Step({ n, state, title, children }: { n: number; state: 'done' | 'now' | 'todo'; title: string; children?: ReactNode }) {
   return (
     <li className={`link-step ${state}`}>
@@ -97,40 +103,56 @@ function MfaSetup() {
   };
   return (
     <div className="card mfa">
-      <b>🔐 Protect your account first</b>
-      <p className="muted">Agents can change your AWS account, so linking it needs an authenticator app (Google Authenticator, 1Password, Authy…).</p>
+      <b>🔐 First, protect your account</b>
+      <p className="muted">
+        The city’s agents can change your AWS account, so connecting it (and approving each change) needs a code from an authenticator app on your phone.
+        You set this up once. Then you connect your account in 3 short steps.
+      </p>
       {!setup ? (
         <PendingButton className="btn primary" pending={busy} busyLabel="Starting…" onClick={() => void run(async () => setSetup(await startMfaSetup()))}>
           Set up an authenticator
         </PendingButton>
       ) : (
-        <>
-          <label className="field-hint" htmlFor="mfa-key">
-            1. In your app, add an account with this key (time-based)
-          </label>
-          <input id="mfa-key" readOnly value={setup.secret.replace(/(.{4})/g, '$1 ').trim()} onFocus={(e) => e.currentTarget.select()} spellCheck={false} />
-          <button className="btn" onClick={() => copy(setup.secret)}>
-            {copied ? 'Copied ✓' : 'Copy key'}
-          </button>
-          <label className="field-hint" htmlFor="mfa-code">
-            2. Type the 6-digit code it shows
-          </label>
-          <div className="row">
-            <input
-              id="mfa-code"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              maxLength={6}
-              placeholder="123456"
-              value={code}
-              onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
-              onKeyDown={(e) => e.key === 'Enter' && code.length === 6 && void run(confirm)}
-            />
-            <PendingButton className="btn primary" pending={busy} busyLabel="Checking…" disabled={code.length !== 6} onClick={() => void run(confirm)}>
-              Turn on
-            </PendingButton>
-          </div>
-        </>
+        <ol className="mfa-steps">
+          <li>
+            <b>Open an authenticator app on your phone</b>
+            <span className="muted">Google Authenticator, Microsoft Authenticator, Authy or 1Password. No app yet? Get one free from the App Store or Google Play.</span>
+          </li>
+          <li>
+            <b>Tap + and scan this code</b>
+            <QrCode text={setup.uri} label="QR code to add AWS City to your authenticator app" />
+            <details className="why">
+              <summary>Can’t scan it? Type a key instead</summary>
+              <label className="field-hint" htmlFor="mfa-key">
+                In the app, choose “Enter a setup key” (time-based) and type this key:
+              </label>
+              <input id="mfa-key" readOnly value={setup.secret.replace(/(.{4})/g, '$1 ').trim()} onFocus={(e) => e.currentTarget.select()} spellCheck={false} />
+              <button className="btn" onClick={() => copy(setup.secret)}>
+                {copied ? 'Copied ✓' : 'Copy key'}
+              </button>
+            </details>
+          </li>
+          <li>
+            <label htmlFor="mfa-code">
+              <b>Type the 6-digit code your app shows</b>
+            </label>
+            <div className="row">
+              <input
+                id="mfa-code"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                placeholder="123456"
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+                onKeyDown={(e) => e.key === 'Enter' && code.length === 6 && void run(confirm)}
+              />
+              <PendingButton className="btn primary" pending={busy} busyLabel="Checking…" disabled={code.length !== 6} onClick={() => void run(confirm)}>
+                Turn on
+              </PendingButton>
+            </div>
+          </li>
+        </ol>
       )}
     </div>
   );
@@ -150,6 +172,8 @@ export function DeployPanel() {
   const kind = useCity((s) => s.backendKind);
   const offline = offlineReason(kind, status);
   const [role, setRole] = useState('');
+  /** Step 2 done: the player says the AWSCity stack is created, so step 3 (the account number) opens. */
+  const [stackMade, setStackMade] = useState(false);
   const findings = useCity((s) => s.findings);
   // Fixes are approved in their finding's card; here they're only a history, never next to Tear down.
   const stacks = deploys.filter((d) => !d.findingId);
@@ -203,7 +227,7 @@ export function DeployPanel() {
   }, [previewKey]);
 
   const verify = () => {
-    const requestId = verifyAccount(role);
+    const requestId = verifyAccount(accountInput(role));
     if (requestId) pending.start('verify', requestId);
   };
 
@@ -229,13 +253,29 @@ export function DeployPanel() {
             Get my setup link
           </PendingButton>
         </Step>
-        <Step n={2} state={account.linkUrl ? 'now' : 'todo'} title="Make a safe key for AWS City in your account">
+        <Step n={2} state={!account.linkUrl ? 'todo' : stackMade ? 'done' : 'now'} title="Create AWS City’s key in your AWS account">
           <p className="muted">
-            <Plain text="One click sets up an IAM role with CloudFormation. It's a key that only opens what the quests need." />
+            <Plain text="A CloudFormation stack makes an IAM role: a key that only opens what the quests need." />
           </p>
-          <button className="btn primary" onClick={() => openUrl(account.linkUrl!)}>
-            Open CloudFormation ↗
-          </button>
+          <ol className="how">
+            <li>
+              Click <b>Open CloudFormation</b> and sign in to the AWS account you want to connect.
+            </li>
+            <li>
+              At the bottom, tick <b>I acknowledge that AWS CloudFormation might create IAM resources with custom names</b>, then click <b>Create stack</b>.
+            </li>
+            <li>
+              Wait about a minute, until the stack says <b>CREATE_COMPLETE</b>.
+            </li>
+          </ol>
+          <div className="row">
+            <button className="btn primary" onClick={() => openUrl(account.linkUrl!)}>
+              Open CloudFormation ↗
+            </button>
+            <button className="btn" onClick={() => setStackMade(true)}>
+              Done: it says CREATE_COMPLETE
+            </button>
+          </div>
           <details className="why">
             <summary>Details</summary>
             <div className="muted">
@@ -243,7 +283,8 @@ export function DeployPanel() {
             </div>
           </details>
         </Step>
-        <Step n={3} state={account.linkUrl ? 'now' : 'todo'} title="Tell us your account number (12 digits)">
+        <Step n={3} state={account.linkUrl && stackMade ? 'now' : 'todo'} title="Tell us your account number (12 digits)">
+          <p className="muted">In the AWS console, click your name at the top right: it’s the Account ID.</p>
           <form
             className="prompt-row"
             onSubmit={(e) => {
@@ -254,7 +295,7 @@ export function DeployPanel() {
             <input
               id="account-id"
               aria-label="AWS account ID or role ARN"
-              placeholder="123456789012"
+              placeholder="1234-5678-9012"
               value={role}
               onChange={(e) => setRole(e.target.value)}
               autoComplete="off"
@@ -342,7 +383,7 @@ export function DeployPanel() {
                   The role trusts AWS City only with a secret ExternalId. It can use only the quest services, in one Region, and everything it makes is tagged{' '}
                   <code>aws-city</code>. Delete the AWSCity stack to remove it at any time.
                 </details>
-                {linkSteps}
+                {!(account.mfaRequired && canSetUpMfa()) && linkSteps}
               </>
             )}
           </>
