@@ -22,6 +22,7 @@ import { CreateSecretCommand, DescribeSecretCommand, PutSecretValueCommand, Secr
 import { CreateEmailIdentityCommand, GetEmailIdentityCommand, SESv2Client } from '@aws-sdk/client-sesv2';
 import { GetCallerIdentityCommand, STSClient } from '@aws-sdk/client-sts';
 import { fromNodeProviderChain } from '@aws-sdk/credential-providers';
+import { explainAwsError } from '../../scripts/launcher/lib.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const INFRA = fileURLToPath(new URL('../', import.meta.url));
@@ -123,22 +124,30 @@ if (flag('--destroy')) {
 // ── 2. Bedrock model access ──────────────────────────────────────────────────
 s.start('Checking Claude on Amazon Bedrock');
 const missing = [];
+const failures = [];
 for (const modelId of offline ? [] : MODELS) {
   try {
     await aws(BedrockRuntimeClient).send(new ConverseCommand({ modelId, messages: [{ role: 'user', content: [{ text: 'hi' }] }], inferenceConfig: { maxTokens: 1 } }));
   } catch (err) {
     missing.push(`${modelId}: ${err.name}`);
+    failures.push(err);
   }
 }
 if (missing.length) {
   s.stop('Bedrock model access is not ready', 1);
   p.log.error(missing.join('\n'));
-  // Commercial Regions have no Model access page any more: serverless models are enabled on first call, and
-  // Anthropic needs a one-time use-case form. The console's deep links aren't documented, so we point at the guide
-  // (https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html) and name the console steps it gives.
+  // Two different walls on a new account: Anthropic's one-time use-case form, and a Claude quota of 0 (Service
+  // Quotas). Commercial Regions have no Model access page any more: serverless models are enabled on first call. The
+  // console's deep links aren't documented, so we point at the guide and name the console steps it gives.
+  const verifying = failures.find((e) => /being verified|account.{0,40}verif/i.test(String(e?.message)));
+  const quota = failures.some((e) => /Throttl|ServiceQuotaExceeded|too many (tokens|requests)|quota/i.test(`${e?.name} ${e?.message}`));
   p.note(
-    `In the Amazon Bedrock console (Region ${region}), open the Model catalog, pick an Anthropic Claude model and\nsubmit the one-time use-case form (once per account or organization). How-to:\nhttps://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html\nThe first call also needs aws-marketplace:Subscribe and a valid payment method. Access can take a few minutes; then run setup again.`,
-    'Enable Claude on Bedrock',
+    verifying
+      ? explainAwsError(verifying)
+      : quota
+      ? `${explainAwsError({ name: 'ServiceQuotaExceededException' })}\nService Quotas console, Region ${region}: https://${region}.console.aws.amazon.com/servicequotas/home/services/bedrock/quotas\nA new account's request can take a few days to be approved; then run setup again.`
+      : `In the Amazon Bedrock console (Region ${region}), open the Model catalog, pick an Anthropic Claude model and\nsubmit the one-time use-case form (once per account or organization). How-to:\nhttps://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html\nThe first call also needs aws-marketplace:Subscribe and a valid payment method. Access can take a few minutes; then run setup again.`,
+    verifying ? 'Wait for AWS to verify the account' : quota ? 'Raise the Claude quota' : 'Enable Claude on Bedrock',
   );
   if (!DRY) bye();
 } else s.stop(offline ? '[dry run] Bedrock check skipped' : `${MAIN_MODEL} and ${LIGHT_MODEL} are available`);

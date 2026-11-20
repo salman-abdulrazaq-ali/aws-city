@@ -70,6 +70,22 @@ export const parsePastedKeys = (text) => {
   return accessKeyId && secretAccessKey ? { accessKeyId, secretAccessKey, sessionToken } : undefined;
 };
 
+const ACCOUNT_VERIFYING =
+  'Your AWS account is still being verified (new accounts: usually under 2 hours). Try again later; after 2 hours, write to aws-verification@amazon.com.';
+const CLAUDE_FORM ="Claude on Bedrock isn't enabled yet: in the Bedrock console, open the Model catalog, pick a Claude model and submit Anthropic's one-time use-case form.";
+const CLAUDE_QUOTA =
+  'Claude has no quota left on this account (new accounts often start at 0). In Service Quotas → Amazon Bedrock, request an increase for "Cross-region model inference tokens per minute for Anthropic Claude Opus 5.5" and "… Sonnet 5.5".';
+
+/**
+ * The server's Claude models in local mode: the Region's inference-profile ids (`modelsFor` in infra/lib/models.ts, so
+ * eu-west-2 gets `eu.`), unless the player set their own in the environment.
+ */
+export const modelEnv = ({ main, light }, env = {}) => ({
+  AWS_CITY_MODEL: env.AWS_CITY_MODEL || main,
+  AWS_CITY_FALLBACK_MODEL: env.AWS_CITY_FALLBACK_MODEL || light,
+  AWS_CITY_LIGHT_MODEL: env.AWS_CITY_LIGHT_MODEL || env.AWS_CITY_FALLBACK_MODEL || light,
+});
+
 /** Plain-language fixes for the errors people actually hit. */
 export const explainAwsError = (err) => {
   const name = err?.name ?? '';
@@ -77,6 +93,10 @@ export const explainAwsError = (err) => {
   if (/ExpiredToken|RequestExpired|token.*expired/i.test(name + msg)) return 'Those AWS keys have expired. Get fresh ones (Workshop Studio → "Get AWS CLI credentials") or sign in again.';
   if (/InvalidClientTokenId|SignatureDoesNotMatch|UnrecognizedClient/i.test(name + msg)) return "AWS didn't accept those keys. Check you copied all of them (including the session token for temporary keys).";
   if (/could not load credentials|CredentialsProviderError|no credentials/i.test(name + msg)) return 'No AWS sign-in found yet.';
+  // A brand-new account: AWS verifies it first, then Claude needs Anthropic's one-time form, and the quota can start at 0.
+  if (/being verified|account.{0,40}verif/i.test(msg)) return ACCOUNT_VERIFYING;
+  if (/use[- ]case/i.test(msg)) return CLAUDE_FORM;
+  if (/Throttl|ServiceQuotaExceeded|too many (tokens|requests)|quota/i.test(name + msg)) return CLAUDE_QUOTA;
   if (/AccessDenied/i.test(name + msg)) return 'Signed in, but this account is not allowed to do that.';
   if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|timed? ?out/i.test(msg)) return "Couldn't reach AWS. Check your internet connection.";
   return msg.split('\n')[0].slice(0, 200);
