@@ -361,7 +361,8 @@ const askAll = async (was, kept) => {
   if (wantCi) {
     githubRepo = await ask('text', { message: 'GitHub repo (owner/name)', initialValue: githubRepo || 'salman-abdulrazaq-ali/aws-city', validate: (v) => (/^[\w.-]+\/[\w.-]+$/.test(v) ? undefined : 'owner/name') }, githubRepo);
     const providers = offline ? [] : await aws(IAMClient).send(new ListOpenIDConnectProvidersCommand({})).then((r) => r.OpenIDConnectProviderList ?? [], () => []);
-    if (providers.some((x) => x.Arn?.endsWith('token.actions.githubusercontent.com'))) {
+    // An OIDC provider's ARN is arn:aws:iam::<account>:oidc-provider/<host>: compare the host exactly.
+    if (providers.some((x) => x.Arn?.split(':oidc-provider/')[1] === 'token.actions.githubusercontent.com')) {
       p.log.warn('This account already has a GitHub OIDC provider, so the CI stack is skipped (it would clash). Point your existing deploy role at the CDK bootstrap roles instead.');
       githubRepo = '';
     }
