@@ -552,7 +552,7 @@ async function askChoices(prefs, found) {
       initialValue: prefs.mode ?? 'demo',
       options: [
         { value: 'demo', label: 'Play the demo', hint: 'no AWS account needed' },
-        { value: 'live', label: 'Real AWS on this computer', hint: 'your AWS account + Claude on Bedrock' },
+        { value: 'live', label: 'Real AWS on this computer', hint: 'your AWS account + AI on Bedrock (Amazon Nova or Claude)' },
         { value: 'deploy', label: 'Put it online for everyone', hint: 'deploys to your AWS account (~25 min)' },
       ],
     }),
@@ -685,7 +685,7 @@ async function main() {
         dash.status(`The server stopped. Press l for its log (full log: ${SERVER_LOG}).`);
       });
       ready = await server.ready;
-      if (ready) return { ok: true, detail: `${cfg.url} · Claude on Bedrock` };
+      if (ready) return { ok: true, detail: `${cfg.url} · ${choice === 'nova' ? 'Amazon Nova' : 'Claude'} on Bedrock` };
       server.stop();
       return { ok: false, message: 'did not start', hint: `Press t to try again; its log is in ${SERVER_LOG}.` };
     }));
