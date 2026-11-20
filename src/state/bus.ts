@@ -2,7 +2,7 @@
 // Persistent state lives in the store; the bus carries "something just happened" moments
 // (animations, camera moves, clicks) that don't belong in state.
 
-import type { AwsIncident, CityFinding, ServerEvent } from '@/backend/contract';
+import type { AwsIncident, AwsNewsItem, CityFinding, ServerEvent } from '@/backend/contract';
 import type { Cargo } from '@/world/carriers';
 import type { PageFocus } from './types';
 import type { CitizenRequest } from './requests';
@@ -76,6 +76,8 @@ export interface BusEvents {
   incidentStarted: { incident: AwsIncident };
   /** v2.6: AWS resolved it (it left the dashboard). */
   incidentResolved: { incident: AwsIncident };
+  /** AWS City Live: a What's New launch arrived while the city was open; its buildings celebrate it (not on load). */
+  launch: { item: AwsNewsItem };
   /** The city has finished arriving (CityScene.arrive: camera settled), so a first-run tour can point at it. */
   arrived: void;
   /** A data carrier (a real DataLink's tanker, standby van, request car or an agent's courier) was tapped. */
