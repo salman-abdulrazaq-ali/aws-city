@@ -92,6 +92,15 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   on for `account.link`/`account.verify`, `deploy.approve` and `finding.fix` (Google sign-ins are exempt); prod Cognito runs Plus with threat protection.
   A "TOTP is on" answer is cached 60 s at most. Proof: `cd server && npx vitest run test/hosted.test.ts -t "MFA"`
   (includes "MFA step-up for writes"), `cd infra && npm test`.
+- **The repo and the AWS account are locked down.** GitHub: `main` changes only through a pull request with CI green
+  (ruleset "main": the `extension`, `server`, `infra`, `fresh-clone` ×3 and `analyze` checks, no force-push or deletion,
+  only the admin may bypass); Actions run only GitHub-owned, verified-creator and `softprops/action-gh-release` actions,
+  pinned to a full SHA (required); fork pull requests from outside collaborators wait for approval; secret scanning with
+  push protection; the `prod` environment needs the maintainer's approval and deploys only from `main`; `SECURITY.md`
+  (private reporting) and `.github/CODEOWNERS`. The deploy workflow skips until `AWS_DEPLOY_ROLE_ARN` is set. AWS: the
+  baseline in `docs/runbook.md` step 5 (GuardDuty, CloudTrail, Access Analyzer, EBS default encryption, a password
+  policy, account-wide S3 Block Public Access for ACLs). Proof: `gh api repos/salman-abdulrazaq-ali/aws-city/rulesets`,
+  `gh api repos/salman-abdulrazaq-ali/aws-city/actions/permissions`, the runbook's "Check:" commands.
 - **Hosted deploys with Claude only run in Regions with a Claude geo inference profile** (Amazon Nova: any Region that offers it on demand) (`infra/lib/models.ts`: `us`, `eu`, `au`,
   `in`; there is no `apac` profile, so e.g. Tokyo is refused). Each geo gets the newest pair with a profile there for
   both models (`GEO_MODELS`, from the Bedrock model cards): Claude Opus 5.5 / Sonnet 5.5 in `us`/`eu`/`au`; India has no
