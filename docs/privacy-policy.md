@@ -81,4 +81,4 @@ logs above age out on their own schedule (30 or 90 days).
 
 ## Contact
 
-Questions: open an issue at https://github.com/iloveclouduk/AWS-North-Hackathon.
+Questions: open an issue at https://github.com/salman-abdulrazaq-ali/aws-city.

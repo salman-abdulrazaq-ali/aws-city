@@ -8,6 +8,10 @@ export declare const pickProfile: (profiles: string[], env?: Record<string, stri
 export declare const upsertProfile: (text: string, name: string, keys: { accessKeyId: string; secretAccessKey: string; sessionToken?: string }) => string;
 export declare const parsePastedKeys: (text: string) => { accessKeyId: string; secretAccessKey: string; sessionToken?: string } | undefined;
 export declare const explainAwsError: (err: unknown) => string;
+export declare const modelEnv: (
+  models: { main: string; light: string },
+  env?: Record<string, string | undefined>,
+) => { AWS_CITY_MODEL: string; AWS_CITY_FALLBACK_MODEL: string; AWS_CITY_LIGHT_MODEL: string };
 export type BuildEvent = { step: number; of: number; label: string; name: string; done?: undefined } | { done: true; seconds: number };
 export declare const parseBuildProgress: (chunk: string | Buffer) => BuildEvent[];
 export declare const progressBar: (fraction: number, width?: number) => string;
