@@ -278,6 +278,13 @@ describe('Amazon Nova: on demand in the deploy Region (Converse, Strands Agents)
   });
 });
 
+describe('deploying before the account\'s Bedrock is ready', () => {
+  it('starts the kill switch off when the wizard deploys without AI, and on otherwise', () => {
+    build().svc.hasResourceProperties('AWS::SSM::Parameter', { Name: '/aws-city/staging/ai-enabled', Value: 'true' });
+    build({ aiEnabled: false }).svc.hasResourceProperties('AWS::SSM::Parameter', { Name: '/aws-city/staging/ai-enabled', Value: 'false' });
+  });
+});
+
 describe('player role template versions', () => {
   it("is published under the template's own version, and old versions are never pruned", () => {
     const yaml = readFileSync(new URL('../player-role/player-role.yaml', import.meta.url), 'utf8');
