@@ -182,6 +182,9 @@ const readJson = async (req: IncomingMessage): Promise<unknown> => {
   }
 };
 
+/** What a person sees opening the server's address in a browser: what it is, nothing about any player. */
+export const ROOT_INFO = { service: 'AWS City', about: 'This is an AWS City server. Play in the AWS City browser extension.' } as const;
+
 const send = (res: ServerResponse, status: number, body?: unknown): void => {
   if (body === undefined) res.writeHead(status).end();
   else res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
@@ -247,6 +250,8 @@ export const createHttpServer = (deps: Deps) => {
     // Load balancer health checks come from the private network with the task IP as Host.
     if (req.method === 'GET' && req.url === '/health') return send(res, draining ? 503 : 200, { status: draining ? 'draining' : 'ok' });
     const url = guard(req);
+    // Someone opened the server's address in a browser: say what this is instead of "Please sign in again".
+    if (req.method === 'GET' && url.pathname === '/') return send(res, 200, { ...ROOT_INFO, status: draining ? 'draining' : 'ok' });
     if (req.headers.origin) {
       res.setHeader('access-control-allow-origin', req.headers.origin);
       res.setHeader('vary', 'Origin');

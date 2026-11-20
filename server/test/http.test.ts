@@ -7,7 +7,7 @@ import type { Approvals } from '../src/contract/approvals.js';
 import type { Orchestrator } from '../src/contract/orchestrator.js';
 import { createProgressStore } from '../src/contract/progress.js';
 import { createUploadStore } from '../src/contract/uploads.js';
-import { createHttpServer, rateLimiter } from '../src/http.js';
+import { createHttpServer, rateLimiter, ROOT_INFO } from '../src/http.js';
 import type { Poller } from '../src/state/poller.js';
 import type { ServerEvent } from '../src/world.js';
 import { snapshot } from './fixtures.js';
@@ -83,6 +83,16 @@ describe('HTTP/WebSocket guards', () => {
     expect((await fetch(`${base}/progress`, { headers: { origin: 'chrome-extension://other' } })).status).toBe(403);
   });
 
+  it('the root says what the server is, with no sign-in and nothing about a player', async () => {
+    const r = await fetch(`${base}/`);
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ ...ROOT_INFO, status: 'ok' });
+    // Only the bare root: everything else still needs the token.
+    expect((await fetch(`${base}/?x=1`)).status).toBe(200);
+    expect((await fetch(`${base}/me`)).status).toBe(401);
+    expect((await fetch(`${base}/`, { method: 'POST' })).status).not.toBe(200);
+  });
+
   it('rejects a foreign Host header (DNS rebinding), except the health check', async () => {
     const raw = (path: string) =>
       new Promise<string>((resolve) => {
@@ -92,6 +102,7 @@ describe('HTTP/WebSocket guards', () => {
         s.on('end', () => resolve(data));
       });
     expect(await raw('/progress')).toMatch(/^HTTP\/1.1 421/);
+    expect(await raw('/')).toMatch(/^HTTP\/1.1 421/);
     // Load balancer health checks use the task's IP as Host; /health reveals nothing.
     expect(await raw('/health')).toMatch(/^HTTP\/1.1 200/);
   });
