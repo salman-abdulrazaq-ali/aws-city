@@ -17,7 +17,8 @@ export const MAX_INCIDENTS = 12;
 export const MAX_LOG = 6;
 export const MAX_LOG_CHARS = 1200;
 export const MAX_SERVICE_NAMES = 12;
-export const MAX_NEWS = 15;
+/** The newest launches kept. re:Invent week brings dozens a day, so a busy day still fits. */
+export const MAX_NEWS = 60;
 
 const known = (ids: string[] | undefined) => (ids ?? []).filter((id) => serviceById(id));
 const uniq = <T>(xs: T[]) => [...new Set(xs)];

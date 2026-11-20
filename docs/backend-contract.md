@@ -114,7 +114,7 @@ Client-internal, not on the wire: `storage.local` keeps `progress.parked` (a sig
   that leaves the dashboard becomes `resolved` and stays for a day. `stale: true` means the dashboard couldn't be read and
   these are the last known incidents. Sent on connect and when the incidents change; the frame stays under 64 KB.
   `drill: true` exists only in the demo (a practice event the game made up).
-- `aws.news {asOf, items[{id, title, url, date, serviceIds[]}]}`: the latest AWS What's New announcements, read hourly.
+- `aws.news {asOf, items[{id, title, url, date, serviceIds[]}]}`: the latest AWS What's New announcements (up to 60), read hourly (every 10 minutes while re:Invent is on, `shared/events.json`). The client celebrates a launch that arrives while the city is open on its buildings (AWS City Live; not the batch on connect).
   `url` is always an `https://aws.amazon.com/` page.
 - The city shows these as a ticker over the map and an incident card. An affected Region pulses on the world map. In
   its city, the affected landmarks are fenced and dark, a Region-wide event brings rain, and the islands of the AZs

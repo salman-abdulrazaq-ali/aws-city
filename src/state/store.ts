@@ -1263,9 +1263,16 @@ export const useCity = create<CityState>()((set, get) => ({
           }
         break;
       }
-      case 'aws.news':
+      case 'aws.news': {
+        const seen = new Set((s.news?.items ?? []).map((n) => n.id));
         set({ news: e });
+        // AWS City Live: a launch that lands while the city is open lights up its building (not the batch on connect),
+        // after the news rung opens (src/state/ladder.ts). One info toast a batch, so re:Invent week doesn't flood.
+        const fresh = s.news && newsOpen(s.progress, s.account.linked) ? e.items.filter((n) => !seen.has(n.id)) : [];
+        for (const item of fresh) bus.emit('launch', { item });
+        if (fresh.length) s.toast('🚀', `New from AWS: ${fresh[0].title}${fresh.length > 1 ? ` (+${fresh.length - 1} more)` : ''}`);
         break;
+      }
       case 'deploy.status': {
         const d = s.deploys[e.deployId];
         if (d) set({ deploys: { ...s.deploys, [e.deployId]: { ...d, status: e.status, outputs: e.outputs ?? d.outputs, message: e.message } } });

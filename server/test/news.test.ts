@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import map from '../../shared/aws-health-services.json' with { type: 'json' };
-import { BACKOFF_MS, createNewsFeed, fetchFeed, HEALTH_EVERY_MS, HEALTH_JSON_URL, HEALTH_RSS_URL, RESOLVED_KEEP_MS, WHATS_NEW_URL } from '../src/news/feed.js';
+import { BACKOFF_MS, createNewsFeed, fetchFeed, HEALTH_EVERY_MS, HEALTH_JSON_URL, HEALTH_RSS_URL, NEWS_EVERY_MS, NEWS_LIVE_EVERY_MS, newsEvery, RESOLVED_KEEP_MS, WHATS_NEW_URL } from '../src/news/feed.js';
 import { decodeFeed, fitFrame, MAX_LOG_CHARS, parseHealthJson, parseHealthRss, parseWhatsNew, plain, zonePrefix } from '../src/news/parse.js';
 import { isServerEvent, serviceById, type AwsHealthEvent, type AwsNewsEvent, type ServerEvent } from '../src/world.js';
 
@@ -106,6 +106,15 @@ describe('AWS Health Dashboard parsing (real feed, 2026-10-11)', () => {
     const fitted = fitFrame(big);
     expect(JSON.stringify({ type: 'aws.health', asOf: '', incidents: fitted }).length).toBeLessThan(64 * 1024);
     expect(fitted[0].log).toHaveLength(6);
+  });
+});
+
+describe('AWS City Live: What\'s New during re:Invent', () => {
+  it('reads launches every 10 minutes while re:Invent is on (shared/events.json), hourly otherwise', () => {
+    expect(newsEvery(Date.parse('2026-12-02T18:00:00Z'))).toBe(NEWS_LIVE_EVERY_MS);
+    expect(NEWS_LIVE_EVERY_MS).toBe(10 * 60_000);
+    expect(newsEvery(Date.parse('2026-11-20T18:00:00Z'))).toBe(NEWS_EVERY_MS);
+    expect(newsEvery(Date.parse('2026-12-06T18:00:00Z'))).toBe(NEWS_EVERY_MS);
   });
 });
 

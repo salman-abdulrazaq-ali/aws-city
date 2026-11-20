@@ -28,6 +28,7 @@ import { glowingNow, ReturnNote, SupplyDrop } from './Loops';
 import { withCoins } from './icons';
 import { doneLine, isSimple, type TodoTask } from '@/state/simple';
 import { ANY_GAME, playAt, runTodo, useCare, useTodayGoals, useTodo } from './today';
+import { EventBanner } from './EventBanner';
 
 export { gameBuilding } from './today';
 
@@ -64,6 +65,7 @@ export function Home({ openTab, places }: { openTab: OpenTab; places?: ReactNode
   if (simple) return <SimpleHome openTab={openTab} care={care} places={ladder.places ? places : undefined} />;
   return (
     <div className="home">
+      <EventBanner />
       <Shift openTab={openTab} care={care} openCare={openCare} />
       <RunningTask />
       <details ref={more} className="more-fold">
@@ -127,6 +129,8 @@ function SimpleHome({ openTab, care, places }: { openTab: OpenTab; care: boolean
   };
   return (
     <div className="home simple">
+      {/* AWS City Live: re:Invent, a Summit, the player's Meetup (one line; nothing when nothing is near). */}
+      <EventBanner />
       {/* What the player asked from the prompt bar: its card while it works, over the list. */}
       {taskUp && working && <TaskCard key={latest!.taskId} task={latest!} openTab={openTab} quiet />}
       <section className="todo" aria-labelledby="todo-title">

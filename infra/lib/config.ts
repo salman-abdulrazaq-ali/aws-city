@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import type { App } from 'aws-cdk-lib';
-import { modelsFor } from './models.js';
+import { type ModelChoice, modelsForChoice } from './models.js';
 
 /** Written by `npm run setup` (infra/setup/setup.mjs) at the repo root; gitignored, no secrets in it. */
 export const SETUP_FILE = new URL('../../aws-city.config.json', import.meta.url);
@@ -33,6 +33,13 @@ export interface EnvConfig {
   globalDailyModelCalls: number;
   minTasks: number;
   maxTasks: number;
+  /** The agents' models: Claude (geo profiles, the default) or Amazon Nova (on demand in the Region). The setup wizard asks. */
+  modelChoice?: ModelChoice;
+  /**
+   * The kill switch's value at deploy: false deploys the city with its AI off (the account's Bedrock isn't ready yet,
+   * e.g. a new account's hold). Absent = on. Re-running setup once Bedrock answers turns it back on.
+   */
+  aiEnabled?: boolean;
   models: { main: string; light: string };
 }
 
@@ -54,8 +61,9 @@ export const loadEnv = (app: App): EnvConfig => {
     name,
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region,
-    // The inference-profile geo (us./eu./au./in.) follows the Region; a Region without one fails here, at synth.
-    models: modelsFor(region),
+    // Claude: the inference-profile geo (us./eu./au./in.) follows the Region, and a Region without one fails here, at
+    // synth. Amazon Nova: on-demand ids, the same in every Region that offers them (the wizard checks it answers).
+    models: modelsForChoice(region, raw.modelChoice === 'nova' ? 'nova' : 'claude'),
   };
 };
 

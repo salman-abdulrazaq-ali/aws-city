@@ -263,10 +263,16 @@ npm install
 npm run setup         # a wizard: asks a few questions, checks everything, deploys, builds the extension
 ```
 
+**New AWS account? Follow [the step-by-step guide](docs/self-hosting.md)**. It covers everything a new account
+needs: root MFA, the Paid plan (upgrade as root), an admin user with MFA, signing in, Amazon Nova or Claude, and what
+to do while AWS holds Bedrock for a new account.
+
 **Before you start** (the wizard checks these and tells you exactly what's missing):
-1. **An AWS account where you're an admin**, signed in on this computer. Use `aws login`
-   (AWS CLI 2.32+), `aws configure sso`, or `export AWS_PROFILE=<profile>`.
-2. **Claude on Amazon Bedrock.** Serverless models are enabled on first use, but Anthropic asks each
+1. **An AWS account on the Paid plan, where you're an admin (not root)**, signed in on this computer. Use `aws login`
+   (AWS CLI 2.32+), `aws configure sso`, or `export AWS_PROFILE=<profile>`. The wizard warns about root and stops on the
+   Free plan, whose account closes when its credits run out.
+2. **The AI models on Amazon Bedrock.** The wizard asks: **Amazon Nova** (recommended: Amazon's own models, nothing
+   extra to enable) or **Claude**. For Claude, serverless models are enabled on first use, but Anthropic asks each
    account (or organization) for a one-time use-case form: in the Bedrock console, open the **Model catalog**,
    pick a Claude model and submit it. The first call also needs `aws-marketplace:Subscribe` and a payment
    method ([AWS docs](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html)). The wizard
@@ -279,7 +285,8 @@ contains no secrets):
 | Question | Why | If you're not sure |
 |---|---|---|
 | Environment | `prod` (players) or `staging` (test copy). Both can live in one account. | `staging` first, then `prod` |
-| Region | Where it runs. Claude runs through a Bedrock geo inference profile, so only these Regions work: US and Canada (`us.`), Europe (`eu.`), Sydney/Melbourne (`au.`), Mumbai/Hyderabad (`in.`); the wizard lists them (`infra/lib/models.ts`). | `us-west-2` |
+| AI models | Amazon Nova (on demand in the Region, run on Strands Agents) or Claude (geo inference profiles). | **Amazon Nova** |
+| Region | Where it runs. With Claude, only Regions with a Bedrock geo inference profile work: US and Canada (`us.`), Europe (`eu.`), Sydney/Melbourne (`au.`), Mumbai/Hyderabad (`in.`); the wizard lists them (`infra/lib/models.ts`). | `us-west-2` |
 | Web address | A Route 53 domain gives `api.yourdomain.com`; otherwise CloudFront gives free HTTPS. | **No domain** |
 | Sign-in page name | Your Cognito sign-in address. The wizard checks it's free. | Accept the suggestion |
 | Google sign-in | Optional "Sign in with Google" ([guide](docs/google-sign-in.md)). Email + password always works. | Skip; add it later |

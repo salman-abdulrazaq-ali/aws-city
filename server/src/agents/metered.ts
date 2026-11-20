@@ -82,9 +82,12 @@ export const metered = (llm: Llm, deps: { sub: string; quota: QuotaStore; daily:
   };
   return {
     model: llm.model,
+    family: llm.family,
     client: llm.client,
     /** The same checks for model calls made outside create/stream (the Strands citizens' model). */
     gate,
+    /** Strands models for this family, every call through the gate above. */
+    strands: (opts) => llm.strands(opts, gate),
     canFallBack: llm.canFallBack,
     async create(params, opts = {}) {
       await gate();

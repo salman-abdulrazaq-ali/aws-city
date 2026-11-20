@@ -18,6 +18,7 @@ import { consoleUrl, DEFAULT_CONSOLE_SERVICE, matchText, matchUrl } from '@/worl
 import { isPracticeService, isPracticeUrl, PRACTICE_PATH, practiceRoute, practiceUrl } from '@/console/practice';
 import type { CopilotMessage } from '@/console/agent';
 import { isReadingUrl } from '@/world/reading';
+import { isEventUrl } from '@/world/liveEvents';
 import { isWorkshopUrl } from '@/world/workshops';
 import { SURFACE, SURFACE_NAME, type Surface } from '@/app/surface';
 import { badgeById, newBadges } from '@/state/badges';
@@ -826,6 +827,15 @@ export function openDocs(url: string) {
 export function openReading(url: string) {
   if (!isReadingUrl(url)) {
     store().toast('⚠️', 'That link isn’t on a learning partner’s site, so it wasn’t opened.', 'error');
+    return;
+  }
+  void browser.tabs.create({ url });
+}
+
+/** An event's page (the Events board): AWS's own, or a meetup's page on meetup.com (src/world/liveEvents.ts). */
+export function openEvent(url: string) {
+  if (!isEventUrl(url)) {
+    store().toast('⚠️', 'That link isn’t an AWS or Meetup event page, so it wasn’t opened.', 'error');
     return;
   }
   void browser.tabs.create({ url });
