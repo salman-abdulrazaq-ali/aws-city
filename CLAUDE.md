@@ -29,6 +29,16 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   channel or is refused). Citizens always; landmark agents too by default (`AWS_CITY_AGENT_ENGINE=classic` keeps the
   hand-written loop as a fallback). Landmark agents run at `effort: 'high'`, citizens `low`. Source: `.claude/references/cached-sources.md`.
   Proof: `cd server && npx vitest run test/citizens.test.ts`.
+- **Amazon Nova runs the whole city on Strands Agents.** The model id picks the family (`familyOf`,
+  `server/src/agents/llm.ts`): Claude keeps the Anthropic Messages API routes above; any other Bedrock model (Amazon
+  Nova: `NOVA_MODELS` in `infra/lib/models.ts`, Pro for agents and planning, Lite for chat and the Lookout, on demand in
+  the Region) goes through Bedrock's Converse API on Strands' `BedrockModel` (`MeteredBedrockModel`, the same gate:
+  kill switch, quotas, token metrics). Agent turns take `llm.strands()`; the one-shot routes (concierge plan, `chat.ask`,
+  the Lookout with its screenshot, the Console Copilot's step) run as fresh Strands Agents through `pick` (one tool,
+  offered and never forced; a missing or invalid call keeps the route's fallback) and `say` (streamed text), in
+  `server/src/agents/once.ts`. Locally: `npm run live -- --model nova` (the launcher checks Nova with Converse and passes
+  the ids as env). Hosted deploys still configure Claude (`infra/lib/models.ts` `modelsFor`) until the wizard offers the
+  choice. Proof: `cd server && npx vitest run test/nova.test.ts`, `npx vitest run tests/launcher.test.ts`.
 - **AWS's public status and news reach every player, read once by the server** (`server/src/news/`, contract v2.6 `aws.health`/`aws.news`).
   The sources are the public Health Dashboard JSON (UTF-16 with a BOM), with the status RSS as fallback, and What's New. Hosts are
   allow-listed, there are no redirects, a size cap and a timeout, and a failure backs off. Feed text is untrusted data (neutralised,

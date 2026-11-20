@@ -43,5 +43,18 @@ export const modelsFor = (region: string): { main: string; light: string } => {
   return { main: `${geo}.anthropic.${m.main}`, light: `${geo}.anthropic.${m.light}` };
 };
 
+/**
+ * Amazon Nova, Amazon's own models, through Bedrock's Converse API (the server runs them on Strands Agents' Bedrock
+ * model). On-demand in the Region itself, no geo profile, so these ids are the same everywhere Nova is offered on demand
+ * (eu-west-2 lists Nova Pro and Nova Lite as ON_DEMAND: `aws bedrock list-foundation-models --by-inference-type ON_DEMAND`).
+ * Pro thinks for the agents and the concierge, Lite answers chat and classifies pages.
+ */
+export const NOVA_MODELS = { main: 'amazon.nova-pro-v1:0', light: 'amazon.nova-lite-v1:0' } as const;
+
+export type ModelChoice = 'claude' | 'nova';
+
+/** The server's two models for this Region and choice; Claude throws where it has no geo profile, Nova doesn't. */
+export const modelsForChoice = (region: string, choice: ModelChoice): { main: string; light: string } => (choice === 'nova' ? { ...NOVA_MODELS } : modelsFor(region));
+
 /** The foundation model behind a profile id: us.anthropic.claude-opus-5-5 → anthropic.claude-opus-5-5. */
 export const foundationModel = (profileId: string) => profileId.replace(/^[a-z]+\.(?=anthropic\.)/, '');

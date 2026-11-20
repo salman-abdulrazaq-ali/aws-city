@@ -76,7 +76,7 @@ const CLAUDE_FORM ="Claude on Bedrock isn't enabled yet: in the Bedrock console,
 // Service Quotas refuses a request at or below the default (30M tokens a minute for Opus 5.5), so a new account held
 // at 0 can't ask there: it waits for AWS to verify it, then asks AWS Support.
 const CLAUDE_QUOTA =
-  "Claude has no quota on this account right now. New accounts start at 0 until AWS verifies them: try again in a few hours. If it stays at 0, open an AWS Support case (Service limit increase → Amazon Bedrock).";
+  "Bedrock's AI models have no quota on this account right now. New accounts start at 0 until AWS verifies them: try again in a few hours. If it stays at 0, open an AWS Support case (Service limit increase → Amazon Bedrock).";
 
 /**
  * The server's Claude models in local mode: the Region's inference-profile ids (`modelsFor` in infra/lib/models.ts, so
@@ -211,9 +211,13 @@ export const parseArgs = (argv, env = {}) => {
       const v = value();
       if (!v || !REGION_RE.test(v)) return fail(`--region needs an AWS Region, e.g. --region us-west-2${v && !v.startsWith('-') ? ` ("${v}" isn't one)` : ''}`);
       out.region = v;
+    } else if (flag === '--model') {
+      const v = value()?.toLowerCase();
+      if (v !== 'claude' && v !== 'nova') return fail('--model needs claude or nova, e.g. --model nova');
+      out.model = v;
     } else return fail(`Unknown option "${args[i]}".`);
   }
-  if ((out.profile || out.region) && out.mode === 'demo') return fail('--profile and --region are for real AWS (--live); the demo needs no AWS account.');
+  if ((out.profile || out.region || out.model) && out.mode === 'demo') return fail('--profile, --region and --model are for real AWS (--live); the demo needs no AWS account.');
   return out;
 };
 
@@ -261,6 +265,7 @@ export const helpText = () =>
     ...BROWSERS.map((b) => `                         ${b.id.padEnd(9)}${HELP_NOTES[b.id] ?? `${b.name} (3 guided clicks the first time)`}`),
     '  --profile <name>     real AWS: the AWS profile to use (default: the one that worked last time)',
     '  --region <name>      real AWS: where Claude runs (default: last time, or us-west-2)',
+    '  --model claude|nova  real AWS: the agents’ models on Bedrock: Claude, or Amazon Nova (default: last time, or claude)',
     '  --rebuild            build the extension even if nothing changed since the last build',
     '  --no-intro           skip the 2 s title animation (any key skips it too)',
     '  -h, --help           show this help',

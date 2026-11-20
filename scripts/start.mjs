@@ -51,7 +51,7 @@ const AWS_DIR = path.join(os.homedir(), '.aws');
 const PROFILE = 'aws-city';
 // Claude's inference-profile ids follow the Region (us./eu./au./in.): the table the setup wizard and the CDK app use
 // (plain erasable TypeScript, no imports, so Node 24 loads it on a fresh clone). The server gets the pair as env.
-const { geoFor, modelsFor, unsupportedRegionMessage } = await import(new URL('../infra/lib/models.ts', import.meta.url).href);
+const { geoFor, modelsFor, modelsForChoice, unsupportedRegionMessage } = await import(new URL('../infra/lib/models.ts', import.meta.url).href);
 const interactive = isInteractive();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -100,7 +100,7 @@ async function awsTools() {
     s.stop('AWS tools ready');
   }
   const req = createRequire(path.join(ROOT, 'server/package.json'));
-  return { sts: req('@aws-sdk/client-sts'), providers: req('@aws-sdk/credential-providers'), bedrock: req('@anthropic-ai/bedrock-sdk') };
+  return { sts: req('@aws-sdk/client-sts'), providers: req('@aws-sdk/credential-providers'), bedrock: req('@anthropic-ai/bedrock-sdk'), runtime: req('@aws-sdk/client-bedrock-runtime') };
 }
 
 const awsFiles = () => ({
@@ -211,8 +211,9 @@ async function connectAws(tools, region, prefs, wanted) {
   }
 }
 
-/** One tiny Claude call on Bedrock, so missing model access shows up now instead of in the game. */
-async function bedrockHello(tools, profile, region) {
+/** One tiny model call on Bedrock, so missing model access shows up now instead of in the game. */
+async function bedrockHello(tools, profile, region, choice = 'claude') {
+  if (choice === 'nova') return novaHello(tools, profile, region);
   if (!geoFor(region)) return { ok: false, message: unsupportedRegionMessage(region), hint: 'Quit and run npm run live -- --region eu-west-2 (or another Region from that list).' };
   const { main: MAIN_MODEL, light: LIGHT_MODEL } = modelsFor(region);
   try {
@@ -231,6 +232,20 @@ async function bedrockHello(tools, profile, region) {
       message: explainAwsError(err),
       hint: `Claude on Bedrock in ${region}: https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html`,
     };
+  }
+}
+
+/** Amazon Nova (Bedrock's Converse API, the same route the server's Strands agents use): Lite, then Pro. */
+async function novaHello(tools, profile, region) {
+  const { main, light } = modelsForChoice(region, 'nova');
+  try {
+    const client = new tools.runtime.BedrockRuntimeClient({ region, credentials: tools.providers.fromIni({ profile }) });
+    const hello = (modelId) => client.send(new tools.runtime.ConverseCommand({ modelId, messages: [{ role: 'user', content: [{ text: 'Reply with OK.' }] }], inferenceConfig: { maxTokens: 16 } }));
+    await hello(light);
+    await hello(main);
+    return { ok: true, detail: 'Amazon Nova Pro + Lite are ready (Strands Agents on Bedrock)' };
+  } catch (err) {
+    return { ok: false, message: explainAwsError(err), hint: `Amazon Nova on Bedrock in ${region}: https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html` };
   }
 }
 
@@ -621,22 +636,24 @@ async function main() {
   }
 
   // Real AWS: sign-in first (questions only if it has to), then the panel does the rest.
+  // The agents' models: Claude (geo profiles) or Amazon Nova (on demand in the Region), --model or last time's.
+  const choice = args.model ?? (prefs.model === 'nova' ? 'nova' : 'claude');
   const tools = await awsTools();
   const region =
     args.region ??
     (plan.kind !== 'ask' && REGION_RE.test(prefs.region ?? '')
       ? prefs.region
       : interactive
-        ? ((sceneDirty = true), await ask(p.text({ message: 'AWS Region (where Claude runs for you)', initialValue: prefs.region ?? 'us-west-2', validate: (v) => (!REGION_RE.test(v ?? '') ? 'e.g. us-west-2' : geoFor(v) ? undefined : unsupportedRegionMessage(v)) })))
+        ? ((sceneDirty = true), await ask(p.text({ message: 'AWS Region (where Claude runs for you)', initialValue: prefs.region ?? 'us-west-2', validate: (v) => (!REGION_RE.test(v ?? '') ? 'e.g. us-west-2' : choice === 'nova' || geoFor(v) ? undefined : unsupportedRegionMessage(v)) })))
         : 'us-west-2');
   const { profile, account } = await connectAws(tools, region, prefs, args.profile);
-  savePrefs({ mode, browser, profile, region });
+  savePrefs({ mode, browser, profile, region, model: choice });
 
   const cfg = liveConfig(browser);
   const dash = panel(
     [
       { id: 'aws', title: 'AWS sign-in' },
-      { id: 'bedrock', title: 'Check Claude on Bedrock' },
+      { id: 'bedrock', title: choice === 'nova' ? 'Check Amazon Nova on Bedrock' : 'Check Claude on Bedrock' },
       { id: 'prepare', title: 'Get the browser ready' },
       { id: 'build', title: 'Build the city' },
       { id: 'server', title: 'Start the server' },
@@ -648,7 +665,7 @@ async function main() {
   let server;
   let stopping = false;
   const go =
-    (await runStep(dash, 'bedrock', () => bedrockHello(tools, profile, region), { canSkip: true })) &&
+    (await runStep(dash, 'bedrock', () => bedrockHello(tools, profile, region, choice), { canSkip: true })) &&
     (await runStep(dash, 'prepare', prepareStep(dash, browser, mode))) &&
     (await runStep(dash, 'build', buildStep(dash, browser, cfg.extEnv))) &&
     (await runStep(dash, 'server', async () => {
@@ -661,7 +678,7 @@ async function main() {
       dash.status(`Starting the server with AWS profile "${profile}"…`);
       let ready = false;
       dash.logTitle('Server log');
-      server = startServer({ profile, region, models: geoFor(region) ? modelsFor(region) : undefined, cfg, onLog: (l) => (dash.log(l), !ready && dash.status(`server: ${l}`)) });
+      server = startServer({ profile, region, models: choice === 'nova' || geoFor(region) ? modelsForChoice(region, choice) : undefined, cfg, onLog: (l) => (dash.log(l), !ready && dash.status(`server: ${l}`)) });
       void server.exited.then((code) => {
         if (!ready || stopping) return;
         dash.set('server', { status: 'failed', detail: `stopped (exit ${code ?? '?'})` });
