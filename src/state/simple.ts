@@ -53,6 +53,8 @@ export interface SimpleContext {
   steps?: readonly string[];
   /** A change is waiting for the player's approval in Deploy. */
   deployWaiting?: boolean;
+  /** A hosted player with no AWS account linked yet: Deploy is where it connects. */
+  canConnect?: boolean;
 }
 
 /** Whether `feature` shows for these prefs (and, in Simple, whether it's needed now). */
@@ -64,7 +66,7 @@ export function shows(feature: Feature, prefs: { simple?: boolean } | undefined,
     case 'care':
       return (ctx.questsDone ?? 0) >= 1 || !!ctx.linked;
     case 'deployTab':
-      return !!ctx.steps?.includes('deploy') || !!ctx.linked || !!ctx.deployWaiting;
+      return !!ctx.steps?.includes('deploy') || !!ctx.linked || !!ctx.deployWaiting || !!ctx.canConnect;
     case 'drawingBoard':
       return !!ctx.steps?.includes('design');
     default:

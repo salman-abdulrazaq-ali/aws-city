@@ -8,6 +8,7 @@ import { offered, perUnit, pricesFor } from '@/world/regions';
 import { useCopy } from './feedback';
 import { costLine, offlineReason } from './logic';
 import { usePending } from './usePending';
+import { useCanConnect } from './useLadder';
 import { ForLearners } from './Term';
 import { Plain } from './Term';
 
@@ -145,6 +146,7 @@ export function DeployPanel() {
   const deployMap = useCity((s) => s.deploys);
   const deploys = Object.values(deployMap);
   const status = useCity((s) => s.backendStatus);
+  const connectNow = useCanConnect() && status !== 'signed-out';
   const kind = useCity((s) => s.backendKind);
   const offline = offlineReason(kind, status);
   const [role, setRole] = useState('');
@@ -207,7 +209,7 @@ export function DeployPanel() {
 
   /** The three linking steps (folded until the player asks; inside "How real accounts connect" in the demo). */
   const linkSteps =
-    !wantsLink && !account.linkUrl && !account.mfaRequired ? (
+    !wantsLink && !connectNow && !account.linkUrl && !account.mfaRequired ? (
       <button className="btn" onClick={() => setWantsLink(true)}>
         Connect an AWS account
       </button>
