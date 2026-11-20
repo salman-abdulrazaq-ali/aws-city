@@ -35,6 +35,18 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   trimmed, never given to a model). Services map only through verified codes in `shared/aws-health-services.json`. There's no IAM and
   no Health API (it needs a Business support plan). The demo plays the real Bahrain/UAE events plus a `drill: true` practice event.
   Proof: `cd server && npx vitest run test/news.test.ts test/tenants.test.ts`, `npx vitest run tests/incidents.test.ts tests/contract.test.ts`.
+- **AWS City Live: the city changes with what AWS is doing.** Events are data with an official page each
+  (`shared/events.json`: re:Invent 2026, 30 Nov – 4 Dec, Las Vegas; links only to aws.amazon.com and meetup.com,
+  `isEventUrl`). `src/world/liveEvents.ts` is pure (`eventPhase`, `bannerEvent`: live first, else the soonest within
+  `BANNER_DAYS`); the City tab's `EventBanner` (both modes, never the primary button) opens the Events board, and
+  `?date=YYYY-MM-DD` previews a day. A What's New launch that lands while the city is open (`bus` `launch`, after the news
+  rung, never the batch on connect) bumps its building with "🚀 New from AWS" and its agent's line (`CityScene.onLaunch`,
+  `LAUNCH_GAP_MS` apart, at most `LAUNCH_MAX` a batch, one toast); a building's card lists its newest launches
+  (`WhatsNew`). The demo holds back its newest captured launch for `LAUNCH_AFTER_MS`. While re:Invent is live the server
+  reads What's New every 10 minutes (`newsEvery`) and keeps `MAX_NEWS` 60. Strands Agents and Amazon Nova are taught in
+  AgentCore Academy and Bedrock Mesa (cards from AWS pages, glossary terms); Strands isn't a service (no console, Region
+  or icon). Proof: `npx vitest run tests/live-events.test.ts tests/events-ui.test.tsx tests/content.test.ts`,
+  `cd server && npx vitest run test/news.test.ts`, `npm run smoke` (86: banner, board with axe, re:Invent live, a launch on S3).
 - **Findings are rules; the model only explains.** `server/src/agents/findings.ts` checks each poll (no model calls);
   players read `shared/wa-rules.json`; an unreadable setting never raises a finding.
   Proof: `cd server && npx vitest run test/care.test.ts`.

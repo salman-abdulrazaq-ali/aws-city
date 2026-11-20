@@ -732,6 +732,22 @@
       ],
       "short": "One slice of a big job. A Kinesis stream's shards are lanes; an OpenSearch index splits into shards across servers.",
       "url": "https://docs.aws.amazon.com/streams/latest/dev/key-concepts.html"
+    },
+    {
+      "term": "Strands Agents",
+      "aliases": [
+        "Strands"
+      ],
+      "short": "An open-source toolkit from AWS for building AI agents: the model does the reasoning and uses the tools you give it.",
+      "url": "https://docs.aws.amazon.com/prescriptive-guidance/latest/agentic-ai-frameworks/strands-agents.html"
+    },
+    {
+      "term": "Amazon Nova",
+      "aliases": [
+        "Nova"
+      ],
+      "short": "Amazon's own AI models on Bedrock: fast and cost-effective, for text and multimodal needs.",
+      "url": "https://aws.amazon.com/ai/generative-ai/nova/"
     }
   ]
 }
