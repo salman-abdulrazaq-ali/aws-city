@@ -17,6 +17,7 @@ import { shows } from '@/state/simple';
 import { consoleUrl, DEFAULT_CONSOLE_SERVICE, matchText, matchUrl } from '@/world/taxonomy';
 import { isPracticeService, isPracticeUrl, PRACTICE_PATH, practiceRoute, practiceUrl } from '@/console/practice';
 import type { CopilotMessage } from '@/console/agent';
+import { isSecretPage } from '@/console/risk';
 import { isReadingUrl } from '@/world/reading';
 import { isWorkshopUrl } from '@/world/workshops';
 import { SURFACE, SURFACE_NAME, type Surface } from '@/app/surface';
@@ -447,10 +448,20 @@ function handleFocus(f: PageFocus) {
   lastScreenshotKey = undefined;
   clearTimeout(autoSnapTimer);
   // Auto-snap covers AWS pages only (like pageContext): other sites are photographed only when the player asks.
-  if (store().autoSnap && isAwsPage(f) && layout === 'panel') {
-    autoSnapTimer = setTimeout(() => void snap(), 1500);
+  if (store().autoSnap && autoSnaps(f) && layout === 'panel') {
+    // Checked again when it fires: the page may have moved on to a secret one meanwhile.
+    autoSnapTimer = setTimeout(() => {
+      const now = store().focus;
+      if (now && autoSnaps(now)) void snap();
+    }, 1500);
   }
 }
+
+/**
+ * Pages the Lookout may photograph on its own (auto-snap): AWS pages, never one that shows a secret (`SECRET_PAGES`:
+ * access keys, secret values, SecureStrings, KMS, CloudShell). A photo isn't redacted, so those are snapped only on ask.
+ */
+export const autoSnaps = (f: Pick<PageFocus, 'kind' | 'url'>) => isAwsPage(f) && !isSecretPage(f.url);
 
 async function initSettings() {
   const s = (await browser.storage.local.get(SETTINGS_STORAGE_KEY))[SETTINGS_STORAGE_KEY] as { autoSnap?: boolean } | undefined;

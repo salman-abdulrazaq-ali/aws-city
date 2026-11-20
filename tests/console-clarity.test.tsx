@@ -9,7 +9,7 @@ const start = vi.fn<(goal: string, opts?: { serviceId?: string; onStart?: (id: s
 vi.mock('@/app/runtime', async (importOriginal) => ({ ...(await importOriginal<object>()), startConsoleCopilot: start }));
 
 const { useCity } = await import('@/state/store');
-const { lookoutUnavailable } = await import('@/app/runtime');
+const { autoSnaps, lookoutUnavailable } = await import('@/app/runtime');
 const { PromptBar } = await import('@/ui/PromptBar');
 const { LandmarkCard } = await import('@/ui/LandmarkCard');
 const { Workshop } = await import('@/ui/Workshop');
@@ -48,6 +48,21 @@ describe('the Lookout card', () => {
     expect(screen.getByRole('note').textContent).toMatch(/side panel/);
     expect(lookoutUnavailable('sidebar')).toMatch(/sidebar/);
     expect(lookoutUnavailable('tab')).toMatch(/Safari has no side panel/);
+  });
+
+  it('never photographs a page that shows a secret on its own (auto-snap), only AWS pages without one', () => {
+    const onConsole = (url: string) => ({ kind: 'console' as const, url });
+    expect(autoSnaps(onConsole('https://us-west-2.console.aws.amazon.com/s3/buckets?region=us-west-2'))).toBe(true);
+    expect(autoSnaps({ kind: 'docs', url: 'https://docs.aws.amazon.com/secretsmanager/latest/userguide/intro.html' })).toBe(true);
+    for (const url of [
+      'https://us-east-1.console.aws.amazon.com/iam/home#/users/details/alice/create-access-key',
+      'https://us-west-2.console.aws.amazon.com/secretsmanager/secret?name=prod-db&region=us-west-2',
+      'https://us-west-2.console.aws.amazon.com/systems-manager/parameters/db-password/description?region=us-west-2',
+      'https://us-west-2.console.aws.amazon.com/kms/home?region=us-west-2#/kms/keys',
+      'https://us-west-2.console.aws.amazon.com/cloudshell/home?region=us-west-2',
+    ])
+      expect(autoSnaps(onConsole(url)), url).toBe(false);
+    expect(autoSnaps({ kind: 'other', url: 'https://mail.example.com/' })).toBe(false);
   });
 
   it('in the panel, shows what it last saw under the button', () => {

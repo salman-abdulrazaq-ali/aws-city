@@ -4,9 +4,9 @@
 import type { SnapshotItem } from './types';
 
 import { byIdFrom } from './dom';
-import { isRisky } from './risk';
+import { isConsoleUrl, isRisky, playerOnlyPage } from './risk';
 
-export { isRisky };
+export { isConsoleUrl, isRisky };
 
 const SENSITIVE_NAME = /(password|secret|token|access ?key|private ?key|credential|mfa|otp|card|cvv|iban)/i;
 
@@ -19,19 +19,7 @@ export function isSensitiveInput(el: Element): boolean {
   return SENSITIVE_NAME.test(hint);
 }
 
-/** Only real console pages — never sign-in, never other sites. */
-export function isConsoleUrl(raw: string): boolean {
-  try {
-    const u = new URL(raw);
-    if (u.protocol !== 'https:') return false;
-    if (/(^|\.)signin\.aws\.amazon\.com$/.test(u.hostname)) return false;
-    return u.hostname === 'console.aws.amazon.com' || u.hostname.endsWith('.console.aws.amazon.com');
-  } catch {
-    return false;
-  }
-}
-
-export type Verdict = { ok: true } | { ok: false; reason: 'risky' | 'sensitive' | 'missing' | 'disabled'; message: string };
+export type Verdict = { ok: true } | { ok: false; reason: 'risky' | 'sensitive' | 'missing' | 'disabled' | 'player-only'; message: string };
 
 /**
  * Every label a control carries — a page could name a Delete button "Next" in one place but not all.
@@ -48,7 +36,9 @@ export function riskSignals(el: Element): string {
     el.getAttribute('data-testid'),
     el.getAttribute('name'),
     el.getAttribute('value'),
-    h.innerText ?? el.textContent,
+    // A native select's text is every option's; mayAct checks the one it picks (optionFor), so a risky option
+    // elsewhere in the list doesn't refuse a safe pick.
+    el instanceof HTMLSelectElement ? undefined : (h.innerText ?? el.textContent),
     el.closest('label')?.textContent,
     // what a screen reader reads with it (Cloudscape puts option and tile descriptions here)
     ...refs('aria-describedby'),
@@ -104,9 +94,15 @@ export function mayChoose(option: Element, fieldName = ''): Verdict {
   return { ok: true };
 }
 
-/** Decide whether the agent may act on this element itself. */
-export function mayAct(item: SnapshotItem | undefined, action: string, el?: Element, value?: string): Verdict {
+/**
+ * Decide whether the agent may act on this element itself. `url` is the page's (the element's document by default):
+ * on the real console's player-only pages (`PLAYER_ONLY_PAGES`) every click, pick and keystroke is the player's.
+ */
+export function mayAct(item: SnapshotItem | undefined, action: string, el?: Element, value?: string, url = el?.ownerDocument.location?.href): Verdict {
   if (!item) return { ok: false, reason: 'missing', message: 'I can’t find that on the page.' };
+  const only = playerOnlyPage(url);
+  if (only && (action === 'click' || action === 'select' || action === 'type'))
+    return { ok: false, reason: 'player-only', message: `On ${only.name} pages, changes are yours to make, so this one is your turn. I’ll point and explain.` };
   if (el && (action === 'click' || action === 'select')) {
     const around = controlsAround(el);
     if (isRisky(riskSignals(el)) || DANGER_CLASS.test(el.getAttribute('class') ?? '') || around.some((c) => isRisky(riskSignals(c)) || DANGER_CLASS.test(c.getAttribute('class') ?? '')))

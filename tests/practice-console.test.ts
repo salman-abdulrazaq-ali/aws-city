@@ -108,9 +108,12 @@ async function play(service: (typeof PRACTICE_SERVICES)[number], goal: string) {
       const el = findExact(document, step.target!);
       const item = snap().items.find((i) => i.id === step.target?.id);
       const verdict = mayAct(item, step.action, el, step.value);
-      // A step the agent may take itself is never refused; one that needs the player's OK is still a safe control.
-      expect(verdict, `${service}: ${step.say}`).toEqual({ ok: true });
-      if (step.risk === 'confirm') handedBack.push(step.target!.name);
+      // A step the agent may take itself is never refused. One the page refuses (a risky control) is one the flow
+      // already hands back (risk 'confirm'), and the player presses it here.
+      if (step.risk === 'confirm') {
+        expect(verdict.ok || verdict.reason === 'risky', `${service}: ${step.say}`).toBe(true);
+        handedBack.push(step.target!.name);
+      } else expect(verdict, `${service}: ${step.say}`).toEqual({ ok: true });
       if (step.action === 'click') press(el!);
       else if (step.action === 'type') typeInto(el!, step.value ?? '');
       else if (step.action === 'select') {
@@ -132,6 +135,18 @@ async function play(service: (typeof PRACTICE_SERVICES)[number], goal: string) {
   return { done, said, handedBack, created: document.body.dataset.created, risky: document.body.dataset.risky };
 }
 
+describe('the practice console is never a player-only page', () => {
+  it('the IAM wizard’s controls are the agent’s at the practice URL, and the player’s on the real IAM console', () => {
+    window.history.replaceState(null, '', '#/iam/create');
+    mountPractice(document, { delay: 0, selectDelay: 0 });
+    const s = snap();
+    const next = s.items.find((i) => i.name === 'Next')!;
+    const el = findExact(document, next)!;
+    expect(mayAct(next, 'click', el, undefined, `${BASE}#/iam/create`)).toEqual({ ok: true });
+    expect(mayAct(next, 'click', el, undefined, 'https://us-east-1.console.aws.amazon.com/iam/home#/roles/create')).toMatchObject({ ok: false, reason: 'player-only' });
+  });
+});
+
 describe('every scripted Copilot flow completes on the practice console', () => {
   const CASES: { service: (typeof PRACTICE_SERVICES)[number]; goal: string; created: RegExp; confirm?: string[] }[] = [
     { service: 's3', goal: 'Create an S3 bucket', created: /^city-demo-\w+ \(SSE-S3 · Block all public access on\)$/ },
@@ -141,7 +156,7 @@ describe('every scripted Copilot flow completes on the practice console', () => 
     { service: 'rds', goal: 'Create an RDS database', created: /^city-db-\w+ \(PostgreSQL, Free tier\)$/, confirm: ['Create database'] },
     { service: 'cloudfront', goal: 'Create a CloudFront distribution', created: /^city-site\.s3\.us-west-2\.amazonaws\.com \(OAC, redirect http to https\)$/ },
     { service: 'sqs', goal: 'Create an SQS queue', created: /^city-orders-\w+ \(Standard\)$/ },
-    { service: 'iam', goal: 'Create an IAM role for Lambda', created: /^city-lambda-role-\w+ \(Lambda, AWSLambdaBasicExecutionRole\)$/, confirm: ['Create role'] },
+    { service: 'iam', goal: 'Create an IAM role for Lambda', created: /^city-lambda-role-\w+ \(Lambda, AWSLambdaBasicExecutionRole\)$/, confirm: ['Create role', 'Create role'] },
   ];
   for (const c of CASES) {
     it(`${c.service}: ${c.goal}`, async () => {

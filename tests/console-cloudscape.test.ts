@@ -263,6 +263,34 @@ describe('mock flows are routed by the task’s service, then the console URL, t
   });
 });
 
+describe('Cloudscape controls that open access are the player’s', () => {
+  it('a security group source of Anywhere-IPv4/IPv6 or 0.0.0.0/0 is refused, My IP is fine', async () => {
+    const { trigger } = cloudscapeSelect(['Custom', 'Anywhere-IPv4', 'Anywhere-IPv6', 'My IP']);
+    const opts = optionsIn((await openListbox(trigger))!);
+    for (const o of ['Anywhere-IPv4', 'Anywhere-IPv6']) expect(mayChoose(matchOption(opts, o)!, 'Source'), o).toMatchObject({ ok: false, reason: 'risky' });
+    expect(mayChoose(matchOption(opts, 'My IP')!, 'Source')).toEqual({ ok: true });
+    // the rule's type and CIDR, typed or picked
+    document.body.innerHTML = `<div class="awsui_form-field_1"><label id="c" for="cidr">CIDR blocks</label><input id="cidr" class="awsui_input_1" aria-labelledby="c" /></div>`;
+    const item = snap().items[0]!;
+    expect(mayAct(item, 'type', findExact(document, item)!, '0.0.0.0/0')).toMatchObject({ ok: false, reason: 'risky' });
+    expect(mayAct(item, 'type', findExact(document, item)!, '::/0')).toMatchObject({ ok: false, reason: 'risky' });
+    expect(mayAct(item, 'type', findExact(document, item)!, '203.0.113.7/32')).toEqual({ ok: true });
+    const types = cloudscapeSelect(['HTTPS', 'All traffic']);
+    const t = optionsIn((await openListbox(types.trigger))!);
+    expect(mayChoose(matchOption(t, 'All traffic')!, 'Type')).toMatchObject({ ok: false, reason: 'risky' });
+  });
+
+  it('S3 Block Public Access boxes and the “I acknowledge … public” box are never ticked by the agent', () => {
+    // each on its own, outside the section whose heading would make it risky anyway
+    document.body.innerHTML = `
+      <span class="awsui_checkbox_1"><input type="checkbox" id="bpa" checked aria-labelledby="bpa-l" /><span id="bpa-l">Block <em>all</em> public access</span></span>
+      <span class="awsui_checkbox_1"><input type="checkbox" id="ack" aria-labelledby="ack-l" /><span id="ack-l">I acknowledge that the current settings might result in this bucket and the objects within becoming public.</span></span>`;
+    const items = snap().items;
+    expect(items.map((i) => i.context)).toEqual([undefined, undefined]);
+    for (const item of items) expect(mayAct(item, 'click', findExact(document, item)!), item.name).toMatchObject({ ok: false, reason: 'risky' });
+  });
+});
+
 describe('risk checks can’t be dodged by nesting or long text', () => {
   it('a span inside a Delete button is a Delete click', async () => {
     const { mayAct } = await import('@/console/safety');

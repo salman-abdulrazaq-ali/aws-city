@@ -18,7 +18,8 @@ fs.mkdirSync(out, { recursive: true });
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // `from`: the surface that asks (city = the full tab, panel = the side panel page). `open`: the player opened the
-// practice console at this service first (otherwise the Copilot opens or moves it). `confirm`: the step handed back.
+// practice console at this service first (otherwise the Copilot opens or moves it). `confirm`: the buttons handed back
+// to the player, in order (a 'confirm' step, or a control the page's safety rules refuse, such as IAM's Create role).
 const FLOWS = [
   { id: 's3', goal: 'Create an S3 bucket', open: true, expect: /^city-demo-\w+ \(SSE-S3 · Block all public access on\)$/ },
   { id: 'ec2', goal: 'Launch an EC2 instance', expect: /^city-web-\w+ \(t3\.micro\)$/, confirm: 'Launch instance' },
@@ -27,7 +28,7 @@ const FLOWS = [
   { id: 'rds', goal: 'Create an RDS database', expect: /^city-db-\w+ \(PostgreSQL, Free tier\)$/, confirm: 'Create database' },
   { id: 'cloudfront', goal: 'Create a CloudFront distribution', expect: /^city-site\.s3\.us-west-2\.amazonaws\.com \(OAC, redirect http to https\)$/ },
   { id: 'sqs', goal: 'Create an SQS queue', from: 'panel', expect: /^city-orders-\w+ \(Standard\)$/ },
-  { id: 'iam', goal: 'Create an IAM role for Lambda', expect: /^city-lambda-role-\w+ \(Lambda, AWSLambdaBasicExecutionRole\)$/, confirm: 'Create role' },
+  { id: 'iam', goal: 'Create an IAM role for Lambda', expect: /^city-lambda-role-\w+ \(Lambda, AWSLambdaBasicExecutionRole\)$/, confirm: ['Create role', 'Create role'] },
 ].filter((f) => !only.length || only.includes(f.id));
 
 const ctx = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.tmpdir(), 'awscity-cp-')), {
@@ -94,7 +95,9 @@ for (const [n, flow] of FLOWS.entries()) {
   let paused = false;
   let explained = false;
   let speedSet = false;
-  let confirmed = false;
+  const confirms = [flow.confirm ?? []].flat();
+  let confirmed = 0;
+  let handled = ''; // the hand-back bubble last answered (it stays up until the next step shows)
   while (Date.now() - t0 < 90_000) {
     await wait(1500);
     // The chip: set the speed once (persists to later flows), pause/resume once, explain again once.
@@ -121,12 +124,17 @@ for (const [n, flow] of FLOWS.entries()) {
       await wait(300);
       await snap('explain');
     }
-    // A step that bills or changes access (risk 'confirm') is handed to the player: play the player and click it.
-    if (flow.confirm && !confirmed && (await tab.locator('[data-awscity-overlay]').getByText('needs your OK').count())) {
-      await snap('your-turn');
-      await tab.getByRole('button', { name: flow.confirm, exact: true }).click();
-      confirmed = true;
-      console.log(`[${flow.id}] player confirmed: ${flow.confirm}`);
+    // A step that bills or changes access is handed to the player ("· your turn"): play the player and click it.
+    const turn = tab.locator('[data-awscity-overlay] .bubble.turn');
+    if (confirmed < confirms.length && (await turn.count()) && (await turn.isVisible())) {
+      const said = await turn.innerText();
+      const button = tab.getByRole('button', { name: confirms[confirmed], exact: true });
+      if (said !== handled && (await button.count()) === 1) {
+        await snap('your-turn');
+        await button.click();
+        handled = said;
+        console.log(`[${flow.id}] player confirmed: ${confirms[confirmed++]}`);
+      }
     }
     if (shot < 14) await snap();
     created = await tab.evaluate(() => document.body.dataset.created);
@@ -136,7 +144,7 @@ for (const [n, flow] of FLOWS.entries()) {
   await wait(2500);
   await snap('final');
   const risky = await tab.evaluate(() => document.body.dataset.risky ?? '');
-  const ok = !!created && flow.expect.test(created) && !risky && (!flow.confirm || confirmed);
+  const ok = !!created && flow.expect.test(created) && !risky && confirmed === confirms.length;
   results.push({ flow: flow.id, created, risky: risky || 'none', ok });
   console.log(`[${flow.id}] created: ${created ?? '(nothing)'} · risky clicks: ${risky || 'none'} · ${ok ? 'OK' : 'FAIL'}`);
   const busy = await asker.evaluate(() => window.awsCity.useCity.getState().copilotTaskId);

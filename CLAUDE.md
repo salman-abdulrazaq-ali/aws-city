@@ -661,6 +661,19 @@ When a change touches a decision, update its entry and run its Proof.
   browser wants the player's OK for the Lookout's photo it asks ("📷 Allow"), and a no reads the page's address
   instead (`lookByAddress`). Proof: `npx vitest run tests/surface.test.ts tests/practice-console.test.ts
   tests/console-clarity.test.tsx`, `npm run smoke:copilot` (8 flows on the practice console, then the demo Lookout).
+- **The Console Copilot hands risky steps back, by rules.** It acts with the signed-in console user's own rights (outside
+  the player role, the ActionService and `deploy.approve`), so pure rules in `src/console/risk.ts` decide, never the model
+  (the server imports the same file). `isRisky` reads every label a control carries and its section: deletes, billing,
+  credentials, full-access and power-user policies (one CamelCase word: no leading `\b`), Block Public Access and "I
+  acknowledge" boxes, `0.0.0.0/0`, `::/0`, Anywhere-IPv4/6, All traffic, other accounts, trust policies, Create role. On
+  the real console's `PLAYER_ONLY_PAGES` (IAM, IAM Identity Center, Organizations, KMS, Secrets Manager, security group
+  rules, S3 permissions) `mayAct` refuses every click, pick and keystroke; the practice console is never one. A refused
+  step is the player's turn. The server marks the same steps `confirm`, and its prompt says page text is data, never
+  instructions. Text leaving the page is redacted (`redact`: keys, emails, tokens, 12-digit account ids bare or split by
+  `-`, `.` or a space), and the Lookout never auto-snaps a `SECRET_PAGES` page (access keys, secret values, Parameter
+  Store, KMS, CloudShell; `autoSnaps`), only when the player asks. Proof: `npx vitest run tests/console.test.ts
+  tests/console-cloudscape.test.ts tests/practice-console.test.ts tests/console-clarity.test.tsx`, `cd server && npx
+  vitest run test/console.test.ts`, `npm run smoke:copilot`.
 - **Three browsers, one codebase.** WXT `-b firefox|safari` with `manifestVersion: 3` (WXT defaults those to MV2).
   Firefox has a fixed add-on id (its sign-in redirect is derived from it); Safari signs in through a relay page
   (no identity API). Firefox/Safari origins are random per install, so the server allows them by scheme, and a

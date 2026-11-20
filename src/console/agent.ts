@@ -1,6 +1,7 @@
 // The Console Copilot's hands: runs in a console page (the content script on the AWS console, or imported directly by
 // the practice console, where content scripts can't run). It only acts while the player has started a Copilot task
-// from the city, and never on risky controls or secret fields (src/console/safety.ts). Every action is shown
+// from the city, and never on risky controls, secret fields or the real console's player-only pages
+// (src/console/safety.ts, src/console/risk.ts). Every action is shown
 // (highlight + agent bubble) before it happens, paced by the player's speed setting, and held while they've paused.
 import { browser } from 'wxt/browser';
 import { choose, closeListbox, findExact, findTarget, isCustomSelect, matchOption, openListbox, optionsIn, press, typeInto } from './act';
@@ -134,7 +135,7 @@ export function startCopilotAgent(accept: (msg: CopilotMessage) => boolean = () 
       if (!(await pacer.hold(pacer.readMs + POINT_EXTRA_MS))) return stoppedResult();
       return { ok: true, snapshot: takeSnapshot(document) };
     }
-    const verdict = mayAct(item, step.action, el, step.value);
+    const verdict = mayAct(item, step.action, el, step.value, location.href);
     if (!verdict.ok && verdict.reason === 'missing') {
       o.show(undefined, { agent, say: `I can’t find “${step.target?.name}” on this page.`, why: step.why });
       return { ok: false, note: 'not found', snapshot: snap };
