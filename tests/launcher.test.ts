@@ -84,7 +84,7 @@ describe('npm start helpers', () => {
     for (const err of [
       { name: 'ThrottlingException', message: 'Too many tokens, please wait before trying again.' },
       { name: 'ServiceQuotaExceededException', message: 'x' },
-    ]) expect(explainAwsError(err)).toMatch(/Service Quotas → Amazon Bedrock.*Claude Opus 5\.5/);
+    ]) expect(explainAwsError(err)).toMatch(/New accounts start at 0.*AWS Support case/);
     expect(explainAwsError({ name: 'AccessDeniedException', message: 'not authorized to perform bedrock:InvokeModel' })).toMatch(/not allowed/);
   });
 

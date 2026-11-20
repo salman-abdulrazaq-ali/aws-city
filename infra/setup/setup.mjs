@@ -145,7 +145,7 @@ if (missing.length) {
     verifying
       ? explainAwsError(verifying)
       : quota
-      ? `${explainAwsError({ name: 'ServiceQuotaExceededException' })}\nService Quotas console, Region ${region}: https://${region}.console.aws.amazon.com/servicequotas/home/services/bedrock/quotas\nA new account's request can take a few days to be approved; then run setup again.`
+      ? `${explainAwsError({ name: 'ServiceQuotaExceededException' })}\nSee your Claude quotas (Region ${region}): https://${region}.console.aws.amazon.com/servicequotas/home/services/bedrock/quotas\nAWS Support: https://support.console.aws.amazon.com/support/home#/case/create. Then run setup again.`
       : `In the Amazon Bedrock console (Region ${region}), open the Model catalog, pick an Anthropic Claude model and\nsubmit the one-time use-case form (once per account or organization). How-to:\nhttps://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html\nThe first call also needs aws-marketplace:Subscribe and a valid payment method. Access can take a few minutes; then run setup again.`,
     verifying ? 'Wait for AWS to verify the account' : quota ? 'Raise the Claude quota' : 'Enable Claude on Bedrock',
   );
