@@ -48,7 +48,11 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   on the Free plan (`GetAccountPlanState`, `@aws-sdk/client-freetier`), and names the Bedrock wall (`explainAwsError`),
   each linking the guide's step. When Bedrock isn't ready, the wizard offers to deploy with the AI off (`aiEnabled:
   false` → the kill switch's starting value; everything but the agents works) and re-running it once Bedrock answers
-  turns the AI on. Proof: `npm run setup -- --dry-run` (changes nothing in AWS), `cd infra && npm test`,
+  turns the AI on. **The questions only read AWS**: the Google secret is held in memory and the SES address only noted,
+  then one review screen (`infra/lib/review.ts`: every answer, every AWS change in order, the us-east-1 note for
+  CloudFront's WAF) offers Deploy / Change an answer (the questions again, pre-filled) / Cancel, and only then writes. SES
+  in its sandbox and free-mail senders are named before the SES question; an SES identity an earlier run created
+  (`sesIdentitiesCreated`) that nothing uses is offered for removal. Proof: `npm run setup -- --dry-run` (changes nothing in AWS), `cd infra && npm test`,
   `npx vitest run tests/launcher.test.ts`; every link in the guide opens (checked when it changes).
 - **AWS's public status and news reach every player, read once by the server** (`server/src/news/`, contract v2.6 `aws.health`/`aws.news`).
   The sources are the public Health Dashboard JSON (UTF-16 with a BOM), with the status RSS as fallback, and What's New. Hosts are

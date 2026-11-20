@@ -139,8 +139,20 @@ models. Then it asks a few questions:
 | Chrome Web Store id | Leave empty |
 | GitHub deploys | Skip |
 
-It asks before every change to AWS, bootstraps CDK, deploys (15–25 minutes the first time), smoke-tests the live API,
-and builds the extension. The answers are saved in `aws-city.config.json` (no secrets).
+**Nothing changes in AWS while you answer.** At the end, a review screen lists every answer and every change it will
+make (storing the Google secret, verifying an SES address, preparing CDK, the deploy). Choose **Deploy**, **Change an
+answer** (the questions again, with your answers filled in) or **Cancel**. Then it asks before each change, deploys
+(15–25 minutes the first time), smoke-tests the live API and builds the extension. Your answers are saved in
+`aws-city.config.json` (no secrets).
+
+**Why us-east-1 when you chose another Region?** Without a custom domain, the city is served through CloudFront, which is
+global, and AWS requires CloudFront's firewall (AWS WAF) to be created in us-east-1 (N. Virginia)
+([AWS WAF docs](https://docs.aws.amazon.com/waf/latest/developerguide/how-aws-waf-works-resources.html)). Only that
+firewall lives there. Your server, data and sign-in stay in your Region.
+
+**Sign-up emails:** skip Amazon SES unless your account has SES production access. A new account's SES is in a
+sandbox, where it emails only addresses you verify one by one, so other players couldn't sign up. Use an address on a
+domain you own: a free address (outlook.com, gmail.com…) sent through SES is often filtered as spoofed.
 
 ## 9. After the deploy
 
@@ -150,6 +162,20 @@ and builds the extension. The answers are saved in `aws-city.config.json` (no se
 4. **Link your AWS account:** follow the in-game link to create the small, read-mostly role in *the same Region*, then
    paste your 12-digit account ID.
 5. Ask an agent something, and approve one change. Every change waits for your **Approve**.
+
+## Change a setting later
+
+Run `npm run setup` again. Every answer is filled in from last time: press Enter to keep one, or type a new one, then
+**Deploy** from the review screen.
+
+- **A new alarm email:** AWS emails the new address a confirmation link. Click it.
+- **A new or no SES sender:** the new address gets a verification email. If an earlier run set up the old one and nothing
+  uses it now, setup offers to remove it.
+- **The Google secret:** answer **Yes** to "Replace it?" and paste the new one.
+- **The AI**, once Bedrock answers: just run setup again. It checks Bedrock and switches the AI on.
+
+Got something wrong before deploying? Choose **Change an answer** on the review screen, or press Ctrl-C: nothing in
+AWS changes before you confirm.
 
 ## 10. Running it, and taking it down
 
