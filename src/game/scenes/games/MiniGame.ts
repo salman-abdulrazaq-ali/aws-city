@@ -361,7 +361,9 @@ export abstract class MiniGame extends Phaser.Scene {
     // The weekly challenge's game pays half as many stars again (src/state/events.ts).
     const base = Math.min(expert() ? 38 : 25, Math.round((paid / 10) * (expert() ? EXPERT_STARS : 1)));
     const roundsBefore = countRound(this.gameId);
-    const xp = Math.max(this.minStars, gatedStars(Math.round(roundStars(base, roundsBefore, newBest) * (weekly ? WEEKLY_BONUS : 1)), gate));
+    // A game's floor (Rush Hour's 1⭐) holds only while rounds still pay: past the day's rounds a round pays nothing.
+    const earned = gatedStars(Math.round(roundStars(base, roundsBefore, newBest) * (weekly ? WEEKLY_BONUS : 1)), gate);
+    const xp = roundStars(1, roundsBefore, newBest) > 0 ? Math.max(this.minStars, earned) : earned;
     // Boards keep timed rounds only (relaxed play is excluded); a round below the floor records no score. A round that
     // scored pays City Coins too (store.recordGame, contract v2.14).
     const coins = s.recordGame(this.gameId, gate.ok ? paid : 0, { timed: !relaxed() });
@@ -391,12 +393,12 @@ export abstract class MiniGame extends Phaser.Scene {
     items.push(score);
     y += score.height + 6;
     if (halved && gate.ok) {
-      // Coins stop after the half-pay rounds (src/state/wallet.ts roundCoins); stars keep growing the building.
-      const noCoins = !coins && roundsBefore >= FULL_ROUNDS_A_DAY + HALF_ROUNDS_A_DAY;
+      // Stars and coins both stop after the half-pay rounds (src/learning/gameStars.ts roundStars, wallet.ts roundCoins).
+      const noPay = !coins && roundsBefore >= FULL_ROUNDS_A_DAY + HALF_ROUNDS_A_DAY;
       const cap = text(
         y,
-        noCoins
-          ? 'No more coins from this game today: stars still grow the building. Full pay again tomorrow, or beat your best!'
+        noPay
+          ? "That's all the stars and coins this game pays today. Full pay again tomorrow, or beat your best!"
           : `Half stars and coins after ${FULL_ROUNDS_A_DAY} rounds a day. Full pay again tomorrow, or beat your best!`,
         13,
         '#6b7280',

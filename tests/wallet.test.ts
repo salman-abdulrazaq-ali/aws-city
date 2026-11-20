@@ -1,7 +1,8 @@
 // City Coins (contract v2.14, src/state/wallet.ts): earning, spending, the merge and the one-time decor refund.
 import { describe, expect, it } from 'vitest';
 import type { Progress } from '@/backend/contract';
-import { charge, COIN_PAY, coins, coinsToday, earn, HALF_ROUNDS_A_DAY, LOG_DAYS, mergeWallet, migrateWallet, payShift, refund, roundCoins, spend } from '@/state/wallet';
+import { charge, COIN_PAY, coins, coinsToday, DESIGN_COINS_A_DAY, designPay, earn, HALF_ROUNDS_A_DAY, LOG_DAYS, mergeWallet, migrateWallet, payShift, refund, roundCoins, spend } from '@/state/wallet';
+import { memoryLedger } from '@/learning/dailyLedger';
 import { FULL_ROUNDS_A_DAY } from '@/learning/gameStars';
 import { mergeProgress } from '@/state/progress';
 import { CATALOGUE } from '@/state/buildmode';
@@ -157,5 +158,31 @@ describe('mini-game round coins', () => {
     expect(paid.reduce((a, b) => a + b, 0)).toBe(FULL_ROUNDS_A_DAY * COIN_PAY.round + HALF_ROUNDS_A_DAY * Math.ceil(COIN_PAY.round / 2));
     // A new best always pays in full.
     expect(roundCoins(50, true)).toBe(COIN_PAY.round);
+  });
+});
+
+describe('drawing-board coins', () => {
+  const svc = (n: number, from = 0) => Array.from({ length: n }, (_, i) => `svc${from + i}`);
+  it('pay each service once a day, at most 8 a design and DESIGN_COINS_A_DAY in all; a new day starts again', () => {
+    expect(DESIGN_COINS_A_DAY).toBe(40);
+    const day = '2026-11-20';
+    const seen = memoryLedger();
+    // Five services, then the same five again: paid once.
+    expect(designPay(svc(5), day, seen)).toEqual(svc(5));
+    expect(designPay(svc(5), day, seen)).toEqual([]);
+    // Five new ones: only three fit under the day's total (8 × 5 = 40 coins).
+    expect(designPay(svc(5, 5), day, seen)).toEqual(svc(3, 5));
+    expect(designPay(svc(8, 20), day, seen)).toEqual([]);
+    // A service the total had no room for wasn't marked paid: tomorrow it pays.
+    const next = '2026-11-21';
+    expect(designPay(svc(1, 8), next, seen)).toEqual(['svc8']);
+    // One design pays 8 services at most, so a day never pays more than the total.
+    const fresh = memoryLedger();
+    const paid = designPay(svc(12, 100), day, fresh);
+    expect(paid).toHaveLength(8);
+    expect(paid.length * COIN_PAY.drawing).toBe(DESIGN_COINS_A_DAY);
+    let more = 0;
+    for (let i = 0; i < 30; i++) more += designPay(svc(8, 200 + i * 8), day, fresh).length;
+    expect(more).toBe(0);
   });
 });

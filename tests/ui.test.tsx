@@ -212,6 +212,46 @@ describe('an architecture puzzle', () => {
     expect(container.querySelectorAll('.tray .svc').length).toBeLessThanOrEqual(new Set(p.required).size + 1);
     localStorage.clear();
   });
+
+  it('Start fresh clears the board and the mistakes on the way, and forgets the draft', async () => {
+    const { ArchitectureBoard } = await import('@/ui/ArchitectureBoard');
+    const { PUZZLES } = await import('@/world/content');
+    const { slotsOf } = await import('@/learning/diagram');
+    const { draftKey } = await import('@/learning/puzzleDraft');
+    const p = PUZZLES[0];
+    const slot = slotsOf(p).find((s) => s.required)!;
+    localStorage.setItem(draftKey(p.id), JSON.stringify({ placements: { [slot.id]: slot.service }, drops: [p.distractors[0]], misdrops: 4, revealed: [slot.id] }));
+    const prog = useCity.getState().progress;
+    useCity.setState({ progress: { ...prog, puzzles: {} }, focusPuzzle: p.id });
+    const { container } = render(<ArchitectureBoard />);
+    expect(container.querySelector('.arch-label .muted')?.textContent).toMatch(/· 1\//);
+    fireEvent.click(screen.getByRole('button', { name: /Start fresh/ }));
+    expect(container.querySelector('.arch-label .muted')?.textContent).toMatch(/· 0\//);
+    expect(screen.getByText(/A fresh start/)).toBeTruthy();
+    // Nothing left worth keeping: the stored draft is gone, and the button with it.
+    expect(localStorage.getItem(draftKey(p.id)) ?? '').toBe('');
+    expect(screen.queryByRole('button', { name: /Start fresh/ })).toBeNull();
+    localStorage.clear();
+  });
+});
+
+describe('a finding card', () => {
+  it('an explain-only finding has "Got it": it resolves it and closes the card; a fixable one is fixed, not dismissed', async () => {
+    const { FindingCard } = await import('@/ui/FindingCard');
+    const { demoFindings } = await import('@/backend/mockAccount');
+    const plain = demoFindings().find((f) => !f.fix)!;
+    const fixable = demoFindings().find((f) => !!f.fix)!;
+    useCity.setState({ findings: { [plain.id]: { ...plain, seenAt: 1 }, [fixable.id]: { ...fixable, seenAt: 2 } }, findingOpen: plain.id });
+    render(<FindingCard openTab={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Got it' }));
+    expect(useCity.getState().findings[plain.id].status).toBe('resolved');
+    expect(useCity.getState().findingOpen).toBeUndefined();
+    act(() => useCity.getState().openFinding(fixable.id));
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Got it' })).toBeNull();
+    act(() => useCity.setState({ findings: {}, findingOpen: undefined }));
+    localStorage.clear();
+  });
 });
 
 describe('quest cards that never stall', () => {

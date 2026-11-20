@@ -10,7 +10,7 @@ import { mixCatch } from './games/fishDeck';
 import { growthLine, growthOf } from '@/state/growth';
 import { dealRound, expert, expertOpen, pace, relaxed, setExpert } from '../pace';
 import { onSceneEnd } from './lifecycle';
-import { countRound, fishingStars, FULL_ROUNDS_A_DAY } from '@/learning/gameStars';
+import { countRound, fishingStars, FULL_ROUNDS_A_DAY, HALF_ROUNDS_A_DAY } from '@/learning/gameStars';
 import { weeklyChallenge, WEEKLY_BONUS } from '@/state/events';
 import { reducedMotion } from '../motion';
 import { CSS } from '../theme';
@@ -399,7 +399,15 @@ export class FishingScene extends Phaser.Scene {
     };
     text(record ? '🏆 New best!' : 'Round over', 16, '#92400e');
     text(`${this.correct}/${ROUND} objects in the right bucket${perfect ? ' — perfect!' : ''}${stars ? `   ·   +${stars} ⭐${coins ? `  +${coins} City Coins` : ''}${weekly ? ' ⚡ weekly' : ''}` : ''}`, 14, '#1b1200');
-    if (halved) text(`Half stars after ${FULL_ROUNDS_A_DAY} rounds a day. Full stars again tomorrow, or beat your best!`, 12, '#6b7280', '600');
+    if (halved)
+      text(
+        stars
+          ? `Half stars after ${FULL_ROUNDS_A_DAY} rounds a day, none after ${FULL_ROUNDS_A_DAY + HALF_ROUNDS_A_DAY}. Full stars again tomorrow, or beat your best!`
+          : "That's all the stars this game pays today. Full stars again tomorrow, or beat your best!",
+        12,
+        '#6b7280',
+        '600',
+      );
     text(last, 13, '#374151', '600');
     text(`🏗️ ${growthLine(g)}`, 13, '#374151');
     const barW = Math.min(260, cw - 60);

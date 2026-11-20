@@ -64,7 +64,8 @@ describe('Watch it done', () => {
     rerender(view());
     expect(container.querySelector('.watch-result .task-result')?.textContent).toMatch(/What Sally built: Your photos are stored cheaply/);
     expect(container.querySelector('.watch-teaches')?.textContent).toMatch(/What it teaches: S3 storage classes/);
-    expect(screen.getByText('+15 ⭐ S3 Lake')).toBeTruthy();
+    // A task pays a little (the agent did the work): at most TASK_STARS, whatever the server reports.
+    expect(screen.getByText('+3 ⭐ S3 Lake')).toBeTruthy();
     expect(screen.getByRole('button', { name: /^Next: / })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /See it in Deploy/ }));
     expect(plan).toHaveBeenCalledWith('static-site', 't1');

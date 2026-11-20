@@ -10,6 +10,8 @@ import { nextAction, openJobs, runNext } from '@/state/next';
 import { currentStreak, dayKey, overtimeGoal, settleToday, todayGoals, type TodaySet } from '@/state/progress';
 import { isDiscovered } from '@/state/selectors';
 import { buildTodo, shows, todoProgress, type TodoTask } from '@/state/simple';
+import { fixableNow } from '@/state/citizens';
+import { stepsLeftToPay } from '@/learning/workshopRewards';
 import { useCity } from '@/state/store';
 import { PLACES, placeFor } from '@/world/places';
 import { GAME_NAMES, readPref, TODAY_SET_KEY, writePref } from './logic';
@@ -71,11 +73,17 @@ export function useTodayGoals(care: boolean) {
   const region = useCity((s) => s.cityRegion);
   const streak = useCity((s) => s.progress.streak);
   const focus = useCity((s) => s.clientFocus);
+  const findings = useCity((s) => s.findings);
+  // A workshop step can pay for real only with a linked account the server reads (the demo's steps are practice).
+  const real = useCity((s) => s.backendKind !== 'mock' && s.account.linked);
   const day = dayKey();
   const game = gameBuilding(progress, region);
   // The order board feeds the shift: how many jobs it has open now (City Clients must be open).
   const jobs = ladder.clients ? openJobs(progress, region, focus, 5).length : 0;
-  const open = { learn: ladder.tabs.has('learn'), puzzles: ladder.learnBuild, care, games: !!game, labs: ladder.places, designs: ladder.learnBuild, jobs };
+  // A fix or a workshop step that can't be done now is a bonus chip, so it never holds the day open.
+  const careNow = care && fixableNow(progress, Object.values(findings));
+  const labsNow = stepsLeftToPay(progress.workshops, real ? 'real' : 'practice');
+  const open = { learn: ladder.tabs.has('learn'), puzzles: ladder.learnBuild, care, careNow, games: !!game, labs: ladder.places, labsNow, designs: ladder.learnBuild, jobs };
   // The finish line is set at the day's first look; what opens later is a bonus (it never moves "2/3" to "2/4").
   const saved = readTodaySet();
   const set = settleToday(saved, day, todayGoals(log, day, open).flatMap((g) => (g.bonus ? [] : [g.id])));

@@ -71,11 +71,15 @@ describe('Simple mode (the default)', () => {
     }
     // One filled button: the first thing still to do.
     expect(container.querySelectorAll('.btn.primary')).toHaveLength(1);
-    // "n/m done" and the HUD's "To do n/m" count exactly the rows shown, and the day isn't done while one is open.
-    const ticked = container.querySelectorAll('.todo-check.on').length;
-    expect(container.querySelector('.todo-count')?.textContent).toBe(`${ticked}/${rows.length} done`);
+    // "n/m done" and the HUD's "To do n/m" count exactly the rows that can tick (today's goals), never the next action or
+    // the board's filler jobs, and the day isn't done while one is open.
+    const counted = container.querySelectorAll('.todo-row.counts');
+    expect(counted.length).toBeGreaterThan(0);
+    expect(counted.length).toBeLessThan(rows.length);
+    const ticked = container.querySelectorAll('.todo-row.counts .todo-check.on').length;
+    expect(container.querySelector('.todo-count')?.textContent).toBe(`${ticked}/${counted.length} done`);
     const hud = render(<Hud layout="panel" />);
-    expect(hud.container.querySelector('.hud-todo')?.textContent).toMatch(new RegExp(`To do ${ticked}/${rows.length}`));
+    expect(hud.container.querySelector('.hud-todo')?.textContent).toMatch(new RegExp(`To do ${ticked}/${counted.length}`));
     hud.unmount();
     expect(screen.queryByText(/Done for today/)).toBeNull();
     expect(screen.getByRole('progressbar', { name: 'Today’s tasks done' })).toBeTruthy();
@@ -131,10 +135,35 @@ describe('Simple mode (the default)', () => {
     const shown = screen.getAllByRole('listitem').length;
     expect(shown).toBe(5);
     const n = Number(more.textContent?.match(/\+(\d+)/)?.[1]);
-    expect(container.querySelector('.todo-count')?.textContent).toMatch(new RegExp(`/${shown + n} done$`));
+    const count = container.querySelector('.todo-count')?.textContent;
     fireEvent.click(more);
     expect(screen.getAllByRole('listitem')).toHaveLength(shown + n);
     expect(container.querySelector('.todo-more')).toBeNull();
+    // The goals behind "+N more" were counted all along: the count is every row that can tick, shown or folded.
+    expect(count).toMatch(new RegExp(`/${container.querySelectorAll('.todo-row.counts').length} done$`));
+  });
+
+  it('City care with nothing to fix now never holds the day open; a finding its citizen can fix makes it a task', async () => {
+    const { demoFindings } = await import('@/backend/mockAccount');
+    const { LEVEL_XP } = await import('@/state/citizens');
+    const done = { [QUESTS[0].id]: { status: 'done' as const, step: QUESTS[0].steps.length, count: 0 } };
+    const all = (c: HTMLElement) => {
+      const more = c.querySelector<HTMLButtonElement>('.todo-more');
+      if (more) fireEvent.click(more);
+    };
+    useCity.setState({ progress: player({ quests: done }), careReleased: true, findings: {} });
+    const first = render(<Home openTab={() => {}} />);
+    all(first.container);
+    expect(first.container.querySelector('.care-fold')).toBeTruthy(); // City care is open…
+    expect(screen.queryByText('Fix something')).toBeNull(); // …but with nothing to fix, it's no task for today
+    first.unmount();
+    // Another day: a finding whose citizen has learned enough to fix it.
+    localStorage.clear();
+    const f = demoFindings().find((x) => x.fix?.scope === 'game')!;
+    useCity.setState({ findings: { [f.id]: { ...f, seenAt: 1 } }, progress: player({ quests: done, citizens: { [f.citizenId]: { xp: LEVEL_XP.at(-1)! } } }) });
+    const next = render(<Home openTab={() => {}} />);
+    all(next.container);
+    expect(screen.getByText('Fix something')).toBeTruthy();
   });
 
   it('a brand-new player sees one task: the quest’s first step', () => {

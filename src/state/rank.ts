@@ -1,7 +1,8 @@
 // Each Region's city has a rank, and the player is its Mayor: Village → Town → City → Metropolis → Megacity → Global
-// City. The rank is what the player built there (every building's level, crowns included) plus the golden tokens found
-// on its streets, so it only grows with learning and walking. Pure: the HUD, the world map and My City read it.
-import type { Progress } from '@/backend/contract';
+// City, then the crown ranks (Crown City → Cloud Capital → Legendary City). The rank is what the player built there
+// (every building's level, crowns included) plus the golden tokens found on its streets, so it only grows with learning
+// and walking. Pure: the HUD, the world map and My City read it.
+import type { PresenceBeat, Progress } from '@/backend/contract';
 import { foundIn, TOKEN_POINTS } from '@/world/tokens';
 import { SERVICES } from '@/world/taxonomy';
 import { regionInfo } from '@/world/regions';
@@ -9,21 +10,33 @@ import { levelOf } from './mastery';
 import { isDiscovered } from './selectors';
 
 export interface Rank {
-  id: 'village' | 'town' | 'city' | 'metropolis' | 'megacity' | 'global';
-  name: 'Village' | 'Town' | 'City' | 'Metropolis' | 'Megacity' | 'Global City';
+  id: 'village' | 'town' | 'city' | 'metropolis' | 'megacity' | 'global' | 'crown' | 'capital' | 'legendary';
+  /** What the player reads. */
+  title: string;
+  /**
+   * What presence.beat sends beside a public Mayor's name: contract v2.12 knows six names, so the crown ranks above
+   * Global City go as 'Global City' (a new name would need a contract and server change first).
+   */
+  name: NonNullable<PresenceBeat['rank']>;
   icon: string;
   /** Points to reach it. */
   at: number;
 }
-// Spread so the top is a long, real climb (every building at Master is about 1,500 points; Global City needs crowns
-// too), while the first steps up still come within a few days of learning.
+// Spread so the top is a long, real climb, while the first steps up still come within a few days of learning. A level
+// is LEVEL_POINTS, so all 58 buildings at Master (Lv 4) are 2,320 points and with every crown (Lv 7) 4,060; the six
+// golden tokens add 30, so a city tops out at 4,090. Global City (2,200) is about every building at Master; the crown
+// ranks need crowns: 2,800 at least 45 of the 174, 3,400 at least 105, 4,000 at least 165. Every Region can reach the
+// top: a service AWS doesn't offer there stands behind a fence, but what the player knows of it still counts.
 export const RANKS: Rank[] = [
-  { id: 'village', name: 'Village', icon: '🏡', at: 0 },
-  { id: 'town', name: 'Town', icon: '🏘️', at: 60 },
-  { id: 'city', name: 'City', icon: '🏙️', at: 250 },
-  { id: 'metropolis', name: 'Metropolis', icon: '🌆', at: 700 },
-  { id: 'megacity', name: 'Megacity', icon: '🌃', at: 1400 },
-  { id: 'global', name: 'Global City', icon: '🌐', at: 2200 },
+  { id: 'village', title: 'Village', name: 'Village', icon: '🏡', at: 0 },
+  { id: 'town', title: 'Town', name: 'Town', icon: '🏘️', at: 60 },
+  { id: 'city', title: 'City', name: 'City', icon: '🏙️', at: 250 },
+  { id: 'metropolis', title: 'Metropolis', name: 'Metropolis', icon: '🌆', at: 700 },
+  { id: 'megacity', title: 'Megacity', name: 'Megacity', icon: '🌃', at: 1400 },
+  { id: 'global', title: 'Global City', name: 'Global City', icon: '🌐', at: 2200 },
+  { id: 'crown', title: 'Crown City', name: 'Global City', icon: '👑', at: 2800 },
+  { id: 'capital', title: 'Cloud Capital', name: 'Global City', icon: '🏛️', at: 3400 },
+  { id: 'legendary', title: 'Legendary City', name: 'Global City', icon: '🌟', at: 4000 },
 ];
 /** Points: each building level (1–7) and each golden token found here. */
 export const LEVEL_POINTS = 10;
@@ -56,6 +69,6 @@ export const mayorOf = (region: string) => `Mayor of ${regionInfo(region)?.city 
 
 /** "140 more points to Town: every building level is 10, every golden token 5". */
 export function nextRankLine(r: CityRank) {
-  if (!r.next) return `${r.rank.name}: the top rank. Keep crowning buildings.`;
-  return `${r.next.at - r.points} more points to ${r.next.name}: each building level is ${LEVEL_POINTS}, each golden token ${TOKEN_POINTS}.`;
+  if (!r.next) return `${r.rank.title}: the top rank. Keep crowning buildings.`;
+  return `${r.next.at - r.points} more points to ${r.next.title}: each building level is ${LEVEL_POINTS}, each golden token ${TOKEN_POINTS}.`;
 }

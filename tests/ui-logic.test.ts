@@ -259,6 +259,56 @@ describe("Today's goals on Home", () => {
     const empty = settleToday(undefined, day, []);
     expect(settleToday(empty, day, ['cards']).ids).toEqual(['cards']);
   });
+
+  it('a fix or a workshop step that can’t be done now is a bonus chip, so it never holds "Done for today" shut', async () => {
+    const { settleToday, todayDone, todayGoals } = await import('@/state/progress');
+    const day = '2026-10-12';
+    // City care is open but no finding's fix can be offered yet; every workshop step has paid already.
+    const stuck = { learn: true, puzzles: true, care: true, careNow: false, labs: true, labsNow: false };
+    const first = todayGoals(undefined, day, stuck);
+    expect(first.map((g) => [g.id, !!g.bonus])).toEqual([['cards', false], ['puzzles', false], ['labs', true], ['fixes', true]]);
+    const set = settleToday(undefined, day, first.flatMap((g) => (g.bonus ? [] : [g.id])));
+    expect(set.ids).toEqual(['cards', 'puzzles']);
+    // Cards and a puzzle done: the day is done, whatever City care and the workshops hold.
+    const log = { day, cards: 5, puzzles: 1, fixes: 0, labs: 0 };
+    expect(todayDone(todayGoals(log, day, stuck, set.ids))).toEqual({ done: 2, of: 2 });
+    // Doable: they're day goals (and a jobs top-up isn't needed to reach the shift's minimum).
+    const doable = todayGoals(undefined, day, { ...stuck, careNow: true, labsNow: true });
+    expect(doable.map((g) => [g.id, !!g.bonus])).toEqual([['cards', false], ['puzzles', false], ['labs', false], ['fixes', false]]);
+    // A day set while a fix was possible: once that finding is gone, the goal drops out of the finish line ("2/2",
+    // not a "2/3" that can never finish); a fix already done today stays one of the day's goals.
+    const morning = settleToday(undefined, day, todayGoals(undefined, day, { ...stuck, careNow: true }).flatMap((g) => (g.bonus ? [] : [g.id])));
+    expect(morning.ids).toEqual(['cards', 'puzzles', 'fixes']);
+    expect(todayDone(todayGoals(log, day, stuck, morning.ids))).toEqual({ done: 2, of: 2 });
+    expect(todayDone(todayGoals({ ...log, fixes: 1 }, day, stuck, morning.ids))).toEqual({ done: 3, of: 3 });
+    // A goal that can't be done doesn't take a slot from a job on a short shift.
+    const short = todayGoals(undefined, day, { learn: true, puzzles: false, care: true, careNow: false, jobs: 3 });
+    expect(short.filter((g) => !g.bonus).map((g) => [g.id, g.goal])).toEqual([['cards', 5], ['jobs', 2]]);
+  });
+
+  it('what "can be done now" means: an open finding whose fix gate passes, a workshop step that would still pay', async () => {
+    const { fixableNow, LEVEL_XP } = await import('@/state/citizens');
+    const { stepsLeftToPay } = await import('@/learning/workshopRewards');
+    const { demoFindings } = await import('@/backend/mockAccount');
+    const { WORKSHOPS } = await import('@/world/workshops');
+    const withFix = demoFindings().find((f) => f.fix && f.fix.scope === 'game')!;
+    const noFix = demoFindings().find((f) => !f.fix)!;
+    const p: Progress = { version: 2, landmarks: {}, updatedAt: '' };
+    // A citizen who hasn't learned enough can't offer the fix yet; a finding with no automatic fix never can.
+    expect(fixableNow(p, [withFix, noFix])).toBe(false);
+    const taught: Progress = { ...p, citizens: { [withFix.citizenId]: { xp: LEVEL_XP.at(-1)! } } };
+    expect(fixableNow(taught, [withFix])).toBe(true);
+    expect(fixableNow(taught, [{ ...withFix, status: 'resolved' }])).toBe(false);
+    expect(fixableNow(taught, [noFix])).toBe(false);
+    // Workshops: every step done in practice still pays for real, never again in practice.
+    const w = WORKSHOPS[0];
+    const practised = { [w.id]: { steps: Object.fromEntries(w.steps.map((st) => [st.id, 'practice' as const])) } };
+    expect(stepsLeftToPay(undefined, 'practice')).toBe(true);
+    expect(stepsLeftToPay(practised, 'practice', [w])).toBe(false);
+    expect(stepsLeftToPay(practised, 'real', [w])).toBe(true);
+    const real = { [w.id]: { steps: Object.fromEntries(w.steps.map((st) => [st.id, 'real' as const])) } };
+    expect(stepsLeftToPay(real, 'real', [w])).toBe(false);
+  });
 });
 
 describe('the Learn tab counts cards learned, not cards seen', () => {

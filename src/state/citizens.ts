@@ -88,6 +88,10 @@ export function howToTeach(c: CitizenDef) {
   return `review flashcards for ${list}, pass an architecture puzzle scoring ${PUZZLE_PILLAR_MIN} or more on ${PILLARS.find((p) => p.id === c.pillar)?.name ?? c.pillar}, or ask ${c.name} to explain a finding`;
 }
 
+/** Some open finding's fix can be offered now (its citizen knows enough): only then can "Fix something" tick today. */
+export const fixableNow = (p: Progress, findings: Iterable<Pick<CityFinding, 'status' | 'citizenId' | 'fix'>>) =>
+  [...findings].some((f) => f.status === 'open' && fixGate(p, f).ok);
+
 /** Whether the finding's citizen may offer its fix yet, and if not, what the player can do about it. */
 export function fixGate(p: Progress, f: Pick<CityFinding, 'citizenId' | 'fix'>): { ok: true } | { ok: false; reason: string } {
   if (!f.fix) return { ok: false, reason: 'There’s no automatic fix for this one. Explain shows what to change.' };

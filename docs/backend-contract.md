@@ -232,7 +232,8 @@ refuses a save that carries `remembered`, `scored`, `bestTimed` or `bestWeek`. D
 - `Progress.games[id].bestTimed?` / `bestWeek?` (`YYYY-Www`, the ISO week of the UTC date, the same week the boards use): the best round played against the
   clock that week (relaxed rounds never count). The client sends only this week's `bestTimed` to `score.submit`. On merge
   the later week wins; the same week, the higher score.
-- `presence.beat`'s `rank` may be `Global City`, the sixth rank (above Megacity).
+- `presence.beat`'s `rank` may be `Global City`, the sixth rank (above Megacity). The client's crown ranks above it
+  (Crown City, Cloud Capital, Legendary City: `src/state/rank.ts`) are sent as `Global City`, so the six names stand.
 
 
 **v2.13 additions, City Clients and build mode (optional):**

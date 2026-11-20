@@ -276,7 +276,9 @@ When a change touches a decision, update its entry and run its Proof.
   progress grows. Going somewhere (a button that names a tab, a building tap) shows that tab while the player is there but
   never opens it for good; only ⋯ → Show everything does (`opened`; it also turns Simple mode off). Findings are held until city care unlocks (a linked account sees them at once),
   then drip in least severe first, at most `MAX_OPEN_FINDINGS` open; hardware-choice advice (`ADVANCED_RULES`: Graviton,
-  previous generation, gp2) waits until a quest is finished and comes last. AWS news (the ticker and incident toasts) is a rung too:
+  previous generation, gp2) waits until a quest is finished and comes last. A finding with no automatic fix has "Got it"
+  (`ackFinding`: resolved, remembered on the device), so it never holds a place for good; the demo never sends a finding in
+  `Progress.fixes` open again (`MockBackend.putProgress`). AWS news (the ticker and incident toasts) is a rung too:
   it opens after the first quest, and the demo's practice drill waits for it (`MockBackend.putProgress`); storms still show.
   There's no "Open anyway" list: the shift's "Coming up next" names the next unlock and how to earn it.
   Proof: `npx vitest run tests/ladder.test.ts tests/finding-pacing.test.ts tests/contract.test.ts`.
@@ -285,9 +287,10 @@ When a change touches a decision, update its entry and run its Proof.
   (`discoverCombo`, `watchBadges`), City care's release (`careUnlocked` in `src/app/runtime.ts`) and the city's courier
   hint, blueprint card and rush-hour surge (`CityScene`). Simple's City tab is one To-do list (`buildTodo`: the next
   action, today's goals and the order board's jobs, deduped by key, at most `TODO_MAX` 5, each a box, one line why and one
-  button that says what happens; "To do n/m" counts today's goals, then "Done for today. Come back tomorrow: N cards
-  ready"; while a quest step is open the day can't read done before `DAY_MIN_DONE` 2 goals are ticked, so a first day
-  is the step plus one goal); a walk run from a game, an HQ or the world map goes back to the city first (`walkTo`,
+  button that says what happens; "To do n/m" counts only the rows that can tick (`todoProgress`: today's goals, never the
+  next action or the board's filler jobs), then "Done for today. Come back tomorrow: N cards ready"; on a day with fewer
+  than `DAY_MIN_DONE` 2 goals an open quest step holds the day open and counts as a row (`holds`), so a first day is the
+  step plus one goal); a walk run from a game, an HQ or the world map goes back to the city first (`walkTo`,
   `walkToStation`); in the city, Simple drops the islands' "AWS trouble" labels and the drill's citizen talk, and the
   "E · Visit X" hint goes once its step is done; the HUD is ⭐ · coins · To do · Decorate · ⋯; tabs City · Learn · Jobs, Deploy only for a deploy step, a linked
   account or a change waiting for approval; Learn hides the Drawing board (a design step shows it); City care waits for a
@@ -308,7 +311,9 @@ When a change touches a decision, update its entry and run its Proof.
   `npx vitest run tests/next.test.ts tests/ui.test.tsx`, `npm run smoke` (one primary button on the shift).
 - **Learning has a daily rhythm and a goal.** The shift shows Today (a few cards, a puzzle, a fix: only areas that are open;
   `todayGoals` in `src/state/progress.ts`; the day's set is fixed at its first look, `settleToday`, and areas that open
-  later are bonus goals that don't move "2/3 done") and the certification the player chose in Golden Jacket Hall
+  later are bonus goals that don't move "2/3 done"; "Fix something" is a day goal only while an open finding's fix gate
+  passes (`fixableNow`) and "Do a workshop step" only while a step would still pay (`stepsLeftToPay`), else they're bonus
+  chips, so neither holds "Done for today" shut) and the certification the player chose in Golden Jacket Hall
   (`prefs.certGoal`, `certProgress`). Each building's sign counts its reviewed cards due again (🃏, `dueFor` in
   `src/state/srs.ts`, re-read each minute; shown with the name under the label budget). Each building's card offers "Which one should I pick?" comparisons
   (`shared/comparisons.json`, AWS decision guides as sources, `CompareCard`). ⋯ → Save a postcard downloads the city as a
@@ -340,7 +345,9 @@ When a change touches a decision, update its entry and run its Proof.
   Proof: `npx vitest run tests/moments.test.ts tests/incidents.test.ts tests/tokens.test.ts tests/ui.test.tsx`.
 - **Each Region is its own city** (contract v2.7, `src/state/cities.ts`). Landmarks live in `Progress.cities[region]`;
   global services (`shared/region-facts.json` `global`) stay in `Progress.landmarks` and stand in every city. Knowledge
-  (cards, quests, puzzles, citizens, streak) follows the player. Old saves migrate into the city being built. Selectors
+  (cards, quests, puzzles, citizens, streak) follows the player, and a building put up in a city for the first time
+  starts from it: the new-card stars (4⭐) for each of its cards the player knows, below Expert at most (`carriedStars`,
+  `CARRY_MAX`), once per city (copies merge by the higher xp). Old saves migrate into the city being built. Selectors
   take the Region (`isDiscovered(p, id, region)`); without one they mean "anywhere". Your real resources stand where they
   live (`src/world/resources.ts`, `shared/resource-props.json`): servers on their AZ's island, buckets on the lake.
   Proof: `npx vitest run tests/cities.test.ts tests/resources.test.ts`, `cd server && npx vitest run test/progress.test.ts`.
@@ -398,16 +405,21 @@ When a change touches a decision, update its entry and run its Proof.
   tall building by its middle without losing its ground (`buildingFocusY`, `src/game/camera.ts`). Between levels a building
   shows scaffolding (1/3 of the way) then a crane (2/3) (`constructionStage`, `TierProps.syncWorks`); a tier-up flies the
   camera there, and one earned while the city slept (game, HQ, world map) is celebrated on return. Drawings pay most
-  (`src/learning/puzzleRewards.ts`: first pass 12/service + 10, better pass 4, a failed try 2 per right piece once a day);
-  a puzzle's `best` is its best *pass* only, and the panel states the rule (70+, nothing missing). Games pay full stars
-  for 3 rounds a day per game or a new best (`gameStars.ts`); a game with calls has a `minAccuracy` (`shared/minigames.json`)
+  (`src/learning/puzzleRewards.ts`: first pass 12/service + 10, the 10 only when the score with the mistakes on the way
+  still reaches 70; better pass 4; a failed try 2 per right piece once a day). A drawing passes on the board as it stands
+  (`src/learning/scoring.ts` `design`: nothing missing, 70+): decoys tried, wrong spots and shown cards (`penalty`) cost
+  score and stars, never the pass, and ↺ Start fresh clears them. A pass records at least 70, so a puzzle's `best` is its
+  best *pass* only, and the panel states the rule (70+, nothing missing) and what the mistakes cost. Games pay full stars
+  for 3 rounds a day per game or a new best, half for the next `HALF_ROUNDS_A_DAY` 10, then none, where their coins stop
+  (`gameStars.ts` `roundStars`); a game with calls has a `minAccuracy` (`shared/minigames.json`)
   below which there's no New best and a third of the stars. One daily ledger, kept on the device for the local day
-  (`src/learning/dailyLedger.ts`), limits game rounds, puzzle tries, drawing-board designs (they pay coins; their own learning kind, `designs`,
-  not a Today goal), Lookout pages (each service once a day), chat answers (3 a building, 10 in all) and tasks (3 a
-  building, then 0); workshop steps pay once per mode, so they're not on it. Again pays 0⭐, and a seen card never pays new-card stars again. District skylines average the buildings put up
+  (`src/learning/dailyLedger.ts`), limits game rounds, puzzle tries, drawing-board designs (they pay coins, 40 a day at
+  most: `designPay`; their own learning kind, `designs`, not a Today goal), Lookout pages (each service once a day),
+  console visits (2⭐ a service once a day), chat answers (3 a building, 10 in all) and agent tasks (3⭐, a helper 1⭐: 1 a
+  building and 5 in all, then 0); workshop steps pay once per mode, so they're not on it. Again pays 0⭐, and a seen card never pays new-card stars again. District skylines average the buildings put up
   (at least 2). Proof: `npx vitest run tests/puzzle-rewards.test.ts tests/park.test.ts tests/game-clock.test.ts
   tests/learning.test.ts tests/minigames.test.ts tests/workshops.test.ts tests/daily-pay.test.ts tests/decor.test.ts tests/art.test.ts
-  tests/occlusion.test.ts tests/camera.test.ts`; `npm run smoke` checks a fully known S3 Lake reads Level 7 and audits the citizen question.
+  tests/occlusion.test.ts tests/camera.test.ts tests/ui.test.tsx tests/browse-growth.test.ts tests/wallet.test.ts`; `npm run smoke` checks a fully known S3 Lake reads Level 7 and audits the citizen question.
 - **Past Master, crowns come from knowledge, not stars** (`src/state/mastery.ts`): Lv 5–7 (`tiers.legend` in
   `shared/world.json`: Mentor, Architect, Legend) need cards remembered for a week (`MASTERED_DAYS`; the first time pays
   `REMEMBERED_STARS` 6⭐, once per card, kept as `CardState.remembered`, contract v2.12, even after an Again), a passed drawing
@@ -510,7 +522,8 @@ When a change touches a decision, update its entry and run its Proof.
   scoring mini-game round 6 (3 for the next `HALF_ROUNDS_A_DAY` 10 after a game's first 3 rounds a day, then 0, unless a new best;
   `roundCoins`; Launch Day too; relaxed rounds of a game with an accuracy floor need `RELAXED_MIN_CALLS` calls), a Watch-it-done
   repeat whose stars are used up 2 (`COIN_PAY.watch`, 5 a day), a workshop step that
-  pays stars 5, each service on a passing drawing-board design 5 (once a day per service, at most 8), finishing the day's
+  pays stars 5, each service on a passing drawing-board design 5 (once a day per service, at most 8 a design and
+  `DESIGN_COINS_A_DAY` 40 a day: `designPay`), finishing the day's
   shift 30 (once a day: Home calls `payShift` when the shift is done, and `wallet.shift` remembers the day across surfaces). A casual session (shift + 2 rounds + a job ≈ 57) buys a
   decoration (most cost 4–30; the 2×2 landmarks 50–80 are worth saving for). Both counters only go up (a refund adds to
   `earned`), so a merge takes the higher of each (coins earned on two surfaces in the same instant count once); `log`
@@ -529,11 +542,13 @@ When a change touches a decision, update its entry and run its Proof.
   walk there.") with 👀 Watch (the camera follows the agent: `flyTo` `agent:<id>`; the card folds to one live step, the
   walk there included, the same step the canvas bubble shows);
   during, its steps mirror the city (the demo plans every step it runs, the helper's visit included); after, what was
-  built, what it teaches in one line, what it paid (or the daily-cap line: `TaskView.paid`/`capped`), the next step
+  built, what it teaches in one line, what it paid (`TASK_STARS` 3⭐, a helper `TASK_HELPER_STARS` 1⭐: the agent did the
+  work; a building's first task a day and the city's first `TASK_PAID_A_DAY_TOTAL` 5, else the daily-cap line:
+  `TaskView.paid`/`capped`; a practice deploy pays what it reports, once per template), the next step
   (`nextAction`) and, in the demo when a task matches a practice template, 🏗️ See it in Deploy (`planDeploy`, link first
   if needed; Home passes `openTab` so it opens Deploy). Home's agent offer is the same `AgentOffer`, and each featured
   request's words route to the agent offering it (`FEATURED_REQUESTS`, `matchText`). A building card separates 💬 Ask a question (the HQ chat) from 🛠️ Watch it done (an agent task, whose TaskCard then shows on that same card, scrolled into view). Its sign's marks are said in words there (`signLegend`: ×N resources, ! N things to check). Proof:
-  `npx vitest run tests/watch.test.ts tests/watch-ui.test.tsx tests/taxonomy.test.ts`; `npm run smoke` (`03`–`06-task-*.png`).
+  `npx vitest run tests/watch.test.ts tests/watch-ui.test.tsx tests/taxonomy.test.ts tests/daily-pay.test.ts`; `npm run smoke` (`03`–`06-task-*.png`).
 - **City Clients: side jobs for real kinds of business** (`shared/clients.json`, `src/world/clients.ts`, `src/ui/clients/`).
   18 businesses: wave 1 (Amazon Air hub, bank, stadium, hospital, shop, school) and wave 2 (streaming studio, game studio,
   news site, port, energy utility, factory, farm co-op, car maker, phone network, town council, hotel, charity), three
@@ -564,14 +579,17 @@ When a change touches a decision, update its entry and run its Proof.
   run test/progress.test.ts`; `npm run smoke` (section 70–77: one job of every kind in Montreal, a level done, axe; 85 a
   wave 2 business: the port's jobs and its empty site).
 - **You're the Mayor; your city has a rank** (`src/state/rank.ts`: building levels and golden tokens → Village, Town, City,
-  Metropolis, Megacity, Global City at 60/250/700/1400/2200 points; `presence.beat` sends the name, v2.12). The HUD's rank chip opens **My City** (`src/ui/Collection.tsx`), the one progress hub: ⭐ · 🪙 · 💡 · 👑 crowns, the rank ladder, badges, the live city (👥), the loops below (`src/ui/Loops.tsx`), collections, and you
+  Metropolis, Megacity, Global City at 60/250/700/1400/2200 points, then the crown ranks Crown City, Cloud Capital,
+  Legendary City at 2800/3400/4000: all 58 buildings at Master are 2,320, every crown and token 4,090, in every Region (a
+  fenced service still counts what's known of it); a rank's `title` is shown, its `name` is what `presence.beat` sends,
+  v2.12, so the crown ranks go as Global City). The HUD's rank chip opens **My City** (`src/ui/Collection.tsx`), the one progress hub: ⭐ · 🪙 · 💡 · 👑 crowns, the rank ladder, badges, the live city (👥), the loops below (`src/ui/Loops.tsx`), collections, and you
   beside AWS at scale. Badges are read from Progress (`src/state/badges.ts`); only moment badges are stored
   (`Progress.badges`, v2.11), and a new one is celebrated once (`watchBadges`). Rank flags stand round the Console
   Plaza. The shift always has a next step (`src/state/next.ts`: never a fenced lot, "Upgrade" only when the deck can pay
   now, "Review N" counts the deck it opens), 3–5 goals (`todayGoals`: the order board feeds a job goal, `SHIFT_MAX`) and
   an optional overtime goal once done, a workshop goal in Today, a weekly challenge game paying
   ×1.5 (`src/state/events.ts`, the ISO week), and one streak freeze a week (`nextStreak`). Proof:
-  `npx vitest run tests/rank.test.ts tests/events.test.ts tests/streak.test.ts tests/next.test.ts`.
+  `npx vitest run tests/rank.test.ts tests/events.test.ts tests/streak.test.ts tests/next.test.ts tests/codex.test.ts`.
 - **Loops that bring you back are earned, cosmetic, free and never decay** (contract v2.15, `Progress.lights`/`seasons`/
   `drops`/`codex`; `src/state/{lights,season,drops,codex,cosmetics,rewards,cityhall,welcome}.ts`, all pure; store actions
   `lightDay`, `fillSeason`, `claimSeason`, `openDrop`, `discoverCombo`). **City Lights** replaces the streak display (HUD 💡,
@@ -668,8 +686,9 @@ When a change touches a decision, update its entry and run its Proof.
 - **Agent animation = real AWS activity.** `agent.state working/idle` from the backend drives the
   work animation. Browsing only moves focus: the camera pans, the agent waves, and first visits
   discover landmarks. "Browsing grew it": a service's console page is a moment the player sees (a toast with the
-  building's icon and its growth line, `browsedText`; the camera flies there), still 2⭐ once a minute a service, and it
-  waits behind a celebration card or a game; docs pages and other sites never make it.
+  building's icon and its growth line, `browsedText`; the camera flies there; at most once a minute a service), and it
+  waits behind a celebration card or a game. It pays 2⭐ once a day a service (the daily ledger, `visit:<id>`); docs pages
+  and other sites never make the moment and pay nothing.
   Proof: `npx vitest run tests/browse-growth.test.ts`.
 - **Surfaces.** The side panel (Chrome/Edge), the Firefox sidebar (same entrypoint) and the full tab at
   `/city.html` run the same app and merge progress through `storage.local`. The toolbar opens the panel, the

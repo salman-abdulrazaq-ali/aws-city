@@ -107,6 +107,30 @@ describe('MockBackend speaks the contract', () => {
       expect(findingsIn(events).every((f) => f.status === 'open')).toBe(true);
     });
 
+    it('a finding the player fixed (Progress.fixes) stays fixed: the demo never sends it open again', async () => {
+      const open = demoFindings().filter((f) => f.status === 'open');
+      const [first, last] = [open[0], open.at(-1)!];
+      const mock = new MockBackend({ speed: 200 });
+      const events: ServerEvent[] = [];
+      mock.onEvent((e) => events.push(e));
+      // Fixed in an earlier session: known before the city opens.
+      mock.putProgress({ version: 2, landmarks: {}, updatedAt: '', fixes: { [first.id]: '2026-11-19T10:00:00.000Z' } });
+      mock.connect();
+      // Fixed on another surface while this one was still sending its findings: it stays away too.
+      await sleep(5);
+      mock.putProgress({ version: 2, landmarks: {}, updatedAt: '', fixes: { [first.id]: '2026-11-19T10:00:00.000Z', [last.id]: '2026-11-20T10:00:00.000Z' } });
+      await sleep(500);
+      mock.disconnect();
+      const sent = findingsIn(events).map((f) => f.id);
+      expect(sent).not.toContain(first.id);
+      expect(sent).not.toContain(last.id);
+      expect(sent).toHaveLength(open.length - 2);
+      // Asking to fix it again: it's already fixed.
+      mock.send({ action: 'finding.fix', requestId: 'again', findingId: first.id });
+      await sleep(20);
+      expect(events.find((e) => e.type === 'error' && e.requestId === 'again')).toMatchObject({ message: 'That one is already fixed.' });
+    });
+
     it('builds findings from wa-rules.json, with the right fix scope', () => {
       const fs = demoFindings();
       for (const f of fs) {

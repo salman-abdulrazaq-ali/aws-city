@@ -176,6 +176,8 @@ export class MockBackend implements AgentBackend {
   private findings = new Map<string, CityFinding>();
   private care = new Map<string, { findingId: string; confirmText?: string }>();
   private careTimers: ReturnType<typeof setTimeout>[] = [];
+  /** Findings the player already fixed (Progress.fixes, from putProgress): the demo keeps them fixed across sessions. */
+  private fixed = new Set<string>();
   /** The demo's practice drill (v2.6), once it has started. */
   private drill?: { at: Date; resolvedAt?: Date };
   /** The drill waits until the player has finished a quest (from putProgress), so it never interrupts the first one. */
@@ -243,10 +245,27 @@ export class MockBackend implements AgentBackend {
     if (this.billOn) this.emit(demoBill());
     if (this.flowOn) this.startFlow();
     if (!this.findings.size) for (const f of demoFindings()) this.findings.set(f.id, f);
+    this.markFixed();
     [...this.findings.values()]
       .filter((f) => f.status === 'open')
-      // Spread over the first minute or so, so the city doesn't fill with alerts all at once.
-      .forEach((f, i) => this.careTimers.push(setTimeout(() => this.emit({ type: 'city.finding', finding: { ...f } }), (3000 + i * 9000) / this.speed)));
+      // Spread over the first minute or so, so the city doesn't fill with alerts all at once. A finding fixed meanwhile
+      // (the player's progress arrived after this was planned) stays away.
+      .forEach((f, i) =>
+        this.careTimers.push(
+          setTimeout(() => {
+            const now = this.findings.get(f.id);
+            if (now?.status === 'open') this.emit({ type: 'city.finding', finding: { ...now } });
+          }, (3000 + i * 9000) / this.speed),
+        ),
+      );
+  }
+
+  /** The findings in Progress.fixes are fixed in the practice account too (a reload never brings them back). */
+  private markFixed() {
+    for (const id of this.fixed) {
+      const f = this.findings.get(id);
+      if (f?.status === 'open') this.findings.set(id, { ...f, status: 'resolved' });
+    }
   }
 
   private explainFinding({ requestId, findingId }: FindingExplain) {
@@ -387,8 +406,9 @@ export class MockBackend implements AgentBackend {
         }
       }
 
-      const xp = [{ serviceId, amount: 15 }];
-      if (script.helper && serviceById(script.helper.agentId)) xp.push({ serviceId: script.helper.agentId, amount: 5 });
+      // What the store pays a task at most (src/state/store.ts TASK_STARS, TASK_HELPER_STARS): the agent did the work.
+      const xp = [{ serviceId, amount: 3 }];
+      if (script.helper && serviceById(script.helper.agentId)) xp.push({ serviceId: script.helper.agentId, amount: 1 });
       this.running = Math.max(0, this.running - 1);
       this.emit({ type: 'task.done', taskId, ok: true, result: script.result, xp });
       const jobs = (this.jobs.get(serviceId) ?? 0) + 1;
@@ -635,6 +655,9 @@ export class MockBackend implements AgentBackend {
   putProgress(p: Progress) {
     // The practice leaderboards show the player's own row under their public name (the demo keeps nothing else).
     this.profile = p.profile;
+    // What the player fixed stays fixed (City care never asks twice for the same fix).
+    for (const id of Object.keys(p.fixes ?? {})) this.fixed.add(id);
+    this.markFixed();
     // The demo keeps no copy; it only notices the first finished quest, which lets the practice drill run.
     if (this.drillReady || !Object.values(p.quests ?? {}).some((q) => q.status === 'done')) return;
     this.drillReady = true;

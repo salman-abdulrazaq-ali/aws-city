@@ -99,6 +99,11 @@ export interface TodoTask {
   goal?: number;
   /** One of today's goals: it counts towards the progress bar and "To do 2/4". */
   counts: boolean;
+  /**
+   * The quest step on a short day (fewer than DAY_MIN_DONE goals): it keeps the day open, so it counts towards "To do
+   * n/m" too, never ticked (the next step takes its place).
+   */
+  holds?: boolean;
   run: TodoRun;
 }
 
@@ -228,10 +233,11 @@ export function buildTodo(i: TodoInput): TodoList {
   if (first) add(first);
   for (const g of i.goals) if (!g.bonus) add(goalTask(g, i.jobs, i.gameName));
   // Today's goals all ticked: the day is done. The rows that never tick leave; the next action is offered instead.
-  // Unless a quest is under way and fewer than DAY_MIN_DONE goals are ticked (a first day has one goal): then its step
-  // stays a row to do, so one mini-game round never ends the day mid-quest.
+  // Unless a quest is under way and the day has fewer than DAY_MIN_DONE goals (a first day has one): then its step
+  // stays a row to do (and is counted as one), so one mini-game round never ends the day mid-quest.
   const goals = out.filter((t) => t.counts);
-  const questHolds = !!first && i.next.kind === 'step' && !out[at.get(first.key)!].counts && goals.filter((t) => t.done).length < DAY_MIN_DONE;
+  const questHolds = !!first && i.next.kind === 'step' && !out[at.get(first.key)!].counts && goals.length < DAY_MIN_DONE;
+  if (questHolds) out[at.get(first.key)!] = { ...out[at.get(first.key)!], holds: true };
   if (goals.length > 0 && goals.every((t) => t.done) && !questHolds) return { ...split(goals), ...(first ? { extra: first } : {}) };
   // A short list: the board's other jobs (one each), never the one a task already does.
   const taken = new Set(out.flatMap((t) => (t.run.kind === 'plan' && t.run.plan.kind === 'job' ? [t.run.plan.taskId] : [])));
@@ -261,11 +267,12 @@ function split(rows: TodoTask[]): TodoList {
 }
 
 /**
- * "To do 2/4" and "2/4 done": every row the list holds (the quest step too, and the goals behind "+N more"), ticked
- * and all. `allDone` only when every one is ticked: then the list says "Done for today" and the shift pays.
+ * "To do 2/4" and "2/4 done": only the rows that can tick (today's goals, the ones behind "+N more" too), plus a quest
+ * step holding a short day open; never the next action or the board's filler jobs, which leave once the goals are done.
+ * `allDone` only when every counted row is ticked: then the list says "Done for today" and the shift pays.
  */
 export function todoProgress(list: TodoList) {
-  const rows = [...list.tasks, ...list.more];
+  const rows = [...list.tasks, ...list.more].filter((t) => t.counts || t.holds);
   const done = rows.filter((t) => t.done).length;
   return { done, of: rows.length, allDone: rows.length > 0 && done === rows.length };
 }

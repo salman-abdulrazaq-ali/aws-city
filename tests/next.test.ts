@@ -291,3 +291,25 @@ describe('a quest step done is a moment', () => {
     s().clearToasts();
   });
 });
+
+describe('starting a quest', () => {
+  it('never restarts a finished one (nor one under way)', async () => {
+    const { useCity } = await import('@/state/store');
+    const s = () => useCity.getState();
+    s().resetSession();
+    const q = QUESTS[0];
+    useCity.setState({ progress: { ...s().progress, quests: { [q.id]: { status: 'done', step: q.steps.length, count: 0 } } } });
+    const before = s().progress;
+    s().startQuest(q.id);
+    expect(s().progress).toBe(before);
+    expect(s().progress.quests?.[q.id]).toEqual({ status: 'done', step: q.steps.length, count: 0 });
+    useCity.setState({ progress: { ...s().progress, quests: { [q.id]: { status: 'active', step: 2, count: 1 } } } });
+    s().startQuest(q.id);
+    expect(s().progress.quests?.[q.id]).toEqual({ status: 'active', step: 2, count: 1 });
+    // A quest never started does start.
+    useCity.setState({ progress: { ...s().progress, quests: {} } });
+    s().startQuest(q.id);
+    expect(s().progress.quests?.[q.id]).toMatchObject({ status: 'active', step: 0 });
+    s().resetSession();
+  });
+});

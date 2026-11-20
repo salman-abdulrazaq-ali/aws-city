@@ -635,6 +635,8 @@ const todayIs = (log) =>
 const todoNow = (p = page) =>
   p.evaluate(() => ({
     rows: [...document.querySelectorAll('#city-tabpanel .todo-row')].map((r) => `${r.classList.contains('done') ? '✓' : '☐'} ${(r.querySelector('.todo-go') ?? r.querySelector('b'))?.textContent.trim()}`),
+    // Rows that can tick (today's goals, a quest step that holds the day open): what "n/m" counts (simple.ts todoProgress).
+    counted: [...document.querySelectorAll('#city-tabpanel .todo-row.counts')].map((r) => (r.classList.contains('done') ? '✓' : '☐')),
     count: document.querySelector('#city-tabpanel .todo-count')?.textContent.trim(),
     hud: document.querySelector('.hud .hud-todo')?.textContent.trim(),
     done: document.querySelector('#city-tabpanel .todo-done')?.textContent.trim(),
@@ -645,12 +647,12 @@ const todoNow = (p = page) =>
     extras: [...document.querySelectorAll('.hud .rank-chip, .hud .hud-lights, .ticker-line, #city-tabpanel .shift, #city-tabpanel .more-fold, .supply-drop')].map((e) => e.className),
     tabs: [...document.querySelectorAll('.tabs button')].map((b) => b.title),
   }));
-/** "n/m done" and the HUD's "To do n/m" count exactly the list's rows (the ones behind "+N more" too). */
+/** "n/m done" and the HUD's "To do n/m" count the rows that can tick (the ones behind "+N more" are goals, so they count too). */
 const todoCounts = (t, where) => {
-  const ticked = t.rows.filter((r) => r.startsWith('✓')).length + t.moreDone;
-  const want = `${ticked}/${t.rows.length + t.more}`;
-  if (t.rows.length && t.count !== `${want} done`) errors.push(`simple mode (${where}): the list says "${t.count}" for ${t.rows.length} rows (+${t.more} more), ${ticked} ticked`);
-  if (t.rows.length && !t.hud?.endsWith(want)) errors.push(`simple mode (${where}): the HUD says "${t.hud}", the list ${want}`);
+  const ticked = t.counted.filter((r) => r === '✓').length + t.moreDone;
+  const want = `${ticked}/${t.counted.length + t.more}`;
+  if (t.counted.length && t.count !== `${want} done`) errors.push(`simple mode (${where}): the list says "${t.count}" for ${t.counted.length} counted rows (+${t.more} more), ${ticked} ticked`);
+  if (t.counted.length && !t.hud?.endsWith(want)) errors.push(`simple mode (${where}): the HUD says "${t.hud}", the list ${want}`);
   if (t.done && t.rows.some((r) => r.startsWith('☐'))) errors.push(`simple mode (${where}): "Done for today" with a row still open`);
 };
 await city(() => window.awsCity.useCity.getState().setPref('simple', undefined));

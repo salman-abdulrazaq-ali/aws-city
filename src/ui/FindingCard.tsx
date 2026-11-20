@@ -321,6 +321,20 @@ export function FindingCard({ openTab }: { openTab: Go }) {
               )}
               {f.fix && !gate.ok && c && <Teach f={f} c={c} need={need} openTab={openTab} close={() => close(undefined)} />}
               <div className="finding-actions">
+                {/* No automatic fix: once read, it leaves the list (so it never holds a place in City care forever). */}
+                {!f.fix && (
+                  <button
+                    className="btn primary"
+                    title="You’ve read it: it leaves City care (Explain says what to change)"
+                    onClick={() => {
+                      feel.tap();
+                      useCity.getState().ackFinding(f.id);
+                      close(undefined);
+                    }}
+                  >
+                    Got it
+                  </button>
+                )}
                 <button
                   className="btn"
                   disabled={!!care || !!offline}

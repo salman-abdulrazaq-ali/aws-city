@@ -49,6 +49,58 @@ describe('hardware-choice advice waits for a beginner (round 3 step 5)', () => {
   });
 });
 
+describe('"Got it": a finding with no automatic fix never holds a place forever', () => {
+  beforeEach(() => {
+    // "Got it" is remembered on the device (localStorage).
+    const mem = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v), removeItem: (k: string) => void mem.delete(k) });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+  const plain = demoFindings().find((f) => !f.fix && !ADVANCED_RULES.has(f.ruleId))!;
+  const fixable = demoFindings().find((f) => !!f.fix)!;
+
+  it('resolves it, lets the next one in at once, and it never comes back open (not even next session)', () => {
+    expect(plain).toBeTruthy();
+    const fs = [0, 1, 2, 3].map((i): CityFinding => ({ ...plain, id: `n${i}`, severity: 'low' }));
+    fs.forEach(send);
+    s().releaseCare();
+    // Look at each one: City care fills to MAX_OPEN_FINDINGS and the fourth waits.
+    const looked = new Set<string>();
+    for (let i = 0; i < MAX_OPEN_FINDINGS; i++) {
+      const id = shown().find((x) => !looked.has(x))!;
+      looked.add(id);
+      s().openFinding(id);
+    }
+    expect(shown()).toHaveLength(MAX_OPEN_FINDINGS);
+    expect(heldFindingIds()).toHaveLength(1);
+    // Explain-only findings used to hold those places for good. "Got it" on one: it's resolved, and the next comes in.
+    const read = shown()[0];
+    expect(s().ackFinding(read)).toBe(true);
+    expect(s().findings[read].status).toBe('resolved');
+    expect(shown()).toHaveLength(MAX_OPEN_FINDINGS);
+    expect(shown()).not.toContain(read);
+    expect(heldFindingIds()).toEqual([]);
+    // The server (or the demo) sends it again: it stays read.
+    send({ ...fs.find((f) => f.id === read)! });
+    expect(s().findings[read].status).toBe('resolved');
+    // Next session: still read, never shown.
+    s().resetSession();
+    send({ ...fs.find((f) => f.id === read)! });
+    s().releaseCare();
+    expect(shown()).toEqual([]);
+    expect(heldFindingIds()).toEqual([]);
+  });
+
+  it('a finding with an automatic fix is fixed, not dismissed', () => {
+    send({ ...fixable, id: 'fx', severity: 'low' });
+    s().releaseCare();
+    expect(shown()).toEqual(['fx']);
+    expect(s().ackFinding('fx')).toBe(false);
+    expect(s().findings.fx.status).toBe('open');
+    expect(s().ackFinding('nobody')).toBe(false);
+  });
+});
+
 describe('findings wait until city care unlocks', () => {
   it('holds new findings out of sight (so Explain and Fix can’t reach them)', () => {
     const [f] = findings(1);

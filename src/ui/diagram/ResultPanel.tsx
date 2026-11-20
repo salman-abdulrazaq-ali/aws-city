@@ -4,7 +4,7 @@ import { PILLARS, templateForPuzzle, type Puzzle } from '@/world/content';
 import { TemplateView } from '../TemplateView';
 import { serviceById } from '@/world/taxonomy';
 import { placeFor } from '@/world/places';
-import { passHint, type PuzzleReward } from '@/learning/puzzleRewards';
+import { passHint, penaltyLine, type PuzzleReward } from '@/learning/puzzleRewards';
 import { ForLearners, Plain } from '../Term';
 import { openDocs } from '@/app/runtime';
 
@@ -13,6 +13,7 @@ const name = (id: string) => serviceById(id)?.name.replace(/^(Amazon|AWS) /, '')
 /** The score, (on a pass) why the design works in simple words, tips, then the pillar meters and best-practice ids for learners. */
 export function ResultPanel({ puzzle, result, earned }: { puzzle: Puzzle; result: PuzzleScore; earned?: PuzzleReward }) {
   const hint = passHint(result, name);
+  const cost = penaltyLine(result);
   const grew = Object.entries(earned?.xp ?? {});
   const total = grew.reduce((n, [, x]) => n + x, 0);
   const tips = result.tips.slice(0, 3).map((tip) => ({ tip, bp: puzzle.pillarBonus[tip.pillar as keyof typeof puzzle.pillarBonus]?.bp }));
@@ -24,6 +25,8 @@ export function ResultPanel({ puzzle, result, earned }: { puzzle: Puzzle; result
       </div>
       {/* The rule, said out loud: a 50 isn't a broken board, it's a design that's missing a piece. */}
       {hint && <div className="result-rule">{hint}</div>}
+      {/* Exploring is never a lock-out: what the decoys, wrong spots and shown cards cost is said, and Start fresh clears it. */}
+      {cost && <div className="result-rule">{cost}</div>}
       {grew.length > 0 && (
         <div className="result-grew">
           +{total} ⭐ {earned?.kind === 'try' ? 'for the pieces already right' : earned?.kind === 'first' ? 'first pass!' : 'a better design'} ·{' '}

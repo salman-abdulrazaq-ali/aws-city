@@ -49,7 +49,7 @@ export function RegionFactsCard() {
         </button>
       )}
       <p className="muted">
-        ✨ {foundIn(progress, region)}/{TOKENS_PER_CITY} golden tokens found on these streets · {cityRank(progress, region).rank.icon} {cityRank(progress, region).rank.name}
+        ✨ {foundIn(progress, region)}/{TOKENS_PER_CITY} golden tokens found on these streets · {cityRank(progress, region).rank.icon} {cityRank(progress, region).rank.title}
       </p>
       <ul className="facts">
         <li>

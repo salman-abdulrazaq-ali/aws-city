@@ -1,15 +1,21 @@
 // Architecture puzzle scoring against the requirements and the six Well-Architected pillars.
+import { PUZZLE_PASS } from '@/state/ladder';
 import type { PillarId, Puzzle } from '@/world/content';
 import { serviceById } from '@/world/taxonomy';
 import { slotsOf, type Placements } from './diagram';
 
 export interface PuzzleScore {
-  score: number; // 0–100
+  /** 0–100: what's paid and kept as `best`. A pass never reads below PUZZLE_PASS (best is the best pass). */
+  score: number;
   passed: boolean;
   missing: string[];
   wrong: string[];
   pillars: Record<PillarId, number>; // 0–100 each
   tips: { pillar: PillarId; tip: string }[];
+  /** The design on the board as it stands, before what the mistakes on the way cost: what the pass is judged on. */
+  design: number;
+  /** Points the mistakes on the way cost (decoys tried, wrong spots, cards a hint showed): stars and best, never the pass. */
+  penalty: number;
 }
 
 export function scorePuzzle(p: Puzzle, placed: string[]): PuzzleScore {
@@ -32,7 +38,7 @@ export function scorePuzzle(p: Puzzle, placed: string[]): PuzzleScore {
   }
   const pillarAvg = ids.length ? pillarSum / ids.length / 100 : 1;
   const score = Math.max(0, Math.round((coverage * 0.65 + pillarAvg * 0.35) * 100 - wrong.length * 10));
-  return { score, passed: missing.length === 0 && score >= 70, missing, wrong, pillars, tips };
+  return { score, passed: missing.length === 0 && score >= PUZZLE_PASS, missing, wrong, pillars, tips, design: score, penalty: 0 };
 }
 
 export interface DiagramAttempt {
@@ -49,7 +55,11 @@ export interface DiagramAttempt {
  * Score a drawn diagram with the same weights as `scorePuzzle`. A service counts once all of its required
  * spots are filled (or, if optional, once any of its spots is). Then the trade-offs:
  * - each bonus service the brief doesn't need (`unneeded`) costs 6 points: more parts to pay for and run;
- * - each wrong-spot drop costs 3 points; each card a hint showed costs 3, at most 12.
+ * - each decoy tried costs 10 points and 15% on every pillar, each wrong-spot drop 3 points, and each card a hint
+ *   showed 3, at most 12.
+ * The pass is judged on the board as it stands (`design`: nothing missing, PUZZLE_PASS or more), so exploring never
+ * locks a beginner out; the mistakes on the way (`penalty`) cost the score that's paid and kept as best instead. A pass
+ * keeps at least PUZZLE_PASS, so `best` (the best pass) still reads as passed everywhere.
  */
 export function scoreDiagram(p: Puzzle, a: DiagramAttempt): PuzzleScore {
   const slots = slotsOf(p);
@@ -59,10 +69,13 @@ export function scoreDiagram(p: Puzzle, a: DiagramAttempt): PuzzleScore {
     const req = mine.filter((s) => s.required);
     return req.length ? req.every((s) => a.placements[s.id]) : mine.some((s) => a.placements[s.id]);
   });
-  const base = scorePuzzle(p, [...complete, ...new Set(a.distractorDrops)]);
   const extra = complete.filter((s) => p.unneeded?.includes(s));
+  const board = scorePuzzle(p, complete);
+  const base = scorePuzzle(p, [...complete, ...new Set(a.distractorDrops)]);
   const tips = [...base.tips];
   if (extra.length) tips.unshift({ pillar: 'cost', tip: `The brief didn’t need ${extra.map((s) => serviceById(s)?.name ?? s).join(' or ')}. Every extra service is more to pay for and run.` });
-  const score = Math.max(0, Math.round(base.score - extra.length * 6 - a.misdrops * 3 - Math.min(12, (a.reveals ?? 0) * 3)));
-  return { ...base, tips, score, passed: base.missing.length === 0 && score >= 70 };
+  const design = Math.max(0, board.score - extra.length * 6);
+  const raw = Math.max(0, Math.round(base.score - extra.length * 6 - a.misdrops * 3 - Math.min(12, (a.reveals ?? 0) * 3)));
+  const passed = board.missing.length === 0 && design >= PUZZLE_PASS;
+  return { ...base, tips, score: passed ? Math.max(raw, PUZZLE_PASS) : raw, passed, design, penalty: design - raw };
 }

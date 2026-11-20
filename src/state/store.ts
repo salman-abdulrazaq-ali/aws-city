@@ -19,7 +19,7 @@ import { citizenById, PILLAR_LABEL } from '@/world/citizens';
 import { bus } from './bus';
 import { growthLine, growthOf } from './growth';
 import { newsOpen } from './ladder';
-import { builtCities, landmarkOf, migrateCities, withLandmark } from './cities';
+import { builtCities, carriedStars, landmarkOf, migrateCities, withLandmark } from './cities';
 import { incidentLine, plainIncidentLead } from '@/world/incidents';
 import { bumpDay, dayKey, nextStreak, type DayLog, type LearningKind } from './progress';
 import { workshopById } from '@/world/workshops';
@@ -45,8 +45,16 @@ export const CHAT_PAID_A_DAY = 3;
 /** …and at most CHAT_PAID_A_DAY_TOTAL paid answers a day across every building. */
 export const CHAT_PAID_A_DAY_TOTAL = 10;
 const CHAT_DAY_KEY = 'chat:*';
-/** A finished task pays its building for the first TASK_PAID_A_DAY tasks a day, nothing after. */
-export const TASK_PAID_A_DAY = 3;
+/**
+ * Watch it done: an agent does the work, so a finished task pays a little (TASK_STARS to its building, TASK_HELPER_STARS
+ * to a helper's), for a building's first TASK_PAID_A_DAY task a day and TASK_PAID_A_DAY_TOTAL tasks a day across the
+ * city, nothing after. Stars are for what the player learns: cards, drawings and games pay more.
+ */
+export const TASK_STARS = 3;
+export const TASK_HELPER_STARS = 1;
+export const TASK_PAID_A_DAY = 1;
+export const TASK_PAID_A_DAY_TOTAL = 5;
+const TASK_DAY_KEY = 'task:*';
 /** A Lookout-classified page pays each service it names CLASSIFY_STARS, once a day per service. */
 export const CLASSIFY_STARS = 3;
 import { FINISH_XP, honestMode, stepReward, withStep, type StepMode } from '@/learning/workshopRewards';
@@ -79,9 +87,9 @@ export interface TaskView {
   result?: string;
   /** The real AWS API calls its agent made (from agent.state working details), in order. */
   calls?: string[];
-  /** Watch it done: the stars its finish paid, by building (empty when today's paid tasks there were used up). */
+  /** Watch it done: the stars its finish paid, by building (empty when today's paid tasks were used up). */
   paid?: { serviceId: string; stars: number }[];
-  /** Its finish paid nothing because that building's TASK_PAID_A_DAY paid tasks today are used up. */
+  /** Its finish paid nothing: that building's TASK_PAID_A_DAY or the city's TASK_PAID_A_DAY_TOTAL paid tasks today are used up. */
   capped?: boolean;
   /** A capped repeat still pays a few City Coins (COIN_PAY.watch, the first WATCH_PAID_A_DAY a day). */
   coins?: number;
@@ -486,6 +494,11 @@ export interface CityState {
   careReleased: boolean;
   /** `all`: show every held finding now (a linked account does this itself; dev and smoke ask for it). */
   releaseCare(opts?: { all?: boolean }): void;
+  /**
+   * "Got it" on a finding with no automatic fix: the player has read it, so it's resolved here (remembered on this
+   * device, so it doesn't come back) and makes room for the next one. False when it has a fix or isn't open.
+   */
+  ackFinding(id: string): boolean;
   careRequests: Record<string, CareRequest>;
   /** The citizen's last answer about a finding (Explain, or why a fix can't run yet), by finding id. */
   explanations: Record<string, string>;
@@ -604,23 +617,28 @@ export interface CityState {
 
 let nextId = 1;
 const FEED_MAX = 120;
+/** A service's console page makes its moment (toast and camera) at most once a minute. */
 const VISIT_XP_COOLDOWN_MS = 60_000;
-/** Stars a console visit pays (at most once a minute per service). */
-const VISIT_XP = 2;
+/** Stars a console visit pays: once a day per service (the daily ledger). Docs pages pay nothing. */
+export const VISIT_XP = 2;
 
 /** "Amazon S3" → "S3", "AWS Lambda" → "Lambda": what the player calls the console they opened. */
 export const consoleName = (serviceId: string) => (serviceById(serviceId)?.name ?? serviceId).replace(/^(Amazon|AWS)\s+/, '');
 
-/** "You opened the S3 console: S3 Lake +2⭐" (or "…S3 Lake is going up!" when it found the building). */
-export function browsedText(serviceId: string, stars: number) {
+/**
+ * "You opened the S3 console: S3 Lake +2⭐", "…S3 Lake is going up!" when it found the building, or (`paidToday`: its
+ * visit stars were paid today already) "…S3 Lake (today's visit stars are in)".
+ */
+export function browsedText(serviceId: string, stars: number, paidToday = false) {
   const place = placeFor(serviceId)?.place ?? consoleName(serviceId);
-  return `You opened the ${consoleName(serviceId)} console: ${place} ${stars > 0 ? `+${stars}⭐` : 'is going up!'}`;
+  const what = stars > 0 ? `+${stars}⭐` : paidToday ? '(today’s visit stars are in)' : 'is going up!';
+  return `You opened the ${consoleName(serviceId)} console: ${place} ${what}`;
 }
 
 /** The "browsing grew it" toast: the building's icon, what grew, and its growth line. */
-function browsedToast(get: () => CityState, serviceId: string, stars: number) {
+function browsedToast(get: () => CityState, serviceId: string, stars: number, paidToday = false) {
   const s = get();
-  get().toast(stars > 0 ? '⭐' : '🚧', browsedText(serviceId, stars), 'info', undefined, { serviceId, detail: growthLine(growthOf(s.progress, serviceId, s.cityRegion)) });
+  get().toast(stars > 0 || paidToday ? '⭐' : '🚧', browsedText(serviceId, stars, paidToday), 'info', undefined, { serviceId, detail: growthLine(growthOf(s.progress, serviceId, s.cityRegion)) });
 }
 const lastVisitXp = new Map<string, number>();
 
@@ -681,6 +699,25 @@ const heldOpen = () =>
   [...heldFindings.values()].filter((f) => f.status === 'open').sort((a, b) => Number(advanced(a)) - Number(advanced(b)) || severityRank(a.severity) - severityRank(b.severity));
 /** Held findings not shown yet (tests and the smoke check this). */
 export const heldFindingIds = () => heldOpen().map((f) => f.id);
+
+/** Findings with no automatic fix the player said "Got it" to (this device), so they don't hold a place forever. */
+const GOT_IT_KEY = 'awscity.findingsGotIt';
+const GOT_IT_MAX = 200;
+const gotIt = (): Set<string> => {
+  try {
+    const v: unknown = JSON.parse(globalThis.localStorage?.getItem(GOT_IT_KEY) ?? '[]');
+    return new Set(Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+  } catch {
+    return new Set();
+  }
+};
+const rememberGotIt = (id: string) => {
+  try {
+    globalThis.localStorage?.setItem(GOT_IT_KEY, JSON.stringify([...gotIt(), id].slice(-GOT_IT_MAX)));
+  } catch {
+    /* storage unavailable */
+  }
+};
 
 
 export const useCity = create<CityState>()((set, get) => ({
@@ -938,6 +975,19 @@ export const useCity = create<CityState>()((set, get) => ({
       drip();
     }
   },
+  ackFinding: (id) => {
+    const f = get().findings[id];
+    if (!f || f.status !== 'open' || f.fix) return false;
+    rememberGotIt(id);
+    const done = { ...f, status: 'resolved' as const };
+    set({ findings: { ...get().findings, [id]: { ...done, seenAt: Date.now() } } });
+    get().log({ kind: 'system', text: `👍 Got it: ${f.title} (${f.resource.name}).` });
+    bus.emit('findingResolved', { finding: done, fixed: false });
+    // Room for the next one now, not after the drip's wait.
+    stopDrip();
+    drip();
+    return true;
+  },
   releaseCare: (opts) => {
     if (!get().careReleased) set({ careReleased: true });
     // A real account's findings are real: all of them at once. The demo's (practice account too) come in gently.
@@ -1011,12 +1061,15 @@ export const useCity = create<CityState>()((set, get) => ({
       if (onConsole) browsedToast(get, id, 0); // the discovery itself flies the camera there (CityScene.onDiscovered)
       return;
     }
+    // Only a console page is a visit that pays (a docs page counts for a quest's visit step, never stars).
+    if (!onConsole) return;
     const now = Date.now();
     if (now - (lastVisitXp.get(id) ?? 0) > VISIT_XP_COOLDOWN_MS) {
       lastVisitXp.set(id, now);
-      get().addXp(id, VISIT_XP);
-      if (!onConsole) return;
-      browsedToast(get, id, VISIT_XP);
+      // The stars once a day per service (the daily ledger); the moment at most once a minute.
+      const stars = takeDaily(`visit:${id}`) ? VISIT_XP : 0;
+      if (stars) get().addXp(id, stars);
+      browsedToast(get, id, stars, !stars);
       // One channel per moment: no camera move while a celebration card or a game holds the floor, or the city sleeps.
       const s = get();
       if (s.view.name === 'city' && !toastsHeld(s)) bus.emit('flyTo', { id });
@@ -1026,12 +1079,15 @@ export const useCity = create<CityState>()((set, get) => ({
   discover: (serviceId, opts) => {
     const { progress, cityRegion } = get();
     if (isDiscovered(progress, serviceId, cityRegion) || !serviceById(serviceId)) return;
-    // Found in this Region's city (a global service: in every city), src/state/cities.ts.
-    set({ progress: { ...withLandmark(progress, serviceId, cityRegion, { discovered: true, xp: landmarkOf(progress, serviceId, cityRegion)?.xp ?? 0 }), updatedAt: new Date().toISOString() } });
+    // Found in this Region's city (a global service: in every city), src/state/cities.ts. What the player already knows
+    // of it comes with them: the building starts with the new-card stars of the cards they know (carriedStars).
+    const carried = carriedStars(progress, serviceId);
+    const xp = Math.max(landmarkOf(progress, serviceId, cityRegion)?.xp ?? 0, carried);
+    set({ progress: { ...withLandmark(progress, serviceId, cityRegion, { discovered: true, xp }), updatedAt: new Date().toISOString() } });
     const p = placeFor(serviceId);
     const quiet = !!opts?.quiet;
     if (!quiet && opts?.toast !== false) get().toast('🚧', `New landmark discovered: ${p?.place}! Construction has started.`, 'info', { group: 'discover', item: p?.place ?? serviceId });
-    get().log({ kind: 'system', text: `You found ${p?.place}. ${p?.agentName} moved into town.` });
+    get().log({ kind: 'system', text: `You found ${p?.place}. ${p?.agentName} moved into town.${carried ? ` What you know of it came too: +${carried} ⭐.` : ''}` });
     bus.emit('discovered', { serviceId, quiet });
   },
 
@@ -1145,14 +1201,21 @@ export const useCity = create<CityState>()((set, get) => ({
             saveCulture(culture);
           }
         }
-        // A building's first TASK_PAID_A_DAY tasks a day pay their stars, later ones nothing (like chat): the stars come
-        // from the server's task.done, which only reports them; this is the one place they're paid.
+        // The stars come from the server's task.done, which only reports them; this is the one place they're paid. A
+        // deploy's (its deployId: the demo's practice template, paid once ever) pays what it reports. A task pays at most
+        // TASK_STARS to its building (the first entry) and TASK_HELPER_STARS to each helper, for the building's first
+        // TASK_PAID_A_DAY task a day and the city's first TASK_PAID_A_DAY_TOTAL (like chat), then nothing.
         const paid: { serviceId: string; stars: number }[] = [];
-        for (const x of e.xp)
-          if (takeDaily(`task:${x.serviceId}`, TASK_PAID_A_DAY)) {
-            get().addXp(x.serviceId, x.amount);
-            if (serviceById(x.serviceId) && x.amount > 0) paid.push({ serviceId: x.serviceId, stars: x.amount });
-          }
+        const deploy = !!s.deploys[e.taskId];
+        const main = e.xp[0];
+        const pays = deploy || (!!main && usedToday(TASK_DAY_KEY) < TASK_PAID_A_DAY_TOTAL && takeDaily(`task:${main.serviceId}`, TASK_PAID_A_DAY));
+        if (pays && !deploy && main) countDaily(TASK_DAY_KEY);
+        if (pays)
+          e.xp.forEach((x, i) => {
+            const stars = deploy ? x.amount : Math.min(x.amount, i === 0 ? TASK_STARS : TASK_HELPER_STARS);
+            get().addXp(x.serviceId, stars);
+            if (serviceById(x.serviceId) && stars > 0) paid.push({ serviceId: x.serviceId, stars });
+          });
         // Watch it done's result card says what was paid, or that today's paid tasks there are used up.
         const done = get().tasks[e.taskId];
         // A repeat whose stars were used up still pays a few coins, so watching isn't dead time (capped a day).
@@ -1221,7 +1284,8 @@ export const useCity = create<CityState>()((set, get) => ({
         break;
       }
       case 'city.finding': {
-        const f = e.finding;
+        // A finding the player said "Got it" to (no automatic fix) stays read: it never comes back open.
+        const f = e.finding.status === 'open' && gotIt().has(e.finding.id) ? { ...e.finding, status: 'resolved' as const } : e.finding;
         // Shown before, or a real account's: straight on. Anything new waits its turn (drip).
         if (s.findings[f.id] || realAccount(s)) get().applyFinding(f);
         else {
@@ -1482,12 +1546,16 @@ export const useCity = create<CityState>()((set, get) => ({
     const next = review(prev, grade);
     // The first time a card is remembered for a week pays a bonus, once ever (the flag survives an Again).
     const remembered = !practice && firstRemembered(prev, next);
-    if (!practice) {
-      const card = prev?.remembered || remembered ? { ...next, remembered: true as const } : next;
-      set({ progress: { ...progress, cards: { ...progress.cards, [cardId]: card }, updatedAt: new Date().toISOString() } });
-    }
     const serviceId = serviceOfCard(cardId);
     const stars = xpFor(prev, grade) + (remembered ? REMEMBERED_STARS : 0);
+    // A card that grows a building not up in this city yet puts it up first, so the building starts from what was known
+    // before this card (src/state/cities.ts carriedStars) and this card's stars aren't counted twice.
+    if (stars > 0) get().discover(serviceId, { quiet: true });
+    if (!practice) {
+      const card = prev?.remembered || remembered ? { ...next, remembered: true as const } : next;
+      const cur = get().progress;
+      set({ progress: { ...cur, cards: { ...cur.cards, [cardId]: card }, updatedAt: new Date().toISOString() } });
+    }
     get().addXp(serviceId, stars);
     if (remembered) get().log({ kind: 'system', text: `🧠 Remembered for a week: a ${placeFor(serviceId)?.place ?? serviceId} card. +${REMEMBERED_STARS} ⭐` });
     const p = get().progress;
@@ -1623,7 +1691,9 @@ export const useCity = create<CityState>()((set, get) => ({
   startQuest: (questId) => {
     const q = questById(questId);
     const { progress } = get();
-    if (!q || progress.quests?.[questId]?.status === 'active') return;
+    // Under way already, or finished: a finished quest never starts over (its steps and its finish paid once).
+    const status = progress.quests?.[questId]?.status;
+    if (!q || status === 'active' || status === 'done') return;
     set({ progress: { ...progress, quests: { ...progress.quests, [questId]: { status: 'active', step: 0, count: 0 } }, updatedAt: new Date().toISOString() } });
     get().log({ kind: 'system', text: `📜 ${q.title}: ${q.intro}` });
     // Already standing at the first step's landmark (console page or selected place): that visit counts now.

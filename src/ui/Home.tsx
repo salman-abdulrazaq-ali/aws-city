@@ -197,7 +197,7 @@ function SimpleHome({ openTab, care, places }: { openTab: OpenTab; care: boolean
 function TodoRow({ t, primary, onRun }: { t: TodoTask; primary: boolean; onRun: (t: TodoTask) => void }) {
   const where = taskWhere(t);
   return (
-    <li className={`todo-row ${t.done ? 'done' : ''}`}>
+    <li className={`todo-row ${t.done ? 'done' : ''} ${t.counts || t.holds ? 'counts' : ''}`}>
       <span className={`todo-check ${t.done ? 'on' : ''}`} aria-hidden="true">
         {t.done ? '✓' : ''}
       </span>

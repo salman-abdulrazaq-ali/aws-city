@@ -3,7 +3,8 @@
 // pays the rest. A step done again pays nothing, and finishing the whole workshop pays a bonus once. Each step pays at
 // most once per mode, ever, so there's no daily ledger here: doing a whole workshop in one sitting pays the same as
 // spreading it over a week.
-import type { WorkshopProgress } from '@/backend/contract';
+import type { Progress, WorkshopProgress } from '@/backend/contract';
+import { WORKSHOPS } from '@/world/workshops';
 
 export const PRACTICE_STEP_XP = 3;
 export const REAL_STEP_XP = 8;
@@ -21,6 +22,13 @@ export function stepReward(prev: WorkshopProgress | undefined, stepId: string, m
   const full = mode === 'real' ? REAL_STEP_XP - (had === 'practice' ? PRACTICE_STEP_XP : 0) : PRACTICE_STEP_XP;
   return Math.max(1, full - Math.max(0, Math.floor(hints)));
 }
+
+/**
+ * Some workshop step still pays in `mode` (a step done again pays nothing and changes nothing, so it can't tick the
+ * day's "Do a workshop step" goal).
+ */
+export const stepsLeftToPay = (done: Progress['workshops'], mode: StepMode, workshops = WORKSHOPS) =>
+  workshops.some((w) => w.steps.some((st) => stepReward(done?.[w.id], st.id, mode) > 0));
 
 /** In the offline demo nothing is real: a "for real" step there is practice (practice stars, never the For Real badge). */
 export const honestMode = (mode: StepMode, demo: boolean): StepMode => (demo ? 'practice' : mode);
