@@ -5,6 +5,7 @@ import { crisp } from '../../SpeechBubble';
 import { EDGE } from '@/world/minigames';
 import { change, EDGE_RULES, expire, hitRatio, invalidate, isChanged, isPopular, newEdge, request, store, type EdgeState } from './edgeCache';
 import { minAccuracy } from './scoring';
+import { edgeKey } from './gameKeys';
 
 /**
  * Edge Cache (CloudFront): viewers (left) ask the edge location (the post office in the middle) for files. Its four
@@ -37,9 +38,11 @@ export class EdgeGame extends MiniGame {
   private ratioText?: Phaser.GameObjects.Text;
   private barW = 0;
   private feedHead?: Phaser.GameObjects.Text;
+  /** The slot the number keys picked (I invalidates it). */
+  private sel = 0;
 
   constructor() {
-    super('game:edge', 'edge', 'cloudfront', '🌍 Edge Cache — click a missed file to cache it; click a ⚠️ slot to invalidate a changed file');
+    super('game:edge', 'edge', 'cloudfront', '🌍 Edge Cache — click a missed file to cache it (or press C); click a ⚠️ slot to invalidate a changed file (or press 1–4, then I)');
     this.wrongWord = 'misses';
     this.accuracyWord = 'hit ratio';
   }
@@ -48,6 +51,7 @@ export class EdgeGame extends MiniGame {
     this.s = newEdge(EDGE.files.map((f) => f.name));
     this.feed = [];
     this.boxes = [];
+    this.sel = 0;
     const { width: w, height: h } = this.scale;
     const g = this.add.graphics();
     g.fillStyle(0x10172a, 1).fillRect(0, this.top, w, h - this.top);
@@ -126,6 +130,20 @@ export class EdgeGame extends MiniGame {
     this.feedTop = this.diagY + diagH + 44;
     this.feedHead = crisp(this.add.text(this.feedX, this.feedTop - 4, 'Misses (click a file to cache it):', { ...TXT(13, '#93c5fd'), wordWrap: { width: this.feedW } })).setOrigin(0, 1);
     legend.setY(this.feedTop + this.feedRows * 22 + 10);
+    this.onKeys((k) => {
+      const a = edgeKey(k, EDGE_RULES.slots);
+      if (!a) return;
+      if (a.kind === 'select') {
+        const prev = this.sel;
+        this.sel = a.slot;
+        this.drawSlot(prev);
+        this.drawSlot(this.sel);
+      } else if (a.kind === 'invalidate') this.invalidate(this.sel);
+      else {
+        const oldest = this.feed[0];
+        if (oldest) this.store(oldest.getData('file') as string, oldest);
+      }
+    });
     this.time.addEvent({ delay: pace(650), loop: true, callback: () => this.request() });
     this.time.addEvent({ delay: pace(EDGE_RULES.changeMs), loop: true, callback: () => this.change() });
     // A few seconds in, the strategy in one line, in the feed's heading where the player is already looking.
@@ -144,7 +162,7 @@ export class EdgeGame extends MiniGame {
     this.boxes[i]?.destroy();
     const changed = c && isChanged(this.s, c);
     const box = crisp(
-      this.add.text(p.x, p.y, c ? `${c.name}${changed ? ' ⚠️' : ''}` : '(empty)', {
+      this.add.text(p.x, p.y, c ? `${i + 1} · ${c.name}${changed ? ' ⚠️' : ''}` : `${i + 1} · (empty)`, {
         ...TXT(13, c ? '#ffffff' : '#94a3b8'),
         backgroundColor: changed ? '#92400e' : c ? '#2e1065' : '#1e293b',
         padding: { x: 4, y: this.slotPad },
@@ -152,6 +170,8 @@ export class EdgeGame extends MiniGame {
         fixedWidth: this.slotW - 8,
       }),
     ).setOrigin(0.5);
+    // The slot the number keys picked is ringed in gold, with its number.
+    if (i === this.sel) box.setStroke('#ffc233', 3);
     if (c) box.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.invalidate(i));
     this.boxes[i] = box;
   }
@@ -229,6 +249,7 @@ export class EdgeGame extends MiniGame {
         wordWrap: { width: this.feedW },
       }),
     ).setInteractive({ useHandCursor: true });
+    t.setData('file', name);
     this.feed.push(t);
     t.once('pointerdown', () => this.store(name, t));
     this.time.delayedCall(pace(EDGE_RULES.feedMs), () => {

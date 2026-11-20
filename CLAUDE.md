@@ -617,7 +617,7 @@ When a change touches a decision, update its entry and run its Proof.
   labels scale with the text size. Games without a clock (`prefs.relaxed`, `src/game/pace.ts`) end rounds on Done and stretch
   reaction windows and spawns (Rush Hour's day, which is the game, runs at half speed instead); Sound captions
   (`prefs.captions`) show a word pill for each meaningful sound (`CAPTIONS` in `src/game/audio.ts`, not steps or blips).
-  Keyboard: arrows walk, E talks, `]` / `[` step through buildings (announced to screen readers), `+` / `−` zoom. Keys go
+  Every mini-game plays from the keyboard (`onKeys`, or in Fishing and Edge Cache the maps in `src/game/scenes/games/gameKeys.ts`: Space casts and hooks, 1–3 pick a bucket; 1–4 pick a cache slot, I invalidates, C caches; `tests/game-keyboard.test.ts`). Keyboard: arrows walk, E talks, `]` / `[` step through buildings (announced to screen readers), `+` / `−` zoom. Keys go
   to the canvas when a game or the city starts, unless the player is in the UI (`keysBelongToUi`, `mayFocusGame`,
   `src/game/keys.ts`).
   Arriving in a city announces its summary (`citySummary`: buildings, issues, AWS status, live traffic). The smoke runs

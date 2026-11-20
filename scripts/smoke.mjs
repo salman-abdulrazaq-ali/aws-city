@@ -1322,9 +1322,11 @@ await panel.screenshot({ path: `${out}/12-lookout.png` });
   const winter = await ctx.newPage();
   winter.on('pageerror', (e) => errors.push(`winter pageerror: ${e.message}`));
   await winter.goto(`chrome-extension://${id}/city.html?season=winter`);
-  await wait(2500);
+  await winter.waitForFunction(() => window.awsCity?.useCity, null, { timeout: 60_000 });
   await winter.evaluate(() => (window.awsCity.useCity.getState().select(undefined), window.awsCity.useCity.getState().enterRegion('eu-west-1'), window.awsCity.bus.emit('hour', { hour: 12 })));
-  await wait(4000);
+  // The city reports the season it drew once its scene is up (the screenshot used to catch the loading bar).
+  await winter.waitForFunction(() => window.awsCity?.ambient?.stats?.()?.season === 'winter', null, { timeout: 60_000 }).catch(() => {});
+  await wait(1500);
   const ws = await winter.evaluate(() => window.awsCity.ambient.stats());
   if (ws?.season !== 'winter') errors.push(`?season=winter drew ${ws?.season}`);
   await winter.screenshot({ path: `${out}/85-winter-city.png` });
@@ -1336,3 +1338,4 @@ await panel.screenshot({ path: `${out}/12-lookout.png` });
 
 console.log(errors.length ? `\n${errors.length} errors:\n` + errors.join('\n') : '\nno page errors');
 await ctx.close();
+process.exit(errors.length ? 1 : 0);
