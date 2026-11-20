@@ -108,8 +108,10 @@ increase** → Amazon Bedrock, your Region. You can paste:
 > Please apply the default on-demand quotas for Amazon Nova Pro and Nova Lite. It's for a small educational app (a
 > few users).
 
-You can carry on with step 8 while you wait: `npm run setup -- --dry-run` checks everything else and changes nothing
-in AWS.
+**You don't have to wait to host.** When the AI check fails, `npm run setup` offers to deploy the city with its AI
+switched off. Sign-in, saving progress, linking an account, City care's findings and AWS status all work without it.
+Once Bedrock answers, run `npm run setup` again and the AI switches on. `npm run setup -- --dry-run` checks everything
+and changes nothing in AWS.
 
 ## 8. Deploy with `npm run setup`
 

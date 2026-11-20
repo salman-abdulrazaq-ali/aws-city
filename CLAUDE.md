@@ -46,7 +46,9 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   Claude, and a new account's Bedrock hold (verifying, 0 tokens a day, Free plan, use-case form, each with its fix and a
   support-case text). The setup wizard checks the same before asking anything else: it warns on root (`sts` ARN), stops
   on the Free plan (`GetAccountPlanState`, `@aws-sdk/client-freetier`), and names the Bedrock wall (`explainAwsError`),
-  each linking the guide's step. Proof: `npm run setup -- --dry-run` (changes nothing in AWS),
+  each linking the guide's step. When Bedrock isn't ready, the wizard offers to deploy with the AI off (`aiEnabled:
+  false` → the kill switch's starting value; everything but the agents works) and re-running it once Bedrock answers
+  turns the AI on. Proof: `npm run setup -- --dry-run` (changes nothing in AWS), `cd infra && npm test`,
   `npx vitest run tests/launcher.test.ts`; every link in the guide opens (checked when it changes).
 - **AWS's public status and news reach every player, read once by the server** (`server/src/news/`, contract v2.6 `aws.health`/`aws.news`).
   The sources are the public Health Dashboard JSON (UTF-16 with a BOM), with the status RSS as fallback, and What's New. Hosts are

@@ -178,6 +178,8 @@ if (flag('--destroy')) {
 s.start(`Checking ${modelChoice === 'nova' ? 'Amazon Nova' : 'Claude'} on Amazon Bedrock`);
 const missing = [];
 const failures = [];
+/** The kill switch at deploy: off only when Bedrock isn't ready and the player chose to deploy anyway. */
+let aiEnabled = true;
 for (const modelId of offline ? [] : MODELS) {
   try {
     await aws(BedrockRuntimeClient).send(new ConverseCommand({ modelId, messages: [{ role: 'user', content: [{ text: 'hi' }] }], inferenceConfig: { maxTokens: 1 } }));
@@ -207,7 +209,14 @@ if (missing.length) {
       : `In the Amazon Bedrock console (Region ${region}), open the Model catalog, pick an Anthropic Claude model and\nsubmit the one-time use-case form (once per account or organization). How-to:\nhttps://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html\nThe first call also needs aws-marketplace:Subscribe and a valid payment method. Access can take a few minutes; then run setup again.`,
     verifying ? 'Wait for AWS to verify the account' : unavailable ? 'Upgrade to the Paid plan' : quota ? 'Bedrock has no quota yet' : modelChoice === 'nova' ? 'Amazon Nova isn’t answering' : 'Enable Claude on Bedrock',
   );
-  if (!DRY) bye();
+  // The rest of the city doesn't need the AI: sign-in, progress, linking an account, City care's findings (rules), AWS
+  // status. Deploy it now with the kill switch off; re-running setup once Bedrock answers switches the AI on.
+  if (!DRY) {
+    const withoutAi = !YES && (await ask('confirm', { message: 'Deploy the city now with its AI switched off? (Re-run setup once Bedrock answers to switch it on.)', initialValue: true }));
+    if (!withoutAi) bye();
+    aiEnabled = false;
+    p.log.warn('Deploying with the AI off: agents will say "The city’s AI is resting" until you run setup again.');
+  }
 } else s.stop(offline ? '[dry run] Bedrock check skipped' : `${MAIN_MODEL} and ${LIGHT_MODEL} are available`);
 
 // ── 3. Domain: yours, or free HTTPS from CloudFront ──────────────────────────
@@ -344,7 +353,7 @@ if (wantCi) {
 
 // ── 9. Save the answers (no secrets) ─────────────────────────────────────────
 const envConfig = {
-  modelChoice, region, domainName, hostedZoneId: zone ? zoneChoice : '', zoneName, cognitoDomainPrefix, extensionIds, firefoxAddonId, safari, googleClientId, sesFromEmail, alarmEmail,
+  modelChoice, aiEnabled, region, domainName, hostedZoneId: zone ? zoneChoice : '', zoneName, cognitoDomainPrefix, extensionIds, firefoxAddonId, safari, googleClientId, sesFromEmail, alarmEmail,
   monthlyBudgetUsd, dailyModelCalls: prev.dailyModelCalls ?? 100, globalDailyModelCalls: prev.globalDailyModelCalls ?? (envName === 'prod' ? 20000 : 5000),
   minTasks: prev.minTasks ?? (envName === 'prod' ? 2 : 1), maxTasks: prev.maxTasks ?? (envName === 'prod' ? 10 : 3),
 };
@@ -400,6 +409,7 @@ p.note(
     firefoxAddonId ? 'Firefox:   upload .output/*-firefox.zip (+ the -sources.zip) to addons.mozilla.org (docs/firefox-addons.md).' : '',
     safari ? 'Safari:    npm run safari:xcode, then build and submit the app in Xcode (docs/safari.md).' : '',
     alarmEmail ? `Confirm:   click the AWS Notification emails sent to ${alarmEmail}.` : '',
+    aiEnabled ? '' : `AI:        off for now. Once Bedrock answers, run npm run setup again (or: aws ssm put-parameter --name /aws-city/${envName}/ai-enabled --value true --overwrite).`,
     githubRepo ? `GitHub:    add AWS_DEPLOY_ROLE_ARN (see the AWSCity-CI stack) + AWS_REGION=${region} to the ${envName} environment.` : '',
     'Kill switch / runbook: docs/runbook.md',
   ]

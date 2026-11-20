@@ -35,6 +35,11 @@ export interface EnvConfig {
   maxTasks: number;
   /** The agents' models: Claude (geo profiles, the default) or Amazon Nova (on demand in the Region). The setup wizard asks. */
   modelChoice?: ModelChoice;
+  /**
+   * The kill switch's value at deploy: false deploys the city with its AI off (the account's Bedrock isn't ready yet,
+   * e.g. a new account's hold). Absent = on. Re-running setup once Bedrock answers turns it back on.
+   */
+  aiEnabled?: boolean;
   models: { main: string; light: string };
 }
 

@@ -77,7 +77,8 @@ export class ServiceStack extends Stack {
 
     this.killSwitch = new ssm.StringParameter(this, 'AiEnabled', {
       parameterName: `/aws-city/${env.name}/ai-enabled`,
-      stringValue: 'true',
+      // Off when the account's Bedrock wasn't ready at deploy time (the setup wizard asks); setup turns it on again.
+      stringValue: env.aiEnabled === false ? 'false' : 'true',
       description: 'Set to "false" to switch every AI call off within ~30 s (manual kill switch).',
     });
 
