@@ -19,6 +19,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as subs from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
@@ -257,7 +258,12 @@ export class ServiceStack extends Stack {
         AWS_CITY_MODEL: env.models.main,
         AWS_CITY_LIGHT_MODEL: env.models.light,
         AWS_CITY_FALLBACK_MODEL: env.models.light,
+        ...(env.jev?.model ? { AWS_CITY_JEV_MODEL: env.jev.model } : {}),
       },
+      // The one secret: Jev's API key, only when configured (ECS reads it at task start through the execution role).
+      ...(env.jev
+        ? { secrets: { TYPESAFE_API_KEY: ecs.Secret.fromSecretsManager(secretsmanager.Secret.fromSecretNameV2(this, 'JevKey', env.jev.secretName), 'apiKey') } }
+        : {}),
     });
     container.addPortMappings({ containerPort: 8787 });
 
@@ -389,7 +395,7 @@ export class ServiceStack extends Stack {
     ]);
     ack(taskDef, [
       { id: `${IAM5}[Resource::*]`, reason: 'ecr:GetAuthorizationToken does not support resource-level permissions.' },
-      { id: 'AwsSolutions::AwsSolutions-ECS2', reason: 'Only non-secret configuration is passed as environment variables; the server has no secrets (task role + public JWKS).' },
+      { id: 'AwsSolutions::AwsSolutions-ECS2', reason: 'Only non-secret configuration is passed as environment variables; the one optional secret (the Jev API key) comes from Secrets Manager through `secrets`.' },
     ]);
     ack(this, [
       { id: 'Construct-Annotations::@aws-cdk/core:crossStackReferencesDefaultStrong', reason: 'Strong cross-stack references are intended (Data/Auth outlive Service).' },

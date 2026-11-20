@@ -304,8 +304,26 @@ describe('cdk-nag AwsSolutions (acknowledgements sit on the constructs they are 
     ['prod, CloudFront + internal ALB', { name: 'prod' as const, domainName: '', hostedZoneId: '', zoneName: '' }],
     ['staging, custom domain + public ALB (eu-west-1)', { region: 'eu-west-1' }],
     ['prod, custom domain + public ALB', { name: 'prod' as const }],
+    ['prod with Jev on', { name: 'prod' as const, jev: { secretName: 'aws-city/jev' } }],
   ])('%s synthesises clean', (_name, over) => {
     expect(nagSynth(over)).not.toThrow();
+  });
+
+  it('Jev: off by default; when configured, its key reaches the task only as a Secrets Manager secret', () => {
+    const off = JSON.stringify(build().svc.findResources('AWS::ECS::TaskDefinition'));
+    expect(off).not.toContain('TYPESAFE_API_KEY');
+    const on = build({ jev: { secretName: 'aws-city/jev', model: 'jev-1.13.0' } }).svc;
+    on.hasResourceProperties('AWS::ECS::TaskDefinition', {
+      ContainerDefinitions: Match.arrayWith([
+        Match.objectLike({
+          Secrets: [Match.objectLike({ Name: 'TYPESAFE_API_KEY', ValueFrom: Match.anyValue() })],
+          Environment: Match.arrayWith([{ Name: 'AWS_CITY_JEV_MODEL', Value: 'jev-1.13.0' }]),
+        }),
+      ]),
+    });
+    // Never as a plain environment variable.
+    const env = JSON.stringify(on.findResources('AWS::ECS::TaskDefinition')).match(/"Environment":\[[^\]]*\]/g)?.join('') ?? '';
+    expect(env).not.toContain('TYPESAFE_API_KEY');
   });
 
   it('a new bucket without access logs is still flagged', () => {

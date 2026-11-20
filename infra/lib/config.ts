@@ -34,6 +34,11 @@ export interface EnvConfig {
   minTasks: number;
   maxTasks: number;
   models: { main: string; light: string };
+  /**
+   * Optional: TypeSafe's Jev as a second opinion on agents' writes (docs/jev.md). The key lives in Secrets Manager under
+   * `secretName` as {"apiKey": "..."} (you create it); absent = Jev off. `model` pins the Jev model (server default otherwise).
+   */
+  jev?: { secretName: string; model?: string };
 }
 
 export const loadEnv = (app: App): EnvConfig => {

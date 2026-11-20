@@ -68,8 +68,15 @@ Set `TYPESAFE_API_KEY` on the server (a key from console.typesafe.ai/keys). It w
 | `AWS_CITY_JEV_MODEL` | `jev-1.13.0` | Pinned, because aliases move on release. A reply from another model is used, and logged as a warning. |
 | `AWS_CITY_JEV_BLOCK_BELOW` / `_ASK_BELOW` / `_ASK_RISK` | 0.2 / 0.6 / 1.2 | Startup fails on a value out of range, or block above ask. |
 
-The startup log line shows `jev: <model>` or `jev: off`. Hosted, pass the key to the ECS task as a secret (Secrets
-Manager), not a plain environment value. The task needs HTTPS egress to `api.typesafe.ai`.
+The startup log line shows `jev: <model>` or `jev: off`. The task needs HTTPS egress to `api.typesafe.ai`.
+
+Hosted, the key reaches the ECS task only as a Secrets Manager secret, never a plain environment value:
+
+1. Create the secret in the deployment's account and Region: `aws secretsmanager create-secret --name aws-city/jev
+   --secret-string '{"apiKey":"<your key>"}'`.
+2. Add `"jev": { "secretName": "aws-city/jev" }` to the environment's settings (`staging` or `prod` in
+   `aws-city.config.json`, or `-c prod='{…}'`); `"model"` beside it pins a model other than the server's default.
+3. Deploy (`npm run setup`, or the deploy workflow). Remove the `jev` block and deploy again to turn it off.
 
 Each decision is logged once (`jev`): a decision id, the model that answered, the scores, the verdict, the latency and
 the token usage. A failure is logged as a warning with its kind (`TimeoutError`, `status 503`, `schema`…). The state,
