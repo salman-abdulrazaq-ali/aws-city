@@ -2,6 +2,7 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { isRisky } from '../../../src/console/risk.js';
 import type { Llm } from '../agents/llm.js';
+import { pick } from '../agents/once.js';
 import { neutralise } from '../knowledge/mcp.js';
 import { matchText, placeFor, type ServerEvent } from '../world.js';
 import type { ConsoleObserve, ConsoleStart, PageSnapshot } from '../world.js';
@@ -183,22 +184,23 @@ export const createConsoleCopilot = (deps: { llm: Llm; now?: () => number; /** S
       // Not a forced tool_choice: Bedrock rejects one while thinking is on, and nothing here pins thinking off for
       // whichever model is configured (default us.anthropic.claude-opus-5-5, config.ts).
       // The prompt asks for the tool and a missing call is handled below. max_tokens covers thinking + the call.
-      const msg = await deps.llm.create({
-        max_tokens: 8000,
-        output_config: { effort: 'low' },
-        system: SYSTEM,
-        tools: [STEP_TOOL],
-        tool_choice: { type: 'auto' },
-        messages: [
-          {
-            role: 'user',
-            content: `Goal: ${t.goal}\n\nSo far:\n${t.history.join('\n') || '(nothing yet)'}\n\n${describe(snapshot, t.goal, t.history)}\n\nCall next_console_step with your one next step.`,
-          },
-        ],
-      });
-      const block = msg.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use' && b.name === STEP_TOOL.name);
-      const parsed = block ? Step.safeParse(block.input) : undefined;
-      step = parsed?.success ? parsed.data : undefined;
+      const content = `Goal: ${t.goal}\n\nSo far:\n${t.history.join('\n') || '(nothing yet)'}\n\n${describe(snapshot, t.goal, t.history)}\n\nCall next_console_step with your one next step.`;
+      if (deps.llm.family === 'converse') {
+        // Amazon Nova (Converse) on Strands Agents: one tool call that records the step (the same Step schema).
+        step = await pick(deps.llm, { system: SYSTEM, prompt: content, tool: { name: STEP_TOOL.name, description: STEP_TOOL.description, schema: Step }, model: { maxTokens: 4000 } });
+      } else {
+        const msg = await deps.llm.create({
+          max_tokens: 8000,
+          output_config: { effort: 'low' },
+          system: SYSTEM,
+          tools: [STEP_TOOL],
+          tool_choice: { type: 'auto' },
+          messages: [{ role: 'user', content }],
+        });
+        const block = msg.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use' && b.name === STEP_TOOL.name);
+        const parsed = block ? Step.safeParse(block.input) : undefined;
+        step = parsed?.success ? parsed.data : undefined;
+      }
     } catch (err) {
       publicError('copilot step failed', err, { taskId });
     } finally {
