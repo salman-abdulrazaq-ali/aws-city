@@ -6,6 +6,7 @@ import path from 'node:path';
 import { depsPlan, explainNpmError, installMessage, readDepsFacts } from '../scripts/launcher/boot.mjs';
 import { panelReserve, renderPanel, wrap, type PanelState } from '../scripts/launcher/panel.mjs';
 import { buildEnv, sourceEntries, sourceStamp, stampOf } from '../scripts/launcher/stamp.mjs';
+import { modelsFor } from '../infra/lib/models';
 import {
   browserFromArg,
   choiceLabel,
@@ -17,6 +18,7 @@ import {
   helpText,
   introPlays,
   listProfiles,
+  modelEnv,
   parseArgs,
   parseBuildProgress,
   parseDownloadProgress,
@@ -66,6 +68,37 @@ describe('npm start helpers', () => {
   it('turns AWS errors into a next step', () => {
     expect(explainAwsError({ name: 'ExpiredTokenException', message: 'x' })).toMatch(/expired/);
     expect(explainAwsError({ name: 'CredentialsProviderError', message: 'Could not load credentials from any providers' })).toMatch(/No AWS sign-in/);
+  });
+
+  it("names a new account's Claude walls: verification, the use-case form and a quota of 0", () => {
+    // Bedrock's real answer on a brand-new account (eu-west-2, Nov 2026).
+    const verifying = {
+      name: 'AccessDeniedException',
+      message: 'Your account is currently being verified. Verification normally takes less than 2 hours. Until your account is verified, you may not have access to this operation.',
+    };
+    expect(explainAwsError(verifying)).toMatch(/still being verified.*2 hours/);
+    const form = explainAwsError({ name: 'ResourceNotFoundException', message: 'Model use case details have not been submitted for this account.' });
+    expect(form).toMatch(/use-case form/);
+    // The form's AccessDenied flavour still points at the form, not at "not allowed".
+    expect(explainAwsError({ name: 'AccessDeniedException', message: 'Model access is denied: use case details not submitted' })).toBe(form);
+    for (const err of [
+      { name: 'ThrottlingException', message: 'Too many tokens, please wait before trying again.' },
+      { name: 'ServiceQuotaExceededException', message: 'x' },
+    ]) expect(explainAwsError(err)).toMatch(/Service Quotas → Amazon Bedrock.*Claude Opus 5\.5/);
+    expect(explainAwsError({ name: 'AccessDeniedException', message: 'not authorized to perform bedrock:InvokeModel' })).toMatch(/not allowed/);
+  });
+
+  it("gives the local server the Region's Claude models (eu-west-2 → eu.), unless the player set their own", () => {
+    expect(modelEnv(modelsFor('eu-west-2'))).toEqual({
+      AWS_CITY_MODEL: 'eu.anthropic.claude-opus-5-5',
+      AWS_CITY_FALLBACK_MODEL: 'eu.anthropic.claude-sonnet-5-5',
+      AWS_CITY_LIGHT_MODEL: 'eu.anthropic.claude-sonnet-5-5',
+    });
+    expect(modelEnv(modelsFor('us-west-2')).AWS_CITY_MODEL).toBe('us.anthropic.claude-opus-5-5');
+    expect(modelEnv(modelsFor('ap-south-1')).AWS_CITY_MODEL).toBe('in.anthropic.claude-opus-5');
+    const own = modelEnv(modelsFor('eu-west-2'), { AWS_CITY_MODEL: 'eu.anthropic.claude-sonnet-5-5', AWS_CITY_FALLBACK_MODEL: 'eu.anthropic.claude-sonnet-5' });
+    expect(own).toEqual({ AWS_CITY_MODEL: 'eu.anthropic.claude-sonnet-5-5', AWS_CITY_FALLBACK_MODEL: 'eu.anthropic.claude-sonnet-5', AWS_CITY_LIGHT_MODEL: 'eu.anthropic.claude-sonnet-5' });
+    expect(() => modelsFor('ap-northeast-1')).toThrow(/geo inference profile/);
   });
 });
 
