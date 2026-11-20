@@ -154,7 +154,7 @@ and builds the extension. The answers are saved in `aws-city.config.json` (no se
 ## 10. Running it, and taking it down
 
 - **Switch the AI off instantly** (about 30 seconds):
-  `aws ssm put-parameter --name /aws-city/staging/ai-enabled --value false --overwrite`. Turn it back on with
+  `aws ssm put-parameter --name /cloud-city/staging/ai-enabled --value false --overwrite`. Turn it back on with
   `--value true`. Everything else keeps working.
 - Alarms, the budget cut-off and restores are in the [runbook](runbook.md).
 - **Remove a deployment:** `npm run setup -- --destroy --env staging`. The table and buckets are kept so no player

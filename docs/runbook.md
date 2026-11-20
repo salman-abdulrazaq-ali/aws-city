@@ -55,7 +55,7 @@ Amazon Nova or Claude, and a new account's Bedrock hold). This section is the op
 
 ## Kill switch / budget
 
-- **Manual, instant (~30 s):** `aws ssm put-parameter --name /aws-city/<env>/ai-enabled --value false --overwrite`
+- **Manual, instant (~30 s):** `aws ssm put-parameter --name /cloud-city/<env>/ai-enabled --value false --overwrite`
   (players see "the city's AI is resting"; everything else works). Turn back on with `--value true`.
 - **Automatic:** at 100% of the monthly budget, AWS Budgets attaches `AWSCityDenyBedrock-<env>` to
   `AWSCityTaskRole-<env>`. This exists even without an alarm email (Budgets notifies an SNS topic). You're
