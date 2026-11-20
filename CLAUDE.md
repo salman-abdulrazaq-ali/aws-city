@@ -255,10 +255,12 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   is the step plus one goal); a walk run from a game, an HQ or the world map goes back to the city first (`walkTo`,
   `walkToStation`); in the city, Simple drops the islands' "AWS trouble" labels and the drill's citizen talk, and the
   "E · Visit X" hint goes once its step is done; the HUD is ⭐ · coins · To do · Decorate · ⋯; tabs City · Learn · Jobs, Deploy only for a deploy step, a linked
-  account or a change waiting for approval; Learn hides the Drawing board (a design step shows it); City care waits for a
+  account, a change waiting for approval or a hosted player who can link an account (`useCanConnect`: signed in, nothing
+  linked; the ladder opens Deploy for them too, the City tab shows `ConnectCard` above the list, never a second primary
+  button, and Deploy shows the three linking steps at once); Learn hides the Drawing board (a design step shows it); City care waits for a
   finished quest; My City is buildings, stars and coins. Hidden, never deleted: badges, combos, coins, the season road and
   the shift keep recording, and ⋯ → Show everything / Keep it simple switches back and forth with nothing lost. The tour's
-  second step points at the list. Proof: `npx vitest run tests/simple.test.ts tests/simple-ui.test.tsx tests/session.test.ts`, `npm run smoke`
+  second step points at the list. Proof: `npx vitest run tests/simple.test.ts tests/simple-ui.test.tsx tests/session.test.ts tests/connect-card.test.tsx`, `npm run smoke`
   (runs Simple first: `01s-simple-first-city`, `80-simple-home`, `80b-simple-task-ticked`, `80c-simple-day-done`,
   `80d-simple-panel`, `80e-simple-tour`; then turns Everything on for the feature checks).
 - **Home is Today's shift** (with Everything on; the City tab, `src/ui/Home.tsx`): one big button from `nextAction` (`src/state/next.ts`, pure
