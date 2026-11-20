@@ -1,0 +1,6 @@
+# Every change is reviewed by the maintainer. The infrastructure, the server and the workflows
+# (which hold deploy rights) are named on their own so the rule is plain to read.
+*           @salman-abdulrazaq-ali
+/infra/     @salman-abdulrazaq-ali
+/server/    @salman-abdulrazaq-ali
+/.github/   @salman-abdulrazaq-ali

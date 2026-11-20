@@ -50,6 +50,27 @@ Amazon Nova or Claude, and a new account's Bedrock hold). This section is the op
    - **Amazon Inspector** ECR scanning for the CDK assets repository: `aws inspector2 enable --resource-types ECR`.
    - **Cost allocation tags**: activate `env` and `app` in Billing → Cost allocation tags (lets you split
      staging and prod spend; the budgets currently count the whole account).
+   - **The account's security baseline.** `<r>` is your deploy Region; run the Regional ones there and in `us-east-1`
+     (CloudFront's firewall). Each "Check:" reads it back.
+     - **GuardDuty** (threat detection; a 30-day free trial, then a few dollars a month for a small account):
+       `aws guardduty create-detector --enable --region <r>`. Check: `aws guardduty list-detectors --region <r>`.
+     - **CloudTrail**: one multi-Region trail with log file validation into its own bucket (Block Public Access on,
+       TLS-only policy, a lifecycle rule; CloudTrail console → Create trail does all of it). The first copy of
+       management events is free. Check: `aws cloudtrail get-trail-status --name <trail> --query IsLogging`.
+     - **IAM Access Analyzer** (anything shared outside the account):
+       `aws accessanalyzer create-analyzer --analyzer-name account-external-access --type ACCOUNT --region <r>`.
+       Check: `aws accessanalyzer list-analyzers --region <r>`.
+     - **EBS encryption by default**: `aws ec2 enable-ebs-encryption-by-default --region <r>`.
+       Check: `aws ec2 get-ebs-encryption-by-default --region <r>`.
+     - **Password policy** (for any IAM user with a console password):
+       `aws iam update-account-password-policy --minimum-password-length 14 --require-symbols --require-numbers --require-uppercase-characters --require-lowercase-characters --password-reuse-prevention 24`.
+       Check: `aws iam get-account-password-policy`.
+     - **S3 Block Public Access for ACLs, account-wide:**
+       `aws s3control put-public-access-block --account-id <acct> --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=false,RestrictPublicBuckets=false`.
+       Only the ACL half: the Data stack's templates bucket serves the player role template and the Safari sign-in
+       relay through a public bucket policy (`player-role/*`, `auth/*`), so blocking public policies would break
+       linking an account. Check: `aws s3control get-public-access-block --account-id <acct>`, then open the
+       player role template URL (the Data stack's `PlayerRoleTemplateUrl` output): it must still load.
 6. Release the extension: tag `v1.2.3` → the `release` workflow attaches the zip → upload it in the Chrome
    Web Store dashboard with `docs/store-listing.md` and `docs/privacy-policy.md`.
 
