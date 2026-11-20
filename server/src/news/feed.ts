@@ -1,5 +1,5 @@
 import { log } from '../log.js';
-import type { AwsHealthEvent, AwsIncident, AwsNewsEvent, ServerEvent } from '../world.js';
+import { isLive, LIVE_EVENTS, type AwsHealthEvent, type AwsIncident, type AwsNewsEvent, type ServerEvent } from '../world.js';
 import { decodeFeed, fitFrame, parseHealthJson, parseHealthRss, parseWhatsNew } from './parse.js';
 
 /**
@@ -16,6 +16,10 @@ export const MAX_FEED_BYTES = 4 * 1024 * 1024;
 
 export const HEALTH_EVERY_MS = 3 * 60_000;
 export const NEWS_EVERY_MS = 60 * 60_000;
+/** AWS City Live: while re:Invent is on (shared/events.json), launches arrive in bursts, so What's New is read this often. */
+export const NEWS_LIVE_EVERY_MS = 10 * 60_000;
+/** How long until the next What's New read. */
+export const newsEvery = (t: number) => (isLive(LIVE_EVENTS, t, 'reinvent') ? NEWS_LIVE_EVERY_MS : NEWS_EVERY_MS);
 /** After a failed read, wait this long before asking again. */
 export const BACKOFF_MS = 15 * 60_000;
 /** A resolved incident stays in the city for a day. */
@@ -124,7 +128,7 @@ export const createNewsFeed = (opts: { fetchBytes?: FetchBytes; now?: () => numb
     if (opts.news === false || now() < newsDue) return;
     try {
       const items = parseWhatsNew(decodeFeed(await get(WHATS_NEW_URL)));
-      newsDue = now() + NEWS_EVERY_MS;
+      newsDue = now() + newsEvery(now());
       const hash = JSON.stringify(items);
       news = { type: 'aws.news', asOf: new Date(now()).toISOString(), items };
       if (hash !== newsHash) ((newsHash = hash), emit(news));

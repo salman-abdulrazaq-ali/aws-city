@@ -27,7 +27,7 @@ import { ack, nagAccount } from './nag.js';
 import { logWaf, visibility, wafRules } from './waf.js';
 import type { Construct } from 'constructs';
 import { type EnvConfig, extensionOrigins, playerRolePrefix, taskRoleName } from './config.js';
-import { foundationModel } from './models.js';
+import { bedrockResources, bedrockWildcards } from './models.js';
 
 export interface ServiceDeps {
   /** CloudFront-scope WAF from EdgeStack (us-east-1), used when there's no custom domain. */
@@ -77,7 +77,8 @@ export class ServiceStack extends Stack {
 
     this.killSwitch = new ssm.StringParameter(this, 'AiEnabled', {
       parameterName: `/aws-city/${env.name}/ai-enabled`,
-      stringValue: 'true',
+      // Off when the account's Bedrock wasn't ready at deploy time (the setup wizard asks); setup turns it on again.
+      stringValue: env.aiEnabled === false ? 'false' : 'true',
       description: 'Set to "false" to switch every AI call off within ~30 s (manual kill switch).',
     });
 
@@ -93,12 +94,10 @@ export class ServiceStack extends Stack {
     this.taskRole.addToPolicy(
       new iam.PolicyStatement({
         sid: 'Bedrock',
+        // InvokeModel (Claude) and Converse (Amazon Nova) use the same two actions. A geo inference profile (us./eu./au./
+        // in., lib/models.ts) routes to its foundation model in that geography's Regions; Nova is on demand, in this one.
         actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
-        resources: [
-          ...models.map((m) => `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/${m}`),
-          // A geo inference profile (us./eu./au./in., lib/models.ts) routes to the foundation model in that geography's Regions.
-          ...models.map((m) => `arn:aws:bedrock:*::foundation-model/${foundationModel(m)}*`),
-        ],
+        resources: bedrockResources(this.region, this.account, models),
       }),
     );
     this.taskRole.addToPolicy(
@@ -368,7 +367,7 @@ export class ServiceStack extends Stack {
     const IAM5 = 'AwsSolutions-IAM5';
     ack(this.taskRole, [
       { id: `${IAM5}[Resource::arn:aws:iam::*:role/${playerRolePrefix(env)}-*]`, reason: "Player roles live in every player's own account; our own account is excluded by an aws:ResourceAccount condition." },
-      ...models.map((m) => ({ id: `${IAM5}[Resource::arn:aws:bedrock:*::foundation-model/${foundationModel(m)}*]`, reason: "The geo inference profile routes to this model in several of its geography's Regions." })),
+      ...bedrockWildcards(models).map((arn) => ({ id: `${IAM5}[Resource::${arn}]`, reason: "The geo inference profile routes to this model in several of its geography's Regions." })),
       { id: `${IAM5}[Resource::AWSCity-${env.name}-Data:ExportsOutputFnGetAttScreenshotsA7A7D8A0Arn0675524A/screenshots/*]`, reason: 'Objects under the screenshots/ prefix only (one folder per player).' },
       // TableV2.grantReadWriteData on a customer-managed key: the wildcards are action families, on that one key.
       { id: `${IAM5}[Action::kms:ReEncrypt*]`, reason: 'Table data-key operations on the single table key (CDK grantReadWriteData).' },

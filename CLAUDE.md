@@ -29,12 +29,45 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   channel or is refused). Citizens always; landmark agents too by default (`AWS_CITY_AGENT_ENGINE=classic` keeps the
   hand-written loop as a fallback). Landmark agents run at `effort: 'high'`, citizens `low`. Source: `.claude/references/cached-sources.md`.
   Proof: `cd server && npx vitest run test/citizens.test.ts`.
+- **Amazon Nova runs the whole city on Strands Agents.** The model id picks the family (`familyOf`,
+  `server/src/agents/llm.ts`): Claude keeps the Anthropic Messages API routes above; any other Bedrock model (Amazon
+  Nova: `NOVA_MODELS` in `infra/lib/models.ts`, Pro for agents and planning, Lite for chat and the Lookout, on demand in
+  the Region) goes through Bedrock's Converse API on Strands' `BedrockModel` (`MeteredBedrockModel`, the same gate:
+  kill switch, quotas, token metrics). Agent turns take `llm.strands()`; the one-shot routes (concierge plan, `chat.ask`,
+  the Lookout with its screenshot, the Console Copilot's step) run as fresh Strands Agents through `pick` (one tool,
+  offered and never forced; a missing or invalid call keeps the route's fallback) and `say` (streamed text), in
+  `server/src/agents/once.ts`. Locally: `npm run live -- --model nova` (the launcher checks Nova with Converse and passes
+  the ids as env). Hosted: the setup wizard asks (Nova recommended; saved as `modelChoice`, `loadEnv` →
+  `modelsForChoice`); the task role may invoke exactly the two Nova foundation models in its Region (`bedrockResources`:
+  no wildcard, no cdk-nag acknowledgement; Claude keeps its profile + wildcard), and the budget's deny covers both.
+  Proof: `cd server && npx vitest run test/nova.test.ts`, `npx vitest run tests/launcher.test.ts`, `cd infra && npm test`.
+- **A new account is walked through, not left to guess** (`docs/self-hosting.md`): root MFA, the Paid plan (upgraded as
+  root; a Free plan account closes when its credits run out), an admin user with MFA, `aws login` as that user, Nova or
+  Claude, and a new account's Bedrock hold (verifying, 0 tokens a day, Free plan, use-case form, each with its fix and a
+  support-case text). The setup wizard checks the same before asking anything else: it warns on root (`sts` ARN), stops
+  on the Free plan (`GetAccountPlanState`, `@aws-sdk/client-freetier`), and names the Bedrock wall (`explainAwsError`),
+  each linking the guide's step. When Bedrock isn't ready, the wizard offers to deploy with the AI off (`aiEnabled:
+  false` → the kill switch's starting value; everything but the agents works) and re-running it once Bedrock answers
+  turns the AI on. Proof: `npm run setup -- --dry-run` (changes nothing in AWS), `cd infra && npm test`,
+  `npx vitest run tests/launcher.test.ts`; every link in the guide opens (checked when it changes).
 - **AWS's public status and news reach every player, read once by the server** (`server/src/news/`, contract v2.6 `aws.health`/`aws.news`).
   The sources are the public Health Dashboard JSON (UTF-16 with a BOM), with the status RSS as fallback, and What's New. Hosts are
   allow-listed, there are no redirects, a size cap and a timeout, and a failure backs off. Feed text is untrusted data (neutralised,
   trimmed, never given to a model). Services map only through verified codes in `shared/aws-health-services.json`. There's no IAM and
   no Health API (it needs a Business support plan). The demo plays the real Bahrain/UAE events plus a `drill: true` practice event.
   Proof: `cd server && npx vitest run test/news.test.ts test/tenants.test.ts`, `npx vitest run tests/incidents.test.ts tests/contract.test.ts`.
+- **AWS City Live: the city changes with what AWS is doing.** Events are data with an official page each
+  (`shared/events.json`: re:Invent 2026, 30 Nov – 4 Dec, Las Vegas; links only to aws.amazon.com and meetup.com,
+  `isEventUrl`). `src/world/liveEvents.ts` is pure (`eventPhase`, `bannerEvent`: live first, else the soonest within
+  `BANNER_DAYS`); the City tab's `EventBanner` (both modes, never the primary button) opens the Events board, and
+  `?date=YYYY-MM-DD` previews a day. A What's New launch that lands while the city is open (`bus` `launch`, after the news
+  rung, never the batch on connect) bumps its building with "🚀 New from AWS" and its agent's line (`CityScene.onLaunch`,
+  `LAUNCH_GAP_MS` apart, at most `LAUNCH_MAX` a batch, one toast); a building's card lists its newest launches
+  (`WhatsNew`). The demo holds back its newest captured launch for `LAUNCH_AFTER_MS`. While re:Invent is live the server
+  reads What's New every 10 minutes (`newsEvery`) and keeps `MAX_NEWS` 60. Strands Agents and Amazon Nova are taught in
+  AgentCore Academy and Bedrock Mesa (cards from AWS pages, glossary terms); Strands isn't a service (no console, Region
+  or icon). Proof: `npx vitest run tests/live-events.test.ts tests/events-ui.test.tsx tests/content.test.ts`,
+  `cd server && npx vitest run test/news.test.ts`, `npm run smoke` (86: banner, board with axe, re:Invent live, a launch on S3).
 - **Findings are rules; the model only explains.** `server/src/agents/findings.ts` checks each poll (no model calls);
   players read `shared/wa-rules.json`; an unreadable setting never raises a finding.
   Proof: `cd server && npx vitest run test/care.test.ts`.
@@ -59,7 +92,7 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   on for `account.link`/`account.verify`, `deploy.approve` and `finding.fix` (Google sign-ins are exempt); prod Cognito runs Plus with threat protection.
   A "TOTP is on" answer is cached 60 s at most. Proof: `cd server && npx vitest run test/hosted.test.ts -t "MFA"`
   (includes "MFA step-up for writes"), `cd infra && npm test`.
-- **Hosted deploys only run in Regions with a Claude geo inference profile** (`infra/lib/models.ts`: `us`, `eu`, `au`,
+- **Hosted deploys with Claude only run in Regions with a Claude geo inference profile** (Amazon Nova: any Region that offers it on demand) (`infra/lib/models.ts`: `us`, `eu`, `au`,
   `in`; there is no `apac` profile, so e.g. Tokyo is refused). Each geo gets the newest pair with a profile there for
   both models (`GEO_MODELS`, from the Bedrock model cards): Claude Opus 5.5 / Sonnet 5.5 in `us`/`eu`/`au`; India has no
   5.5 profile and keeps Opus 5 / Sonnet 5. Model ids and their IAM ARNs derive from the Region; synth and the setup

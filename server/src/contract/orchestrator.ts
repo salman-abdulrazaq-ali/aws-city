@@ -2,6 +2,7 @@ import { docsBlock, type Knowledge, neutralise } from '../knowledge/mcp.js';
 import type Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import type { Llm } from '../agents/llm.js';
+import { pick, say } from '../agents/once.js';
 import { agentSystemPrompt, CONCIERGE_PROMPT, lookoutPrompt } from '../agents/personas.js';
 import { type AgentRunner, snapshotForModel } from '../agents/runner.js';
 import type { Approvals } from './approvals.js';
@@ -73,6 +74,11 @@ const toolInput = <T>(msg: Anthropic.Message, name: string, schema: z.ZodType<T>
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** A screenshot's MIME type as the Converse image format (the Lookout uploads PNG or JPEG). */
+const IMAGE_FORMATS = { 'image/png': 'png', 'image/jpeg': 'jpeg', 'image/webp': 'webp', 'image/gif': 'gif' } as const;
+export const imageFormat = (contentType: string | undefined) =>
+  contentType && contentType in IMAGE_FORMATS ? IMAGE_FORMATS[contentType as keyof typeof IMAGE_FORMATS] : undefined;
+
 /**
  * Implements the frontend contract (docs/backend-contract.md) on top of the agent runner.
  * Rule from the contract: every real AWS call made for an agent is wrapped in agent.state working → idle.
@@ -105,20 +111,28 @@ export const createOrchestrator = (deps: {
 
   const plan = async (cmd: Omit<TaskSubmit, 'action'>) => {
     const snapshot = await deps.snapshot();
-    const msg = await deps.llm.create({
-      max_tokens: 16000,
-      // Routing a request is a quick decision: low effort keeps thinking (and cost) small.
-      output_config: { effort: 'low' },
-      system: CONCIERGE_PROMPT,
-      tools: [PLAN_TOOL],
-      messages: [
-        {
-          role: 'user',
-          content: `<city_snapshot>${snapshotForModel(snapshot)}</city_snapshot>\n${describeContext(cmd.context)}\n\nPlayer request: ${cmd.prompt}`,
-        },
-      ],
-    });
-    const parsed = toolInput(msg, PLAN_TOOL.name, Plan);
+    const request = `<city_snapshot>${snapshotForModel(snapshot)}</city_snapshot>\n${describeContext(cmd.context)}\n\nPlayer request: ${cmd.prompt}`;
+    const parsed =
+      deps.llm.family === 'converse'
+        ? // Amazon Nova (Converse) on Strands Agents: one tool call that records the plan.
+          await pick(deps.llm, {
+            system: CONCIERGE_PROMPT,
+            prompt: `${request}\n\nCall ${PLAN_TOOL.name} with your plan.`,
+            tool: { name: PLAN_TOOL.name, description: PLAN_TOOL.description, schema: Plan },
+            model: { maxTokens: 4000 },
+          })
+        : toolInput(
+            await deps.llm.create({
+              max_tokens: 16000,
+              // Routing a request is a quick decision: low effort keeps thinking (and cost) small.
+              output_config: { effort: 'low' },
+              system: CONCIERGE_PROMPT,
+              tools: [PLAN_TOOL],
+              messages: [{ role: 'user', content: request }],
+            }),
+            PLAN_TOOL.name,
+            Plan,
+          );
     if (parsed) return parsed;
     // The model answered without the tool: fall back to the frontend's own keyword routing.
     const agentId = matchText(cmd.prompt) ?? cmd.context.serviceId ?? 'bedrock';
@@ -207,25 +221,29 @@ export const createOrchestrator = (deps: {
     let sent = false;
     try {
       const [snapshot, docs] = await Promise.all([deps.snapshot(), deps.knowledge?.search(`${svc.name} ${cmd.question}`, 3) ?? []]);
-      const msg = await deps.llm.stream(
-        {
-          max_tokens: 16000,
-          output_config: { effort: 'low' }, // a short spoken answer
-          system: `${agentSystemPrompt(agentId)}\n\nYou are answering a question at ${district.hq}. Reply in plain text (no markdown headings), under 120 words.`,
-          messages: [
-            {
-              role: 'user',
-              content: `${docsBlock(docs)}<city_snapshot>${snapshotForModel(snapshot)}</city_snapshot>\n${describeContext(cmd.context)}\n\nQuestion: ${cmd.question}`,
-            },
-          ],
-        },
-        (delta) => {
-          sent = true;
-          emit({ type: 'chat.answer', requestId, districtId, agentId, delta, done: false });
-        },
-      );
+      const system = `${agentSystemPrompt(agentId)}\n\nYou are answering a question at ${district.hq}. Reply in plain text (no markdown headings), under 120 words.`;
+      const question = `${docsBlock(docs)}<city_snapshot>${snapshotForModel(snapshot)}</city_snapshot>\n${describeContext(cmd.context)}\n\nQuestion: ${cmd.question}`;
+      const onText = (delta: string) => {
+        sent = true;
+        emit({ type: 'chat.answer', requestId, districtId, agentId, delta, done: false });
+      };
+      const refused =
+        deps.llm.family === 'converse'
+          ? // Amazon Nova (Converse) on Strands Agents, on the light model, streamed.
+            (await say(deps.llm, { system, prompt: question, model: { light: true, maxTokens: 1500 }, onText })).refused
+          : (
+              await deps.llm.stream(
+                {
+                  max_tokens: 16000,
+                  output_config: { effort: 'low' }, // a short spoken answer
+                  system,
+                  messages: [{ role: 'user', content: question }],
+                },
+                onText,
+              )
+            ).stop_reason === 'refusal';
       if (!sent) {
-        const text = msg.stop_reason === 'refusal' ? "Sorry, I can't answer that one." : 'Hmm, I have nothing to add.';
+        const text = refused ? "Sorry, I can't answer that one." : 'Hmm, I have nothing to add.';
         emit({ type: 'chat.answer', requestId, districtId, agentId, delta: text, done: false });
       }
       const sources = docs.map(({ title, url }) => ({ title, url }));
@@ -247,9 +265,20 @@ export const createOrchestrator = (deps: {
     }
     try {
       const report = await working(emit, 'lookout', 'bedrock', image ? 'InvokeModel (vision) on screenshot' : 'InvokeModel on page title', async () => {
+        const ask = `${describeContext(context) || 'No URL or title.'}\n\nWhat is this page about?`;
+        if (deps.llm.family === 'converse') {
+          // Amazon Nova (Converse) on Strands Agents: the screenshot as an image block when there is one, then the text.
+          const format = imageFormat(image?.contentType);
+          return pick(deps.llm, {
+            system: lookoutPrompt,
+            prompt: [...(image && format ? [{ image: { format, source: { bytes: new Uint8Array(image.bytes) } } }] : []), { text: `${ask}\n\nCall ${REPORT_TOOL.name}.` }],
+            tool: { name: REPORT_TOOL.name, description: REPORT_TOOL.description, schema: Report },
+            model: { light: true, maxTokens: 1000 },
+          });
+        }
         const content: Anthropic.ContentBlockParam[] = [];
         if (image) content.push({ type: 'image', source: { type: 'base64', media_type: image.contentType, data: image.bytes.toString('base64') } });
-        content.push({ type: 'text', text: `${describeContext(context) || 'No URL or title.'}\n\nWhat is this page about?` });
+        content.push({ type: 'text', text: ask });
         const msg = await deps.llm.create(
           { max_tokens: 16000, output_config: { effort: 'low' }, system: lookoutPrompt, tools: [REPORT_TOOL], messages: [{ role: 'user', content }] },
           { light: true },

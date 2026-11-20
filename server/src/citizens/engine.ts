@@ -49,7 +49,12 @@ export const createStrandsRunner = (deps: {
   const queues = new Map<string, Promise<unknown>>();
   /** The citizen Agent running right now (for cancel), by citizen id. */
   const live = new Map<string, Agent>();
-  const client = deps.client ?? deps.llm.client;
+  /** Citizens explain briefly; landmark agents work through a task. Claude gets `effort` (Converse models ignore it). */
+  const modelFor = (citizen: boolean) => {
+    const opts = citizen ? { maxTokens: CITIZEN_TOKENS.maxTokens, effort: 'low' as const } : { maxTokens: AGENT_TOKENS.maxTokens, effort: 'high' as const };
+    // A test's stub Anthropic client; otherwise the configured family (Claude, or Amazon Nova through Converse).
+    return deps.client ? new MeteredAnthropicModel({ client: deps.client, modelId: deps.llm.model, ...opts }, deps.llm.gate) : deps.llm.strands(opts);
+  };
 
   const toolNames = (agentId: string): ActionName[] => (isCitizen(agentId) ? [...READ_ONLY] : actionsForAgent(agentId));
 
@@ -58,7 +63,6 @@ export const createStrandsRunner = (deps: {
     // context (no growing input tokens). Landmark agents keep their conversation.
     const existing = isCitizen(agentId) ? undefined : agents.get(agentId);
     if (existing) return existing;
-    if (!client) throw new Error('No model client for the Strands runner');
     const citizen = citizenById(agentId);
     const tools = [
       ...actionTools(toolNames(agentId), { actions: deps.actions, turn: () => turns.get(agentId) }),
@@ -67,10 +71,7 @@ export const createStrandsRunner = (deps: {
     const agent = new Agent({
       id: agentId.replace(/[^a-zA-Z0-9_-]/g, '-'),
       name: citizen?.name ?? agentId,
-      model: new MeteredAnthropicModel(
-        citizen ? { client, modelId: deps.llm.model, maxTokens: CITIZEN_TOKENS.maxTokens, effort: 'low' } : { client, modelId: deps.llm.model, maxTokens: AGENT_TOKENS.maxTokens, effort: 'high' },
-        deps.llm.gate,
-      ),
+      model: modelFor(!!citizen),
       tools,
       systemPrompt: citizen ? citizenSystemPrompt(citizen) : agentSystemPrompt(agentId),
       printer: false,

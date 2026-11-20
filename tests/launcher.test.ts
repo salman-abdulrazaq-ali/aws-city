@@ -6,7 +6,7 @@ import path from 'node:path';
 import { depsPlan, explainNpmError, installMessage, readDepsFacts } from '../scripts/launcher/boot.mjs';
 import { panelReserve, renderPanel, wrap, type PanelState } from '../scripts/launcher/panel.mjs';
 import { buildEnv, sourceEntries, sourceStamp, stampOf } from '../scripts/launcher/stamp.mjs';
-import { modelsFor } from '../infra/lib/models';
+import { modelsFor, modelsForChoice, NOVA_MODELS } from '../infra/lib/models';
 import {
   browserFromArg,
   choiceLabel,
@@ -86,6 +86,8 @@ describe('npm start helpers', () => {
       { name: 'ServiceQuotaExceededException', message: 'x' },
     ]) expect(explainAwsError(err)).toMatch(/New accounts start at 0.*AWS Support case/);
     expect(explainAwsError({ name: 'AccessDeniedException', message: 'not authorized to perform bedrock:InvokeModel' })).toMatch(/not allowed/);
+    // Bedrock's answer for Claude on a Free plan account (eu-west-2, Nov 2026).
+    expect(explainAwsError({ name: 'AccessDeniedException', message: 'anthropic.claude-sonnet-5-5 is not available for this account. You can explore other available models on Amazon Bedrock.' })).toMatch(/Paid plan.*root user/);
   });
 
   it("gives the local server the Region's Claude models (eu-west-2 → eu.), unless the player set their own", () => {
@@ -99,6 +101,10 @@ describe('npm start helpers', () => {
     const own = modelEnv(modelsFor('eu-west-2'), { AWS_CITY_MODEL: 'eu.anthropic.claude-sonnet-5-5', AWS_CITY_FALLBACK_MODEL: 'eu.anthropic.claude-sonnet-5' });
     expect(own).toEqual({ AWS_CITY_MODEL: 'eu.anthropic.claude-sonnet-5-5', AWS_CITY_FALLBACK_MODEL: 'eu.anthropic.claude-sonnet-5', AWS_CITY_LIGHT_MODEL: 'eu.anthropic.claude-sonnet-5' });
     expect(() => modelsFor('ap-northeast-1')).toThrow(/geo inference profile/);
+    // Amazon Nova: on demand in the Region (no geo profile), Pro for the agents, Lite for chat; its ids reach the server.
+    expect(modelEnv(modelsForChoice('eu-west-2', 'nova'))).toEqual({ AWS_CITY_MODEL: 'amazon.nova-pro-v1:0', AWS_CITY_FALLBACK_MODEL: 'amazon.nova-lite-v1:0', AWS_CITY_LIGHT_MODEL: 'amazon.nova-lite-v1:0' });
+    expect(modelsForChoice('ap-northeast-1', 'nova')).toEqual(NOVA_MODELS);
+    expect(modelsForChoice('eu-west-2', 'claude')).toEqual(modelsFor('eu-west-2'));
   });
 });
 
@@ -109,6 +115,11 @@ describe('npm start options (the stage one-liner)', () => {
     expect(parseArgs(['--live', '--browser=firefox', '--no-intro'])).toEqual({ help: false, intro: false, mode: 'live', browser: 'firefox' });
     expect(parseArgs(['--demo', '--intro', '--rebuild'])).toEqual({ help: false, intro: true, rebuild: true, mode: 'demo' });
     expect(parseArgs(['--live', '--profile', 'workshop', '--region=eu-west-1'])).toEqual({ help: false, mode: 'live', profile: 'workshop', region: 'eu-west-1' });
+    // The agents' models: Claude or Amazon Nova (real AWS only).
+    expect(parseArgs(['--live', '--model', 'nova', '--region', 'eu-west-2'])).toEqual({ help: false, mode: 'live', model: 'nova', region: 'eu-west-2' });
+    expect(parseArgs(['--live', '--model=Claude'])).toEqual({ help: false, mode: 'live', model: 'claude' });
+    expect(parseArgs(['--live', '--model', 'gpt']).error).toMatch(/claude or nova/);
+    expect(parseArgs(['--demo', '--model', 'nova']).error).toMatch(/real AWS/);
     expect(parseArgs(['-b', 'Edge']).browser).toBe('edge');
     expect(parseArgs(['--browser', 'city']).browser).toBe('cft');
     expect(parseArgs(['--browser', 'safari']).browser).toBe('safari');
