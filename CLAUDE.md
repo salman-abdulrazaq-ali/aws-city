@@ -63,8 +63,12 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   `in`; there is no `apac` profile, so e.g. Tokyo is refused). Each geo gets the newest pair with a profile there for
   both models (`GEO_MODELS`, from the Bedrock model cards): Claude Opus 5.5 / Sonnet 5.5 in `us`/`eu`/`au`; India has no
   5.5 profile and keeps Opus 5 / Sonnet 5. Model ids and their IAM ARNs derive from the Region; synth and the setup
-  wizard refuse other Regions. Local mode keeps the `us.` defaults in `server/src/config.ts` (Opus 5.5 / Sonnet 5.5).
-  Proof: `cd infra && npm test`.
+  wizard refuse other Regions. Local mode (`npm start` real AWS, `npm run live`) uses the same table: the launcher's
+  Bedrock check and the server's `AWS_CITY_MODEL`/`_FALLBACK_MODEL`/`_LIGHT_MODEL` come from `modelsFor(region)`
+  (`modelEnv` in `scripts/launcher/lib.mjs`; a player's own env wins), so eu-west-2 runs on `eu.`. Only the bare server
+  (`cd server && npm start`) keeps the `us.` defaults in `server/src/config.ts`. A new account's Bedrock errors are
+  named in plain words (account still being verified, the use-case form, a quota of 0: `explainAwsError`, and the
+  wizard's note). Proof: `cd infra && npm test`, `npx vitest run tests/launcher.test.ts`.
 - **Bedrock calls never force `tool_choice`** (Bedrock rejects it while thinking is on, and always for
   Claude 5.5-generation models; the defaults are Opus 5.5 / Sonnet 5.5, `server/src/config.ts`, but any model can be
   configured). Ask for the tool in the prompt and handle a missing call. Short routes use `effort: 'low'`. On 5.5

@@ -49,9 +49,9 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PREFS = path.join(ROOT, '.cache/launcher.json');
 const AWS_DIR = path.join(os.homedir(), '.aws');
 const PROFILE = 'aws-city';
-// server/src/config.ts defaults: the main model, and the fallback/light model it drops to.
-const MAIN_MODEL = 'us.anthropic.claude-opus-5-5';
-const LIGHT_MODEL = 'us.anthropic.claude-sonnet-5-5';
+// Claude's inference-profile ids follow the Region (us./eu./au./in.): the table the setup wizard and the CDK app use
+// (plain erasable TypeScript, no imports, so Node 24 loads it on a fresh clone). The server gets the pair as env.
+const { geoFor, modelsFor, unsupportedRegionMessage } = await import(new URL('../infra/lib/models.ts', import.meta.url).href);
 const interactive = isInteractive();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -213,6 +213,8 @@ async function connectAws(tools, region, prefs, wanted) {
 
 /** One tiny Claude call on Bedrock, so missing model access shows up now instead of in the game. */
 async function bedrockHello(tools, profile, region) {
+  if (!geoFor(region)) return { ok: false, message: unsupportedRegionMessage(region), hint: 'Quit and run npm run live -- --region eu-west-2 (or another Region from that list).' };
+  const { main: MAIN_MODEL, light: LIGHT_MODEL } = modelsFor(region);
   try {
     const client = new tools.bedrock.AnthropicBedrock({ awsRegion: region, providerChainResolver: async () => tools.providers.fromIni({ profile }) });
     const hello = (model) => client.messages.create({ model, max_tokens: 64, messages: [{ role: 'user', content: 'Reply with OK.' }] });
@@ -227,7 +229,7 @@ async function bedrockHello(tools, profile, region) {
     return {
       ok: false,
       message: explainAwsError(err),
-      hint: `If Claude isn't enabled here, turn it on: https://${region}.console.aws.amazon.com/bedrock/home?region=${region}#/modelaccess`,
+      hint: `Claude on Bedrock in ${region}: https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html`,
     };
   }
 }
@@ -625,7 +627,7 @@ async function main() {
     (plan.kind !== 'ask' && REGION_RE.test(prefs.region ?? '')
       ? prefs.region
       : interactive
-        ? ((sceneDirty = true), await ask(p.text({ message: 'AWS Region (where Claude runs for you)', initialValue: prefs.region ?? 'us-west-2', validate: (v) => (REGION_RE.test(v ?? '') ? undefined : 'e.g. us-west-2') })))
+        ? ((sceneDirty = true), await ask(p.text({ message: 'AWS Region (where Claude runs for you)', initialValue: prefs.region ?? 'us-west-2', validate: (v) => (!REGION_RE.test(v ?? '') ? 'e.g. us-west-2' : geoFor(v) ? undefined : unsupportedRegionMessage(v)) })))
         : 'us-west-2');
   const { profile, account } = await connectAws(tools, region, prefs, args.profile);
   savePrefs({ mode, browser, profile, region });
@@ -659,7 +661,7 @@ async function main() {
       dash.status(`Starting the server with AWS profile "${profile}"…`);
       let ready = false;
       dash.logTitle('Server log');
-      server = startServer({ profile, region, cfg, onLog: (l) => (dash.log(l), !ready && dash.status(`server: ${l}`)) });
+      server = startServer({ profile, region, models: geoFor(region) ? modelsFor(region) : undefined, cfg, onLog: (l) => (dash.log(l), !ready && dash.status(`server: ${l}`)) });
       void server.exited.then((code) => {
         if (!ready || stopping) return;
         dash.set('server', { status: 'failed', detail: `stopped (exit ${code ?? '?'})` });
