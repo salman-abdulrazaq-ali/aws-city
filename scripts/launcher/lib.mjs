@@ -39,6 +39,23 @@ export const pickProfile = (profiles, env = process.env) => {
 };
 
 /**
+ * The Region a profile names in ~/.aws/config (`[profile x]`, or `[default]` for default), or undefined. Only that
+ * profile's own block counts: another profile's Region is never borrowed.
+ */
+export const profileRegion = (config = '', profile = 'default') => {
+  const header = profile === 'default' ? /^\s*\[(?:profile\s+)?default\]\s*$/ : new RegExp(`^\\s*\\[profile\\s+${profile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]\\s*$`);
+  let inside = false;
+  for (const line of config.split('\n')) {
+    if (/^\s*\[/.test(line)) inside = header.test(line);
+    else if (inside) {
+      const m = /^\s*region\s*=\s*([a-z0-9-]+)\s*$/.exec(line);
+      if (m) return m[1];
+    }
+  }
+  return undefined;
+};
+
+/**
  * Adds or replaces one profile in a credentials file's text, leaving every other profile untouched.
  * Keys are written as given; callers never log them.
  */
