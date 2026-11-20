@@ -9,7 +9,7 @@
 **🏆 1st place, North Hackathon at Northumbria University**
 <!-- TODO: add the date, the prize and the team's names, e.g. "October 2026 · Team: …" -->
 
-[![CI](https://github.com/iloveclouduk/AWS-North-Hackathon/actions/workflows/ci.yml/badge.svg)](https://github.com/iloveclouduk/AWS-North-Hackathon/actions/workflows/ci.yml)
+[![CI](https://github.com/salman-abdulrazaq-ali/aws-city/actions/workflows/ci.yml/badge.svg)](https://github.com/salman-abdulrazaq-ali/aws-city/actions/workflows/ci.yml)
 ![Node 24](https://img.shields.io/badge/node-24-339933?logo=nodedotjs&logoColor=white)
 ![Chrome · Edge · Firefox · Safari](https://img.shields.io/badge/browsers-Chrome%20%C2%B7%20Edge%20%C2%B7%20Firefox%20%C2%B7%20Safari-4285F4)
 ![Built on AWS](https://img.shields.io/badge/built%20on-AWS-FF9900?logo=amazonwebservices&logoColor=white)
@@ -137,7 +137,7 @@ minutes the first time, and it starts in **Demo mode**: no account, no AWS, noth
 On Windows, press the <kbd>Windows</kbd> key, type **cmd** and press Enter (Command Prompt). Then paste these two lines:
 
 ```bash
-git clone https://github.com/iloveclouduk/AWS-North-Hackathon.git && cd AWS-North-Hackathon
+git clone https://github.com/salman-abdulrazaq-ali/aws-city.git && cd aws-city
 npm start
 ```
 
@@ -152,7 +152,7 @@ browser once (about 150 MB). Then a new browser window opens with two tabs:
 
 The terminal stays open as the city's remote control: press **q** there when you're done (it closes the window too).
 When you want to keep your city, open the **⋯** menu and pick **Sign in to save your city**. Next time, open a terminal,
-type `cd AWS-North-Hackathon`, then `npm start`, and press Enter at **Play again?**
+type `cd aws-city`, then `npm start`, and press Enter at **Play again?**
 
 ---
 
@@ -171,7 +171,7 @@ Publishing guides: [Chrome Web Store](docs/chrome-web-store.md) · [Firefox Add-
 ## Start here: one command
 
 ```bash
-git clone https://github.com/iloveclouduk/AWS-North-Hackathon.git && cd AWS-North-Hackathon
+git clone https://github.com/salman-abdulrazaq-ali/aws-city.git && cd aws-city
 npm start
 ```
 
@@ -231,7 +231,7 @@ Keep the `--`: without it npm keeps the options for itself.
 ### 1 · Play now
 
 ```bash
-git clone https://github.com/iloveclouduk/AWS-North-Hackathon.git && cd AWS-North-Hackathon
+git clone https://github.com/salman-abdulrazaq-ali/aws-city.git && cd aws-city
 npm install
 npm run open          # builds the extension and opens Chromium with it loaded
 ```

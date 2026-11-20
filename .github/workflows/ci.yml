@@ -32,6 +32,24 @@ jobs:
         if: always()
         with: { name: smoke-screenshots, path: .output/smoke, retention-days: 7 }
 
+  # What a workshop attendee does on their own laptop: a fresh clone, install, build, and the launcher answering.
+  fresh-clone:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - name: The extension is ready to load unpacked
+        run: node -e "const m=require('./.output/chrome-mv3/manifest.json'); if(m.manifest_version!==3) process.exit(1); console.log(m.name, m.version)"
+      - name: npm start answers (help, before any browser opens)
+        run: npm start -- --help
+
   server:
     runs-on: ubuntu-latest
     steps:
