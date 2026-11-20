@@ -24,6 +24,7 @@ import { nextLevelPreview } from '@/world/preview';
 import { EmptyState } from './EmptyState';
 import { CompareCard } from './CompareCard';
 import { ReadingShelf } from './ReadingShelf';
+import { WhatsNew } from './WhatsNew';
 import { comparisonsFor } from '@/world/comparisons';
 import { agentOffer } from '@/state/watch';
 import { TaskCard } from './ActivityFeed';
@@ -281,6 +282,7 @@ export function LandmarkCard({ openTab, layout }: { openTab?: OpenTab; layout?: 
           <WorkshopList ids={workshopsFor(id).map((w) => w.id)} progress={progress.workshops} />
         </section>
       )}
+      <WhatsNew serviceId={id} />
       <ReadingShelf serviceId={id} />
       <CompareCard
         id={compare}

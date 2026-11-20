@@ -127,6 +127,8 @@ function genericScript(serviceId: string): MockScript {
 const AMBIENT = AMBIENT_CHATTER;
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** AWS City Live: the demo's newest captured launch lands this long after the city opens (once a session). */
+export const LAUNCH_AFTER_MS = 60_000;
 
 export interface MockOptions {
   /** Agents currently visible in the city (ambient chatter only uses these). */
@@ -178,6 +180,8 @@ export class MockBackend implements AgentBackend {
   private careTimers: ReturnType<typeof setTimeout>[] = [];
   /** The demo's practice drill (v2.6), once it has started. */
   private drill?: { at: Date; resolvedAt?: Date };
+  /** AWS City Live: the held-back launch has arrived (once a session; see openCity). */
+  private launchLanded = false;
   /** The drill waits until the player has finished a quest (from putProgress), so it never interrupts the first one. */
   private drillReady = false;
   private online = false;
@@ -237,7 +241,18 @@ export class MockBackend implements AgentBackend {
     for (const t of this.careTimers.splice(0)) clearTimeout(t);
     // v2.6: AWS's public status, then (once a session) a practice drill in the demo's Region that resolves itself.
     this.emit(demoHealth(new Date(), this.drill));
-    this.emit(demoNews());
+    // AWS City Live: the newest captured launch (a real What's New item) arrives a minute in, once a session, so the
+    // demo's city shows a launch moment without AWS. Until then the ticker has the rest.
+    const news = demoNews();
+    const newest = [...news.items].sort((a, b) => b.date.localeCompare(a.date))[0];
+    this.emit(this.launchLanded || !newest ? news : { ...news, items: news.items.filter((n) => n !== newest) });
+    if (!this.launchLanded && newest)
+      this.careTimers.push(
+        setTimeout(() => {
+          this.launchLanded = true;
+          this.emit(demoNews());
+        }, LAUNCH_AFTER_MS / this.speed),
+      );
     if (this.drillReady) this.scheduleDrill();
     this.emit(demoInventory(new Date(), { crossRegion: !!this.account }));
     if (this.billOn) this.emit(demoBill());

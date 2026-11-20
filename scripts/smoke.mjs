@@ -1334,5 +1334,53 @@ await panel.screenshot({ path: `${out}/12-lookout.png` });
   await wait(1500);
 }
 
+// ── AWS City Live (src/world/liveEvents.ts): the event banner and Events board (?date= previews a day), re:Invent
+// week, and a What's New launch landing on its building while the city is open ──
+{
+  const live = await ctx.newPage();
+  live.on('pageerror', (e) => errors.push(`events pageerror: ${e.message}`));
+  live.on('console', (m) => m.type() === 'error' && errors.push(`events console: ${m.text()}`));
+  await live.goto(`chrome-extension://${id}/city.html?date=2026-11-25`);
+  await wait(2500);
+  await live.evaluate(() => window.awsCity.useCity.getState().select(undefined));
+  // The City tab (the banner's home), whichever tab this profile last had open.
+  const cityTab = live.getByRole('tab', { name: /^City/ });
+  if (await cityTab.count()) await cityTab.first().click();
+  await wait(500);
+  const banner = live.locator('.event-banner');
+  if (!(await banner.count())) errors.push('events: no banner five days before re:Invent (?date=2026-11-25)');
+  else {
+    if (!/In 5 days · Las Vegas/.test((await banner.textContent()) ?? '')) errors.push(`events: banner says "${await banner.textContent()}"`);
+    await live.screenshot({ path: `${out}/86-events-banner.png` });
+    console.log('📸 86-events-banner');
+    await live.locator('.event-line').click();
+    await wait(300);
+    if (!(await live.locator('#event-board').isVisible())) errors.push('events: the Events board did not open');
+    await live.screenshot({ path: `${out}/86b-events-board.png` });
+    console.log('📸 86b-events-board');
+    await audit('events board', live);
+  }
+  await live.goto(`chrome-extension://${id}/city.html?date=2026-12-02`);
+  await wait(2500);
+  if (!(await live.locator('.event-banner.reinvent.live').count())) errors.push('events: re:Invent is not live on ?date=2026-12-02');
+  await live.screenshot({ path: `${out}/86c-reinvent-live.png` });
+  console.log('📸 86c-reinvent-live');
+  await live.close();
+
+  // A launch for S3 lands while the city is open: "New from AWS" (the toast) and S3 Lake's moment in the city.
+  await city(() => window.awsCity.bus.emit('flyTo', { id: 's3' }));
+  await wait(1500);
+  await city(() => {
+    const st = window.awsCity.useCity.getState();
+    const items = st.news?.items ?? [];
+    const launch = { id: 'smoke-launch', title: 'Amazon S3 adds a smoke-test launch', url: 'https://aws.amazon.com/about-aws/whats-new/', date: new Date().toISOString(), serviceIds: ['s3'] };
+    st.applyServerEvent({ type: 'aws.news', asOf: new Date().toISOString(), items });
+    st.applyServerEvent({ type: 'aws.news', asOf: new Date().toISOString(), items: [launch, ...items] });
+  });
+  await wait(1200);
+  if (!(await page.locator('.toast', { hasText: 'New from AWS' }).count())) errors.push('events: no "New from AWS" toast for a launch that landed');
+  await shot('86d-launch-s3');
+}
+
 console.log(errors.length ? `\n${errors.length} errors:\n` + errors.join('\n') : '\nno page errors');
 await ctx.close();

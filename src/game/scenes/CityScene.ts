@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import type { Progress, ServerEvent } from '@/backend/contract';
+import type { AwsNewsItem, Progress, ServerEvent } from '@/backend/contract';
 import { bus } from '@/state/bus';
 import { agentName, isDiscovered, openFindings, severityRank, taskRunning, tierOf, useCity, type Inventory } from '@/state/store';
 import { dueFor } from '@/state/srs';
@@ -134,6 +134,9 @@ const TICKER_PX = 34;
 const TIER_BUBBLE_MS = 3500;
 /** A tier-up within this long of an XP gain at the same landmark is the one reward shown (no "+N ⭐" float too). */
 const REWARD_MERGE_MS = 500;
+/** AWS City Live: launch moments in one batch play this far apart, and at most this many (re:Invent week). */
+const LAUNCH_GAP_MS = 2200;
+const LAUNCH_MAX = 5;
 /** How often the scene re-reads the areas the player opened anyway (the ladder's `opened`, kept in localStorage). */
 const LADDER_POLL_MS = 1_000;
 /** How often the workers follow what's discovered (and the surface's cap). */
@@ -190,6 +193,9 @@ export class CityScene extends Phaser.Scene {
   private tipTurn = 0;
   /** Who is showing a level-up bubble now: one at a time, the rest go to the feed only (the store logs them). */
   private cheering?: Agent;
+  /** AWS City Live: when the current batch of launch moments ends, and how many it has played (onLaunch). */
+  private launchBatchEnds = 0;
+  private launchesInBatch = 0;
   private dayNight!: DayNight;
   /** v2.6: storms from AWS's Health Dashboard (the only weather that means something). */
   private weather?: Weather;
@@ -1573,7 +1579,32 @@ export class CityScene extends Phaser.Scene {
         if (this.cheer(a, incident.drill ? 'Drill over: we kept running.' : 'AWS says we’re back to normal.', { tone: 'done', caption: 'AWS Health' })) a?.emote('jump', 1000);
         if (this.newsHeard()) this.ring(true);
       }),
+      bus.on('launch', ({ item }) => this.onLaunch(item)),
     );
+  }
+
+  /**
+   * AWS City Live: a What's New launch for a service standing in this city. Its building bumps, "🚀 New from AWS"
+   * floats up and its agent says what launched; a batch plays one building at a time (LAUNCH_GAP_MS), at most
+   * LAUNCH_MAX of them, and one chime. Asleep (a game, an HQ, the world map): the ticker and the toast carry it.
+   */
+  private onLaunch(item: AwsNewsItem) {
+    if (!this.sys.isActive()) return;
+    const id = item.serviceIds.find((x) => this.landmarks.has(x));
+    if (!id) return;
+    const now = this.time.now;
+    if (now >= this.launchBatchEnds) this.launchesInBatch = 0;
+    if (this.launchesInBatch >= LAUNCH_MAX) return;
+    const at = Math.max(now, this.launchBatchEnds);
+    this.launchBatchEnds = at + LAUNCH_GAP_MS;
+    if (this.launchesInBatch++ === 0 && this.newsHeard()) this.ring(true);
+    const title = item.title.length > 70 ? `${item.title.slice(0, 67)}…` : item.title;
+    this.time.delayedCall(at - now, () => {
+      if (!this.sys.isActive()) return;
+      if (!reducedMotion()) this.landmarks.get(id)?.celebrate();
+      this.floatText(id, '🚀 New from AWS');
+      this.cheer(this.agents.get(id), `AWS just launched: ${title}`, { tone: 'done', caption: 'AWS news' });
+    });
   }
 
   /**

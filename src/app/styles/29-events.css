@@ -1,0 +1,116 @@
+/* ── AWS City Live: the event banner and the Events board (src/ui/EventBanner.tsx) ── */
+.event-banner {
+  --event: var(--info);
+  border: 1px solid var(--line-strong);
+  border-left: 4px solid var(--event);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  overflow: hidden;
+}
+.event-banner.reinvent {
+  --event: var(--gold);
+}
+.event-banner.meetup {
+  --event: var(--accent);
+}
+.event-banner.live {
+  background: linear-gradient(90deg, var(--accent-soft), var(--panel) 70%);
+}
+.event-line {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  padding: var(--s-3) var(--s-4);
+  background: none;
+  border: 0;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.event-line:focus-visible {
+  outline: 2px solid var(--event);
+  outline-offset: -2px;
+}
+.event-icon {
+  font-size: 20px;
+}
+.event-tag {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: var(--r-sm);
+  background: var(--event);
+  color: var(--paper-ink);
+  font-size: var(--fs-xs);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.event-banner.live .event-tag {
+  animation: event-pulse 2s ease-in-out infinite;
+}
+.event-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.event-text b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.event-when {
+  font-size: var(--fs-sm);
+  color: var(--ink-soft);
+}
+.event-more {
+  color: var(--muted);
+}
+.event-board {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  margin: 0;
+  padding: var(--s-3) var(--s-4) var(--s-4);
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+.event-board li {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-2);
+}
+.event-board p {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+@keyframes event-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .event-banner.live .event-tag {
+    animation: none;
+  }
+}
+
+/* A building's card: what AWS launched for it lately (src/ui/WhatsNew.tsx). */
+.place-news-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.place-news-list .btn {
+  white-space: normal;
+  text-align: left;
+  line-height: 1.35;
+}
