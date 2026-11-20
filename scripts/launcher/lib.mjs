@@ -72,6 +72,8 @@ export const parsePastedKeys = (text) => {
 
 const ACCOUNT_VERIFYING =
   'Your AWS account is still being verified (new accounts: usually under 2 hours). Try again later; after 2 hours, write to aws-verification@amazon.com.';
+const PAID_PLAN =
+  'This model isn’t available on this account yet. On the AWS Free plan, paid Marketplace models (such as Claude) need the Paid plan: upgrade as the root user (Billing → Upgrade plan; your credits stay).';
 const CLAUDE_FORM ="Claude on Bedrock isn't enabled yet: in the Bedrock console, open the Model catalog, pick a Claude model and submit Anthropic's one-time use-case form.";
 // Service Quotas refuses a request at or below the default (30M tokens a minute for Opus 5.5), so a new account held
 // at 0 can't ask there: it waits for AWS to verify it, then asks AWS Support.
@@ -98,6 +100,7 @@ export const explainAwsError = (err) => {
   // A brand-new account: AWS verifies it first, then Claude needs Anthropic's one-time form, and the quota can start at 0.
   if (/being verified|account.{0,40}verif/i.test(msg)) return ACCOUNT_VERIFYING;
   if (/use[- ]case/i.test(msg)) return CLAUDE_FORM;
+  if (/not available for this account/i.test(msg)) return PAID_PLAN;
   if (/Throttl|ServiceQuotaExceeded|too many (tokens|requests)|quota/i.test(name + msg)) return CLAUDE_QUOTA;
   if (/AccessDenied/i.test(name + msg)) return 'Signed in, but this account is not allowed to do that.';
   if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|timed? ?out/i.test(msg)) return "Couldn't reach AWS. Check your internet connection.";

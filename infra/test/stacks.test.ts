@@ -9,7 +9,7 @@ import { BudgetStack } from '../lib/budget-stack.js';
 import { type EnvConfig, firefoxRedirectUrl, loadEnv, taskRoleName } from '../lib/config.js';
 import { DataStack, PLAYER_ROLE_KEY, playerRoleTemplateVersion } from '../lib/data-stack.js';
 import { EdgeStack } from '../lib/edge-stack.js';
-import { foundationModel, geoFor, modelsFor } from '../lib/models.js';
+import { bedrockWildcards, foundationModel, geoFor, isProfileId, modelsFor, modelsForChoice, NOVA_MODELS } from '../lib/models.js';
 import { ServiceStack } from '../lib/service-stack.js';
 
 const env: EnvConfig = {
@@ -246,6 +246,38 @@ describe('Claude inference profiles follow the deploy Region', () => {
   });
 });
 
+describe('Amazon Nova: on demand in the deploy Region (Converse, Strands Agents)', () => {
+  it('the setup wizard\'s modelChoice picks Nova, in any Region; Claude stays the default', () => {
+    const cfg = { region: 'eu-west-2', cognitoDomainPrefix: 'cloud-city-x', extensionIds: [] };
+    expect(loadEnv(new App({ context: { env: 'staging', staging: { ...cfg, modelChoice: 'nova' } } })).models).toEqual(NOVA_MODELS);
+    expect(loadEnv(new App({ context: { env: 'staging', staging: cfg } })).models.main).toBe('eu.anthropic.claude-opus-5-5');
+    // Nova has no geo profile, so a Region Claude can't use doesn't fail synth (the wizard checks Nova answers there).
+    expect(loadEnv(new App({ context: { env: 'staging', staging: { ...cfg, region: 'ap-northeast-1', modelChoice: 'nova' } } })).models).toEqual(NOVA_MODELS);
+  });
+
+  it('the task role may invoke exactly those two Nova models in its own Region: no wildcard, no profile', () => {
+    expect(isProfileId('eu.anthropic.claude-opus-5-5')).toBe(true);
+    expect(isProfileId('amazon.nova-pro-v1:0')).toBe(false);
+    expect(bedrockWildcards([NOVA_MODELS.main, NOVA_MODELS.light])).toEqual([]);
+    const nova = build({ region: 'eu-west-2', modelChoice: 'nova', models: modelsForChoice('eu-west-2', 'nova') });
+    nova.svc.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Sid: 'Bedrock',
+            Action: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
+            Resource: ['arn:aws:bedrock:eu-west-2::foundation-model/amazon.nova-pro-v1:0', 'arn:aws:bedrock:eu-west-2::foundation-model/amazon.nova-lite-v1:0'],
+          }),
+        ]),
+      },
+    });
+    const task = JSON.stringify(nova.svc.findResources('AWS::ECS::TaskDefinition'));
+    expect(task).toContain('"Name":"AWS_CITY_MODEL","Value":"amazon.nova-pro-v1:0"');
+    expect(task).toContain('"Name":"AWS_CITY_LIGHT_MODEL","Value":"amazon.nova-lite-v1:0"');
+    expect(task).not.toContain('anthropic');
+  });
+});
+
 describe('player role template versions', () => {
   it("is published under the template's own version, and old versions are never pruned", () => {
     const yaml = readFileSync(new URL('../player-role/player-role.yaml', import.meta.url), 'utf8');
@@ -286,6 +318,7 @@ describe('cdk-nag AwsSolutions (acknowledgements sit on the constructs they are 
     ['prod, CloudFront + internal ALB', { name: 'prod' as const, domainName: '', hostedZoneId: '', zoneName: '' }],
     ['staging, custom domain + public ALB (eu-west-1)', { region: 'eu-west-1' }],
     ['prod, custom domain + public ALB', { name: 'prod' as const }],
+    ['staging on Amazon Nova, CloudFront (eu-west-2)', { region: 'eu-west-2', domainName: '', hostedZoneId: '', zoneName: '', modelChoice: 'nova' as const, models: modelsForChoice('eu-west-2', 'nova') }],
   ])('%s synthesises clean', (_name, over) => {
     expect(nagSynth(over)).not.toThrow();
   });

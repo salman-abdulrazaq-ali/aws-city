@@ -86,6 +86,8 @@ describe('npm start helpers', () => {
       { name: 'ServiceQuotaExceededException', message: 'x' },
     ]) expect(explainAwsError(err)).toMatch(/New accounts start at 0.*AWS Support case/);
     expect(explainAwsError({ name: 'AccessDeniedException', message: 'not authorized to perform bedrock:InvokeModel' })).toMatch(/not allowed/);
+    // Bedrock's answer for Claude on a Free plan account (eu-west-2, Nov 2026).
+    expect(explainAwsError({ name: 'AccessDeniedException', message: 'anthropic.claude-sonnet-5-5 is not available for this account. You can explore other available models on Amazon Bedrock.' })).toMatch(/Paid plan.*root user/);
   });
 
   it("gives the local server the Region's Claude models (eu-west-2 → eu.), unless the player set their own", () => {

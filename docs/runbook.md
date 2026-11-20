@@ -10,6 +10,9 @@ evidence is in `docs/well-architected.md`.
 
 ## First deploy (once per AWS account)
 
+A new AWS account: start with [the step-by-step guide](self-hosting.md) (root MFA, the Paid plan, an admin user,
+Amazon Nova or Claude, and a new account's Bedrock hold). This section is the operator's checklist.
+
 1. **Prerequisites** (yours): an AWS account with admin access for the first deploy; Claude Opus 5.5 and
    Sonnet 5.5 invocable on Bedrock in the region (Opus 5 and Sonnet 5 in India, which has no 5.5 profile:
    `infra/lib/models.ts` `GEO_MODELS`). The server calls them through a geo cross-Region inference profile
