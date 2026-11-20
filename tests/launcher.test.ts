@@ -21,6 +21,7 @@ import {
   modelEnv,
   parseArgs,
   parseBuildProgress,
+  profileRegion,
   parseDownloadProgress,
   parsePastedKeys,
   pickProfile,
@@ -63,6 +64,18 @@ describe('npm start helpers', () => {
     expect(parsePastedKeys('export AWS_ACCESS_KEY_ID="ASIA1"\nexport AWS_SECRET_ACCESS_KEY="s/2+x"\nexport AWS_SESSION_TOKEN="tok=="')).toEqual({ accessKeyId: 'ASIA1', secretAccessKey: 's/2+x', sessionToken: 'tok==' });
     expect(parsePastedKeys('[default]\naws_access_key_id=AKIA9\naws_secret_access_key=abc')).toEqual({ accessKeyId: 'AKIA9', secretAccessKey: 'abc', sessionToken: undefined });
     expect(parsePastedKeys('hello')).toBeUndefined();
+  });
+
+  it("reads a profile's own Region from ~/.aws/config, never another profile's", () => {
+    const config = '[default]\nregion = us-east-1\n\n[profile aws-city]\nlogin_session = arn:aws:iam::111122223333:user/admin\nregion = eu-west-2\n\n[profile other]\noutput = json\n';
+    expect(profileRegion(config, 'aws-city')).toBe('eu-west-2');
+    expect(profileRegion(config, 'default')).toBe('us-east-1');
+    expect(profileRegion(config, 'other')).toBeUndefined();
+    expect(profileRegion(config, 'missing')).toBeUndefined();
+    expect(profileRegion('[profile aws-city]\noutput = json\n[profile x]\nregion = ap-south-1\n', 'aws-city')).toBeUndefined();
+    expect(profileRegion('', 'aws-city')).toBeUndefined();
+    // A name with regex characters is matched literally.
+    expect(profileRegion('[profile a.b]\nregion = eu-west-1\n[profile aXb]\nregion = us-west-2\n', 'a.b')).toBe('eu-west-1');
   });
 
   it('turns AWS errors into a next step', () => {

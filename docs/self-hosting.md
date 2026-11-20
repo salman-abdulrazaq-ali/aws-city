@@ -120,8 +120,9 @@ npm install
 npm run setup
 ```
 
-The wizard first checks your sign-in (it warns if it's root), your plan (it stops on the Free plan) and the AI models.
-Then it asks a few questions:
+The wizard uses the `aws-city` profile from step 5 by itself (or `AWS_PROFILE`, if you set one), and suggests that
+profile's Region. It first checks your sign-in (it warns if it's root), your plan (it stops on the Free plan) and the AI
+models. Then it asks a few questions:
 
 | Question | Suggested answer |
 |---|---|

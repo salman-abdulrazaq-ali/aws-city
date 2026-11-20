@@ -8,6 +8,7 @@ export declare const pickProfile: (profiles: string[], env?: Record<string, stri
 export declare const upsertProfile: (text: string, name: string, keys: { accessKeyId: string; secretAccessKey: string; sessionToken?: string }) => string;
 export declare const parsePastedKeys: (text: string) => { accessKeyId: string; secretAccessKey: string; sessionToken?: string } | undefined;
 export declare const explainAwsError: (err: unknown) => string;
+export declare const profileRegion: (config?: string, profile?: string) => string | undefined;
 export declare const modelEnv: (
   models: { main: string; light: string },
   env?: Record<string, string | undefined>,

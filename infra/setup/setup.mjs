@@ -11,6 +11,8 @@
 //   npm run setup -- --destroy --env staging
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as p from '@clack/prompts';
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
@@ -23,7 +25,7 @@ import { CreateSecretCommand, DescribeSecretCommand, PutSecretValueCommand, Secr
 import { CreateEmailIdentityCommand, GetEmailIdentityCommand, SESv2Client } from '@aws-sdk/client-sesv2';
 import { GetCallerIdentityCommand, STSClient } from '@aws-sdk/client-sts';
 import { fromNodeProviderChain } from '@aws-sdk/credential-providers';
-import { explainAwsError } from '../../scripts/launcher/lib.mjs';
+import { explainAwsError, listProfiles, pickProfile, profileRegion } from '../../scripts/launcher/lib.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const INFRA = fileURLToPath(new URL('../', import.meta.url));
@@ -89,7 +91,22 @@ const [major] = process.versions.node.split('.').map(Number);
 if (major < 24) bye(`Node ${process.versions.node} is too old: install Node 24 or newer (https://nodejs.org).`);
 // No Docker needed: the server image is built in AWS CodeBuild during the deploy (infra/lib/service-stack.ts).
 
-const envName = opt('--env') ?? (await ask('select', { message: 'Which environment?', options: [{ value: 'prod', label: 'prod', hint: 'the real one players use' }, { value: 'staging', label: 'staging', hint: 'a test copy' }], initialValue: saved.lastEnv ?? 'prod' }, saved.lastEnv));
+// Your sign-in: AWS_PROFILE, else the profile AWS City's own tools use (the launcher's pickProfile: AWS_CITY_PROFILE,
+// aws-city from `aws login --profile aws-city`, workshop, default). Exported, so cdk and every child process sign in the
+// same way. Keys in the environment (CI) win, and then no profile is picked.
+const awsFile = (name) => {
+  try {
+    return readFileSync(path.join(homedir(), '.aws', name), 'utf8');
+  } catch {
+    return '';
+  }
+};
+const awsConfigText = awsFile('config');
+const profile = process.env.AWS_PROFILE ?? (process.env.AWS_ACCESS_KEY_ID ? undefined : pickProfile(listProfiles(awsFile('credentials'), awsConfigText)));
+if (profile) process.env.AWS_PROFILE = profile;
+
+// Staging first (a test copy; docs/self-hosting.md), prod one arrow away.
+const envName = opt('--env') ?? (await ask('select', { message: 'Which environment?', options: [{ value: 'staging', label: 'staging', hint: 'a test copy: start here' }, { value: 'prod', label: 'prod', hint: 'the real one players use' }], initialValue: saved.lastEnv ?? 'staging' }, saved.lastEnv));
 const prev = saved[envName] ?? {};
 
 // The agents' models (infra/lib/models.ts): Amazon Nova, on demand in the Region and run on Strands Agents' Bedrock model,
@@ -113,7 +130,8 @@ const region = await ask(
   {
     message: 'AWS Region to deploy in',
     placeholder: 'eu-west-2',
-    initialValue: prev.region ?? process.env.AWS_REGION ?? 'us-west-2',
+    // A saved answer, then AWS_REGION, then the Region your profile was set up with (aws login asks for it).
+    initialValue: prev.region ?? process.env.AWS_REGION ?? profileRegion(awsConfigText, profile ?? 'default') ?? 'us-west-2',
     validate: (v) => (!REGION_RE.test(v ?? '') ? 'an AWS Region, e.g. eu-west-2' : modelChoice === 'nova' || geoFor(v) ? undefined : `Claude needs one of: ${SUPPORTED_REGIONS.join(', ')}`),
   },
   prev.region,
@@ -130,7 +148,7 @@ let account;
 try {
   const id = await aws(STSClient).send(new GetCallerIdentityCommand({}));
   account = id.Account;
-  s.stop(`Signed in to AWS account ${account} as ${id.Arn?.split(':').pop()}`);
+  s.stop(`Signed in to AWS account ${account} as ${id.Arn?.split(':').pop()}${profile ? ` (profile ${profile})` : ''}`);
   // Root can do everything and can't be limited: AWS's advice is an admin user with MFA for everyday work.
   if (id.Arn?.endsWith(':root')) {
     p.log.warn(
@@ -141,7 +159,7 @@ try {
 } catch (err) {
   s.stop('Not signed in to AWS', 1);
   p.log.error(err.message ?? String(err));
-  if (!DRY) bye('Sign in first, then run setup again:\n  aws login            (AWS CLI 2.32+)\n  or: aws configure sso  /  export AWS_PROFILE=<profile>');
+  if (!DRY) bye(`Sign in first, then run setup again:\n  aws login --profile aws-city   (AWS CLI 2.32+; setup finds this profile by itself)\n  or: aws configure sso  /  export AWS_PROFILE=<profile>${profile ? `\n(Tried profile ${profile}.)` : ''}`);
   account = '000000000000';
   p.log.warn('[dry run] continuing without AWS: checks are skipped, nothing is written to AWS.');
 }
