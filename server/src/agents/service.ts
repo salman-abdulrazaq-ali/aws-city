@@ -9,6 +9,7 @@ import type { AccountLocks } from '../store/types.js';
 import { log } from '../log.js';
 import { withGrant } from '../guard/gate.js';
 import { actionGrant } from '../guard/grants.js';
+import { BLOCKED_REASON, type Judge, type Judgement, UNCHECKED_REASON } from './jev.js';
 
 export type SubmitOutcome =
   | { status: 'done'; result: ExecutionResult }
@@ -28,12 +29,17 @@ export interface ApprovalRequest {
   action: Action;
   summary: string;
   destructive: boolean;
+  /**
+   * The second opinion (Jev, agents/jev.ts) asked for more care: the player must type the resource's name to approve
+   * (the preview's v2.3 confirmText), and `reason` says why. Absent: the ordinary preview.
+   */
+  check?: { reason: string };
 }
 /** Asks the player (contract v2 deploy.preview); resolves true only on an explicit deploy.approve. */
 export type Approve = (req: ApprovalRequest) => Promise<boolean>;
 
 /**
- * The one path from "an agent wants to do X" to AWS: parse → policy → execute → re-poll.
+ * The one path from "an agent wants to do X" to AWS: parse → policy → (second opinion) → approval → execute → re-poll.
  * Writes are serialised, and resources just created are counted before the (eventually consistent)
  * AWS listings show them, so parallel requests can't all slip under the same limit.
  */
@@ -45,6 +51,8 @@ export const createActionService = (deps: {
   locks?: AccountLocks;
   /** Which AWS account these writes go to (the lock key). */
   accountKey?: () => string;
+  /** A second opinion on writes that may only tighten (Jev, with TYPESAFE_API_KEY). Undefined = off. */
+  judge?: Judge;
 }) => {
   const locks = deps.locks ?? memoryLocks();
   const accountKey = deps.accountKey ?? (() => deps.poller.current()?.accountId ?? 'local');
@@ -90,8 +98,9 @@ export const createActionService = (deps: {
      * Validates untrusted input (a model's tool call) and runs it through policy.
      * Every write is shown to the player first (no `approve` means no writes); policy is checked before asking
      * (don't ask about things that would be denied) and again inside the write lock after approval.
+     * `intent`: the player's own words for this turn, for the second opinion (absent when the text isn't theirs).
      */
-    async submit(name: unknown, input: unknown, opts: { approve?: Approve } = {}): Promise<SubmitOutcome> {
+    async submit(name: unknown, input: unknown, opts: { approve?: Approve; intent?: string } = {}): Promise<SubmitOutcome> {
       const parsed = parseAction(name, input);
       if (!parsed.ok) return { status: 'invalid', error: parsed.error };
       const action = parsed.action;
@@ -100,7 +109,15 @@ export const createActionService = (deps: {
       const snapshot = await withJustCreated(deps.poller.current() ?? (await deps.poller.refresh()));
       const pre = checkAction(action, snapshot, { confirmed: true });
       if (pre.verdict === 'deny') return { status: 'denied', reason: pre.reason };
-      const ok = await opts.approve({ action, summary: describeAction(action), destructive: DESTRUCTIVE.has(action.type) });
+      const summary = describeAction(action);
+      const destructive = DESTRUCTIVE.has(action.type);
+      // The second opinion only tightens: it can refuse, or make the player type the name; the approval below still runs.
+      const second = deps.judge
+        ? await deps.judge({ action, summary, destructive, intent: opts.intent }).catch((): Judgement => ({ verdict: 'ask', reason: UNCHECKED_REASON }))
+        : undefined;
+      if (second?.verdict === 'block') return { status: 'denied', reason: second.reason ?? BLOCKED_REASON };
+      const check = second && second.verdict !== 'allow' ? { check: { reason: second.reason ?? UNCHECKED_REASON } } : {};
+      const ok = await opts.approve({ action, summary, destructive, ...check });
       if (!ok) return { status: 'denied', reason: REJECTED_REASON };
       return run(action, true);
     },

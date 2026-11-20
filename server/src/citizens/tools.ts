@@ -2,7 +2,7 @@ import { tool } from '@strands-agents/sdk';
 import { z } from 'zod';
 import { docsBlock, type Knowledge } from '../knowledge/mcp.js';
 import { ACTION_SCHEMAS, type ActionName } from '../agents/actions.js';
-import { outcomeMessage, outcomeText, type ToolCallReport, type TurnHooks } from '../agents/runner.js';
+import { outcomeMessage, outcomeText, submitOpts, type ToolCallReport, type TurnHooks } from '../agents/runner.js';
 import type { ActionService, SubmitOutcome } from '../agents/service.js';
 
 /** What a tool callback needs from the turn that's running (set by the engine before each invoke). */
@@ -24,7 +24,7 @@ export const actionTools = (names: ActionName[], deps: { actions: ActionService;
       inputSchema: ACTION_SCHEMAS[name] as unknown as z.ZodObject,
       callback: async (input: unknown) => {
         const ctx = deps.turn();
-        const outcome: SubmitOutcome = ctx?.hooks.approve ? await deps.actions.submit(name, input, { approve: ctx.hooks.approve }) : await deps.actions.submit(name, input);
+        const outcome: SubmitOutcome = ctx?.hooks.approve ? await deps.actions.submit(name, input, submitOpts(ctx.hooks)) : await deps.actions.submit(name, input);
         const report: ToolCallReport = { name, input, outcome: outcome.status, message: outcomeMessage(outcome) };
         ctx?.toolCalls.push(report);
         ctx?.hooks.onToolEnd?.(report);

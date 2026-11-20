@@ -40,6 +40,10 @@ const FIX_RESOURCE_TYPE: Record<string, string> = {
 const labelOf = (a: ApprovalRequest['action']): string =>
   'name' in a ? String(a.name) : 'instanceId' in a ? String(a.instanceId) : 'suffix' in a ? `aws-city-…-${String(a.suffix)}` : a.type;
 
+/** What the player types when a write gets a second look: the resource's own name or id (never empty, never "…"). */
+const typedName = (a: ApprovalRequest['action']): string =>
+  ('name' in a ? String(a.name) : 'instanceId' in a ? String(a.instanceId) : 'suffix' in a ? String(a.suffix) : '').trim() || a.type;
+
 /**
  * Per-socket player approvals (contract v2): a guarded write becomes deploy.preview; the player answers
  * with deploy.approve / deploy.reject. Unanswered requests expire; closing the socket rejects them all.
@@ -67,11 +71,24 @@ export const createApprovals = (opts: { region: string; timeoutMs?: number }) =>
         logicalId: labelOf(req.action),
         resourceType: RESOURCE_TYPE[t],
       };
-      emit({ type: 'deploy.preview', deployId, taskId, templateId: t, stackName: req.summary, region: opts.region, changes: [change], costNote: COST[t] });
+      // A second look (Jev) asked for care: the player types the name (v2.3 confirmText) and reads why on a 'detail' line.
+      const confirmText = req.check ? typedName(req.action) : undefined;
+      const why: DeployChange[] = req.check ? [{ action: 'Modify', logicalId: `Safety check: ${req.check.reason}`, resourceType: 'detail' }] : [];
+      emit({
+        type: 'deploy.preview',
+        deployId,
+        taskId,
+        templateId: t,
+        stackName: req.summary,
+        region: opts.region,
+        changes: [change, ...why],
+        costNote: COST[t],
+        ...(confirmText ? { confirmText } : {}),
+      });
       return new Promise<boolean>((resolve) => {
         const timer = setTimeout(() => settle(deployId, false, 'No answer within 5 minutes, so nothing was changed.'), opts.timeoutMs ?? 300_000);
         timer.unref?.();
-        pending.set(deployId, { resolve: (ok) => (ok && awaitingResult.set(taskId, deployId), resolve(ok)), emit, timer });
+        pending.set(deployId, { resolve: (ok) => (ok && awaitingResult.set(taskId, deployId), resolve(ok)), emit, timer, confirmText });
       });
     },
     /**
@@ -104,7 +121,7 @@ export const createApprovals = (opts: { region: string; timeoutMs?: number }) =>
       });
       return { deployId, approved };
     },
-    /** From the client: returns false if the id is unknown/expired. `confirm` must match a fix's confirmText. */
+    /** From the client: returns false if the id is unknown/expired. `confirm` must match the preview's confirmText (a fix, or a write the second look flagged). */
     answer(deployId: string, ok: boolean, confirm?: string): boolean {
       const p = pending.get(deployId);
       if (p && ok && p.confirmText && confirm?.trim() !== p.confirmText) return settle(deployId, false, 'The name you typed didn’t match, so nothing was changed.');

@@ -11,13 +11,14 @@ import { createAuthenticate } from './auth.js';
 import { assumedRole, createAwsClients, getAccountId, SDK_DEFAULTS, serviceCredentials } from './aws.js';
 import { ConfigError, loadConfig } from './config.js';
 import { createS3UploadStore, createUploadStore, type UploadStore } from './contract/uploads.js';
-import { createHttpServer } from './http.js';
+import { createHttpServer, SERVER_VERSION } from './http.js';
 import { createKnowledge } from './knowledge/mcp.js';
 import { log, setPublicErrors } from './log.js';
 import { createNewsFeed } from './news/feed.js';
 import { dynamoStores } from './store/dynamo.js';
 import { localStores } from './store/local.js';
 import { createTenants, playerAws } from './tenants.js';
+import { CONTRACT_VERSION } from './world.js';
 
 let config: ReturnType<typeof loadConfig>;
 try {
@@ -81,7 +82,16 @@ const deleted = config.authMode === 'cognito' ? (sub: string) => stores.deletedR
 const http = createHttpServer({ config, tenants, authenticate: createAuthenticate(config), uploads: memoryUploads, mfaReady, deleted });
 
 http.server.listen(config.port, config.host, () => {
-  log.info(`AWS City backend on ${config.host}:${config.port}`, { auth: config.authMode, aws: config.awsMode, store: config.store, uploads: config.uploads, model: config.model });
+  log.info(`AWS City backend on ${config.host}:${config.port}`, {
+    version: SERVER_VERSION,
+    contract: CONTRACT_VERSION,
+    auth: config.authMode,
+    aws: config.awsMode,
+    store: config.store,
+    uploads: config.uploads,
+    model: config.model,
+    jev: config.jev ? config.jev.model : 'off',
+  });
   if (config.authMode === 'token') {
     const base = `http://${config.host}:${config.port}`;
     console.log(`  frontend .env.local:  WXT_BACKEND=aws  WXT_AWS_WS_URL=ws://${config.host}:${config.port}/ws  WXT_AWS_API_URL=${base}`);

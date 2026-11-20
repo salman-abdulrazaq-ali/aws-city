@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { LIMITS } from '../src/agents/policy.js';
 import type { AwsClients } from '../src/aws.js';
 import type { Poller } from '../src/state/poller.js';
+import type { Judgement, WriteReview } from '../src/agents/jev.js';
+import type { ApprovalRequest } from '../src/agents/service.js';
 import { instance, snapshot } from './fixtures.js';
 
 const { executeAction } = vi.hoisted(() => {
@@ -17,6 +19,7 @@ const { executeAction } = vi.hoisted(() => {
 vi.mock('../src/agents/executor.js', () => ({ executeAction }));
 
 const { createActionService, NEEDS_APPROVAL_REASON, REJECTED_REASON } = await import('../src/agents/service.js');
+const { UNCHECKED_REASON } = await import('../src/agents/jev.js');
 
 const pollerFor = (resources = snapshot([])) => ({ current: () => resources, refresh: async () => resources, start() {}, stop() {} }) as Poller;
 
@@ -76,5 +79,60 @@ describe('action service', () => {
     const approve = vi.fn(async () => false);
     await service.submit('describe_resource', { id: 'anything' }, { approve });
     expect(approve).not.toHaveBeenCalled();
+  });
+});
+
+describe('a second opinion on writes (judge = Jev) only tightens', () => {
+  const judged = (...verdicts: (Judgement | Error)[]) => {
+    executeAction.mockClear();
+    const judge = vi.fn(async (_r: WriteReview): Promise<Judgement> => {
+      const next = verdicts.shift()!;
+      if (next instanceof Error) throw next;
+      return next;
+    });
+    const service = createActionService({ clients: {} as AwsClients, poller: pollerFor(), region: 'us-west-2', judge });
+    return { service, judge };
+  };
+
+  it('block refuses without asking the player; ask adds a typed check; allow asks as before', async () => {
+    const { service } = judged({ verdict: 'block', reason: 'Stopped by the check.' }, { verdict: 'ask', reason: 'Look twice.' }, { verdict: 'allow' });
+    const approve = vi.fn(async (_req: ApprovalRequest) => true);
+    expect(await service.submit('create_table', { name: 'city-quest' }, { approve })).toEqual({ status: 'denied', reason: 'Stopped by the check.' });
+    expect(approve).not.toHaveBeenCalled();
+    expect(executeAction).not.toHaveBeenCalled();
+
+    expect(await service.submit('create_table', { name: 'city-quest' }, { approve })).toMatchObject({ status: 'done' });
+    expect(approve.mock.calls[0]![0]).toMatchObject({ destructive: false, check: { reason: 'Look twice.' } });
+
+    expect(await service.submit('create_table', { name: 'city-quest' }, { approve })).toMatchObject({ status: 'done' });
+    expect(approve.mock.calls[1]![0]).not.toHaveProperty('check');
+    expect(executeAction).toHaveBeenCalledTimes(2);
+  });
+
+  it("ask can't skip the player: a no still changes nothing", async () => {
+    const { service } = judged({ verdict: 'ask', reason: 'Look twice.' });
+    expect(await service.submit('create_table', { name: 'city-quest' }, { approve: async () => false })).toEqual({ status: 'denied', reason: REJECTED_REASON });
+    expect(executeAction).not.toHaveBeenCalled();
+  });
+
+  it('a judge that throws counts as ask', async () => {
+    const { service } = judged(new Error('boom'));
+    const approve = vi.fn(async (_req: ApprovalRequest) => true);
+    expect(await service.submit('create_table', { name: 'city-quest' }, { approve })).toMatchObject({ status: 'done' });
+    expect(approve.mock.calls[0]![0].check).toEqual({ reason: UNCHECKED_REASON });
+  });
+
+  it("gets the player's words and the write after policy; never a read, a denied write or one with no approval channel", async () => {
+    const mine = instance('i-0000000000000001a', 'running');
+    executeAction.mockClear();
+    const judge = vi.fn(async (_r: WriteReview): Promise<Judgement> => ({ verdict: 'allow' }));
+    const service = createActionService({ clients: {} as AwsClients, poller: pollerFor(snapshot([mine])), region: 'us-west-2', judge });
+    const approve = async () => true;
+    await service.submit('describe_resource', { id: mine.id }, { approve, intent: 'what is this?' });
+    await service.submit('terminate_instance', { instanceId: 'i-0000000000000009f' }, { approve, intent: 'knock it down' });
+    expect(await service.submit('terminate_instance', { instanceId: mine.id }, { intent: 'knock it down' })).toEqual({ status: 'denied', reason: NEEDS_APPROVAL_REASON });
+    expect(judge).not.toHaveBeenCalled();
+    await service.submit('terminate_instance', { instanceId: mine.id }, { approve, intent: 'knock it down' });
+    expect(judge).toHaveBeenCalledWith({ action: { type: 'terminate_instance', instanceId: mine.id }, summary: `Permanently terminate EC2 instance ${mine.id}`, destructive: true, intent: 'knock it down' });
   });
 });

@@ -152,6 +152,7 @@ export const createOrchestrator = (deps: {
           emit({ type: 'agent.state', agentId, state: 'working', service: api.split(':')[0], detail: `${api.split(':')[1] ?? api} — ${summary}` });
         },
         approve: approvals ? (req) => approvals.request(taskId, req, emit) : undefined,
+        intent: cmd.prompt,
         onToolEnd: (call) => {
           approvals?.reportResult(taskId, call, emit);
           emit({ type: 'agent.state', agentId, state: 'idle' });

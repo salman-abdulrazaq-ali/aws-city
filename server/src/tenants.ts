@@ -10,6 +10,7 @@ import { type AgentRunner, createAgentRunner } from './agents/runner.js';
 import { createStrandsRunner } from './citizens/engine.js';
 import { isCitizen } from './citizens/roles.js';
 import { type ActionService, createActionService } from './agents/service.js';
+import { createJev } from './agents/jev.js';
 import type { Principal } from './auth.js';
 import { type AwsClients, clientsFor } from './aws.js';
 import type { Config } from './config.js';
@@ -140,6 +141,8 @@ export interface TenantDeps {
 
 export const createTenants = (deps: TenantDeps): TenantHub => {
   const tenants = new Map<string, { tenant: Tenant; refs: number; evict?: NodeJS.Timeout; stop: () => void }>();
+  // Jev's second opinion on agents' writes (only tightens): one judge for every player, off without TYPESAFE_API_KEY.
+  const judge = deps.config.jev ? createJev(deps.config.jev) : undefined;
 
   const build = async (p: Principal) => {
     const sub = p.sub;
@@ -176,7 +179,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
       });
       const snapshot = async () => poller.current() ?? poller.refresh();
       const locks = deps.stores.locks ?? memoryLocks();
-      const actions = createActionService({ clients: aws.clients, poller, region: aws.region, locks, accountKey: () => aws.accountId });
+      const actions = createActionService({ clients: aws.clients, poller, region: aws.region, locks, accountKey: () => aws.accountId, judge });
       const runnerDeps = { llm, actions, snapshot, knowledge: deps.knowledge };
       const strands = createStrandsRunner(runnerDeps);
       const runner = routedRunner(createAgentRunner(runnerDeps), strands, deps.config.agentEngine === 'strands');

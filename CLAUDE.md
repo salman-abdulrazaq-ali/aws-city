@@ -128,6 +128,18 @@ When a change touches a decision, update its entry and run its Proof.
   grant or not; and one without a grant (`withGrant`) naming its command and exact target, once. Only ActionService (after
   policy and approval) and fixes.ts (after approval and its re-read) mint grants. Refusals are `GuardDeniedError` ("The city's
   safety gate stopped this: …"), logged without account ids. Proof: `cd server && npx vitest run test/guard.test.ts test/player-role.test.ts test/service.test.ts test/fixes.test.ts`.
+- **Jev, a second opinion that only tightens** (`server/src/agents/jev.ts`, `docs/jev.md`). Off unless `TYPESAFE_API_KEY` is
+  set (local or hosted). ActionService asks TypeSafe's Jev about a write after policy passes and before the player is asked
+  (the `judge` dependency); never about a read, a denied write or one with no approval channel. The state is only the
+  player's own words (`TurnHooks.intent` = task.submit's prompt, ≤ 500 chars), the action type, `describeAction` and
+  `destructive`, with 12-digit ids and ARNs redacted; nothing from AWS. Questions: `intent` (`noul`, only with the player's
+  words) and `risk` (`score`, 3 levels, lowest first); the thresholds are code (`verdictFor`: block < 0.2 intent; ask < 0.6
+  or risk ≥ 1.2; `AWS_CITY_JEV_*`). Block refuses with a plain sentence; ask adds a "Safety check" detail line and the
+  preview's v2.3 `confirmText` (the resource's name; `approvals.answer` refuses a mismatch); it never skips or answers
+  the approval. A timeout (3 s), non-2xx, a reply over 32 KB, a redirect or a reply off the documented shape is ask. The
+  model is pinned (`AWS_CITY_JEV_MODEL`, default `jev-1.13.0`); each decision is logged (id, model, scores, verdict, ms,
+  tokens), never the state or the key. Injected text can sway Jev, so it can never loosen anything.
+  Proof: `cd server && npx vitest run test/jev.test.ts test/service.test.ts test/guard.test.ts`.
 - **Linking an AWS account, approving a write and applying a fix need MFA (step-up).** Hosted players must have TOTP
   on for `account.link`/`account.verify`, `deploy.approve` and `finding.fix` (Google sign-ins are exempt); prod Cognito runs Plus with threat protection.
   A "TOTP is on" answer is cached 60 s at most. Proof: `cd server && npx vitest run test/hosted.test.ts -t "MFA"`

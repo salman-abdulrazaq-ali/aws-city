@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { DEFAULT_JEV_MODEL, DEFAULT_JEV_THRESHOLDS, type JevConfig, RISK_LEVELS } from './agents/jev.js';
 
 /**
  * Two ways to run:
@@ -59,6 +60,8 @@ export interface Config {
   globalDailyModelCalls: number;
   maxSocketsPerUser: number;
   maxSockets: number;
+  /** TypeSafe's Jev, a second opinion on agents' writes that only tightens (agents/jev.ts). On with TYPESAFE_API_KEY. */
+  jev?: JevConfig;
 }
 
 const list = (v?: string) => (v ?? '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -88,6 +91,27 @@ const positiveInt = (name: string, value: string | undefined, fallback: number, 
   const n = Number(value);
   if (!Number.isInteger(n) || n < min) throw new ConfigError(`${name}=${value} must be an integer ≥ ${min}`);
   return n;
+};
+
+const numberIn = (name: string, value: string | undefined, fallback: number, min: number, max: number): number => {
+  if (value === undefined || value === '') return fallback;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < min || n > max) throw new ConfigError(`${name}=${value} must be a number from ${min} to ${max}`);
+  return n;
+};
+
+/** Jev is on only with a key. The key is never logged or put in an error message. */
+const jevConfig = (env: NodeJS.ProcessEnv): JevConfig | undefined => {
+  if (env.TYPESAFE_API_KEY === undefined || env.TYPESAFE_API_KEY === '') return undefined;
+  return {
+    apiKey: env.TYPESAFE_API_KEY,
+    model: env.AWS_CITY_JEV_MODEL || DEFAULT_JEV_MODEL,
+    thresholds: {
+      blockBelow: numberIn('AWS_CITY_JEV_BLOCK_BELOW', env.AWS_CITY_JEV_BLOCK_BELOW, DEFAULT_JEV_THRESHOLDS.blockBelow, 0, 1),
+      askBelow: numberIn('AWS_CITY_JEV_ASK_BELOW', env.AWS_CITY_JEV_ASK_BELOW, DEFAULT_JEV_THRESHOLDS.askBelow, 0, 1),
+      askRiskAtLeast: numberIn('AWS_CITY_JEV_ASK_RISK', env.AWS_CITY_JEV_ASK_RISK, DEFAULT_JEV_THRESHOLDS.askRiskAtLeast, 0, RISK_LEVELS.length - 1),
+    },
+  };
 };
 
 const MIN_TOKEN_LENGTH = 32;
@@ -134,6 +158,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
     globalDailyModelCalls: positiveInt('GLOBAL_DAILY_MODEL_CALLS', env.GLOBAL_DAILY_MODEL_CALLS, 20_000, 0),
     maxSocketsPerUser: positiveInt('MAX_SOCKETS_PER_USER', env.MAX_SOCKETS_PER_USER, 4),
     maxSockets: positiveInt('MAX_SOCKETS', env.MAX_SOCKETS, hosted ? 1000 : 10),
+    jev: jevConfig(env),
   };
   validate(cfg);
   return cfg;
@@ -164,4 +189,9 @@ export const validate = (c: Config) => {
   if (!LOOPBACK.has(c.host)) need(c.publicHosts.length, `HOST=${c.host} needs PUBLIC_HOSTS (accepted Host headers)`);
   for (const o of c.extensionOrigins)
     need(!o.includes('*') || (ORIGIN_WILDCARDS as readonly string[]).includes(o), `EXTENSION_ORIGIN ${o}: wildcards only as ${ORIGIN_WILDCARDS.join(' or ')}`);
+  if (c.jev) {
+    need(/^[\x21-\x7e]+$/.test(c.jev.apiKey), 'TYPESAFE_API_KEY must be one printable token (no spaces or line breaks)');
+    need(/^[\w.-]{1,64}$/.test(c.jev.model), `AWS_CITY_JEV_MODEL=${c.jev.model} must be a model name like ${DEFAULT_JEV_MODEL}`);
+    need(c.jev.thresholds.blockBelow <= c.jev.thresholds.askBelow, 'AWS_CITY_JEV_BLOCK_BELOW must not be above AWS_CITY_JEV_ASK_BELOW');
+  }
 };

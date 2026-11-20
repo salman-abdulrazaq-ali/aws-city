@@ -173,6 +173,16 @@ describe('Strands runner (citizens and landmark agents)', () => {
     expect(actions.submit).toHaveBeenCalledWith('create_bucket', { suffix: 'abc' }, { approve });
   });
 
+  it("passes the player's own words with a write, for its second opinion (Jev)", async () => {
+    const { runner, actions } = setup([
+      { blocks: [{ tool: 'create_bucket', id: 't1', input: { suffix: 'abc' } }], stop: 'tool_use' },
+      { blocks: [{ text: 'done' }], stop: 'end_turn' },
+    ]);
+    const approve = vi.fn(async () => true);
+    await runner.turn('s3', 'make a bucket', { approve, intent: 'make a bucket for my photos' });
+    expect(actions.submit).toHaveBeenCalledWith('create_bucket', { suffix: 'abc' }, { approve, intent: 'make a bucket for my photos' });
+  });
+
   it('a refusal becomes a short apology', async () => {
     const { runner } = setup([{ blocks: [], stop: 'refusal' }]);
     expect(await runner.turn('ec2', '…')).toMatchObject({ refused: true });
