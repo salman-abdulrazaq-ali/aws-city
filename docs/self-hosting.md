@@ -131,25 +131,56 @@ models. Then it asks a few questions:
 | Region | Where you signed in, e.g. `eu-west-2` |
 | Web address | **No domain** (free HTTPS from CloudFront) |
 | Sign-in page name | Accept the suggestion |
-| Google sign-in | Skip (email and password always work) |
+| Google sign-in | Skip (email and password always work). If you add it, **Publish app** in Google's consent screen, or only the test users you list can use it |
 | Alarm email | Your email |
 | Monthly budget | 50 for staging (the AI switches off at 100%) |
-| SES sender | Skip for staging |
-| Allow the local build | Yes for staging |
+| SES sender | Skip until SES has production access (a new account's SES only emails addresses you verify) |
+| Allow the local build | **Yes** until your Chrome Web Store listing is live (otherwise nothing can sign in) |
 | Chrome Web Store id | Leave empty |
 | GitHub deploys | Skip |
 
-It asks before every change to AWS, bootstraps CDK, deploys (15–25 minutes the first time), smoke-tests the live API,
-and builds the extension. The answers are saved in `aws-city.config.json` (no secrets).
+**Nothing changes in AWS while you answer.** At the end, a review screen lists every answer and every change it will
+make (storing the Google secret, verifying an SES address, preparing CDK, the deploy). Choose **Deploy**, **Change an
+answer** (the questions again, with your answers filled in) or **Cancel**. Then it asks before each change, deploys
+(15–25 minutes the first time), smoke-tests the live API and builds the extension. Your answers are saved in
+`aws-city.config.json` (no secrets).
+
+**Why us-east-1 when you chose another Region?** Without a custom domain, the city is served through CloudFront, which is
+global, and AWS requires CloudFront's firewall (AWS WAF) to be created in us-east-1 (N. Virginia)
+([AWS WAF docs](https://docs.aws.amazon.com/waf/latest/developerguide/how-aws-waf-works-resources.html)). Only that
+firewall lives there. Your server, data and sign-in stay in your Region.
+
+**Sign-up emails:** skip Amazon SES unless your account has SES production access. A new account's SES is in a
+sandbox, where it emails only addresses you verify one by one, so other players couldn't sign up. Use an address on a
+domain you own: a free address (outlook.com, gmail.com…) sent through SES is often filtered as spoofed.
 
 ## 9. After the deploy
 
 1. Open the email from **AWS Notifications** and click **Confirm subscription**, so alarms and budget alerts reach you.
-2. In Chrome, open `chrome://extensions` → **Developer mode** → **Load unpacked** → pick `.output/chrome-mv3`.
+2. In Chrome, open `chrome://extensions` → **Developer mode** → **Load unpacked** → pick `.output/chrome-mv3`. (This
+   works if you answered **Yes** to "Allow the local build"; otherwise only your Chrome Web Store build can sign in.)
 3. In the city: **⋯ → Sign in to save your city** → sign up with your email → turn on MFA when asked.
+
+The **Server** and **Sign-in** addresses setup prints aren't web pages. The extension uses them. Opened in a browser,
+the server only says what it is, and the sign-in address shows `Missing Authentication Token`. Both are normal. To check
+the server, open `<Server>/health`: it shows `{"status":"ok"}`.
 4. **Link your AWS account:** follow the in-game link to create the small, read-mostly role in *the same Region*, then
    paste your 12-digit account ID.
 5. Ask an agent something, and approve one change. Every change waits for your **Approve**.
+
+## Change a setting later
+
+Run `npm run setup` again. Every answer is filled in from last time: press Enter to keep one, or type a new one, then
+**Deploy** from the review screen.
+
+- **A new alarm email:** AWS emails the new address a confirmation link. Click it.
+- **A new or no SES sender:** the new address gets a verification email. If an earlier run set up the old one and nothing
+  uses it now, setup offers to remove it.
+- **The Google secret:** answer **Yes** to "Replace it?" and paste the new one.
+- **The AI**, once Bedrock answers: just run setup again. It checks Bedrock and switches the AI on.
+
+Got something wrong before deploying? Choose **Change an answer** on the review screen, or press Ctrl-C: nothing in
+AWS changes before you confirm.
 
 ## 10. Running it, and taking it down
 

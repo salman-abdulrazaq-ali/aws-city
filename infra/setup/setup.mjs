@@ -22,7 +22,7 @@ import { CognitoIdentityProviderClient, DescribeUserPoolDomainCommand } from '@a
 import { IAMClient, ListOpenIDConnectProvidersCommand } from '@aws-sdk/client-iam';
 import { ListHostedZonesCommand, Route53Client } from '@aws-sdk/client-route-53';
 import { CreateSecretCommand, DescribeSecretCommand, PutSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
-import { CreateEmailIdentityCommand, GetEmailIdentityCommand, SESv2Client } from '@aws-sdk/client-sesv2';
+import { CreateEmailIdentityCommand, DeleteEmailIdentityCommand, GetAccountCommand, GetEmailIdentityCommand, SESv2Client } from '@aws-sdk/client-sesv2';
 import { GetCallerIdentityCommand, STSClient } from '@aws-sdk/client-sts';
 import { fromNodeProviderChain } from '@aws-sdk/credential-providers';
 import { explainAwsError, listProfiles, pickProfile, profileRegion } from '../../scripts/launcher/lib.mjs';
@@ -32,6 +32,8 @@ const INFRA = fileURLToPath(new URL('../', import.meta.url));
 const CONFIG = `${ROOT}aws-city.config.json`;
 // Claude's inference-profile ids follow the Region (us./eu./au./in.): one table for the wizard and the CDK app.
 const { SUPPORTED_REGIONS, geoFor, modelsForChoice, unsupportedRegionMessage } = await import(new URL('../lib/models.ts', import.meta.url));
+// The review screen's text (pure, tested in test/review.test.ts).
+const { cloudFrontNote, isFreeMail, plannedActions, reviewRows, reviewText } = await import(new URL('../lib/review.ts', import.meta.url));
 const GOOGLE_SECRET = 'aws-city/google-oauth';
 
 const args = process.argv.slice(2);
@@ -237,143 +239,218 @@ if (missing.length) {
   }
 } else s.stop(offline ? '[dry run] Bedrock check skipped' : `${MAIN_MODEL} and ${LIGHT_MODEL} are available`);
 
-// ── 3. Domain: yours, or free HTTPS from CloudFront ──────────────────────────
+// ── 3–8. The questions. They only read AWS: nothing is written until you confirm the review (step 9). ───────
 let zones = [];
 try {
   zones = (await aws(Route53Client).send(new ListHostedZonesCommand({}))).HostedZones?.filter((z) => !z.Config?.PrivateZone) ?? [];
 } catch {
   /* no Route 53 access: offer CloudFront only */
 }
-const zoneChoice = await ask(
-  'select',
-  {
-    message: 'Web address for the server',
-    options: [
-      { value: '', label: 'No domain — use CloudFront HTTPS (https://xxxx.cloudfront.net)', hint: 'recommended, nothing to buy' },
-      ...zones.map((z) => ({ value: z.Id.replace('/hostedzone/', ''), label: `api.${z.Name.replace(/\.$/, '')}`, hint: 'your Route 53 zone' })),
-    ],
-    initialValue: prev.hostedZoneId ?? '',
-  },
-  prev.hostedZoneId,
-);
-const zone = zones.find((z) => z.Id.endsWith(zoneChoice));
-const zoneName = zone ? zone.Name.replace(/\.$/, '') : '';
-const domainName = zone ? await ask('text', { message: 'API hostname', initialValue: prev.domainName || `api.${zoneName}` }, prev.domainName) : '';
+// SES starts in a sandbox: until AWS grants production access, it only sends to addresses verified one by one.
+const sesSandbox = offline ? false : await aws(SESv2Client).send(new GetAccountCommand({})).then((r) => !r.ProductionAccessEnabled, () => false);
+const googleSecretStored = offline ? false : await aws(SecretsManagerClient).send(new DescribeSecretCommand({ SecretId: GOOGLE_SECRET })).then(() => true, () => false);
+const otherEnvSes = Object.entries(saved).filter(([k, v]) => k !== envName && v && typeof v === 'object').map(([, v]) => v.sesFromEmail);
 
-// ── 4. Sign-in (Cognito) ─────────────────────────────────────────────────────
-// Cognito refuses prefixes containing reserved words such as aws, amazon or cognito.
-const suggested = `cloud-city-${envName === 'prod' ? '' : `${envName}-`}${account.slice(-6)}`;
-let cognitoDomainPrefix;
-for (;;) {
-  cognitoDomainPrefix = await ask('text', { message: 'Sign-in page name (Cognito domain prefix)', initialValue: prev.cognitoDomainPrefix ?? suggested, validate: (v) => (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(v) ? 'lowercase letters, digits and -' : /aws|amazon|cognito/.test(v) ? 'can’t contain aws, amazon or cognito' : undefined) }, prev.cognitoDomainPrefix);
-  const d = offline ? {} : await aws(CognitoIdentityProviderClient).send(new DescribeUserPoolDomainCommand({ Domain: cognitoDomainPrefix })).catch(() => ({}));
-  const owner = d.DomainDescription?.UserPoolId;
-  if (!owner || d.DomainDescription?.AWSAccountId === account) break; // free, or already ours (re-run)
-  if (YES) bye(`The sign-in name "${cognitoDomainPrefix}" is taken; pick another in aws-city.config.json.`);
-  p.log.warn(`"${cognitoDomainPrefix}" is taken by another AWS account. Try another name.`);
-}
-const cognitoHost = `${cognitoDomainPrefix}.auth.${region}.amazoncognito.com`;
-
-// ── 5. Google sign-in (optional) ─────────────────────────────────────────────
-const useGoogle = await ask('confirm', { message: 'Add "Sign in with Google"? (email + password always works)', initialValue: Boolean(prev.googleClientId) }, Boolean(prev.googleClientId));
-let googleClientId = '';
-if (useGoogle) {
-  p.note(
-    [
-      '1. https://console.cloud.google.com/apis/credentials → Create credentials → OAuth client ID',
-      '   (first time: configure the consent screen: External, app name "AWS City", your email).',
-      '2. Application type: Web application. Name: AWS City.',
-      `3. Authorised JavaScript origins:  https://${cognitoHost}`,
-      `4. Authorised redirect URIs:       https://${cognitoHost}/oauth2/idpresponse`,
-      '5. Create → copy the Client ID and Client secret.',
-    ].join('\n'),
-    'Google Cloud Console (2 minutes)',
+/** One pass through the questions, filled in from `was` (the saved answers, or the last pass's); `kept` holds a secret already typed. */
+const askAll = async (was, kept) => {
+  const zoneChoice = await ask(
+    'select',
+    {
+      message: 'Web address for the server',
+      options: [
+        { value: '', label: 'No domain — use CloudFront HTTPS (https://xxxx.cloudfront.net)', hint: 'recommended, nothing to buy' },
+        ...zones.map((z) => ({ value: z.Id.replace('/hostedzone/', ''), label: `api.${z.Name.replace(/\.$/, '')}`, hint: 'your Route 53 zone' })),
+      ],
+      initialValue: was.hostedZoneId ?? '',
+    },
+    was.hostedZoneId,
   );
-  googleClientId = await ask('text', { message: 'Google Client ID', initialValue: prev.googleClientId, validate: (v) => (/\.apps\.googleusercontent\.com$/.test(v) ? undefined : 'ends with .apps.googleusercontent.com') }, prev.googleClientId);
-  const sm = aws(SecretsManagerClient);
-  const exists = offline ? false : await sm.send(new DescribeSecretCommand({ SecretId: GOOGLE_SECRET })).then(() => true, () => false);
-  const update = !exists || (!YES && (await ask('confirm', { message: 'A Google secret is already stored in Secrets Manager. Replace it?', initialValue: false })));
-  if (update) {
-    // Hidden prompt → straight to Secrets Manager. Never written to disk or printed.
-    const secret = YES ? process.env.GOOGLE_CLIENT_SECRET : await ask('password', { message: 'Google Client secret (hidden)', validate: (v) => (v?.length >= 10 ? undefined : 'paste the client secret') });
-    if (!secret) bye('Set GOOGLE_CLIENT_SECRET for --yes runs.');
-    if (await approve(`store the Google client secret in Secrets Manager as "${GOOGLE_SECRET}"`)) {
-      const SecretString = JSON.stringify({ clientSecret: secret });
-      if (exists) await sm.send(new PutSecretValueCommand({ SecretId: GOOGLE_SECRET, SecretString }));
-      else await sm.send(new CreateSecretCommand({ Name: GOOGLE_SECRET, SecretString, Description: 'AWS City: Google OAuth client secret for Cognito' }));
-      p.log.success('Google secret stored in Secrets Manager.');
+  // "No domain" is '', which every zone id ends with: only look a zone up when one was picked.
+  const zone = zoneChoice ? zones.find((z) => z.Id.endsWith(zoneChoice)) : undefined;
+  const zoneName = zone ? zone.Name.replace(/\.$/, '') : '';
+  const domainName = zone ? await ask('text', { message: 'API hostname', initialValue: was.domainName || `api.${zoneName}` }, was.domainName) : '';
+
+  // Sign-in (Cognito). Cognito refuses prefixes containing reserved words such as aws, amazon or cognito.
+  const suggested = `cloud-city-${envName === 'prod' ? '' : `${envName}-`}${account.slice(-6)}`;
+  let cognitoDomainPrefix;
+  for (;;) {
+    cognitoDomainPrefix = await ask('text', { message: 'Sign-in page name (Cognito domain prefix)', initialValue: was.cognitoDomainPrefix ?? suggested, validate: (v) => (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(v) ? 'lowercase letters, digits and -' : /aws|amazon|cognito/.test(v) ? 'can’t contain aws, amazon or cognito' : undefined) }, was.cognitoDomainPrefix);
+    const d = offline ? {} : await aws(CognitoIdentityProviderClient).send(new DescribeUserPoolDomainCommand({ Domain: cognitoDomainPrefix })).catch(() => ({}));
+    const owner = d.DomainDescription?.UserPoolId;
+    if (!owner || d.DomainDescription?.AWSAccountId === account) break; // free, or already ours (re-run)
+    if (YES) bye(`The sign-in name "${cognitoDomainPrefix}" is taken; pick another in aws-city.config.json.`);
+    p.log.warn(`"${cognitoDomainPrefix}" is taken by another AWS account. Try another name.`);
+  }
+  const cognitoHost = `${cognitoDomainPrefix}.auth.${region}.amazoncognito.com`;
+
+  // Google sign-in (optional). The secret is kept in memory; it's stored in Secrets Manager only after the review.
+  const useGoogle = await ask('confirm', { message: 'Add "Sign in with Google"? (email + password always works)', initialValue: Boolean(was.googleClientId) }, Boolean(was.googleClientId));
+  let googleClientId = '';
+  let googleSecret;
+  if (useGoogle) {
+    p.note(
+      [
+        '1. https://console.cloud.google.com/apis/credentials → Create credentials → OAuth client ID',
+        '   (first time: configure the consent screen: External, app name "AWS City", your email).',
+        '2. Application type: Web application. Name: AWS City.',
+        `3. Authorised JavaScript origins:  https://${cognitoHost}`,
+        `4. Authorised redirect URIs:       https://${cognitoHost}/oauth2/idpresponse`,
+        '5. Create → copy the Client ID and Client secret.',
+        '6. Google Auth Platform → Audience → Publish app. While it says Testing, only the test users you list',
+        '   can sign in with Google (basic sign-in scopes need no Google review).',
+      ].join('\n'),
+      'Google Cloud Console (2 minutes)',
+    );
+    googleClientId = await ask('text', { message: 'Google Client ID', initialValue: was.googleClientId, validate: (v) => (/\.apps\.googleusercontent\.com$/.test(v) ? undefined : 'ends with .apps.googleusercontent.com') }, was.googleClientId);
+    googleSecret = kept.googleSecret;
+    const enter = googleSecret
+      ? !YES && !(await ask('confirm', { message: 'Keep the Google client secret you entered?', initialValue: true }))
+      : !googleSecretStored || (!YES && (await ask('confirm', { message: 'A Google secret is already stored in Secrets Manager. Replace it?', initialValue: false })));
+    if (enter) {
+      // Hidden prompt, kept in memory until you confirm. Never written to disk or printed.
+      googleSecret = YES ? process.env.GOOGLE_CLIENT_SECRET : await ask('password', { message: 'Google Client secret (hidden)', validate: (v) => (v?.length >= 10 ? undefined : 'paste the client secret') });
+      if (!googleSecret) bye('Set GOOGLE_CLIENT_SECRET for --yes runs.');
     }
   }
-}
 
-// ── 6. Emails ────────────────────────────────────────────────────────────────
-// The AI cut-off works without an email, but in prod nobody would hear about alarms or the cut-off.
-const emailOptional = envName !== 'prod';
-const alarmEmail = await ask('text', { message: 'Email for alarms and budget alerts (you’ll get a confirmation email to click)', initialValue: prev.alarmEmail ?? '', validate: (v) => (/^\S+@\S+\.\S+$/.test(v ?? '') || (emailOptional && !v) ? undefined : emailOptional ? 'an email address, or leave empty' : 'prod needs an email for alarms and the budget cut-off') }, prev.alarmEmail);
-if (!alarmEmail && !emailOptional) bye('prod needs alarmEmail (alarms and the budget cut-off notify it).');
-if (!alarmEmail) p.log.warn('No alarm email: the AI still switches off at 100% of the budget, but nobody is told. Add one before going live.');
-const monthlyBudgetUsd = Number(await ask('text', { message: 'Monthly AWS budget in USD (AI switches off at 100%)', initialValue: String(prev.monthlyBudgetUsd ?? (envName === 'prod' ? 300 : 50)), validate: (v) => (Number(v) > 0 ? undefined : 'a number') }, prev.monthlyBudgetUsd));
-const useSes = await ask('confirm', { message: 'Send sign-up emails from your own address with Amazon SES? (otherwise Cognito’s default sender, ~50/day)', initialValue: Boolean(prev.sesFromEmail) }, Boolean(prev.sesFromEmail));
-let sesFromEmail = '';
-if (useSes) {
-  sesFromEmail = await ask('text', { message: 'From address (e.g. noreply@yourdomain.com)', initialValue: prev.sesFromEmail, validate: (v) => (/^\S+@\S+\.\S+$/.test(v) ? undefined : 'an email address') }, prev.sesFromEmail);
-  const ses = aws(SESv2Client);
-  const status = offline ? undefined : await ses.send(new GetEmailIdentityCommand({ EmailIdentity: sesFromEmail })).then((r) => r.VerifiedForSendingStatus, () => undefined);
-  if (status === undefined && (await approve(`ask SES to verify ${sesFromEmail} (it sends a verification email)`))) {
-    await ses.send(new CreateEmailIdentityCommand({ EmailIdentity: sesFromEmail }));
-    p.log.warn(`Click the link in the email SES sent to ${sesFromEmail} before players sign up. (New SES accounts are in the sandbox: request production access in the SES console.)`);
-  } else if (status === false) p.log.warn(`${sesFromEmail} isn't verified yet: click the SES email link.`);
-}
-
-// ── 7. Chrome extension ids ──────────────────────────────────────────────────
-const storeId = await ask('text', { message: 'Chrome Web Store extension id (leave empty until you have one)', initialValue: (prev.extensionIds ?? []).find((i) => i !== DEV_EXTENSION_ID) ?? '', validate: (v) => (!v || /^[a-p]{32}$/.test(v) ? undefined : '32 letters a–p') }, (prev.extensionIds ?? []).find((i) => i !== DEV_EXTENSION_ID) ?? '');
-// The local build's id comes from a public key in this repo, so ANY unpacked extension could claim it.
-// Fine for staging; for prod it's opt-in (it lets that id sign in and talk to your server).
-const hadDev = (prev.extensionIds ?? []).includes(DEV_EXTENSION_ID);
-const allowDev = await ask(
-  'confirm',
-  {
-    message: `Allow the local (unpacked) build to sign in? ${envName === 'prod' ? '(not recommended for prod: anyone can build an extension with this id)' : '(handy for testing)'}`,
-    initialValue: prev.extensionIds ? hadDev : envName !== 'prod',
-  },
-  prev.extensionIds ? hadDev : envName !== 'prod',
-);
-const extensionIds = [...(allowDev ? [DEV_EXTENSION_ID] : []), ...(storeId ? [storeId] : [])];
-if (!extensionIds.length) p.log.warn('No extension can sign in yet: publish to the Chrome Web Store and re-run setup with its id (or allow the local build).');
-// Chrome/Edge are always on; Firefox and Safari players sign in with the same accounts when enabled.
-const browsers = await ask(
-  'multiselect',
-  {
-    message: 'Which other browsers should players be able to use? (Chrome and Edge always work)',
-    options: [
-      { value: 'firefox', label: 'Firefox', hint: `add-on id ${FIREFOX_ADDON_ID}` },
-      { value: 'safari', label: 'Safari', hint: 'needs Xcode + an Apple Developer account to publish' },
-    ],
-    initialValues: [...(prev.firefoxAddonId ? ['firefox'] : []), ...(prev.safari ? ['safari'] : [])],
-    required: false,
-  },
-  [...(prev.firefoxAddonId ? ['firefox'] : []), ...(prev.safari ? ['safari'] : [])],
-);
-const firefoxAddonId = browsers.includes('firefox') ? FIREFOX_ADDON_ID : '';
-const safari = browsers.includes('safari');
-
-// ── 8. GitHub CI/CD (optional) ───────────────────────────────────────────────
-let githubRepo = saved.githubRepo ?? '';
-const wantCi = await ask('confirm', { message: 'Set up GitHub Actions deploys (OIDC, no stored keys)?', initialValue: Boolean(githubRepo) }, Boolean(githubRepo));
-if (wantCi) {
-  githubRepo = await ask('text', { message: 'GitHub repo (owner/name)', initialValue: githubRepo || 'salman-abdulrazaq-ali/aws-city', validate: (v) => (/^[\w.-]+\/[\w.-]+$/.test(v) ? undefined : 'owner/name') }, githubRepo);
-  const providers = offline ? [] : await aws(IAMClient).send(new ListOpenIDConnectProvidersCommand({})).then((r) => r.OpenIDConnectProviderList ?? [], () => []);
-  if (providers.some((x) => x.Arn?.endsWith('token.actions.githubusercontent.com'))) {
-    p.log.warn('This account already has a GitHub OIDC provider, so the CI stack is skipped (it would clash). Point your existing deploy role at the CDK bootstrap roles instead.');
-    githubRepo = '';
+  // Emails. The AI cut-off works without an alarm email, but in prod nobody would hear about alarms or the cut-off.
+  const emailOptional = envName !== 'prod';
+  const alarmEmail = await ask('text', { message: 'Email for alarms and budget alerts (you’ll get a confirmation email to click)', initialValue: was.alarmEmail ?? '', validate: (v) => (/^\S+@\S+\.\S+$/.test(v ?? '') || (emailOptional && !v) ? undefined : emailOptional ? 'an email address, or leave empty' : 'prod needs an email for alarms and the budget cut-off') }, was.alarmEmail);
+  if (!alarmEmail && !emailOptional) bye('prod needs alarmEmail (alarms and the budget cut-off notify it).');
+  if (!alarmEmail) p.log.warn('No alarm email: the AI still switches off at 100% of the budget, but nobody is told. Add one before going live.');
+  const monthlyBudgetUsd = Number(await ask('text', { message: 'Monthly AWS budget in USD (AI switches off at 100%)', initialValue: String(was.monthlyBudgetUsd ?? (envName === 'prod' ? 300 : 50)), validate: (v) => (Number(v) > 0 ? undefined : 'a number') }, was.monthlyBudgetUsd));
+  // SES starts in a sandbox (only verified recipients), so while it's there the question defaults to No, even when an
+  // earlier run said Yes: otherwise players never get their sign-up code. --yes runs keep the saved answer.
+  if (sesSandbox)
+    p.log.info(
+      was.sesFromEmail
+        ? `Amazon SES in this account is still in its sandbox: sign-up emails from ${was.sesFromEmail} only reach addresses you verified one by one, so other players can’t sign up. Answer No to use Cognito’s own sender (any address, about 50 a day) until SES has production access.`
+        : 'Amazon SES in this account is still in its sandbox: it would only email addresses you verify one by one, so players couldn’t sign up. Skip it for now; request production access in the SES console before using it.',
+    );
+  const useSes = await ask('confirm', { message: 'Send sign-up emails from your own address with Amazon SES? (otherwise Cognito’s default sender, ~50/day)', initialValue: Boolean(was.sesFromEmail) && !sesSandbox }, Boolean(was.sesFromEmail));
+  let sesFromEmail = '';
+  if (useSes) {
+    sesFromEmail = await ask('text', { message: 'From address (e.g. noreply@yourdomain.com)', initialValue: was.sesFromEmail, validate: (v) => (/^\S+@\S+\.\S+$/.test(v) ? undefined : 'an email address') }, was.sesFromEmail);
+    if (isFreeMail(sesFromEmail)) p.log.warn(`${sesFromEmail} is a free email address: mail sent "from" it through SES is often filtered as spoofed. Use an address on a domain you own, or skip SES.`);
   }
-} else githubRepo = '';
 
-// ── 9. Save the answers (no secrets) ─────────────────────────────────────────
+  // Chrome extension ids. The local build's id comes from a public key in this repo, so ANY unpacked copy built from it
+  // can sign in (only as the person signing in: the server still checks every request). Until there's a store id it's
+  // the only way to try the city, so it's the default then; with a store id, prod keeps the previous answer.
+  const storeId = await ask('text', { message: 'Chrome Web Store extension id (leave empty until you have one)', initialValue: (was.extensionIds ?? []).find((i) => i !== DEV_EXTENSION_ID) ?? '', validate: (v) => (!v || /^[a-p]{32}$/.test(v) ? undefined : '32 letters a–p') }, (was.extensionIds ?? []).find((i) => i !== DEV_EXTENSION_ID) ?? '');
+  const hadDev = (was.extensionIds ?? []).includes(DEV_EXTENSION_ID);
+  const allowDev = await ask(
+    'confirm',
+    {
+      message: `Allow the local (unpacked) build to sign in? ${
+        envName !== 'prod'
+          ? '(handy for testing)'
+          : storeId
+            ? '(No once your store listing is live: any copy of this repo’s build could sign in)'
+            : '(Yes to try it before your Chrome Web Store listing is live. Any copy of this repo’s build could sign in, but only as the person signing in.)'
+      }`,
+      initialValue: !storeId || (was.extensionIds ? hadDev : envName !== 'prod'),
+    },
+    was.extensionIds ? hadDev : envName !== 'prod',
+  );
+  const extensionIds = [...(allowDev ? [DEV_EXTENSION_ID] : []), ...(storeId ? [storeId] : [])];
+  if (!extensionIds.length) p.log.warn('No extension can sign in, so you won’t be able to try the city: allow the local build, or publish to the Chrome Web Store and run setup again with its id.');
+  // Chrome/Edge are always on; Firefox and Safari players sign in with the same accounts when enabled.
+  const browsers = await ask(
+    'multiselect',
+    {
+      message: 'Which other browsers should players be able to use? (Chrome and Edge always work)',
+      options: [
+        { value: 'firefox', label: 'Firefox', hint: `add-on id ${FIREFOX_ADDON_ID}` },
+        { value: 'safari', label: 'Safari', hint: 'needs Xcode + an Apple Developer account to publish' },
+      ],
+      initialValues: [...(was.firefoxAddonId ? ['firefox'] : []), ...(was.safari ? ['safari'] : [])],
+      required: false,
+    },
+    [...(was.firefoxAddonId ? ['firefox'] : []), ...(was.safari ? ['safari'] : [])],
+  );
+
+  // GitHub CI/CD (optional).
+  let githubRepo = was.githubRepo ?? '';
+  const wantCi = await ask('confirm', { message: 'Set up GitHub Actions deploys (OIDC, no stored keys)?', initialValue: Boolean(githubRepo) }, Boolean(githubRepo));
+  if (wantCi) {
+    githubRepo = await ask('text', { message: 'GitHub repo (owner/name)', initialValue: githubRepo || 'salman-abdulrazaq-ali/aws-city', validate: (v) => (/^[\w.-]+\/[\w.-]+$/.test(v) ? undefined : 'owner/name') }, githubRepo);
+    const providers = offline ? [] : await aws(IAMClient).send(new ListOpenIDConnectProvidersCommand({})).then((r) => r.OpenIDConnectProviderList ?? [], () => []);
+    // An OIDC provider's ARN is arn:aws:iam::<account>:oidc-provider/<host>: compare the host exactly.
+    if (providers.some((x) => x.Arn?.split(':oidc-provider/')[1] === 'token.actions.githubusercontent.com')) {
+      p.log.warn('This account already has a GitHub OIDC provider, so the CI stack is skipped (it would clash). Point your existing deploy role at the CDK bootstrap roles instead.');
+      githubRepo = '';
+    }
+  } else githubRepo = '';
+
+  return {
+    hostedZoneId: zone ? zoneChoice : '', zoneName, domainName, cognitoDomainPrefix, googleClientId, googleSecret, alarmEmail, monthlyBudgetUsd, sesFromEmail,
+    storeId, allowDev, extensionIds, firefoxAddonId: browsers.includes('firefox') ? FIREFOX_ADDON_ID : '', safari: browsers.includes('safari'), githubRepo,
+  };
+};
+
+// ── 9. Review: every answer and every AWS change on one screen, then Deploy / Change an answer / Cancel ─────────
+const cdkReady = async (r) => new CloudFormationClient({ region: r, credentials }).send(new DescribeStacksCommand({ StackName: 'CDKToolkit' })).then(() => true, () => false);
+let was = { ...prev, githubRepo: saved.githubRepo ?? '' };
+let A;
+let sesStatus;
+let deleteSes = [];
+for (;;) {
+  A = await askAll(was, { googleSecret: A?.googleSecret });
+  sesStatus = A.sesFromEmail && !offline ? await aws(SESv2Client).send(new GetEmailIdentityCommand({ EmailIdentity: A.sesFromEmail })).then((r) => r.VerifiedForSendingStatus, () => undefined) : undefined;
+  // SES addresses an earlier run set up that nothing uses any more (this environment's new answer, or the other one's).
+  deleteSes = (prev.sesIdentitiesCreated ?? []).filter((e) => e !== A.sesFromEmail && !otherEnvSes.includes(e));
+  const regions = [...new Set([region, ...(A.domainName ? [] : ['us-east-1'])])];
+  const bootstrap = offline ? [] : (await Promise.all(regions.map(async (r) => ((await cdkReady(r)) ? undefined : r)))).filter(Boolean);
+  const review = { envName, modelChoice, region, aiEnabled, ...A, firefox: Boolean(A.firefoxAddonId) };
+  const actions = plannedActions(review, { account, storeGoogleSecret: Boolean(A.googleSecret), verifySes: Boolean(A.sesFromEmail) && sesStatus === undefined, deleteSes, bootstrap });
+  if (YES) break;
+  p.note(reviewText(reviewRows(review), actions), 'Check your answers');
+  if (!A.domainName) p.log.info(cloudFrontNote(region));
+  const next = await ask('select', {
+    message: DRY ? 'Is this right? (a dry run changes nothing in AWS)' : 'Ready?',
+    options: [
+      { value: 'go', label: DRY ? 'Looks right' : 'Deploy', hint: DRY ? 'see what it would do' : 'make the changes above' },
+      { value: 'change', label: 'Change an answer', hint: 'go through the questions again, your answers filled in' },
+      { value: 'cancel', label: 'Cancel', hint: 'nothing has been changed in AWS' },
+    ],
+    initialValue: 'go',
+  });
+  if (next === 'cancel') bye('Cancelled. Nothing was changed in AWS.');
+  if (next === 'go') break;
+  was = { ...A, extensionIds: A.extensionIds };
+}
+const { hostedZoneId, zoneName, domainName, cognitoDomainPrefix, googleClientId, alarmEmail, monthlyBudgetUsd, sesFromEmail, extensionIds, allowDev, storeId, firefoxAddonId, safari, githubRepo } = A;
+
+// ── 10. Now, and only now, the changes: the Google secret, SES, the saved answers ────────────────────────────
+if (A.googleSecret && (await approve(`store the Google client secret in Secrets Manager as "${GOOGLE_SECRET}"`))) {
+  const sm = aws(SecretsManagerClient);
+  const SecretString = JSON.stringify({ clientSecret: A.googleSecret });
+  if (googleSecretStored) await sm.send(new PutSecretValueCommand({ SecretId: GOOGLE_SECRET, SecretString }));
+  else await sm.send(new CreateSecretCommand({ Name: GOOGLE_SECRET, SecretString, Description: 'AWS City: Google OAuth client secret for Cognito' }));
+  p.log.success('Google secret stored in Secrets Manager.');
+}
+const sesIdentitiesCreated = [...(prev.sesIdentitiesCreated ?? [])];
+if (sesFromEmail) {
+  const ses = aws(SESv2Client);
+  if (sesStatus === undefined && (await approve(`ask SES to verify ${sesFromEmail} (it sends a verification email)`))) {
+    await ses.send(new CreateEmailIdentityCommand({ EmailIdentity: sesFromEmail }));
+    sesIdentitiesCreated.push(sesFromEmail);
+    p.log.warn(`Click the link in the email SES sent to ${sesFromEmail} before players sign up.${sesSandbox ? ' (SES is in its sandbox: request production access in the SES console.)' : ''}`);
+  } else if (sesStatus === false) p.log.warn(`${sesFromEmail} isn't verified yet: click the SES email link.`);
+}
+for (const e of deleteSes) {
+  if (!(await approve(`remove the SES identity ${e} (an earlier run set it up; nothing uses it now)`))) continue;
+  await aws(SESv2Client).send(new DeleteEmailIdentityCommand({ EmailIdentity: e })).catch(() => undefined);
+  sesIdentitiesCreated.splice(sesIdentitiesCreated.indexOf(e), 1);
+}
+
 const envConfig = {
-  modelChoice, aiEnabled, region, domainName, hostedZoneId: zone ? zoneChoice : '', zoneName, cognitoDomainPrefix, extensionIds, firefoxAddonId, safari, googleClientId, sesFromEmail, alarmEmail,
+  modelChoice, aiEnabled, region, domainName, hostedZoneId, zoneName, cognitoDomainPrefix, extensionIds, firefoxAddonId, safari, googleClientId, sesFromEmail, alarmEmail,
   monthlyBudgetUsd, dailyModelCalls: prev.dailyModelCalls ?? 100, globalDailyModelCalls: prev.globalDailyModelCalls ?? (envName === 'prod' ? 20000 : 5000),
   minTasks: prev.minTasks ?? (envName === 'prod' ? 2 : 1), maxTasks: prev.maxTasks ?? (envName === 'prod' ? 10 : 3),
+  // SES addresses this wizard asked AWS to verify, so a later run can offer to remove one nothing uses.
+  ...(sesIdentitiesCreated.length ? { sesIdentitiesCreated } : {}),
 };
 writeFileSync(CONFIG, `${JSON.stringify({ ...saved, lastEnv: envName, account, githubRepo, [envName]: envConfig }, null, 2)}\n`);
 p.log.success('Saved your answers to aws-city.config.json (gitignored; no secrets in it).');
@@ -385,7 +462,8 @@ if (!existsSync(`${INFRA}node_modules`)) run('npm', ['ci'], INFRA);
 for (const r of offline ? [] : [...new Set([region, ...(domainName ? [] : ['us-east-1'])])]) {
   const cfn = new CloudFormationClient({ region: r, credentials });
   const ready = await cfn.send(new DescribeStacksCommand({ StackName: 'CDKToolkit' })).then(() => true, () => false);
-  if (!ready && (await approve(`prepare ${account}/${r} for CDK (cdk bootstrap, one time)`))) run('npx', ['cdk', 'bootstrap', `aws://${account}/${r}`], INFRA, cdkEnv);
+  if (!ready && r === 'us-east-1' && r !== region) p.log.info(cloudFrontNote(region));
+  if (!ready && (await approve(`prepare ${account}/${r} for CDK (cdk bootstrap, one time)${r === 'us-east-1' && r !== region ? ': for CloudFront’s firewall' : ''}`))) run('npx', ['cdk', 'bootstrap', `aws://${account}/${r}`], INFRA, cdkEnv);
 }
 const outputsFile = `${INFRA}outputs.${envName}.json`;
 if (await approve(`deploy AWS City (${envName}) — about 15–25 minutes the first time`)) {
@@ -418,10 +496,16 @@ if (safari) run('npx', ['wxt', 'build', '-b', 'safari', '--mode', 'production'])
 
 p.note(
   [
-    `Server:   ${pick('Service', 'ApiUrl')}`,
-    `Sign-in:  ${pick('Auth', 'CognitoDomain')}`,
+    allowDev
+      ? 'Try it now: chrome://extensions → Developer mode → Load unpacked → .output/chrome-mv3, then ⋯ → Sign in.'
+      : storeId
+        ? 'Players sign in with the Chrome Web Store build (the local build is not allowed to).'
+        : 'No extension can sign in yet: run setup again and allow the local build, or publish (below).',
     '',
-    allowDev ? `Try it now: chrome://extensions → Developer mode → Load unpacked → .output/chrome-mv3 (id ${DEV_EXTENSION_ID}).` : 'The local build is not allowed to sign in (prod); use the store build.',
+    // Neither address is a web page: opened in a browser, the sign-in domain shows "Missing Authentication Token".
+    `Server:    ${pick('Service', 'ApiUrl')}  (for the extension; ${pick('Service', 'ApiUrl')}/health shows {"status":"ok"})`,
+    `Sign-in:   ${pick('Auth', 'CognitoDomain')}  (the extension's Sign in button opens it)`,
+    '',
     'Publish:   upload .output/*-chrome.zip in the Chrome Web Store dashboard (docs/chrome-web-store.md),',
     '           then run setup again with the store id so store users can sign in too.',
     firefoxAddonId ? 'Firefox:   upload .output/*-firefox.zip (+ the -sources.zip) to addons.mozilla.org (docs/firefox-addons.md).' : '',
