@@ -44,7 +44,12 @@ const labelOf = (a: ApprovalRequest['action']): string =>
  * Per-socket player approvals (contract v2): a guarded write becomes deploy.preview; the player answers
  * with deploy.approve / deploy.reject. Unanswered requests expire; closing the socket rejects them all.
  */
-export const createApprovals = (opts: { region: string; timeoutMs?: number }) => {
+export const createApprovals = (opts: { region: string | (() => string); accountId?: () => string | undefined; timeoutMs?: number }) => {
+  /** v2.18: exactly where the change goes, read as each card is made. */
+  const where = () => {
+    const accountId = opts.accountId?.();
+    return { region: typeof opts.region === 'function' ? opts.region() : opts.region, ...(accountId ? { accountId } : {}) };
+  };
   const pending = new Map<string, { resolve: (ok: boolean) => void; emit: Emit; timer: NodeJS.Timeout; confirmText?: string }>();
   const awaitingResult = new Map<string, string>(); // taskId → deployId of the approved call in flight
 
@@ -67,7 +72,7 @@ export const createApprovals = (opts: { region: string; timeoutMs?: number }) =>
         logicalId: labelOf(req.action),
         resourceType: RESOURCE_TYPE[t],
       };
-      emit({ type: 'deploy.preview', deployId, taskId, templateId: t, stackName: req.summary, region: opts.region, changes: [change], costNote: COST[t] });
+      emit({ type: 'deploy.preview', deployId, taskId, templateId: t, stackName: req.summary, ...where(), changes: [change], costNote: COST[t] });
       return new Promise<boolean>((resolve) => {
         const timer = setTimeout(() => settle(deployId, false, 'No answer within 5 minutes, so nothing was changed.'), opts.timeoutMs ?? 300_000);
         timer.unref?.();
@@ -86,7 +91,7 @@ export const createApprovals = (opts: { region: string; timeoutMs?: number }) =>
         deployId,
         templateId: f.fix.fixId,
         stackName: f.fix.title,
-        region: opts.region,
+        ...where(),
         // Names aren't unique (every VPC has a "default" group): the id says exactly which resource changes.
         changes: [
           { action: 'Modify', logicalId: f.resource.id === f.resource.name || f.resource.id.includes(':') ? f.resource.name : `${f.resource.name} (${f.resource.id})`, resourceType: FIX_RESOURCE_TYPE[f.serviceId] ?? 'AWS account setting' },

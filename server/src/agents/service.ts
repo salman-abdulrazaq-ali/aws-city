@@ -1,7 +1,7 @@
 import type { AwsClients } from '../aws.js';
 import { type Resource, resourceKey, type WorldSnapshot } from '../state/model.js';
 import type { Poller } from '../state/poller.js';
-import { type Action, DESTRUCTIVE, parseAction, READ_ONLY } from './actions.js';
+import { type Action, actionTarget, DESTRUCTIVE, parseAction, READ_ONLY } from './actions.js';
 import { type ExecutionResult, executeAction } from './executor.js';
 import { checkAction, describeAction } from './policy.js';
 import { memoryLocks } from '../store/local.js';
@@ -30,6 +30,15 @@ export interface ApprovalRequest {
 /** Asks the player (contract v2 deploy.preview); resolves true only on an explicit deploy.approve. */
 export type Approve = (req: ApprovalRequest) => Promise<boolean>;
 
+/** One AWS change asked for, done or refused (the tenant adds who, which account and which Region, and logs it). */
+export interface AuditEntry {
+  /** An action name (create_bucket) or a citizen's fix (fix:s3-block-public-access). */
+  action: string;
+  target: string;
+  outcome: 'done' | 'failed' | 'denied' | 'rejected';
+}
+export type Audit = (entry: AuditEntry) => void;
+
 /**
  * The one path from "an agent wants to do X" to AWS: parse → policy → execute → re-poll.
  * Writes are serialised, and resources just created are counted before the (eventually consistent)
@@ -47,6 +56,8 @@ export const createActionService = (deps: {
   accountKey?: () => string;
   /** False once the player re-linked or the city stopped: an approval given before that never writes to the old account. */
   live?: () => boolean;
+  /** Called once per write asked for, whatever happened (an audit line); never for reads or input that didn't parse. */
+  audit?: Audit;
 }) => {
   const locks = deps.locks ?? memoryLocks();
   const accountKey = deps.accountKey ?? (() => deps.poller.current()?.accountId ?? 'local');
@@ -85,6 +96,16 @@ export const createActionService = (deps: {
       return { status: result.ok ? 'done' : 'failed', result };
     });
 
+  const write = async (action: Action, approve: Approve | undefined): Promise<SubmitOutcome> => {
+    if (!approve) return { status: 'denied', reason: NEEDS_APPROVAL_REASON };
+    const snapshot = await withJustCreated(deps.poller.current() ?? (await deps.poller.refresh()));
+    const pre = checkAction(action, snapshot, { confirmed: true });
+    if (pre.verdict === 'deny') return { status: 'denied', reason: pre.reason };
+    const ok = await approve({ action, summary: describeAction(action), destructive: DESTRUCTIVE.has(action.type) });
+    if (!ok) return { status: 'denied', reason: REJECTED_REASON };
+    return run(action, true);
+  };
+
   return {
     /**
      * Validates untrusted input (a model's tool call) and runs it through policy.
@@ -96,13 +117,13 @@ export const createActionService = (deps: {
       if (!parsed.ok) return { status: 'invalid', error: parsed.error };
       const action = parsed.action;
       if (READ_ONLY.has(action.type)) return run(action, false);
-      if (!opts.approve) return { status: 'denied', reason: NEEDS_APPROVAL_REASON };
-      const snapshot = await withJustCreated(deps.poller.current() ?? (await deps.poller.refresh()));
-      const pre = checkAction(action, snapshot, { confirmed: true });
-      if (pre.verdict === 'deny') return { status: 'denied', reason: pre.reason };
-      const ok = await opts.approve({ action, summary: describeAction(action), destructive: DESTRUCTIVE.has(action.type) });
-      if (!ok) return { status: 'denied', reason: REJECTED_REASON };
-      return run(action, true);
+      const outcome = await write(action, opts.approve);
+      deps.audit?.({
+        action: action.type,
+        target: actionTarget(action),
+        outcome: outcome.status === 'denied' && outcome.reason === REJECTED_REASON ? 'rejected' : (outcome.status as 'done' | 'failed' | 'denied'),
+      });
+      return outcome;
     },
     describe: (name: unknown, input: unknown) => {
       const parsed = parseAction(name, input);

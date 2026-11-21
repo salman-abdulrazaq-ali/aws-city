@@ -1,6 +1,6 @@
 import { ruleById } from '@/world/citizens';
 import { WaReview } from './WaReview';
-import { CostNote } from './DeployPanel';
+import { ChangeTarget, CostNote } from './DeployPanel';
 import { useEffect, useRef, useState } from 'react';
 import { decideDeploy, explainFinding, fixFinding, openDocs, wasExplained } from '@/app/runtime';
 import { bus } from '@/state/bus';
@@ -124,6 +124,7 @@ function Approve({ d, offline, preview }: { d: DeployView; offline?: string; pre
   return (
     <div className="finding-preview">
       <b>Check this change</b>
+      <ChangeTarget d={d} />
       {preview && (
         <p>
           <Plain text={preview} />

@@ -5,11 +5,13 @@ import type { AccountLinker } from './accounts/link.js';
 import { LinkError } from './accounts/link.js';
 import type { Llm } from './agents/llm.js';
 import { metered, withErrorCodes } from './agents/metered.js';
+import { parseAction } from './agents/actions.js';
 import { type CityCare, createCityCare } from './agents/care.js';
+import { describeAction } from './agents/policy.js';
 import { type AgentRunner, createAgentRunner } from './agents/runner.js';
 import { createStrandsRunner } from './citizens/engine.js';
 import { isCitizen } from './citizens/roles.js';
-import { ACCOUNT_CHANGED_REASON, type ActionService, createActionService } from './agents/service.js';
+import { ACCOUNT_CHANGED_REASON, type ActionService, type Audit, createActionService } from './agents/service.js';
 import type { Principal } from './auth.js';
 import { type AwsClients, clientsFor } from './aws.js';
 import type { Config } from './config.js';
@@ -37,6 +39,8 @@ type Emit = (e: ServerEvent) => void;
 export interface Tenant {
   readonly sub: string;
   readonly region: string;
+  /** The linked AWS account (undefined until one is linked): approval cards name it. */
+  readonly accountId?: string;
   orchestrator(): Orchestrator;
   /** City care (citizens, findings, fixes) for a linked account. */
   care(): CityCare | undefined;
@@ -88,7 +92,10 @@ export const UNLINKED_REASON = 'Connect your AWS account first (Deploy tab → C
 const unlinkedActions = (): ActionService =>
   ({
     submit: async () => ({ status: 'denied', reason: UNLINKED_REASON }),
-    describe: (name: unknown) => `Run ${String(name)}`,
+    describe: (name: unknown, input: unknown) => {
+      const parsed = parseAction(name, input);
+      return parsed.ok ? describeAction(parsed.action) : `Run ${String(name)}`;
+    },
   }) as unknown as ActionService;
 
 /** How often the account's full resource list is re-read for the city's mirror (the poller itself runs every ~10 s). */
@@ -173,7 +180,8 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         const runner = routedRunner(createAgentRunner(runnerDeps), createStrandsRunner(runnerDeps), deps.config.agentEngine === 'strands');
         const bill = createBill({ sub, store: deps.stores.bills, broadcast });
         const flow = createFlow({ sub, region, initialOn: flowOn, broadcast, active });
-        return { orchestrator: createOrchestrator({ llm, runner, snapshot, uploads: deps.uploads, owner: sub, walkMs: deps.walkMs, knowledge: deps.knowledge }), snapshot, linked: false, region, bill, flow };
+        // actions: a plain request ("Create a bucket called x") still gets an honest answer: link your account first.
+        return { orchestrator: createOrchestrator({ llm, runner, snapshot, uploads: deps.uploads, owner: sub, walkMs: deps.walkMs, knowledge: deps.knowledge, actions: runnerDeps.actions }), snapshot, linked: false, region, bill, flow };
       }
       let care: CityCare | undefined;
       const poller = createPoller({
@@ -189,7 +197,9 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
       const snapshot = async () => poller.current() ?? poller.refresh();
       const locks = deps.stores.locks ?? memoryLocks();
       let retired = false;
-      const actions = createActionService({ clients: aws.clients, poller, region: aws.region, locks, accountKey: () => aws.accountId, live: () => !retired });
+      // Every AWS change asked for, done or refused: who (hashed), where and what. Server logs are kept 30 days.
+      const audit: Audit = (e) => log.info('aws change', { who: who(sub), account: aws.accountId, region: aws.region, ...e });
+      const actions = createActionService({ clients: aws.clients, poller, region: aws.region, locks, accountKey: () => aws.accountId, live: () => !retired, audit });
       const runnerDeps = { llm, actions, snapshot, knowledge: deps.knowledge };
       const strands = createStrandsRunner(runnerDeps);
       const runner = routedRunner(createAgentRunner(runnerDeps), strands, deps.config.agentEngine === 'strands');
@@ -203,6 +213,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         progress: () => deps.stores.progress.get(sub),
         snapshot: () => poller.current(),
         fixesEnabled: deps.config.allowFixes,
+        audit,
       });
       await poller.refresh().catch((err) => log.warn('first poll failed', { who: who(sub), err: (err as Error).name }));
       poller.start();
@@ -222,7 +233,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         void flow.tick().catch((err) => log.warn('flow failed', { who: who(sub), err: (err as Error).name }));
       }, INVENTORY_EVERY_MS);
       inventoryTimer.unref?.();
-      return { poller, care, bill, flow, inventoryTimer, orchestrator: createOrchestrator({ llm, runner, snapshot, uploads: deps.uploads, owner: sub, walkMs: deps.walkMs, knowledge: deps.knowledge }), snapshot, linked: true, region: aws.region, accountId: aws.accountId, retire: () => void (retired = true) };
+      return { poller, care, bill, flow, inventoryTimer, orchestrator: createOrchestrator({ llm, runner, snapshot, uploads: deps.uploads, owner: sub, walkMs: deps.walkMs, knowledge: deps.knowledge, actions }), snapshot, linked: true, region: aws.region, accountId: aws.accountId, retire: () => void (retired = true) };
     };
 
     let world = await makeWorld(await deps.stores.accounts.get(sub));
@@ -267,6 +278,9 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
       sub,
       get region() {
         return world.region;
+      },
+      get accountId() {
+        return world.linked ? world.accountId : undefined;
       },
       orchestrator: () => world.orchestrator,
       care: () => world.care,

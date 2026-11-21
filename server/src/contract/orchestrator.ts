@@ -4,7 +4,10 @@ import { z } from 'zod';
 import type { Llm } from '../agents/llm.js';
 import { pick, say } from '../agents/once.js';
 import { agentSystemPrompt, CONCIERGE_PROMPT, lookoutPrompt } from '../agents/personas.js';
-import { type AgentRunner, snapshotForModel } from '../agents/runner.js';
+import { type AgentRunner, outcomeMessage, snapshotForModel, type ToolCallReport } from '../agents/runner.js';
+import { type ActionName, actionsForAgent, AWS_API, READ_ONLY } from '../agents/actions.js';
+import { parseCommand } from '../agents/commands.js';
+import type { ActionService, ApprovalRequest } from '../agents/service.js';
 import type { Approvals } from './approvals.js';
 import type { WorldSnapshot } from '../state/model.js';
 import {
@@ -63,6 +66,15 @@ const REMOVES = /^(delete|terminate|demolish|remove|make|build|put|turn)$/;
 export const isActionStep = (step: string) => {
   const verb = leadingVerb(step);
   return isCommit(verb) || REMOVES.test(verb);
+};
+
+/**
+ * The one change a plain request asks for, when the agent it went to owns that action ("Create a bucket called
+ * holiday-123" at the S3 Warehouse). Read from the player's own words only: never page context, never the plan.
+ */
+export const directRequest = (agentId: string, prompt: string) => {
+  const command = parseCommand(prompt);
+  return command && actionsForAgent(agentId).includes(command.name) ? command : undefined;
 };
 
 const PLAN_TOOL = {
@@ -128,6 +140,11 @@ export const createOrchestrator = (deps: {
   knowledge?: Knowledge;
   /** Whose screenshots this orchestrator may read (the signed-in player; 'local' for the local server). */
   owner?: string;
+  /**
+   * The tenant's ActionService (the same one the agents' tools use): a plain request the agent's turn didn't act on
+   * goes through it, with the same policy, approval card and MFA. Omitted = no fallback.
+   */
+  actions?: Pick<ActionService, 'submit' | 'describe'>;
   /** Time the agent gets to walk to its landmark before work starts (mock uses ~4.5 s). */
   walkMs?: number;
   paceMs?: number;
@@ -194,28 +211,63 @@ export const createOrchestrator = (deps: {
 
       let index = 1;
       const last = steps.length - 1;
+      const approve = approvals ? (req: ApprovalRequest) => approvals.request(taskId, req, emit) : undefined;
+      const onToolStart = ({ name, api, summary }: { name: string; api: string; summary: string }) => {
+        // A change ticks the plan step that makes it: explanation steps before that one walk through as done first, so
+        // "Explain buckets", "Create a bucket" never ticks the explanation and calls the real change "not done".
+        // Only for a write: a read (describe_resource, a docs search) never moves the plan on.
+        const write = Object.hasOwn(AWS_API, name) && !READ_ONLY.has(name as ActionName);
+        const at = write ? steps.findIndex((s, i) => i >= index && isActionStep(s)) : -1;
+        for (; at > index; index++) {
+          emit({ type: 'task.step', taskId, index, text: steps[index]!, status: 'running' });
+          emit({ type: 'task.step', taskId, index, text: steps[index]!, status: 'done' });
+        }
+        emit({ type: 'task.step', taskId, index: Math.min(index, last), text: steps[Math.min(index, last)]!, status: 'running' });
+        emit({ type: 'agent.state', agentId, state: 'working', service: api.split(':')[0], detail: `${api.split(':')[1] ?? api} — ${summary}` });
+      };
+      const onToolEnd = (call: ToolCallReport) => {
+        approvals?.reportResult(taskId, call, emit);
+        emit({ type: 'agent.state', agentId, state: 'idle' });
+        const i = Math.min(index, last);
+        const ok = call.outcome === 'done';
+        emit({ type: 'task.step', taskId, index: i, text: ok ? steps[i]! : `${steps[i]} — ${call.message}`, status: ok ? 'done' : 'failed' });
+        index++;
+      };
       const result = await deps.runner.turn(agentId, withPlan(cmd.prompt, p.steps), {
         onModelCall: (phase) =>
           emit(phase === 'start' ? { type: 'agent.state', agentId, state: 'working', service: 'bedrock', detail: 'InvokeModel — thinking' } : { type: 'agent.state', agentId, state: 'idle' }),
-        onToolStart: ({ api, summary }) => {
-          emit({ type: 'task.step', taskId, index: Math.min(index, last), text: steps[Math.min(index, last)]!, status: 'running' });
-          emit({ type: 'agent.state', agentId, state: 'working', service: api.split(':')[0], detail: `${api.split(':')[1] ?? api} — ${summary}` });
-        },
-        approve: approvals ? (req) => approvals.request(taskId, req, emit) : undefined,
-        onToolEnd: (call) => {
-          approvals?.reportResult(taskId, call, emit);
-          emit({ type: 'agent.state', agentId, state: 'idle' });
-          const i = Math.min(index, last);
-          const ok = call.outcome === 'done';
-          emit({ type: 'task.step', taskId, index: i, text: ok ? steps[i]! : `${steps[i]} — ${call.message}`, status: ok ? 'done' : 'failed' });
-          index++;
-        },
+        onToolStart,
+        approve,
+        onToolEnd,
         onText: (text) => emit({ type: 'agent.message', from: agentId, to: 'user', text }),
         signal,
       });
       if (signal?.aborted) return;
 
-      let ok = !result.refused && result.toolCalls.every((c) => c.outcome === 'done');
+      // A plain request ("Create a bucket called holiday-123") the agent's turn made no tool call for: a small model
+      // sometimes says "I'll build it now" and doesn't (seen live, 21 Nov 2026). The server submits exactly what the
+      // player typed through the same ActionService and approval card (policy, MFA and the recent sign-in all apply).
+      // Never after a refusal, and never from page context or the plan: only the player's own words.
+      const toolCalls = [...result.toolCalls];
+      let reply = result.reply;
+      const direct = !result.refused && !toolCalls.length && approve && deps.actions ? directRequest(agentId, cmd.prompt) : undefined;
+      if (direct && approve && deps.actions) {
+        onToolStart({ name: direct.name, api: AWS_API[direct.name], summary: deps.actions.describe(direct.name, direct.input) });
+        // Said when the card is really shown (policy is checked first: a refused change says why instead).
+        const outcome = await deps.actions.submit(direct.name, direct.input, {
+          approve: (req) => {
+            emit({ type: 'agent.message', from: agentId, to: 'user', text: `I'll do exactly what you asked: ${req.summary}. It waits for your Approve.` });
+            return approve(req);
+          },
+        });
+        const call: ToolCallReport = { name: direct.name, input: direct.input, outcome: outcome.status, message: outcomeMessage(outcome) };
+        toolCalls.push(call);
+        onToolEnd(call);
+        reply = call.message;
+        if (signal?.aborted) return;
+      }
+
+      let ok = !result.refused && toolCalls.every((c) => c.outcome === 'done');
       if (ok) {
         // The steps the agent's tool calls didn't cover: explanations walk through as done, but a step that changes AWS
         // was not done (no tool call made it), and says so, never a ✓ (seen live 21 Nov: "Create a bucket" ticked, nothing
@@ -231,12 +283,12 @@ export const createOrchestrator = (deps: {
       }
       if (result.refused) emit({ type: 'agent.message', from: agentId, to: 'user', text: result.reply });
 
-      const writes = result.toolCalls.filter((c) => c.outcome === 'done' && c.name !== 'describe_resource' && c.name !== 'review_architecture').length;
+      const writes = toolCalls.filter((c) => c.outcome === 'done' && c.name !== 'describe_resource' && c.name !== 'review_architecture').length;
       emit({
         type: 'task.done',
         taskId,
         ok,
-        result: (result.reply || (ok ? 'Done.' : 'That did not work out.')).slice(0, 400),
+        result: (reply || (ok ? 'Done.' : 'That did not work out.')).slice(0, 400),
         xp: [{ serviceId: agentId, amount: ok ? XP.task + XP.perWrite * writes : XP.attempted }],
         ...(result.sources?.length ? { sources: result.sources } : {}),
       });

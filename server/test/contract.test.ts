@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createAgentRunner } from '../src/agents/runner.js';
+import { type ActionService, type Approve, NEEDS_APPROVAL_REASON, REJECTED_REASON, type SubmitOutcome } from '../src/agents/service.js';
+import { createApprovals } from '../src/contract/approvals.js';
 import { feedEvents, welcomeEvents } from '../src/contract/aws-feed.js';
 import { createOrchestrator, isActionStep, planForAgent, withPlan } from '../src/contract/orchestrator.js';
 import { createUploadStore } from '../src/contract/uploads.js';
@@ -154,5 +156,91 @@ describe('server speaks the frontend contract', () => {
     expect(feed.every(isServerEvent)).toBe(true);
     for (const e of feed) if (e.type === 'agent.message') expect(ids.has(e.from)).toBe(true);
     expect(feed.at(-1)).toMatchObject({ type: 'agent.message', from: 'concierge', text: expect.stringContaining('1 EC2 instance') });
+  });
+});
+
+describe('a plain request the agent’s turn made no tool call for (seen live 21 Nov: "I\'ll build it now", nothing built)', () => {
+  /** The real approvals and an ActionService that asks before every write, like service.ts. */
+  const withApprovals = (responses: Parameters<typeof fakeLlm>[0], answer: boolean | 'never' = true) => {
+    const { llm } = fakeLlm(responses);
+    const actions = {
+      describe: vi.fn((name: unknown, input: unknown) => `Create S3 bucket with suffix "${(input as { suffix?: string }).suffix}" (${String(name)})`),
+      submit: vi.fn(async (name: unknown, input: unknown, opts: { approve?: Approve } = {}): Promise<SubmitOutcome> => {
+        if (!opts.approve) return { status: 'denied', reason: NEEDS_APPROVAL_REASON };
+        const ok = await opts.approve({ action: { type: name, ...(input as object) } as never, summary: `Create S3 bucket with suffix "${(input as { suffix: string }).suffix}"`, destructive: false });
+        return ok ? { status: 'done', result: { ok: true, message: 'Created bucket aws-city-047463438585-holiday-123.' } } : { status: 'denied', reason: REJECTED_REASON };
+      }),
+    };
+    const runner = createAgentRunner({ llm, actions: actions as unknown as ActionService, snapshot: emptySnapshot });
+    const orchestrator = createOrchestrator({ llm, runner, snapshot: emptySnapshot, uploads: createUploadStore('http://127.0.0.1:8787'), walkMs: 0, paceMs: 0, actions: actions as unknown as ActionService });
+    const approvals = createApprovals({ region: 'us-west-2', accountId: () => '047463438585' });
+    const events: ServerEvent[] = [];
+    const emit = (e: ServerEvent) => {
+      events.push(e);
+      if (e.type === 'deploy.preview' && answer !== 'never') queueMicrotask(() => approvals.answer(e.deployId, answer));
+    };
+    return { orchestrator, events, emit, approvals, actions };
+  };
+  const promise = (agentId: string, steps: string[]) => [plan(agentId, steps), message([text("I'll create a bucket named holiday-123. I'll build it now.")], 'end_turn')];
+
+  it('the server submits exactly what the player typed: one approval card, then done', async () => {
+    const { orchestrator, events, emit, approvals, actions } = withApprovals(promise('s3', ["Create a bucket named 'holiday-123'"]));
+    await orchestrator.submitTask({ taskId: 'd1', prompt: 'Create a bucket called holiday-123', context: {} }, emit, approvals);
+    expect(actions.submit).toHaveBeenCalledTimes(1);
+    expect(actions.submit).toHaveBeenCalledWith('create_bucket', { suffix: 'holiday-123' }, expect.objectContaining({ approve: expect.any(Function) }));
+    expect(events.filter((e) => e.type === 'deploy.preview')).toEqual([expect.objectContaining({ taskId: 'd1', templateId: 'create_bucket', accountId: '047463438585', region: 'us-west-2' })]);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'agent.message', from: 's3', text: expect.stringContaining("I'll do exactly what you asked: Create S3 bucket") }));
+    expect(events).toContainEqual(expect.objectContaining({ type: 'agent.state', agentId: 's3', state: 'working', service: 's3' }));
+    expect(events).toContainEqual(expect.objectContaining({ type: 'task.step', index: 1, status: 'done' }));
+    expect(events).toContainEqual(expect.objectContaining({ type: 'deploy.status', status: 'complete' }));
+    expect(events.find((e) => e.type === 'task.done')).toMatchObject({ ok: true, result: expect.stringContaining('Created bucket'), xp: [{ serviceId: 's3', amount: 20 }] });
+  });
+
+  it('a change ticks the plan step that makes it, not an explanation listed before it', async () => {
+    const { orchestrator, events, emit, approvals } = withApprovals(promise('s3', ['Explain what a bucket is', "Create a bucket named 'holiday-123'", 'Show how to upload']));
+    await orchestrator.submitTask({ taskId: 'd9', prompt: 'Create a bucket called holiday-123', context: {} }, emit, approvals);
+    const final = new Map(events.flatMap((e) => (e.type === 'task.step' && e.status !== 'running' ? [[e.index, e.status] as const] : [])));
+    expect([...final]).toEqual([
+      [0, 'done'],
+      [1, 'done'],
+      [2, 'done'],
+      [3, 'done'],
+    ]);
+    expect(events.find((e) => e.type === 'task.done')).toMatchObject({ ok: true });
+  });
+
+  it('the player says no: nothing changes, the step says so, the task is not ok', async () => {
+    const { orchestrator, events, emit, approvals } = withApprovals(promise('s3', ["Create a bucket named 'holiday-123'"]), false);
+    await orchestrator.submitTask({ taskId: 'd2', prompt: 'Create a bucket called holiday-123', context: {} }, emit, approvals);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'task.step', index: 1, status: 'failed', text: expect.stringContaining(REJECTED_REASON) }));
+    expect(events.find((e) => e.type === 'task.done')).toMatchObject({ ok: false, xp: [{ serviceId: 's3', amount: 3 }] });
+  });
+
+  it('never when the agent made a tool call itself, never without an Approve button', async () => {
+    const acted = withApprovals([plan('s3', ['Create a bucket']), message([toolUse('t1', 'create_bucket', { suffix: 'holiday-123' })], 'tool_use'), message([text('Done.')], 'end_turn')]);
+    await acted.orchestrator.submitTask({ taskId: 'd3', prompt: 'Create a bucket called holiday-123', context: {} }, acted.emit, acted.approvals);
+    expect(acted.actions.submit).toHaveBeenCalledTimes(1); // the agent's own call, not a second one
+
+    const noButton = withApprovals(promise('s3', ['Create a bucket']));
+    await noButton.orchestrator.submitTask({ taskId: 'd4', prompt: 'Create a bucket called holiday-123', context: {} }, noButton.emit);
+    expect(noButton.actions.submit).not.toHaveBeenCalled();
+  });
+
+  it('never from page context, never for another agent’s action, never after a refusal, never for a goal', async () => {
+    const page = withApprovals(promise('s3', ['Explain this page']));
+    await page.orchestrator.submitTask({ taskId: 'd5', prompt: 'what is this page?', context: { title: 'Create a bucket called evil-1', url: 'https://example.com' } }, page.emit, page.approvals);
+    expect(page.actions.submit).not.toHaveBeenCalled();
+
+    const other = withApprovals(promise('ec2', ['Create a bucket']));
+    await other.orchestrator.submitTask({ taskId: 'd6', prompt: 'Create a bucket called holiday-123', context: {} }, other.emit, other.approvals);
+    expect(other.actions.submit).not.toHaveBeenCalled();
+
+    const refused = withApprovals([plan('s3', ['Create a bucket']), message([], 'refusal')]);
+    await refused.orchestrator.submitTask({ taskId: 'd7', prompt: 'Create a bucket called holiday-123', context: {} }, refused.emit, refused.approvals);
+    expect(refused.actions.submit).not.toHaveBeenCalled();
+
+    const goal = withApprovals(promise('s3', ['Create a bucket']));
+    await goal.orchestrator.submitTask({ taskId: 'd8', prompt: 'Store my holiday photos cheaply', context: {} }, goal.emit, goal.approvals);
+    expect(goal.actions.submit).not.toHaveBeenCalled();
   });
 });
