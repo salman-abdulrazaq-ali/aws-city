@@ -113,6 +113,8 @@ export const explainAwsError = (err) => {
   const msg = String(err?.message ?? err);
   if (/ExpiredToken|RequestExpired|token.*expired/i.test(name + msg)) return 'Those AWS keys have expired. Get fresh ones (Workshop Studio → "Get AWS CLI credentials") or sign in again.';
   if (/InvalidClientTokenId|SignatureDoesNotMatch|UnrecognizedClient/i.test(name + msg)) return "AWS didn't accept those keys. Check you copied all of them (including the session token for temporary keys).";
+  // An `aws login` (or SSO) session that ran out: the sign-in exists, it only needs renewing (credential-provider-login).
+  if (/session has expired|re-?authenticate|aws login|sso session.*expired/i.test(msg)) return 'Your AWS sign-in has expired. Sign in again (it opens your browser).';
   if (/could not load credentials|CredentialsProviderError|no credentials/i.test(name + msg)) return 'No AWS sign-in found yet.';
   // A brand-new account: AWS verifies it first, then Claude needs Anthropic's one-time form, and the quota can start at 0.
   if (/being verified|account.{0,40}verif/i.test(msg)) return ACCOUNT_VERIFYING;

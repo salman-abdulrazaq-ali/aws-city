@@ -75,6 +75,9 @@ Pick your Region (for example `eu-west-2`, London) and sign in **as your admin u
 `aws login` says the profile already uses root, answer **y** to switch it. To check, run
 `aws sts get-caller-identity --profile aws-city`: the `Arn` must end in `user/<your admin name>`.
 
+An `aws login` sign-in expires after some hours. If it has expired, or you skipped this step, `npm run setup` notices.
+It offers **Sign in with your browser**, runs `aws login` for you, and carries on from the same question.
+
 ## 6. Choose the AI models
 
 AWS City's agents run on [Strands Agents](https://docs.aws.amazon.com/prescriptive-guidance/latest/agentic-ai-frameworks/strands-agents.html)
