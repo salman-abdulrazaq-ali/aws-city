@@ -13,12 +13,16 @@ COPY shared shared
 COPY server server
 RUN cd server && npm run build:bundle
 
-FROM node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
+# Runtime: distroless Node 24 (Debian 13), Google's minimal image: node, glibc, OpenSSL and CA certificates, and
+# nothing else. No shell, package manager, perl or pam, so nothing for an attacker to run and far fewer CVEs (the old
+# node:24-slim runtime carried Debian's perl, glibc, zlib, pam, apt and util-linux). The server is one bundled file
+# with no child processes. Pinned by digest (multi-arch index); runs as uid 65532 (nonroot); ECS adds a read-only
+# root filesystem. The image's ENTRYPOINT is /nodejs/bin/node.
+FROM gcr.io/distroless/nodejs24-debian13:nonroot@sha256:6abfcb367ebc291572c774c1592a986be2ab26a2486f73093401327495a5962a
 ENV NODE_ENV=production AWS_CITY_MODE=hosted HOST=0.0.0.0 PORT=8787 LOG_FORMAT=json
 WORKDIR /app
 COPY --from=build /app/server/dist ./dist
-USER node
 EXPOSE 8787
-# No curl in the slim image: a tiny Node health probe for local `docker run` (ECS uses the ALB check).
-HEALTHCHECK --interval=30s --timeout=3s CMD node -e "fetch('http://127.0.0.1:8787/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
-CMD ["node", "--enable-source-maps", "dist/main.js"]
+# A tiny Node health probe for local `docker run` (ECS uses the load balancer's check). Exec form: there's no shell.
+HEALTHCHECK --interval=30s --timeout=3s CMD ["/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:8787/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+CMD ["--enable-source-maps", "dist/main.js"]

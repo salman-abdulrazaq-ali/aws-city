@@ -131,7 +131,11 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   push protection; the `prod` environment needs the maintainer's approval and deploys only from `main`; `SECURITY.md`
   (private reporting) and `.github/CODEOWNERS`. The deploy workflow skips until `AWS_DEPLOY_ROLE_ARN` is set. AWS: the
   baseline in `docs/runbook.md` step 5 (GuardDuty, CloudTrail, Access Analyzer, EBS default encryption, a password
-  policy, account-wide S3 Block Public Access for ACLs). Proof: `gh api repos/salman-abdulrazaq-ali/aws-city/rulesets`,
+  policy, account-wide S3 Block Public Access for ACLs), and for the organization: no root user in member accounts
+  (central root management), an organization trail, GuardDuty and an analyzer for every account, the SCP
+  `AWSCityGuardrails` (stay in the org, security services stay on, no member root, three Regions), and Security Hub
+  (Foundational Best Practices), Config and Inspector ECR scanning. The server image runs on distroless Node
+  (`server/Dockerfile`: no shell or package manager, uid 65532); the AI image as uid 65534 on a read-only disk. Proof: `gh api repos/salman-abdulrazaq-ali/aws-city/rulesets`,
   `gh api repos/salman-abdulrazaq-ali/aws-city/actions/permissions`, the runbook's "Check:" commands.
 - **Hosted deploys with Claude only run in Regions with a Claude geo inference profile** (Amazon Nova: any Region that offers it on demand) (`infra/lib/models.ts`: `us`, `eu`, `au`,
   `in`; there is no `apac` profile, so e.g. Tokyo is refused). Each geo gets the newest pair with a profile there for

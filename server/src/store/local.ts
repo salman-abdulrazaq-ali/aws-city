@@ -34,7 +34,7 @@ export const fileBills = (progressFile: string): BillStore & { fileFor(sub: stri
     const file = fileFor(sub);
     await mkdir(dir, { recursive: true });
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(tmp, JSON.stringify(record));
+    await writeFile(tmp, JSON.stringify(record), { flag: 'wx', mode: 0o600 });
     await rename(tmp, file);
   };
   // Writes run one at a time (one process), so saveRead's check and write can't interleave with a put.

@@ -71,6 +71,38 @@ Amazon Nova or Claude, and a new account's Bedrock hold). This section is the op
        relay through a public bucket policy (`player-role/*`, `auth/*`), so blocking public policies would break
        linking an account. Check: `aws s3control get-public-access-block --account-id <acct>`, then open the
        player role template URL (the Data stack's `PlayerRoleTemplateUrl` output): it must still load.
+       IAM Access Analyzer reports exactly that one public read (the templates bucket); any other finding is new. It
+       isn't archived: an archive rule can't match on the action, so it would also hide a wider policy there.
+   - **An AWS Organization with other accounts** (e.g. a second account for testing linking, `docs/self-hosting.md`
+     step 9). Run these from the management account. Each one is reversible from there.
+     - **No root user in member accounts:** `aws organizations enable-aws-service-access --service-principal iam.amazonaws.com`,
+       `aws iam enable-organizations-root-credentials-management`, `aws iam enable-organizations-root-sessions`, then
+       per member `aws sts assume-root --target-principal <member> --task-policy-arn arn=arn:aws:iam::aws:policy/root-task/IAMDeleteRootUserCredentials`
+       and, with those credentials, delete any root password, access keys, certificates and MFA.
+       Check: `aws iam list-organizations-features` lists RootCredentialsManagement and RootSessions.
+     - **One trail for the organization:** allow `AWSLogs/<org-id>/*` writes in the trail bucket's policy (same
+       `aws:SourceArn` condition), `aws organizations enable-aws-service-access --service-principal cloudtrail.amazonaws.com`,
+       `aws cloudtrail update-trail --name <trail> --is-organization-trail`. Check: `aws cloudtrail describe-trails --query 'trailList[].IsOrganizationTrail'`.
+     - **GuardDuty for every account:** in each Region you use, `aws guardduty enable-organization-admin-account --admin-account-id <mgmt>`,
+       `aws guardduty create-members` for each member, `aws guardduty update-organization-configuration --auto-enable-organization-members ALL`.
+       Check: `aws guardduty list-members --detector-id <id> --region <r>` shows each member Enabled.
+     - **An organization analyzer:** `aws accessanalyzer create-analyzer --analyzer-name org-external-access --type ORGANIZATION --region <r>`.
+     - **Members' account settings** (through `OrganizationAccountAccessRole`): S3 Block Public Access, all four
+       settings on, and EBS encryption by default in each Region.
+     - **Guardrails (an SCP on the root, `AWSCityGuardrails`; members only, never the management account):** members
+       can't leave the organization; can't stop or delete CloudTrail, GuardDuty, Access Analyzer, Config, Security Hub
+       or Inspector, or switch off S3 Block Public Access or EBS encryption; a member's root user can't act (central
+       root sessions from the management account still can, `aws:AssumedRoot`); and only eu-west-2, us-west-2 and
+       us-east-1 work (AWS's documented global-service exemptions). Validate first:
+       `aws accessanalyzer validate-policy --policy-type SERVICE_CONTROL_POLICY --policy-document file://scp.json`.
+       Check: from a member, a call in another Region (e.g. `ap-south-1`) is refused with "explicit deny in a service
+       control policy", and the city still reads the linked account.
+   - **Continuous checks** (a few dollars a month): AWS Config recording all resources into its own private bucket,
+     Security Hub with AWS Foundational Security Best Practices only (`--no-enable-default-standards` then
+     `batch-enable-standards`), and Amazon Inspector for ECR (`aws inspector2 enable --resource-types ECR`), which
+     switches the registry to enhanced scanning (OS and npm packages, rescanned as new CVEs appear).
+     Check: `aws securityhub get-enabled-standards`, `aws configservice describe-configuration-recorder-status`,
+     `aws ecr get-registry-scanning-configuration` (ENHANCED).
 6. Release the extension: tag `v1.2.3` → the `release` workflow attaches the zip → upload it in the Chrome
    Web Store dashboard with `docs/store-listing.md` and `docs/privacy-policy.md`.
 
