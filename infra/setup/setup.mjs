@@ -10,7 +10,7 @@
 //   npm run setup -- --yes --env staging  non-interactive: reuse aws-city.config.json (CI)
 //   npm run setup -- --destroy --env staging
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import * as p from '@clack/prompts';
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
@@ -224,6 +224,9 @@ const emailOptional = envName !== 'prod';
 const alarmEmail = await ask('text', { message: 'Email for alarms and budget alerts (you’ll get a confirmation email to click)', initialValue: prev.alarmEmail ?? '', validate: (v) => (/^\S+@\S+\.\S+$/.test(v ?? '') || (emailOptional && !v) ? undefined : emailOptional ? 'an email address, or leave empty' : 'prod needs an email for alarms and the budget cut-off') }, prev.alarmEmail);
 if (!alarmEmail && !emailOptional) bye('prod needs alarmEmail (alarms and the budget cut-off notify it).');
 if (!alarmEmail) p.log.warn('No alarm email: the AI still switches off at 100% of the budget, but nobody is told. Add one before going live.');
+// Optional: who the privacy policy names as the operator (docs/privacy-policy.md is a template). Remembered like the rest.
+const operatorName = (await ask('text', { message: 'Your name or organisation, for the privacy policy (optional; you run this service)', initialValue: prev.operatorName ?? '' }, prev.operatorName ?? '')).trim();
+const contactEmail = (await ask('text', { message: 'Contact email for privacy questions (optional)', initialValue: prev.contactEmail ?? alarmEmail ?? '', validate: (v) => (!v || /^\S+@\S+\.\S+$/.test(v) ? undefined : 'an email address, or leave empty') }, prev.contactEmail ?? '')).trim();
 const monthlyBudgetUsd = Number(await ask('text', { message: 'Monthly AWS budget in USD (AI switches off at 100%)', initialValue: String(prev.monthlyBudgetUsd ?? (envName === 'prod' ? 300 : 50)), validate: (v) => (Number(v) > 0 ? undefined : 'a number') }, prev.monthlyBudgetUsd));
 const useSes = await ask('confirm', { message: 'Send sign-up emails from your own address with Amazon SES? (otherwise Cognito’s default sender, ~50/day)', initialValue: Boolean(prev.sesFromEmail) }, Boolean(prev.sesFromEmail));
 let sesFromEmail = '';
@@ -311,7 +314,7 @@ if (githubRepo) {
 
 // ── 9. Save the answers (no secrets) ─────────────────────────────────────────
 const envConfig = {
-  region, domainName, hostedZoneId: zone ? zoneChoice : '', zoneName, cognitoDomainPrefix, extensionIds, chromeStoreId: storeId, edgeStoreId, firefoxAddonId, safari, googleClientId, sesFromEmail, alarmEmail,
+  region, domainName, hostedZoneId: zone ? zoneChoice : '', zoneName, cognitoDomainPrefix, extensionIds, chromeStoreId: storeId, edgeStoreId, firefoxAddonId, safari, googleClientId, sesFromEmail, alarmEmail, operatorName, contactEmail,
   monthlyBudgetUsd, dailyModelCalls: prev.dailyModelCalls ?? 100, globalDailyModelCalls: prev.globalDailyModelCalls ?? (envName === 'prod' ? 20000 : 5000),
   minTasks: prev.minTasks ?? (envName === 'prod' ? 2 : 1), maxTasks: prev.maxTasks ?? (envName === 'prod' ? 10 : 3),
 };
@@ -370,6 +373,18 @@ if (allowDev) {
   cpSync(`${ROOT}.output/chrome-mv3`, `${ROOT}${tryCopy}`, { recursive: true });
 }
 
+// The privacy policy, filled in for this deployment (the store listings need it at a public URL).
+const policyFile = `.output/privacy-policy-${envName}.md`;
+mkdirSync(`${ROOT}.output`, { recursive: true });
+writeFileSync(
+  `${ROOT}${policyFile}`,
+  readFileSync(`${ROOT}docs/privacy-policy.md`, 'utf8')
+    .replaceAll('{{OPERATOR_NAME}}', operatorName || '{{OPERATOR_NAME}}')
+    .replaceAll('{{CONTACT_EMAIL}}', contactEmail || '{{CONTACT_EMAIL}}')
+    .replaceAll('{{REGION}}', region),
+);
+if (!operatorName || !contactEmail) p.log.warn(`The privacy policy still has {{OPERATOR_NAME}} / {{CONTACT_EMAIL}} blanks: fill them in (${policyFile}) or run setup again.`);
+
 p.note(
   [
     `Server:   ${pick('Service', 'ApiUrl')}`,
@@ -383,6 +398,7 @@ p.note(
     'Builds:    npm run build / zip now build for this server (.env.production); npm start’s demo and npm run smoke stay the demo.',
     alarmEmail ? `Confirm:   click the AWS Notification emails sent to ${alarmEmail}.` : '',
     githubRepo ? `GitHub:    add AWS_DEPLOY_ROLE_ARN (see the AWSCity-CI stack) + AWS_REGION=${region} to the ${envName} environment.` : '',
+    `Privacy:   ${policyFile}: host it at a public URL; the Chrome, Edge, Firefox and Apple listings all ask for one.`,
     'Kill switch / runbook: docs/runbook.md',
   ]
     .filter((l) => l !== undefined)

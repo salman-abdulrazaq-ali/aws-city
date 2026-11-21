@@ -1,18 +1,44 @@
 # AWS City — Privacy Policy
 
-*Last updated: 17 October 2026*
+*Last updated: 20 November 2026*
+
+> **For whoever runs this service.** AWS City is open-source software; each deployment is run by the person or
+> organisation that deployed it. This file is a template: `npm run setup` asks for your name and contact email and
+> writes a filled copy to `.output/privacy-policy-<env>.md`. Host that copy at a public URL and give the URL to each
+> store listing (see `docs/store-listing.md`). If you fill it in by hand, replace every `{{PLACEHOLDER}}`. Before you
+> publish, check it against what your deployment really does (a changed retention or log setting changes this page).
+> Delete this note from the published copy.
+
+## Who runs this service
+
+The AWS City service you sign in to is run by **{{OPERATOR_NAME}}** ("we"), who decides why and how your data is used
+(the "controller", in data-protection terms). The service runs in AWS in the **{{REGION}}** Region.
+
+Contact for any privacy question, or to ask us to delete your data: **{{CONTACT_EMAIL}}**.
+
+The extension and its demo mode work without an account and send nothing to us. The rest of this page is about the
+hosted service you can sign in to.
 
 AWS City is a learning game (a browser extension for Chrome, Edge, Firefox and Safari) that teaches Amazon Web Services. This page explains
 what the game stores, why, and how to delete it. We don't sell data, show ads, or use your data to
 train AI models.
+
+## Children
+
+AWS City is made for learners of all ages, but an account needs an email address, and we don't knowingly collect
+personal information from a child under 13 (or the age of digital consent where you live, if higher). A child under
+13 should not create an account: a parent or guardian can sign up and play with the child. The demo needs no account
+and collects nothing. Signing in collects an **email address** (kept by Amazon Cognito) and your game progress, as
+described below. A parent or guardian who believes a child has an account can write to {{CONTACT_EMAIL}} and we will
+delete it.
 
 ## What we store
 
 | Data | Why | Where / how long |
 |---|---|---|
 | Your account id from sign-in (a random Cognito id) and email address | So you can sign in and keep your city on any computer | Amazon Cognito, until you delete your account |
-| Your city progress (discovered landmarks, XP) | To save your game | Amazon DynamoDB, until you delete your account |
-| Your AWS account link: account id, role name, region and a random setup code (ExternalId) | So agents can build in *your* AWS account after you approve | DynamoDB, until you delete your account or the AWSCity stack |
+| Your city progress (buildings and their levels, ⭐ stars, 🪙 City Coins, cards, quests, settings) | To save your game | Amazon DynamoDB, until you delete your account |
+| Your AWS account link: account id, role name, region and a random setup code (ExternalId) | So agents can build in *your* AWS account after you approve | DynamoDB, until you delete your account |
 | Your linked AWS account's month-to-date cost totals, by service and Region (only if you turn the city's bill on; off by default) | So the city can show what your account costs this month | DynamoDB, replaced by the next read (at most once a day) and deleted when you delete your account |
 | Request counts per minute from your linked AWS account's CloudWatch (load balancer, Lambda, API Gateway, DynamoDB writes), only if you turn live traffic on (off by default) | So the city's traffic can follow your real requests | In the server's memory only, replaced by the next read (at most every 5 minutes) and gone when you close the city |
 | A public Mayor name (two words picked by the game, like "Kind Otter"; you never type it), only if you turn on **Show me on leaderboards** (off by default) | So other players can see you in the live city and on the weekly leaderboards | DynamoDB: your presence row expires 90 seconds after you close the city; leaderboard rows after 9 weeks. Turning the switch off removes both at once |
@@ -22,7 +48,9 @@ train AI models.
 
 **We never see or store your AWS password or access keys.** Agents act in your AWS account only
 through the narrow `AWSCityPlayerRole` you install yourself, and only after you press **Approve** in
-the game. You can remove that access at any time by deleting the `AWSCity` stack in CloudFormation.
+the game. You can remove that access at any time by deleting the `AWSCity` stack in CloudFormation. Deleting the stack
+doesn't tell us: the city simply stops being able to read your account, and the link record stays until you delete
+your AWS City account.
 
 ## What we process but don't keep
 
@@ -70,7 +98,7 @@ incidents), not to track you.
 Other players never see your account id or email: the live city and leaderboards store you under a one-way scrambled
 code, with only the Mayor name the game picked for you.
 
-In the game: **Deploy → Delete my account**. This deletes your progress, account link, cached bill, live-city presence, leaderboard scores and sign-in
+In the game: **Deploy → Delete my account** (if you don't see the Deploy tab, open **⋯ → Show everything**), or write to {{CONTACT_EMAIL}}. This deletes your progress, account link, cached bill, live-city presence, leaderboard scores and sign-in
 (`DELETE /me`) from the live database immediately; screenshots expire within a day anyway. Then delete the
 `AWSCity` stack in your AWS account's CloudFormation console to remove the role.
 
@@ -81,4 +109,6 @@ logs above age out on their own schedule (30 or 90 days).
 
 ## Contact
 
-Questions: open an issue at https://github.com/iloveclouduk/AWS-North-Hackathon.
+Questions, deletion requests and concerns about children's data: {{CONTACT_EMAIL}} ({{OPERATOR_NAME}}).
+
+There is no in-game download of your data yet.

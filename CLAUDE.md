@@ -160,8 +160,9 @@ When a change touches a decision, update its entry and run its Proof.
   (`publicError` in `server/src/log.ts`). Proof: `cd server && npx vitest run test/log.test.ts`.
 - **One seam to the backend.** Only `src/backend/` does network I/O. `contract.ts` is the source of
   truth; `docs/backend-contract.md` mirrors it. UI code reading the extension's own files goes through
-  `readAsset` (`src/backend/assets.ts`: same-origin `/assets/` paths only). A v2.14 client needs a v2.14 server (the
-  strict schema refuses unknown fields; v2.14 adds `Progress.wallet`): deploy the server first. Proof: `npx vitest run tests/contract.test.ts tests/assets.test.ts`, and
+  `readAsset` (`src/backend/assets.ts`: same-origin `/assets/` paths only). A client needs a server of its contract version or newer
+  (`CONTRACT_VERSION`, `src/backend/contract.ts`; the server's strict `Progress` schema refuses unknown fields, and nothing checks
+  versions otherwise; `/health` reports the server's): deploy the server first. Proof: `npx vitest run tests/contract.test.ts tests/assets.test.ts`, and
   `grep -rn -e "fetch(" -e "WebSocket(" src | grep -v src/backend/` prints nothing.
 - **Content is data in `shared/`** (world, flashcards, puzzles, quests, templates). JSON imports need
   `with { type: 'json' }` because the server runs as NodeNext ESM.
