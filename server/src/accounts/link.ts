@@ -1,6 +1,8 @@
 import { randomBytes } from 'node:crypto';
+import { EC2Client } from '@aws-sdk/client-ec2';
 import { GetCallerIdentityCommand, STSClient } from '@aws-sdk/client-sts';
 import type { AwsCredentialIdentityProvider } from '@smithy/types';
+import { fixesAllowed } from '../agents/fixes.js';
 import { assumedRole, SDK_DEFAULTS } from '../aws.js';
 import { guard } from '../guard/gate.js';
 import type { AccountRecord, AccountStore } from '../store/types.js';
@@ -13,11 +15,47 @@ const ROLE_ARN = /^arn:aws:iam::(\d{12}):role\/(AWSCityPlayerRole-[a-z0-9-]+)$/;
 
 export class LinkError extends Error {}
 
+/** A setup link is good for a day: verify refuses an older one, so a link phished from another player ages out. */
+export const LINK_TTL_MS = 24 * 60 * 60_000;
+
+/** The template version a player-role template URL names (…/player-role/v<N>.yaml: infra/lib/data-stack.ts PLAYER_ROLE_KEY). */
+export const templateVersion = (url: string): number | undefined => {
+  const v = /\/v(\d+)\.yaml(?:[?#]|$)/.exec(url)?.[1];
+  return v === undefined ? undefined : Number(v);
+};
+
+/** The characters the template's ConnectsPlayer parameter allows (its AllowedPattern), and its length. */
+const LABEL_CHARS = /[^A-Za-z0-9 ._@*-]/g;
+const LABEL_MAX = 64;
+
+/**
+ * Who a setup link connects, shown as the AWSCity stack's ConnectsPlayer parameter (visible on the quick-create page,
+ * not NoEcho), so a player handed someone else's link can see it isn't theirs. Never a secret and never the raw email:
+ * the public Mayor name ("Mayor Kind Otter") while the profile is public, else the email masked ("a***@e***.com") when
+ * the sign-in carries one, else "Player " and the first 8 characters of the sign-in id. The Deploy tab shows the same
+ * label (it's in the link) so the player knows what to look for.
+ */
+export const connectsPlayerLabel = (p: { sub: string; email?: string }, profile?: { public?: boolean; name?: string } | null): string => {
+  const clean = (s: string) => s.replace(LABEL_CHARS, '').replace(/\s+/g, ' ').trim().slice(0, LABEL_MAX);
+  const mayor = profile?.public && profile.name ? clean(`Mayor ${profile.name}`) : '';
+  if (mayor.length > 'Mayor '.length) return mayor;
+  const at = p.email?.lastIndexOf('@') ?? -1;
+  if (p.email && at > 0) {
+    const [local, domain] = [p.email.slice(0, at), p.email.slice(at + 1)];
+    const dot = domain.lastIndexOf('.');
+    const masked = clean(`${local[0]}***@${domain[0] ?? ''}***${dot > 0 ? domain.slice(dot) : ''}`);
+    if (/^[A-Za-z0-9]/.test(masked)) return masked;
+  }
+  return `Player ${p.sub.replace(/[^A-Za-z0-9]/g, '').slice(0, 8) || 'unknown'}`;
+};
+
 /**
  * Connecting a player's own AWS account:
  *  1. link: we mint a per-player ExternalId and hand back a CloudFormation quick-create URL for the
- *     player role (trusting only our task role, with that ExternalId).
- *  2. verify: we assume the role and check who we are before saving anything.
+ *     player role (trusting only our task role, with that ExternalId), naming the player it connects
+ *     (ConnectsPlayer) and, if they asked, AllowFixes=true. The link is good for LINK_TTL_MS.
+ *  2. verify: we assume the role and check who we are before saving anything, then ask (a DryRun that
+ *     changes nothing) whether the role allows fixes, and record the template version the link pointed at.
  * We never see or store the player's keys; only the role ARN and the ExternalId.
  */
 export const createAccountLinker = (deps: {
@@ -30,43 +68,67 @@ export const createAccountLinker = (deps: {
   credentialsFor?: (o: { roleArn: string; externalId: string; sub: string; region: string }) => AwsCredentialIdentityProvider;
   /** Test seam: GetCallerIdentity with those credentials. */
   whoAmI?: (region: string, credentials: AwsCredentialIdentityProvider) => Promise<{ Account?: string; Arn?: string }>;
+  /** Test seam: whether the role allows fixes (fixesAllowed's DryRun), or undefined when it can't tell. */
+  canFix?: (region: string, credentials: AwsCredentialIdentityProvider, accountId: string) => Promise<boolean | undefined>;
+  now?: () => number;
 }) => {
   const credentialsFor = deps.credentialsFor ?? assumedRole;
+  const now = deps.now ?? Date.now;
   // Gated like every client with a player's credentials: this one can send GetCallerIdentity and nothing else.
   const whoAmI =
     deps.whoAmI ?? ((region, credentials) => guard(new STSClient({ ...SDK_DEFAULTS, region, credentials }), { home: region }).send(new GetCallerIdentityCommand({})));
+  // Gated too: the only write-shaped request it can send without a grant is the EBS fix's DryRun.
+  const canFix =
+    deps.canFix ?? ((region, credentials, accountId) => fixesAllowed(guard(new EC2Client({ ...SDK_DEFAULTS, region, credentials }), { home: region, accountId: () => accountId })));
+  /** The newest template version: the one every setup link points at. */
+  const latestRoleVersion = templateVersion(deps.templateUrl);
 
-  const quickCreateUrl = (region: string, externalId: string) => {
-    const params = new URLSearchParams({
+  const quickCreateUrl = (region: string, externalId: string, opts: LinkOptions) => {
+    const params: Record<string, string> = {
       templateURL: deps.templateUrl,
       stackName: 'AWSCity',
       param_ExternalId: externalId,
+      // Visible on the quick-create page: who this link connects (a stranger's link names a stranger).
+      param_ConnectsPlayer: opts.label,
+      ...(opts.allowFixes ? { param_AllowFixes: 'true' } : {}),
       // No trust parameters: the published template has our account fixed in it.
-    });
-    return `https://${region}.console.aws.amazon.com/cloudformation/home?region=${region}#/stacks/quickcreate?${params}`;
+    };
+    // %20 for spaces (not form-encoding's +), so the console reads the label as written.
+    const query = Object.entries(params)
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+      .join('&');
+    return `https://${region}.console.aws.amazon.com/cloudformation/home?region=${region}#/stacks/quickcreate?${query}`;
   };
 
   return {
-    async link(sub: string, region: string) {
+    templateUrl: deps.templateUrl,
+    latestRoleVersion,
+
+    async link(sub: string, region: string, opts: LinkOptions) {
       if (!REGION.test(region)) throw new LinkError('That doesn’t look like an AWS region (e.g. us-west-2).');
       const existing = await deps.accounts.get(sub);
+      // Every link starts a fresh day to verify in, and names the template version it points at.
+      const issued = { linkIssuedAt: new Date(now()).toISOString(), ...(latestRoleVersion !== undefined ? { linkRoleVersion: latestRoleVersion } : {}) };
       // Re-linking keeps the same ExternalId, so a stack the player already installed keeps working. A linked account
-      // stays linked (and usable) until verify succeeds for the new Region.
+      // stays linked (and usable) until verify succeeds for the new Region. A broken link goes back to pending.
       let record: AccountRecord;
-      if (existing?.status === 'linked') {
-        const { pendingRegion: _, ...linked } = existing;
-        record = existing.region === region ? linked : { ...linked, pendingRegion: region };
-      } else record = { status: 'pending', externalId: existing?.externalId ?? randomBytes(24).toString('base64url'), region };
-      if (JSON.stringify(record) !== JSON.stringify(existing)) await deps.accounts.put(sub, record);
-      return { url: quickCreateUrl(region, record.externalId), externalId: record.externalId };
+      if (existing?.status === 'linked' && !existing.brokenAt) {
+        const { pendingRegion: _, linkRoleVersion: _v, ...linked } = existing;
+        record = { ...(existing.region === region ? linked : { ...linked, pendingRegion: region }), ...issued };
+      } else record = { status: 'pending', externalId: existing?.externalId ?? randomBytes(24).toString('base64url'), region, ...issued };
+      await deps.accounts.put(sub, record);
+      return { url: quickCreateUrl(region, record.externalId, opts), externalId: record.externalId };
     },
 
     /** Accepts the stack's RoleArn output or just the 12-digit account id. */
     async verify(sub: string, input: string): Promise<AccountRecord & { status: 'linked' }> {
       const stored = await deps.accounts.get(sub);
       if (!stored) throw new LinkError('Start with “Get my setup link” first.');
-      // The Region asked for last (a linked player's new Region, else the record's own).
-      const { pendingRegion, ...rest } = stored;
+      const issuedAt = stored.linkIssuedAt ? Date.parse(stored.linkIssuedAt) : Number.NaN;
+      if (!(now() - issuedAt <= LINK_TTL_MS))
+        throw new LinkError('Your setup link is more than a day old, so I won’t use it. Press “Get my setup link” again (a stack you already made from it keeps working), then check again.');
+      // The Region asked for last (a linked player's new Region, else the record's own). What verify learns is fresh.
+      const { pendingRegion, brokenAt: _b, fixes: _f, roleVersion: _r, ...rest } = stored;
       const record = { ...rest, region: pendingRegion ?? stored.region };
       const trimmed = input.trim();
       const prefix = deps.playerRolePrefix ?? 'AWSCityPlayerRole';
@@ -75,17 +137,36 @@ export const createAccountLinker = (deps: {
       if (!m || !m[2]!.startsWith(`${prefix}-`)) throw new LinkError('Paste your 12-digit AWS account id (or the RoleArn from the AWSCity stack).');
       if (m[1] === deps.selfAccountId) throw new LinkError('That’s the city’s own account — use your account.');
       let id: { Account?: string; Arn?: string };
+      const credentials = credentialsFor({ roleArn, externalId: record.externalId, sub, region: record.region });
       try {
-        id = await whoAmI(record.region, credentialsFor({ roleArn, externalId: record.externalId, sub, region: record.region }));
+        id = await whoAmI(record.region, credentials);
       } catch {
         throw new LinkError(`I couldn’t use the AWSCity role in ${m[1]} (${record.region}). Is the stack finished, in that region, and made from your latest setup link?`);
       }
       if (id.Account !== m[1] || !id.Arn?.includes(`:assumed-role/${m[2]}/`)) throw new LinkError('That role isn’t the AWSCity player role.');
-      const linked = { ...record, status: 'linked' as const, roleArn, accountId: m[1], linkedAt: new Date().toISOString() };
+      // Changes nothing: a DryRun (undefined when AWS's answer can't tell).
+      const fixes = await canFix(record.region, credentials, m[1]).catch(() => undefined);
+      const linked = {
+        ...record,
+        status: 'linked' as const,
+        roleArn,
+        accountId: m[1],
+        linkedAt: new Date(now()).toISOString(),
+        ...(record.linkRoleVersion !== undefined ? { roleVersion: record.linkRoleVersion } : {}),
+        ...(fixes !== undefined ? { fixes } : {}),
+      };
       await deps.accounts.put(sub, linked);
       return linked;
     },
   };
 };
+
+/** What a setup link carries besides the ExternalId. */
+export interface LinkOptions {
+  /** The stack's ConnectsPlayer (connectsPlayerLabel). */
+  label: string;
+  /** v2.17: AllowFixes=true on the quick-create page (the player ticked "Allow small fixes"). */
+  allowFixes?: boolean;
+}
 
 export type AccountLinker = ReturnType<typeof createAccountLinker>;

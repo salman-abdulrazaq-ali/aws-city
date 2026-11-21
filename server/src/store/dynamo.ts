@@ -151,6 +151,9 @@ export const dynamoStores = (deps: { client: DynamoDBClient; table: string; now?
       async put(sub, record) {
         await db.send(new PutCommand({ TableName, Item: { pk: user(sub), sk: 'ACCOUNT', record } }));
       },
+      async delete(sub) {
+        await db.send(new DeleteCommand({ TableName, Key: { pk: user(sub), sk: 'ACCOUNT' } }));
+      },
     },
     // v2.5: the bill switch and the last Cost Explorer read (deleted with the rest of USER#<sub> by deleteUser).
     bills: {

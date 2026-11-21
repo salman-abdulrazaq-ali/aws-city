@@ -1,4 +1,4 @@
-import type { ClientCommand, Progress, ServerEvent } from './contract';
+import type { ClientCommand, PlayerDataExport, Progress, ServerEvent } from './contract';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error' | 'signed-out';
 
@@ -26,6 +26,11 @@ export interface AgentBackend {
   /** null = backend has no progress for this user yet. */
   getProgress(): Promise<Progress | null>;
   putProgress(p: Progress): void;
+  /**
+   * v2.17 "Download my data": everything the backend keeps about the player (the server: GET /me/export; the demo: this
+   * device's progress, `practice: true`). The account link is metadata only, never the ExternalId.
+   */
+  exportMe(): Promise<PlayerDataExport>;
 
   /** Interactive sign-in (hosted server). Must be called from a user gesture. */
   signIn?(): Promise<void>;

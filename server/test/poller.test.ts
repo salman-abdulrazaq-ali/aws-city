@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { AwsClients } from '../src/aws.js';
+import { DescribeInstancesCommand } from '@aws-sdk/client-ec2';
+import { type AwsClients, classifyAwsError, clientsFor, isRoleRefused, refusalsMarked, RoleRefusedError } from '../src/aws.js';
 import { createPoller, mapLimit } from '../src/state/poller.js';
 
 describe('poller helpers', () => {
@@ -70,5 +71,56 @@ describe('poller caps', () => {
     // Unreadable stays unknown (null), never "off": no finding is raised from it.
     expect(snap.resources.filter((r) => r.kind === 'table').map((r) => r.meta.pitr)).toEqual([null, null]);
     expect(snap.account?.ebsEncryptionByDefault).toBeUndefined();
+  });
+});
+
+describe('a refused role (v2.17)', () => {
+  const fakeClients = (handle: (cmd: string) => unknown) => {
+    const client = { send: async (c: { constructor: { name: string } }) => handle(c.constructor.name) ?? {} };
+    return new Proxy({}, { get: (_t, k) => (k === 's3' ? { ...client, config: { region: async () => 'us-east-1' } } : client) }) as unknown as AwsClients;
+  };
+
+  it('refusalsMarked: STS refusing the role becomes RoleRefusedError (same name, same kind); anything else passes as it was', async () => {
+    const failing = (name: string) => refusalsMarked(async () => Promise.reject(Object.assign(new Error(name), { name })));
+    const denied: unknown = await failing('AccessDenied')().catch((e: unknown) => e);
+    expect(isRoleRefused(denied)).toBe(true);
+    expect(classifyAwsError(denied)).toBe('denied');
+    expect(isRoleRefused(await failing('ExpiredToken')().catch((e: unknown) => e))).toBe(true);
+    const other = (await failing('Throttling')().catch((e: unknown) => e)) as Error;
+    expect(isRoleRefused(other)).toBe(false);
+    expect(other.name).toBe('Throttling');
+  });
+
+  it('a real SDK client hands the refusal on unchanged (it is still RoleRefusedError when send() fails), before any request', async () => {
+    const sent: string[] = [];
+    const requestHandler = { handle: async () => (sent.push('request'), { response: { statusCode: 200, headers: {}, body: new Uint8Array() } }) };
+    const refusing = refusalsMarked(async () => Promise.reject(Object.assign(new Error('not authorized to perform: sts:AssumeRole'), { name: 'AccessDenied' })));
+    const clients = clientsFor({ region: 'us-west-2', credentials: refusing, accountId: () => '123456789012', requestHandler: requestHandler as never });
+    const err = await clients.ec2.send(new DescribeInstancesCommand({})).catch((e: unknown) => e);
+    expect(isRoleRefused(err)).toBe(true);
+    expect(sent).toEqual([]);
+  });
+
+  it("marks the poll roleRefused and keeps what was seen; one service's AccessDenied only locks that service", async () => {
+    let mode: 'ok' | 'refused' | 'lambda-denied' = 'ok';
+    const clients = fakeClients((cmd) => {
+      if (mode === 'refused') throw new RoleRefusedError(Object.assign(new Error('not authorized to perform: sts:AssumeRole'), { name: 'AccessDenied' }));
+      if (mode === 'lambda-denied' && cmd === 'ListFunctionsCommand') throw Object.assign(new Error('no'), { name: 'AccessDeniedException' });
+      if (cmd === 'ListTablesCommand') return { TableNames: ['city-a'] };
+      if (cmd === 'DescribeTableCommand') return { Table: { TableName: 'city-a', TableStatus: 'ACTIVE' } };
+      return undefined;
+    });
+    const poller = createPoller({ clients, accountId: '123456789012', region: 'us-east-1', intervalMs: 60_000, onSnapshot: () => {} });
+    const first = await poller.refresh();
+    expect(first.roleRefused).toBeUndefined();
+    mode = 'refused';
+    const second = await poller.refresh();
+    expect(second).toMatchObject({ roleRefused: true, credentials: 'ok' });
+    expect(new Set(Object.values(second.services))).toEqual(new Set(['error'])); // not "locked": IAM didn't lock a service
+    expect(second.resources.map((r) => r.id)).toEqual(first.resources.map((r) => r.id));
+    mode = 'lambda-denied';
+    const third = await poller.refresh();
+    expect(third.roleRefused).toBeUndefined();
+    expect(third.services.lambda).toBe('locked');
   });
 });

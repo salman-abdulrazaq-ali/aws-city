@@ -114,6 +114,9 @@ When a change touches a decision, update its entry and run its Proof.
   template says so). Undo is the player's, in the console. Outside the city's own resources the player types the
   resource id, and the citizen must be level 3 (a teaching gate, not a security control). Local mode needs
   `AWS_CITY_ALLOW_FIXES=true` (`npm run live -- --allow-fixes`), and its "fixes are off" message says so (`howToAllowFixes`).
+  Hosted, fixes are per account (v2.17): the setup link sets `AllowFixes=true` when the player asks (`account.link {allowFixes}`),
+  and verify learns whether the role allows them without changing anything (`fixesAllowed`: EC2's DryRun of the EBS fix,
+  `DryRunOperation` = yes); `createCityCare` uses the record's answer (unknown: the server's setting) and `account.status` says it (`fixes`).
   Proof: `cd server && npx vitest run test/fixes.test.ts test/player-role.test.ts test/care.test.ts`.
 - **AWS plugins for Claude Code** (`.claude/settings.json`): `aws-core` and `aws-agents` from
   `claude-plugins-official` (Agent Toolkit for AWS). Use their skills (aws-cdk, aws-iam, aws-containers,
@@ -122,8 +125,10 @@ When a change touches a decision, update its entry and run its Proof.
   session only, every call asks first (`permissions.ask` in `.claude/settings.json`), and it's never wired
   into the game's agents (they get only allow-listed read-only docs tools). Proof: `cd server && npx vitest run test/knowledge.test.ts`.
 - **Every AWS write needs the player's approval** (contract v2 `deploy.preview` → `deploy.approve`).
-  With no approval channel, writes are refused (only reads run). Proof: `server/test/approvals.test.ts`,
-  `server/test/service.test.ts` ("refuses every write without an approval channel").
+  With no approval channel, writes are refused (only reads run). v2.17 `resource.remove` (no model) goes the same way:
+  `ActionService.submit` with the socket's approvals, so policy, Jev, the preview, MFA on approve and the gate all apply.
+  Proof: `server/test/approvals.test.ts`, `server/test/service.test.ts` ("refuses every write without an approval channel"),
+  `cd server && npx vitest run test/tenants.test.ts -t "resource.remove"`.
 - **A deterministic gate sits between the server and AWS** (`server/src/guard/`). One SDK middleware on every client with a
   player's credentials (`clientsFor`, lazy ones too; link.ts's STS) refuses, before signing: a command not in `RULES`
   (`guard/rules.ts`: as the SDK names it, `read`/`write`/`fix`, its IAM actions; the parsed role, `yaml` with CFN short tags as
@@ -131,7 +136,9 @@ When a change touches a decision, update its entry and run its Proof.
   outside the home Region (AZ/Region lists anywhere, Cost Explorer us-east-1); a write or fix not shaped exactly as the server
   sends it, grant or not (strict zod: RunInstances one encrypted disk and `CpuCredits: standard`; PutBucketTagging/DeleteBucket
   `ExpectedBucketOwner` = the account, CreateBucket has none so its name prefix stands in); and one without a grant naming its
-  command and exact target, once. What goes on to be serialised is zod's checked copy, never the caller's object (a later
+  command and exact target, once. The one exception is a rule's `probe`, its exact DryRun (`{DryRun: true}` on the EBS fix,
+  v2.17): it changes nothing and needs no grant, and IAM checks it against the fix's own action, so it maps to aws-city-fix
+  and answers "are fixes on?". What goes on to be serialised is zod's checked copy, never the caller's object (a later
   change, getter or Proxy can't alter it). A grant is minted for one account (refused from clients in another or an unknown
   one), its entries are frozen copies, and all are spent when `withGrant` ends (a timer started inside gets nothing). Only
   ActionService (after policy and approval) and care.ts (after approval, the re-read and the account lock; `FixDef.entry`
@@ -163,6 +170,43 @@ When a change touches a decision, update its entry and run its Proof.
   revokes the refresh token (`/oauth2/revoke`, bounded); an email change waits for its code (`keepOriginal`). A "TOTP is on" answer is
   cached 60 s at most. Proof: `cd server && npx vitest run test/hosted.test.ts -t "MFA"` (includes "MFA step-up for writes"),
   `npx vitest run tests/auth.test.ts`, `cd infra && npm test`.
+- **A linked account can be disconnected, notices a deleted stack, and upgrades its role** (contract v2.17). `account.unlink`
+  needs no MFA (taking access away): `AccountStore.delete` (files or DynamoDB `USER#<sub> ACCOUNT`), an unlinked world, the
+  poller stopped, `account.status {linked: false}` to every tab. STS refusing the role itself (`RoleRefusedError` from
+  `assumedRole`, told apart from one service's AccessDenied) on `BROKEN_AFTER` (3) polls in a row stops polling and marks the
+  record `brokenAt` (`broken: true`: "Was the stack deleted? Link again, or disconnect."); a refused poll says nothing else
+  (no lock lessons, no findings resolved), a restart doesn't retry it, and a new link (back to pending) or a verify clears it.
+  Verify learns fixes by DryRun and records the template version the link pointed at (`v<N>` of its URL); hosted
+  `account.status` carries `fixes`, `roleVersion`, `latestRoleVersion`, `templateUrl`. Against a phished link
+  (`infra/player-role/player-role.yaml` v5): the stack's visible `ConnectsPlayer` names who it serves (public Mayor name, else
+  a masked email, else "Player " + 8 characters of the sub: `connectsPlayerLabel`), and verify is refused 24 h after the link.
+  A refused link or verify (the 24 h one included) is `error {requestId}`, never an `account.status`: a status with a requestId always means success. `resource.remove` takes down one game-owned thing with no model (approved
+  like any write). `GET /me/export` downloads the player's progress, link metadata (never the ExternalId) and social rows.
+  Serverless quest templates (`hello-api`, `queue-worker`) are practice builds on the server (`ServerBackend.planPractice`),
+  never an EC2 house. Proof: `cd server && npx vitest run test/tenants.test.ts test/hosted.test.ts test/poller.test.ts test/guard.test.ts test/player-role.test.ts`,
+  `npx vitest run tests/server-backend.test.ts tests/contract.test.ts`, `cfn-lint` on the template (CI).
+- **The player's own AWS account: easy to find, linked where they choose, easy to let go** (contract v2.17; rules pure in
+  `src/state/account.ts`, `src/ui/Account.tsx`, the card in `src/ui/DeployPanel.tsx`). On the hosted server ⋯ → Account
+  has the AWS account (its card in Deploy), Sign in or out, Download my data (`exportMe`, saved as a local JSON file) and
+  Delete my account… (asked first, in a dialog); there's no privacy-policy item, since no build setting holds its address.
+  The To-do row, the shift's line (Everything) and ⋯ open Deploy with the steps unfolded (`openAccountCard`). Step 1
+  picks the Region by name (`LINK_REGIONS`, the commercial partition only; it starts on the Region asked for last, the
+  linked one, else the city's) and says "Your key will be made in <Region>; the city reads that Region"; step 2 has
+  "Allow small fixes" (a new link with `allowFixes`) and what the console asks (`linkChecklist`: the right account and
+  Region, rights to create IAM roles and stacks, the IAM acknowledgement, CREATE_COMPLETE in about a minute, then Verify).
+  The linked card names the Region, says whether small fixes are on (and how to turn them on), offers "Update your AWS
+  City role (vN → vM)" when `roleVersion < latestRoleVersion` (steps, the template address, the stacks page, Check
+  again), "Use another Region or account" and "Disconnect" (asked first; hosted and the demo, never the local server;
+  afterwards it says how to delete the AWSCity stack in that Region). A broken link shows its message with Link again and
+  Disconnect. Only an `account.status` with a `requestId` (a reply to the player's own request) is toasted: a welcome or
+  a broken link updates the card quietly, and the unlinked hint is a muted line, never an alert. City care says up front
+  when the role doesn't allow fixes (no Fix button, so no approve or MFA first), and the Today fix goal is a bonus then.
+  My builds lists the inventory's `managedByGame` items, so it survives a reload, each with Take it down
+  (`resource.remove` for an instance, a table or a bucket; anything else is removed in the console), and Delete my
+  account warns while they're still there (they keep billing). Every build preview keeps `confirmText`, like a fix: its
+  'detail' lines in words ("Safety check: …") and the name typed before Approve. Proof: `npx vitest run
+  tests/account.test.ts tests/account-ui.test.tsx tests/deploy-account.test.tsx tests/runtime-session.test.ts
+  tests/session.test.ts tests/finding-pacing.test.ts`.
 - **Hosted deploys only run in Regions with a Claude geo inference profile** (`infra/lib/models.ts`: `us`, `eu`, `au`,
   `in`; there is no `apac` profile, so e.g. Tokyo is refused). Each geo gets the newest pair with a profile there for
   both models (`GEO_MODELS`, from the Bedrock model cards): Claude Opus 5.5 / Sonnet 5.5 in `us`/`eu`/`au`; India has no
@@ -187,7 +231,10 @@ When a change touches a decision, update its entry and run its Proof.
   truth; `docs/backend-contract.md` mirrors it. UI code reading the extension's own files goes through
   `readAsset` (`src/backend/assets.ts`: same-origin `/assets/` paths only). A client needs a server of its contract version or newer
   (`CONTRACT_VERSION`, `src/backend/contract.ts`; the server's strict `Progress` schema refuses unknown fields, and nothing checks
-  versions otherwise; `/health` reports the server's): deploy the server first. Proof: `npx vitest run tests/contract.test.ts tests/assets.test.ts`, and
+  versions otherwise; `/health` reports the server's): deploy the server first. v2.17 adds `account.unlink`, `resource.remove`,
+  `account.link.allowFixes` (the strict command schema refuses them on an older server), `account.status`'s lifecycle fields
+  and REST `GET /me/export`; `ServerBackend.send` ends in a `never` default, so a new command can't be dropped silently.
+  Proof: `npx vitest run tests/contract.test.ts tests/server-backend.test.ts tests/assets.test.ts`, and
   `grep -rn -e "fetch(" -e "WebSocket(" src | grep -v src/backend/` prints nothing.
 - **Content is data in `shared/`** (world, flashcards, puzzles, quests, templates). JSON imports need
   `with { type: 'json' }` because the server runs as NodeNext ESM.

@@ -403,8 +403,8 @@ describe('MockBackend speaks the contract', () => {
   describe('AWS public status (v2.6)', () => {
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-    it('is contract 2.16 (2.6 added these), and both new events pass the frame guard', () => {
-      expect(CONTRACT_VERSION).toBe('2.16');
+    it('is contract 2.17 (2.6 added these), and both new events pass the frame guard', () => {
+      expect(CONTRACT_VERSION).toBe('2.17');
       expect(isServerEvent(demoHealth())).toBe(true);
       expect(isServerEvent(demoNews())).toBe(true);
     });
@@ -568,5 +568,95 @@ describe('Merges that never lose a freeze, a refund or a removal (v2.16)', () =>
     const doc = readFileSync('docs/backend-contract.md', 'utf8');
     for (const f of ['freezesEarned?', 'extra?', 'drops.overtime?', 'bought?', 'spares?', 'refundedBy?', 'gone?']) expect(doc).toContain(f);
     expect(doc).toMatch(/v2\.16 client needs a v2\.16 server[^]*Deploy the server first/);
+  });
+});
+
+describe('The account lifecycle (v2.17)', () => {
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  /** A demo city whose practice account is linked. */
+  const linkedMock = async () => {
+    const mock = new MockBackend({ speed: 200 });
+    const events: ServerEvent[] = [];
+    mock.onEvent((e) => events.push(e));
+    mock.send({ action: 'account.verify', requestId: 'v1', roleArn: '123456789012' });
+    await sleep(50);
+    return { mock, events };
+  };
+  const inventories = (events: ServerEvent[]) => events.filter((e): e is Extract<ServerEvent, { type: 'city.inventory' }> => e.type === 'city.inventory');
+
+  it('the practice account links with fixes on and no role version, and account.unlink disconnects it (its Region links go too)', async () => {
+    const { mock, events } = await linkedMock();
+    const linked = events.find((e) => e.type === 'account.status');
+    expect(linked).toMatchObject({ requestId: 'v1', linked: true, fixes: true });
+    expect(linked).not.toHaveProperty('roleVersion');
+    mock.send({ action: 'account.unlink', requestId: 'u1' });
+    await sleep(50);
+    expect(events.filter((e) => e.type === 'account.status').at(-1)).toMatchObject({ type: 'account.status', requestId: 'u1', linked: false });
+    expect((inventories(events).at(-1)!.links ?? []).every((l) => l.from.region === l.to.region)).toBe(true);
+    expect(events.every(isServerEvent)).toBe(true);
+  });
+
+  it('resource.remove: only something the city built, only after approval; then it leaves the inventory', async () => {
+    const { mock, events } = await linkedMock();
+    // Not the city's (a table the demo account has that the game didn't make), and not there at all: refused at once.
+    mock.send({ action: 'resource.remove', requestId: 'x1', kind: 'table', id: 'sessions' });
+    expect(events.filter((e) => e.type === 'error').at(-1)).toMatchObject({ requestId: 'x1', message: expect.stringMatching(/wasn’t built by the city/) });
+    mock.send({ action: 'resource.remove', requestId: 'x2', kind: 'instance', id: 'i-0123456789abcdef0' });
+    expect(events.filter((e) => e.type === 'error').at(-1)).toMatchObject({ requestId: 'x2', message: expect.stringMatching(/nothing called/) });
+    expect(events.some((e) => e.type === 'deploy.preview')).toBe(false);
+    mock.send({ action: 'resource.remove', requestId: 'r1', kind: 'table', id: 'city-quest-library' });
+    await sleep(20);
+    const preview = events.find((e) => e.type === 'deploy.preview') as Extract<ServerEvent, { type: 'deploy.preview' }>;
+    expect(preview).toMatchObject({ requestId: 'r1', templateId: 'delete_table', changes: [{ action: 'Remove', logicalId: 'city-quest-library' }] });
+    const arn = 'arn:aws:dynamodb:us-west-2:123456789012:table/city-quest-library';
+    expect(inventories(events).at(-1)!.items.some((i) => i.arn === arn)).toBe(true);
+    mock.send({ action: 'deploy.approve', deployId: preview.deployId });
+    await sleep(50);
+    expect(events.filter((e) => e.type === 'deploy.status').map((e) => (e.type === 'deploy.status' ? e.status : ''))).toEqual(['creating', 'complete']);
+    expect(inventories(events).at(-1)!.items.some((i) => i.arn === arn)).toBe(false);
+    // Gone: asking again is refused.
+    mock.send({ action: 'resource.remove', requestId: 'r2', kind: 'table', id: 'city-quest-library' });
+    expect(events.filter((e) => e.type === 'error').at(-1)).toMatchObject({ requestId: 'r2' });
+    expect(events.every(isServerEvent)).toBe(true);
+  });
+
+  it('resource.remove needs the practice account linked, like the server; a rejected removal leaves it standing', async () => {
+    const mock = new MockBackend({ speed: 200 });
+    const events: ServerEvent[] = [];
+    mock.onEvent((e) => events.push(e));
+    mock.send({ action: 'resource.remove', requestId: 'r0', kind: 'bucket', id: 'aws-city-123456789012-quest' });
+    expect(events.at(-1)).toMatchObject({ type: 'error', requestId: 'r0', code: 'unlinked' });
+    mock.send({ action: 'account.verify', requestId: 'v', roleArn: '123456789012' });
+    await sleep(50);
+    mock.send({ action: 'resource.remove', requestId: 'r1', kind: 'bucket', id: 'aws-city-123456789012-quest' });
+    await sleep(20);
+    const { deployId } = events.find((e) => e.type === 'deploy.preview') as { deployId: string };
+    mock.send({ action: 'deploy.reject', deployId });
+    expect(events.at(-1)).toMatchObject({ type: 'deploy.status', deployId, status: 'rejected' });
+  });
+
+  it('a refused verify is an error for the request, never an account.status (a status with a requestId always means it worked)', async () => {
+    const mock = new MockBackend({ speed: 200 });
+    const events: ServerEvent[] = [];
+    mock.onEvent((e) => events.push(e));
+    mock.send({ action: 'account.verify', requestId: 'bad', roleArn: 'not an account' });
+    await sleep(50);
+    expect(events).toEqual([{ type: 'error', requestId: 'bad', message: expect.stringMatching(/12-digit/) }]);
+    mock.send({ action: 'account.verify', requestId: 'good', roleArn: 'arn:aws:iam::123456789012:role/aws-city-player' });
+    await sleep(50);
+    expect(events.find((e) => e.type === 'account.status')).toMatchObject({ requestId: 'good', linked: true, accountId: '123456789012' });
+  });
+
+  it('Download my data in the demo: the progress this device saved, marked practice', async () => {
+    const mock = new MockBackend({ speed: 200 });
+    const progress = { version: 2 as const, landmarks: { s3: { discovered: true, xp: 12 } }, updatedAt: '2026-11-21T10:00:00.000Z' };
+    expect(await mock.exportMe()).toMatchObject({ contract: CONTRACT_VERSION, progress: null, social: [], practice: true });
+    mock.putProgress(progress);
+    expect((await mock.exportMe()).progress).toEqual(progress);
+  });
+
+  it('the docs mirror the new commands, fields and REST route', () => {
+    const doc = readFileSync('docs/backend-contract.md', 'utf8');
+    for (const f of ['account.unlink', 'resource.remove', 'allowFixes', 'broken', 'fixes', 'roleVersion', 'latestRoleVersion', 'templateUrl', 'GET /me/export', 'ConnectsPlayer']) expect(doc).toContain(f);
   });
 });

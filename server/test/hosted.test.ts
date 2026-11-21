@@ -6,7 +6,7 @@ import { BatchWriteCommand, DeleteCommand, DynamoDBDocumentClient, GetCommand, P
 import { mockClient } from 'aws-sdk-client-mock';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
-import { createAccountLinker, playerRoleName } from '../src/accounts/link.js';
+import { connectsPlayerLabel, createAccountLinker, playerRoleName, templateVersion } from '../src/accounts/link.js';
 import { APIUserAbortError, PermissionDeniedError, RateLimitError } from '@anthropic-ai/sdk';
 import { createMfaCheck, memoryMfa, SIGN_IN_AGAIN_MESSAGE, type StepUp } from '../src/accounts/mfa.js';
 import { metered, ModelLimitError, NEW_PLAYERS_KEY, PAUSED_MESSAGE, QUOTA_MESSAGE, withErrorCodes } from '../src/agents/metered.js';
@@ -23,7 +23,7 @@ import type { AwsClients } from '../src/aws.js';
 import type { Approvals } from '../src/contract/approvals.js';
 import { createTenants, type Tenant, UNLINKED_REASON } from '../src/tenants.js';
 import type { ServerEvent } from '../src/world.js';
-import { bearerSubprotocols, CLOSE_CODES } from '../../src/backend/contract.js';
+import { bearerSubprotocols, CLOSE_CODES, CONTRACT_VERSION } from '../../src/backend/contract.js';
 import { fakeLlm, message, text } from './fakes.js';
 
 const EXT = 'chrome-extension://storeid';
@@ -184,36 +184,64 @@ describe('metered model calls', () => {
 });
 
 describe('account linking', () => {
-  const setup = (whoAmI: (roleArn: string) => { Account?: string; Arn?: string }) => {
+  const setup = (whoAmI: (roleArn: string) => { Account?: string; Arn?: string }, opts: { canFix?: () => Promise<boolean | undefined>; now?: () => number } = {}) => {
     const stores = localStores('/tmp/aws-city-link-test.json');
     let lastArn = '';
+    const canFix = vi.fn(opts.canFix ?? (async () => undefined));
     const linker = createAccountLinker({
       accounts: stores.accounts,
-      templateUrl: 'https://templates.example/player-role/v1.yaml',
+      templateUrl: 'https://templates.example/player-role/v5.yaml',
       selfAccountId: SELF,
       credentialsFor: (o) => {
         lastArn = o.roleArn;
         return async () => ({ accessKeyId: 'x', secretAccessKey: 'y' });
       },
       whoAmI: async () => whoAmI(lastArn),
+      // Never the network: the DryRun probe is stubbed (fixesAllowed has its own test in fixes.test.ts).
+      canFix,
+      now: opts.now,
     });
-    return { linker, stores };
+    const link = (sub: string, region: string, extra: { allowFixes?: boolean; label?: string } = {}) => linker.link(sub, region, { label: `Player ${sub}`, ...extra });
+    return { linker, stores, link, canFix };
   };
+  const ok = (arn: string) => ({ Account: '111122223333', Arn: `arn:aws:sts::111122223333:assumed-role/${arn.split('/')[1]}/aws-city-x` });
 
   it('quick-create link carries a per-player ExternalId that survives re-linking', async () => {
-    const { linker } = setup(() => ({}));
-    const a = await linker.link('u1', 'eu-west-1');
+    const { link } = setup(() => ({}));
+    const a = await link('u1', 'eu-west-1');
     expect(a.url).toContain('https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks/quickcreate?');
     expect(a.url).toContain(`param_ExternalId=${a.externalId}`);
     expect(a.url).not.toContain('param_Trusted'); // trust is fixed in the published template
-    expect((await linker.link('u1', 'eu-west-1')).externalId).toBe(a.externalId);
-    expect((await linker.link('u2', 'eu-west-1')).externalId).not.toBe(a.externalId);
-    await expect(linker.link('u1', 'not a region')).rejects.toThrow(/region/);
+    expect((await link('u1', 'eu-west-1')).externalId).toBe(a.externalId);
+    expect((await link('u2', 'eu-west-1')).externalId).not.toBe(a.externalId);
+    await expect(link('u1', 'not a region')).rejects.toThrow(/region/);
+  });
+
+  it('v2.17: the link names who it connects (ConnectsPlayer) and asks for AllowFixes only when the player did', async () => {
+    const { link } = setup(() => ({}));
+    const plain = await link('u1', 'us-west-2', { label: 'Mayor Kind Otter' });
+    expect(plain.url).toContain('param_ConnectsPlayer=Mayor%20Kind%20Otter'); // %20, not +: the console shows it as written
+    expect(plain.url).toContain(`templateURL=${encodeURIComponent('https://templates.example/player-role/v5.yaml')}`);
+    expect(plain.url).not.toContain('AllowFixes');
+    expect((await link('u1', 'us-west-2', { allowFixes: true })).url).toContain('param_AllowFixes=true');
+    expect(templateVersion('https://bucket.s3.us-west-2.amazonaws.com/player-role/v5.yaml')).toBe(5);
+    expect(templateVersion('https://templates.example/player-role/latest.yaml')).toBeUndefined();
+  });
+
+  it("v2.17: ConnectsPlayer is the public Mayor name, else a masked email, else a short id: never the raw email, always the template's pattern", () => {
+    expect(connectsPlayerLabel({ sub: 'abc' }, { public: true, name: 'Kind Otter' })).toBe('Mayor Kind Otter');
+    const masked = connectsPlayerLabel({ sub: 'abc', email: 'ahmed.k@example.co.uk' }, { public: false, name: 'Kind Otter' });
+    expect(masked).toBe('a***@e***.uk');
+    expect(masked).not.toContain('ahmed');
+    expect(connectsPlayerLabel({ sub: '1a2b3c4d-5e6f-7a8b-9c0d-ef0123456789' })).toBe('Player 1a2b3c4d');
+    // Junk in a profile or an email never reaches the link (letters, digits, spaces and . _ @ * - only).
+    for (const label of [connectsPlayerLabel({ sub: 'x', email: '<b>@"evil"' }), connectsPlayerLabel({ sub: '!!!' }), connectsPlayerLabel({ sub: 's' }, { public: true, name: '<script>' })])
+      expect(label).toMatch(/^[A-Za-z0-9 ._@*-]{1,64}$/);
   });
 
   it('verify accepts an account id, checks who we really are, and refuses our own account', async () => {
-    const { linker, stores } = setup((arn) => ({ Account: '111122223333', Arn: `arn:aws:sts::111122223333:assumed-role/${playerRoleName('us-west-2')}/aws-city-x` }));
-    await linker.link('u1', 'us-west-2');
+    const { linker, stores, link } = setup(() => ({ Account: '111122223333', Arn: `arn:aws:sts::111122223333:assumed-role/${playerRoleName('us-west-2')}/aws-city-x` }));
+    await link('u1', 'us-west-2');
     const rec = await linker.verify('u1', '111122223333');
     expect(rec).toMatchObject({ status: 'linked', accountId: '111122223333', roleArn: `arn:aws:iam::111122223333:role/AWSCityPlayerRole-us-west-2` });
     expect((await stores.accounts.get('u1'))?.status).toBe('linked');
@@ -221,42 +249,95 @@ describe('account linking', () => {
     await expect(linker.verify('u1', 'arn:aws:iam::111122223333:role/Admin')).rejects.toThrow(/account id/);
   });
 
+  it('v2.17: verify records the template version the link pointed at and whether fixes are allowed (a DryRun), never guessing', async () => {
+    let answer: boolean | undefined = true;
+    const { linker, stores, link, canFix } = setup(ok, { canFix: async () => answer });
+    await link('u1', 'us-west-2');
+    expect(await stores.accounts.get('u1')).toMatchObject({ status: 'pending', linkRoleVersion: 5, linkIssuedAt: expect.any(String) });
+    expect(await linker.verify('u1', '111122223333')).toMatchObject({ roleVersion: 5, fixes: true });
+    expect(canFix).toHaveBeenCalledWith('us-west-2', expect.any(Function), '111122223333');
+    answer = false;
+    expect(await linker.verify('u1', '111122223333')).toMatchObject({ fixes: false });
+    // Can't tell this time: unknown, not the last answer (the stack may have changed since).
+    answer = undefined;
+    expect(await linker.verify('u1', '111122223333')).not.toHaveProperty('fixes');
+    expect(linker).toMatchObject({ latestRoleVersion: 5, templateUrl: 'https://templates.example/player-role/v5.yaml' });
+  });
+
+  it('v2.17: verify is refused a day after the link was made; a new link (same ExternalId) works again', async () => {
+    let t = Date.parse('2026-11-21T10:00:00Z');
+    const { linker, link, stores } = setup(ok, { now: () => t });
+    const first = await link('u1', 'us-west-2');
+    t += 24 * 60 * 60_000 + 1;
+    await expect(linker.verify('u1', '111122223333')).rejects.toThrow(/more than a day old/);
+    expect((await stores.accounts.get('u1'))?.status).toBe('pending');
+    expect((await link('u1', 'us-west-2')).externalId).toBe(first.externalId);
+    expect(await linker.verify('u1', '111122223333')).toMatchObject({ status: 'linked' });
+    // A record from before v2.17 (no issue time) needs a new link too.
+    await stores.accounts.put('u2', { status: 'pending', externalId: 'e'.repeat(32), region: 'us-west-2' });
+    await expect(linker.verify('u2', '111122223333')).rejects.toThrow(/more than a day old/);
+  });
+
+  it('v2.17: a broken link goes back to pending on a new link, and a verify clears it', async () => {
+    const { linker, link, stores } = setup(ok);
+    await link('u1', 'us-west-2');
+    const linked = await linker.verify('u1', '111122223333');
+    await stores.accounts.put('u1', { ...linked, brokenAt: '2026-11-21T10:00:00.000Z' });
+    await link('u1', 'us-west-2');
+    const pending = await stores.accounts.get('u1');
+    expect(pending).toMatchObject({ status: 'pending', externalId: linked.externalId });
+    expect(pending).not.toHaveProperty('brokenAt');
+    expect(pending).not.toHaveProperty('roleArn');
+    await stores.accounts.put('u1', { ...linked, brokenAt: '2026-11-21T10:00:00.000Z', linkIssuedAt: new Date().toISOString() });
+    expect(await linker.verify('u1', '111122223333')).not.toHaveProperty('brokenAt');
+  });
+
   it('asking for a link in another Region keeps the linked account usable until verify succeeds', async () => {
-    const { linker, stores } = setup((arn) => ({ Account: '111122223333', Arn: `arn:aws:sts::111122223333:assumed-role/${arn.split('/')[1]}/aws-city-x` }));
-    await linker.link('u1', 'us-west-2');
+    const { linker, stores, link } = setup(ok);
+    await link('u1', 'us-west-2');
     await linker.verify('u1', '111122223333');
     const before = await stores.accounts.get('u1');
-    const again = await linker.link('u1', 'eu-west-1');
+    const again = await link('u1', 'eu-west-1');
     expect(again.externalId).toBe(before!.externalId);
     // Still linked to us-west-2 (the role ARN and account id survive), with the new Region pending.
-    expect(await stores.accounts.get('u1')).toEqual({ ...before, pendingRegion: 'eu-west-1' });
+    expect(await stores.accounts.get('u1')).toEqual({ ...before, pendingRegion: 'eu-west-1', linkIssuedAt: expect.any(String) });
     const rec = await linker.verify('u1', '111122223333');
     expect(rec).toMatchObject({ status: 'linked', region: 'eu-west-1', roleArn: `arn:aws:iam::111122223333:role/${playerRoleName('eu-west-1')}` });
     expect(await stores.accounts.get('u1')).not.toHaveProperty('pendingRegion');
     // Asking for the linked Region again drops a pending one.
-    await linker.link('u1', 'us-east-1');
-    await linker.link('u1', 'eu-west-1');
+    await link('u1', 'us-east-1');
+    await link('u1', 'eu-west-1');
     expect(await stores.accounts.get('u1')).not.toHaveProperty('pendingRegion');
   });
 
   it('a failed verify for the new Region leaves the old link in place', async () => {
     let fail = false;
-    const { linker, stores } = setup((arn) => {
+    const { linker, stores, link } = setup((arn) => {
       if (fail) throw new Error('AccessDenied');
-      return { Account: '111122223333', Arn: `arn:aws:sts::111122223333:assumed-role/${arn.split('/')[1]}/aws-city-x` };
+      return ok(arn);
     });
-    await linker.link('u1', 'us-west-2');
+    await link('u1', 'us-west-2');
     await linker.verify('u1', '111122223333');
-    await linker.link('u1', 'eu-west-1');
+    await link('u1', 'eu-west-1');
     fail = true;
     await expect(linker.verify('u1', '111122223333')).rejects.toThrow(/eu-west-1/);
     expect(await stores.accounts.get('u1')).toMatchObject({ status: 'linked', region: 'us-west-2', accountId: '111122223333', roleArn: expect.stringContaining('us-west-2') });
   });
 
   it('verify refuses a role that turns out to be something else', async () => {
-    const { linker } = setup(() => ({ Account: '444455556666', Arn: 'arn:aws:sts::444455556666:assumed-role/Other/x' }));
-    await linker.link('u1', 'us-west-2');
+    const { linker, link } = setup(() => ({ Account: '444455556666', Arn: 'arn:aws:sts::444455556666:assumed-role/Other/x' }));
+    await link('u1', 'us-west-2');
     await expect(linker.verify('u1', '111122223333')).rejects.toThrow(/isn’t the AWSCity/);
+  });
+});
+
+describe('account store: unlink forgets the link (v2.17)', () => {
+  it('local: delete removes the record, and deleting nothing is fine', async () => {
+    const s = localStores(`${process.env.TEMP ?? '/tmp'}/aws-city-unlink-${Date.now()}/progress.json`);
+    await s.accounts.put('u1', { status: 'linked', externalId: 'e'.repeat(32), region: 'us-west-2', accountId: '111122223333' });
+    await s.accounts.delete('u1');
+    expect(await s.accounts.get('u1')).toBeUndefined();
+    await s.accounts.delete('nobody');
   });
 });
 
@@ -317,6 +398,31 @@ describe('DynamoDB store', () => {
     const keys = ddb.commandCalls(BatchWriteCommand).flatMap((c) => (c.args[0].input.RequestItems as Record<string, { DeleteRequest: { Key: { pk: string; sk: string } } }[]>)['aws-city-test']!.map((r) => r.DeleteRequest.Key));
     expect(keys).toEqual(expect.arrayContaining([{ pk: 'LB#shield#2026-W42', sk: who }, { pk: 'PRESENCE#us-west-2', sk: who }, { pk: 'USER#u1', sk: 'SOCIAL#LB#shield#2026-W42' }]));
     expect(JSON.stringify(keys)).not.toContain('"sk":"u1"');
+  });
+
+  it('v2.17 account.unlink: the ACCOUNT item is deleted under the player key', async () => {
+    ddb.on(DeleteCommand).resolves({});
+    await stores().accounts.delete('u1');
+    expect(ddb.commandCalls(DeleteCommand)[0]!.args[0].input).toMatchObject({ TableName: 'aws-city-test', Key: { pk: 'USER#u1', sk: 'ACCOUNT' } });
+  });
+
+  it("v2.17 GET /me/export: the social rows are the player's own refs, each read by its key (the salted hash)", async () => {
+    const who = whoOf('u1');
+    const until = Date.now() + 60_000;
+    ddb.on(QueryCommand).resolves({ Items: [{ pk: 'USER#u1', sk: 'SOCIAL#LB#shield#2026-W47', target: 'LB#shield#2026-W47' }, { pk: 'USER#u1', sk: 'SOCIAL#PRESENCE#us-west-2', target: 'PRESENCE#us-west-2' }] });
+    ddb
+      .on(GetCommand)
+      .resolvesOnce({ Item: { pk: 'LB#shield#2026-W47', sk: who, name: 'Kind Otter', score: 120 } })
+      .resolvesOnce({ Item: { pk: 'PRESENCE#us-west-2', sk: who, until, name: 'Kind Otter', rank: 'Town' } });
+    expect(await stores().social.mine('u1')).toEqual([
+      { kind: 'leaderboard', board: 'shield', week: '2026-W47', name: 'Kind Otter', score: 120 },
+      { kind: 'presence', region: 'us-west-2', until: new Date(until).toISOString(), name: 'Kind Otter', rank: 'Town' },
+    ]);
+    expect(ddb.commandCalls(QueryCommand)[0]!.args[0].input).toMatchObject({ ExpressionAttributeValues: { ':pk': 'USER#u1', ':p': 'SOCIAL#' } });
+    expect(ddb.commandCalls(GetCommand).map((c) => c.args[0].input.Key)).toEqual([
+      { pk: 'LB#shield#2026-W47', sk: who },
+      { pk: 'PRESENCE#us-west-2', sk: who },
+    ]);
   });
 
   it('progress: newest wins atomically, an older copy is accepted but not written', async () => {
@@ -502,7 +608,8 @@ describe('hosted server: Cognito players and tenants', () => {
   beforeAll(async () => {
     const base = loadConfig({});
     const config = { ...base, authMode: 'cognito' as const, extensionOrigins: [EXT], port: 0 };
-    const stores = localStores(`/tmp/aws-city-hosted-${Date.now()}.json`);
+    // Its own directory each run: progress files sit beside it, and one run's players must not meet the next run's.
+    const stores = localStores(`${process.env.TEMP ?? '/tmp'}/aws-city-hosted-${Date.now()}/progress.json`);
     const { llm } = fakeLlm([]);
     const uploads = createUploadStore('http://127.0.0.1:1');
     const tenants = createTenants({ config, stores, uploads, llm, enabled: async () => true, awsFor: () => undefined, walkMs: 0 });
@@ -590,6 +697,28 @@ describe('hosted server: Cognito players and tenants', () => {
     expect((await get('jwt-alice')).status).toBe(410);
     expect((await put('jwt-alice', 7)).status).toBe(410);
     expect((await get('jwt-bob')).status).toBe(404);
+  });
+
+  it('v2.17 GET /me/export: the player\'s own data as a download; another player\'s never; a deleted player 410', async () => {
+    const auth = (jwt: string) => ({ authorization: `Bearer ${jwt}`, origin: EXT });
+    const put = await fetch(`http://127.0.0.1:${port}/progress`, {
+      method: 'PUT',
+      headers: { ...auth('jwt-bob'), 'content-type': 'application/json' },
+      body: JSON.stringify({ version: 1, landmarks: { s3: { discovered: true, xp: 31 } }, updatedAt: new Date().toISOString() }),
+    });
+    expect(put.status).toBe(204);
+    const bob = await fetch(`http://127.0.0.1:${port}/me/export`, { headers: auth('jwt-bob') });
+    expect(bob.status).toBe(200);
+    expect(bob.headers.get('content-disposition')).toMatch(/^attachment; filename="aws-city-my-data\.json"$/);
+    expect(bob.headers.get('cache-control')).toBe('no-store');
+    const data = (await bob.json()) as { contract: string; progress: { landmarks: { s3: { xp: number } } }; social: unknown[]; account?: unknown };
+    expect(data).toMatchObject({ contract: CONTRACT_VERSION, progress: { landmarks: { s3: { xp: 31 } } }, social: [] });
+    expect(data).not.toHaveProperty('account');
+    // Another player's export has none of it.
+    const carol = (await (await fetch(`http://127.0.0.1:${port}/me/export`, { headers: auth('jwt-carol') })).json()) as { progress: unknown };
+    expect(carol.progress).toBeNull();
+    expect((await fetch(`http://127.0.0.1:${port}/me/export`, { headers: { origin: EXT } })).status).toBe(401);
+    expect((await fetch(`http://127.0.0.1:${port}/me/export`, { headers: auth('jwt-alice') })).status).toBe(410); // deleted above
   });
 
   it('an unlinked player can learn but agents refuse to build', async () => {
@@ -735,6 +864,74 @@ describe('MFA step-up check', () => {
 
 // Every AWS write is approved through deploy.approve (task writes) or started by finding.fix: both need MFA on.
 describe('MFA step-up for writes', () => {
+  it('v2.17: account.unlink needs no MFA; resource.remove starts only with it (and is validated strictly); allowFixes reaches the link', async () => {
+    let mfa: StepUp = 'enrol';
+    const unlink = vi.fn(async (requestId: string, emit: (e: ServerEvent) => void) => emit({ type: 'account.status', requestId, linked: false }));
+    const remove = vi.fn(async (cmd: { requestId: string }, emit: (e: ServerEvent) => void, _approvals: Approvals) => emit({ type: 'error', requestId: cmd.requestId, message: 'removed' }));
+    const link = vi.fn(async (requestId: string, _region: string, emit: (e: ServerEvent) => void) => emit({ type: 'account.linkUrl', requestId, url: 'u', externalId: 'e' }));
+    const tenant = { sub: 'erin', region: 'us-west-2', unlink, remove, link, createCopilot: () => undefined, welcome: async () => [], subscribe: () => () => undefined, emitter: (emit: unknown) => emit } as unknown as Tenant;
+    const tenants = { acquire: async () => tenant, data: () => tenant, release: () => undefined, closeAll: () => undefined };
+    const base = { ...loadConfig({}), authMode: 'cognito' as const, extensionOrigins: [EXT] };
+    const deps = { tenants, authenticate: async () => ({ sub: 'erin' }), mfaReady: async () => mfa };
+    const probe = createHttpServer({ config: { ...base, port: 0 }, ...deps });
+    await new Promise<void>((r) => probe.server.listen(0, '127.0.0.1', r));
+    const port = (probe.server.address() as AddressInfo).port;
+    probe.server.close();
+    const { server } = createHttpServer({ config: { ...base, port }, ...deps });
+    await new Promise<void>((r) => server.listen(port, '127.0.0.1', r));
+    const events: ServerEvent[] = [];
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, bearerSubprotocols('x'), { origin: EXT });
+    ws.on('message', (raw) => events.push(JSON.parse(raw.toString())));
+    await new Promise((r) => ws.on('open', r));
+    const until = async (ok: () => boolean) => {
+      for (const end = Date.now() + 3000; !ok() && Date.now() < end; ) await new Promise((r) => setTimeout(r, 10));
+    };
+    const reply = (id: string) => events.find((e) => 'requestId' in e && e.requestId === id);
+    try {
+      ws.send(JSON.stringify({ action: 'account.unlink', requestId: 'u1' }));
+      await until(() => !!reply('u1'));
+      expect(unlink).toHaveBeenCalledWith('u1', expect.any(Function));
+      expect(reply('u1')).toMatchObject({ type: 'account.status', linked: false });
+
+      ws.send(JSON.stringify({ action: 'resource.remove', requestId: 'm1', kind: 'table', id: 'city-quest' }));
+      await until(() => !!reply('m1'));
+      expect(reply('m1')).toMatchObject({ type: 'error', code: 'mfa_required' });
+      expect(remove).not.toHaveBeenCalled();
+      mfa = 'ok';
+      ws.send(JSON.stringify({ action: 'resource.remove', requestId: 'm2', kind: 'table', id: 'city-quest' }));
+      await until(() => !!reply('m2'));
+      expect(remove).toHaveBeenCalledWith({ requestId: 'm2', kind: 'table', id: 'city-quest' }, expect.any(Function), expect.anything());
+
+      // Strict: an unknown kind or field, or an id with a slash, never reaches the tenant.
+      for (const bad of [
+        { action: 'resource.remove', requestId: 'b1', kind: 'function', id: 'f' },
+        { action: 'resource.remove', requestId: 'b2', kind: 'table', id: 'city-x', region: 'eu-west-1' },
+        { action: 'resource.remove', requestId: 'b3', kind: 'bucket', id: '../x/y' },
+        { action: 'account.unlink', requestId: 'b4', force: true },
+      ])
+        ws.send(JSON.stringify(bad));
+      await until(() => events.filter((e) => e.type === 'error' && /Bad command/.test(e.message)).length >= 4);
+      expect(events.filter((e) => e.type === 'error' && /Bad command/.test(e.message))).toHaveLength(4);
+      expect(remove).toHaveBeenCalledTimes(1);
+
+      // The cooldown spans every account command on a socket (each rebuilds the city): this one just unlinked.
+      ws.send(JSON.stringify({ action: 'account.link', requestId: 'l0', region: 'us-west-2' }));
+      await until(() => !!reply('l0'));
+      expect(reply('l0')).toMatchObject({ type: 'error', message: expect.stringMatching(/few seconds/) });
+      // Another tab: allowFixes reaches the link.
+      const ws2 = new WebSocket(`ws://127.0.0.1:${port}/ws`, bearerSubprotocols('x'), { origin: EXT });
+      ws2.on('message', (raw) => events.push(JSON.parse(raw.toString())));
+      await new Promise((r) => ws2.on('open', r));
+      ws2.send(JSON.stringify({ action: 'account.link', requestId: 'l1', region: 'us-west-2', allowFixes: true }));
+      await until(() => !!reply('l1'));
+      expect(link).toHaveBeenCalledWith('l1', 'us-west-2', expect.any(Function), true);
+      ws2.close();
+    } finally {
+      ws.close();
+      server.close();
+    }
+  });
+
   it('deploy.approve and finding.fix are refused while MFA is off; the preview waits until it is on', async () => {
     let mfa: StepUp = 'enrol';
     const fix = vi.fn(async (requestId: string, _f: string, emit: (e: ServerEvent) => void) => emit({ type: 'error', requestId, message: 'fixed' }));

@@ -66,6 +66,22 @@ export const worldAdminRules = async (clients: AwsClients, groupId: string): Pro
 /** The fix ran but deliberately left something for the player (shown as the result, the finding stays open). */
 export class PartialFix extends Error {}
 
+/**
+ * v2.17, at account.verify: may the citizens fix things in this account? Asked without changing anything: EC2's DryRun of
+ * the EBS fix, which IAM checks against ec2:EnableEbsEncryptionByDefault, granted only in the role's aws-city-fix policy
+ * (AllowFixes=true). DryRunOperation = allowed, UnauthorizedOperation = not; anything else (throttled, the network) =
+ * undefined, unknown. The gate lets exactly { DryRun: true } through with no grant (guard/rules.ts `probe`).
+ */
+export const fixesAllowed = async (ec2: AwsClients['ec2']): Promise<boolean | undefined> => {
+  try {
+    await ec2.send(new EnableEbsEncryptionByDefaultCommand({ DryRun: true }));
+    return undefined; // EC2 always answers a DryRun with an error; a plain success says nothing either way
+  } catch (err) {
+    const name = (err as Error)?.name;
+    return name === 'DryRunOperation' ? true : name === 'UnauthorizedOperation' ? false : undefined;
+  }
+};
+
 export const FIXES: Record<string, FixDef> = {
   s3_block_public_access: {
     iamAction: 's3:PutBucketPublicAccessBlock',

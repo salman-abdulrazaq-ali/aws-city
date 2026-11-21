@@ -63,7 +63,8 @@ export const createApprovals = (opts: { region: string; timeoutMs?: number }) =>
   };
 
   return {
-    request(taskId: string, req: ApprovalRequest, emit: Emit): Promise<boolean> {
+    /** `requestId`: a direct command's (v2.17 resource.remove), put on the preview so the client can match it. */
+    request(taskId: string, req: ApprovalRequest, emit: Emit, requestId?: string): Promise<boolean> {
       const deployId = `a-${randomUUID().slice(0, 8)}`;
       const t = req.action.type;
       const change: DeployChange = {
@@ -76,6 +77,7 @@ export const createApprovals = (opts: { region: string; timeoutMs?: number }) =>
       const why: DeployChange[] = req.check ? [{ action: 'Modify', logicalId: `Safety check: ${req.check.reason}`, resourceType: 'detail' }] : [];
       emit({
         type: 'deploy.preview',
+        ...(requestId ? { requestId } : {}),
         deployId,
         taskId,
         templateId: t,
@@ -128,13 +130,14 @@ export const createApprovals = (opts: { region: string; timeoutMs?: number }) =>
       if (p && ok) p.emit({ type: 'deploy.status', deployId, status: 'creating' });
       return settle(deployId, ok);
     },
-    /** After the approved tool call ran: report the real outcome on the same deployId. */
-    reportResult(taskId: string, call: ToolCallReport, emit: Emit) {
+    /** After the approved tool call ran: report the real outcome on the same deployId. False if nothing was approved for it. */
+    reportResult(taskId: string, call: ToolCallReport, emit: Emit): boolean {
       const deployId = awaitingResult.get(taskId);
-      if (!deployId) return;
+      if (!deployId) return false;
       awaitingResult.delete(taskId);
       const ok = call.outcome === 'done';
       emit({ type: 'deploy.status', deployId, status: ok ? 'complete' : 'failed', message: call.message, outputs: ok ? { Result: call.message } : undefined });
+      return true;
     },
     cancelAll() {
       for (const id of [...pending.keys()]) settle(id, false, 'Connection closed, so nothing was changed.');

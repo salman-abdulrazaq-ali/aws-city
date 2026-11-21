@@ -11,6 +11,10 @@ import { bucketPrefix, GAME_TAG, TABLE_PREFIX } from '../state/model.js';
  * write / fix: needs a grant naming the command and its exact target, and the request must have the exact shape the
  * server sends (`wire`, strict: an unknown field is refused), grant or not. They mirror executor.ts and fixes.ts, and
  * the player role's conditions (infra/player-role/player-role.yaml).
+ * probe (on a write or fix): a request of exactly that shape is EC2's DryRun of the change: AWS checks the permission and
+ * changes nothing, so it runs like a read, with no grant. IAM checks a DryRun against the change's own action, so the
+ * probe needs the rule's IAM action (which only the role's policy for that kind grants): it answers "would AWS allow
+ * this change?" (v2.17: fixesAllowed in agents/fixes.ts, at account.verify).
  */
 export type Kind = 'read' | 'write' | 'fix';
 
@@ -45,6 +49,8 @@ export interface ChangeRule extends RuleBase {
   target: (input: Wire, ctx: WireContext) => string | undefined;
   /** Rule ids it removes, each of which the grant must name. */
   ids?: (input: Wire) => readonly string[];
+  /** The exact DryRun request that only asks whether the change is allowed (strict); it needs no grant. */
+  probe?: z.ZodType;
 }
 export type CommandRule = ReadRule | ChangeRule;
 
@@ -141,6 +147,8 @@ export const RULES = {
     EnableEbsEncryptionByDefaultCommand: fix({
       iam: ['ec2:EnableEbsEncryptionByDefault'],
       wire: () => z.object({}).strict(),
+      // v2.17: { DryRun: true } and nothing else: "may the citizens fix things?" (DryRunOperation = yes), asked at verify.
+      probe: z.object({ DryRun: z.literal(true) }).strict(),
       refusal: 'the EBS fix only turns encryption by default on.',
       // The finding's resource id for this Region's setting (agents/findings.ts).
       target: (_i, ctx) => `ebs-default:${ctx.region}`,

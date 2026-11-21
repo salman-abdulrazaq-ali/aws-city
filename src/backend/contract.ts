@@ -1,9 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// AWS City ⇄ backend contract v2.16. SOURCE OF TRUTH — docs/backend-contract.md mirrors this, and the
+// AWS City ⇄ backend contract v2.17. SOURCE OF TRUTH — docs/backend-contract.md mirrors this, and the
 // server (server/) imports it, so drift breaks its build.
 //
 // Transport: ONE WebSocket to the AWS City server (server/src/http.ts): ws://127.0.0.1:<port>/ws locally,
-// wss://<api host>/ws hosted. REST beside it: /progress, /screenshots, /me.
+// wss://<api host>/ws hosted. REST beside it: /progress, /screenshots, /me (v2.17: GET /me/export).
 // Auth (hosted): the Cognito access token in the Sec-WebSocket-Protocol header (never the URL, which ends
 // up in logs):
 //   protocols = ['base64UrlBearerAuthorization.<base64url(jwt)>', 'base64UrlBearerAuthorization']
@@ -16,7 +16,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A string since v2.10 (the number 2.10 is 2.1, which reads as older than 2.9). */
-export const CONTRACT_VERSION = '2.16';
+export const CONTRACT_VERSION = '2.17';
 
 // ── Console Copilot shapes (also used by the content script in src/console/) ──
 export type ConsoleAction = 'click' | 'type' | 'select' | 'point' | 'done';
@@ -101,14 +101,45 @@ export interface ProgressPut {
   progress: Progress;
 }
 
-/** Ask for the CloudFormation quick-create link that connects the player's AWS account. */
+/** Ask for the CloudFormation quick-create link that connects the player's AWS account (answered with account.linkUrl; a refusal is error {requestId}). */
 export interface AccountLink {
   action: 'account.link';
   requestId: string;
   region: string;
+  /** v2.17: the quick-create link sets AllowFixes=true (the player ticked "Allow small fixes"). */
+  allowFixes?: boolean;
 }
 
-/** Player finished the quick-create stack; backend verifies it can assume the role. */
+/**
+ * v2.17: Disconnect the linked AWS account. The server forgets the link (role ARN, ExternalId), stops reading the account
+ * and answers every tab of the player with account.status {linked: false} (the asking tab's carries this requestId). No
+ * MFA step-up: taking access away is always allowed. The AWSCity stack stays in the player's account until they delete
+ * it (the UI says how). The local server has nothing to disconnect (it uses the workshop profile) and says so.
+ */
+export interface AccountUnlink {
+  action: 'account.unlink';
+  requestId: string;
+}
+
+/**
+ * v2.17: Take down one thing the city built (`managedByGame` in the server's latest read of the account), with no model
+ * call. The server runs it through the ActionService like any write (policy, the gate, the player's approval:
+ * deploy.preview (with this requestId) → deploy.approve, with MFA step-up when hosted) and reports with deploy.status.
+ * Refused before any preview (no such resource, not the city's, no linked account): error {requestId}.
+ */
+export interface ResourceRemove {
+  action: 'resource.remove';
+  requestId: string;
+  kind: 'instance' | 'table' | 'bucket';
+  id: string;
+}
+
+/**
+ * Player finished the quick-create stack; backend verifies it can assume the role. Success: account.status
+ * {requestId, linked: true, …}. v2.17: any refusal (the role can't be used, the link is more than a day old, not the
+ * AWSCity role…) is error {requestId, message} and never an account.status, so an account.status carrying a requestId
+ * always means the request worked; nothing changed (an account already linked stays linked).
+ */
 export interface AccountVerify {
   action: 'account.verify';
   requestId: string;
@@ -264,6 +295,8 @@ export type ClientCommand =
   | ProgressPut
   | AccountLink
   | AccountVerify
+  | AccountUnlink
+  | ResourceRemove
   | QuestStart
   | DeployPlan
   | DeployDecision
@@ -390,6 +423,22 @@ export interface AccountStatusEvent {
   accountId?: string;
   region?: string;
   message?: string;
+  /**
+   * v2.17: the link is kept but its role can't be used any more (STS refused AssumeRole on 3 polls in a row: the AWSCity
+   * stack was deleted or changed): the server stopped reading the account. Sent with linked: false, the account id and
+   * Region. The player links again (account.link clears it) or disconnects (account.unlink).
+   */
+  broken?: boolean;
+  /**
+   * v2.17: whether the player's role allows fixes (AllowFixes), learned at verify without changing anything (an EC2
+   * DryRun); absent = unknown (linked before v2.17, or the check couldn't tell). The local server sends its own setting.
+   */
+  fixes?: boolean;
+  /** v2.17: the player-role template version the player installed (absent = unknown, e.g. linked before v2.17). Hosted only. */
+  roleVersion?: number;
+  /** v2.17: the newest player-role template version, and its template URL (for "Update your AWS City role"). Hosted only. */
+  latestRoleVersion?: number;
+  templateUrl?: string;
 }
 
 export interface DeployChange {
@@ -966,6 +1015,28 @@ export interface SavedDesign {
 export interface WorkshopProgress {
   steps: Record<string, 'practice' | 'real'>;
   done?: string;
+}
+
+// ── REST: GET /me/export (v2.17) ─────────────────────────────────────────────
+
+/** v2.17: one live-city or leaderboard row the server keeps for the player (filed under a salted hash of their id). */
+export type SocialRow =
+  | { kind: 'presence'; region: string; /** ISO time the row lapses (90 s after the last beat). */ until: string; name?: string; rank?: string }
+  | { kind: 'leaderboard'; board: string; week: string; name: string; score: number };
+
+/**
+ * v2.17: GET /me/export (authenticated like /progress; a JSON download, Content-Disposition: attachment): everything the
+ * server keeps about the player. The account link is its metadata only: never the ExternalId (the role's shared secret).
+ */
+export interface PlayerDataExport {
+  exportedAt: string;
+  contract: string;
+  progress: Progress | null;
+  /** Absent when no AWS account was ever linked (and always on the local server, which uses the workshop profile). */
+  account?: { status: 'pending' | 'linked'; region: string; accountId?: string; linkedAt?: string; roleVersion?: number; fixes?: boolean; broken?: boolean };
+  social: SocialRow[];
+  /** The demo: made on this device from its own progress; no server keeps anything. */
+  practice?: true;
 }
 
 export const SERVER_EVENT_TYPES: ServerEvent['type'][] = [

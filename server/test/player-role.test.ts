@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseDocument } from 'yaml';
+import { connectsPlayerLabel } from '../src/accounts/link.js';
 import { FIXES } from '../src/agents/fixes.js';
 import { RULES } from '../src/guard/rules.js';
 
@@ -193,6 +194,41 @@ describe('player role template', () => {
     expect(statementFor(fixStatements, 'ec2:ModifyInstanceMetadataOptions')?.Condition?.StringEquals?.['ec2:Attribute/HttpTokens']).toBe('required');
     // Nothing that could undo a fix by loosening a setting, anywhere in the role.
     for (const loosen of ['AuthorizeSecurityGroupIngress', 'DisableEbsEncryptionByDefault', 'DeleteBucketPublicAccessBlock', 'DeletePublicAccessBlock']) expect(template).not.toContain(loosen);
+  });
+
+  it('v2.17: the DryRun probe (fixesAllowed at verify) needs its fix action, which only aws-city-fix grants: "allowed" means AllowFixes=true', () => {
+    // IAM checks a DryRun against the change's own action, so the probe (a read for the gate: no grant) maps to the fix
+    // policy, not aws-city-read. That's the point: DryRunOperation comes back exactly when fixes are on.
+    const probes = Object.values(RULES).flatMap((commands) => Object.values(commands).flatMap((rule) => ('probe' in rule && rule.probe ? [rule] : [])));
+    expect(probes).toHaveLength(1);
+    for (const rule of probes) {
+      expect(rule.kind).toBe('fix');
+      for (const action of rule.iam) {
+        expect(role.actionsOf('aws-city-fix')).toContain(action);
+        expect([...role.actionsOf('aws-city-read'), ...role.actionsOf('aws-city-build')]).not.toContain(action);
+      }
+    }
+  });
+
+  it('v5: names the player it serves (ConnectsPlayer: visible, required, used), and every label the server writes fits it', () => {
+    const t = role.t as { Description?: string; Parameters?: Record<string, Record<string, unknown>> };
+    expect(t.Description).toMatch(/\bv5$/);
+    const p = t.Parameters?.ConnectsPlayer;
+    expect(p).toMatchObject({ Type: 'String', Description: "The AWS City player this role will serve. Don't create the stack if this isn't you." });
+    expect(p).not.toHaveProperty('NoEcho');
+    expect(p).not.toHaveProperty('Default');
+    // Used (in the role's description), so cfn-lint has no unused parameter to warn about.
+    expect(String(role.role.Description)).toContain('${ConnectsPlayer}');
+    const pattern = new RegExp(`^(?:${String(p!.AllowedPattern)})$`);
+    for (const label of [
+      connectsPlayerLabel({ sub: 'abc' }, { public: true, name: 'Kind Otter' }),
+      connectsPlayerLabel({ sub: 'u', email: 'first.last@example.org' }),
+      connectsPlayerLabel({ sub: '1a2b3c4d-0000-0000-0000-000000000000' }),
+      connectsPlayerLabel({ sub: '!!' }, { public: true, name: '<script>' }),
+    ]) {
+      expect(label).toMatch(pattern);
+      expect(label.length).toBeLessThanOrEqual(Number(p!.MaxLength));
+    }
   });
 
   it('CloudWatch: GetMetricData only, in its own Region, and only the fixed queries flow.ts sends', async () => {

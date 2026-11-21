@@ -11,6 +11,8 @@ import { ANY_REGION, type ChangeCommand, type ClientName, type Kind, ruleFor, ty
  *  - every request stays in the home Region, except the few account-wide reads RULES marks;
  *  - a write or fix must have the exact shape the server sends (RULES' `wire`), grant or not, and what goes on to be
  *    serialised is the gate's checked copy of it, never the caller's object;
+ *  - except its DryRun (RULES' `probe`, exact too), which changes nothing and needs no grant (also sent as the checked
+ *    copy, so DryRun can't be dropped after the check);
  *  - and it needs a grant (withGrant) minted for this account, naming that command and its exact target, each usable
  *    once and only while withGrant runs. Grants are minted only by ActionService (after policy and the player's
  *    approval) and care.ts (after approval, the re-read and the account lock).
@@ -102,6 +104,8 @@ export interface GateRequest {
 
 export type Decision =
   | { allow: true; kind: 'read' }
+  /** A write or fix's DryRun (RULES' `probe`): no grant used; `input` is the checked copy. */
+  | { allow: true; kind: 'probe'; input: Record<string, unknown> }
   /** `input` is the checked copy (zod's output): it is what goes on to be serialised. */
   | { allow: true; kind: 'write' | 'fix'; input: Record<string, unknown>; target: string }
   | { allow: false; kind?: Kind; reason: string; detail?: string; target?: string };
@@ -118,6 +122,8 @@ export const decide = (req: GateRequest, ctx: GateContext, grant: Grant | undefi
     return { allow: false, kind: rule.kind, reason: `the city sends ${op} only to ${where === ctx.home ? `your home Region (${where})` : where}.` };
   }
   if (rule.kind === 'read') return { allow: true, kind: 'read' };
+  const probe = rule.probe?.safeParse(req.input ?? {});
+  if (probe?.success) return { allow: true, kind: 'probe', input: probe.data as Record<string, unknown> };
 
   const wire: WireContext = { region: req.region, accountId: ctx.accountId?.() };
   const parsed = rule.wire(wire).safeParse(req.input ?? {});
@@ -155,8 +161,8 @@ const audit = (req: GateRequest, d: Decision, grant: Grant | undefined, ctx: Gat
     command: req.command,
     kind: d.kind ?? 'unlisted',
     target: targetHash('target' in d ? d.target : undefined),
-    grant: grant?.id ?? 'none',
-    reason: d.allow ? grant?.reason : d.reason,
+    grant: d.allow && d.kind === 'probe' ? 'none' : (grant?.id ?? 'none'),
+    reason: d.allow ? (d.kind === 'probe' ? 'dry run' : grant?.reason) : d.reason,
     detail: d.allow ? undefined : d.detail,
   };
   if (d.allow) log.info('aws gate', fields);

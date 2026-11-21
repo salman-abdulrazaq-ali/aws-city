@@ -1,6 +1,7 @@
 import { Listeners, uid, type AgentBackend, type ConnectionStatus } from './AgentBackend';
 import type { CognitoAuth } from './auth';
-import { bearerSubprotocols, CLOSE_CODES, isServerEvent, type ClientCommand, type Progress, type ServerEvent } from './contract';
+import { bearerSubprotocols, CLOSE_CODES, isServerEvent, type ClientCommand, type DeployDecision, type DeployPlan, type PlayerDataExport, type Progress, type ServerEvent } from './contract';
+import templatesJson from '../../shared/templates.json' with { type: 'json' };
 
 /**
  * The AWS City server (server/): Claude on Bedrock + real AWS. Two deployments, same protocol:
@@ -12,6 +13,8 @@ import { bearerSubprotocols, CLOSE_CODES, isServerEvent, type ClientCommand, typ
  *
  * Deploys here are the server's guarded actions (EC2 t4g, DynamoDB, S3). Every write the agents want
  * to make arrives as deploy.preview and needs deploy.approve — see server/src/contract/approvals.ts.
+ * A curated template with no guarded build (the serverless quests' hello-api, queue-worker) is a practice build
+ * here, like the demo's: a preview and a "built" status from this class, nothing sent and nothing created in AWS.
  */
 export interface ServerConfig {
   wsUrl: string;
@@ -60,6 +63,8 @@ export class ServerBackend implements AgentBackend {
   private player?: string;
   /** deployId → what was built, so teardown can ask the agent to demolish it. */
   private built = new Map<string, string>();
+  /** Practice builds waiting for the player's answer: deployId → template id (never sent to the server). */
+  private practice = new Map<string, string>();
 
   /**
    * The signed-in player (hosted only). The local server has no players, so it has no playerId at all: the runtime
@@ -331,10 +336,12 @@ export class ServerBackend implements AgentBackend {
         const { questId: _q, ...rest } = cmd; // the server's schema rejects unknown fields
         return this.raw(rest);
       }
-      case 'chat.ask':
-      case 'page.classify':
       case 'deploy.approve':
       case 'deploy.reject':
+        if (this.practice.has(cmd.deployId)) return this.answerPractice(cmd);
+        return this.raw(cmd);
+      case 'chat.ask':
+      case 'page.classify':
       case 'console.start':
       case 'console.observe':
       case 'console.stop':
@@ -344,6 +351,11 @@ export class ServerBackend implements AgentBackend {
       case 'finding.undo':
       // v2.5: the bill switch (the server reads Cost Explorer at most once a day while it's on).
       case 'bill.enable':
+      // v2.8: live traffic (the server reads CloudWatch at most every 5 minutes while it's on).
+      case 'flow.enable':
+      // v2.17: disconnect the account; take down one thing the city built (approved like any write).
+      case 'account.unlink':
+      case 'resource.remove':
       // v2.10: a workshop step checked with a read-only look at the account.
       case 'workshop.verify':
       // v2.11: the live city and leaderboards.
@@ -353,7 +365,8 @@ export class ServerBackend implements AgentBackend {
         return this.raw(cmd);
       case 'deploy.plan': {
         const bp = GUARDED_BLUEPRINTS.find((b) => b.id === cmd.templateId) ?? GUARDED_BLUEPRINTS.find((b) => b.id === GUARDED_EQUIV[cmd.templateId]);
-        if (!bp) return this.events.emit({ type: 'error', requestId: cmd.requestId, message: `This backend can't build ${cmd.templateId}.` });
+        // No guarded build (serverless): a practice build, so the quest step still counts and nothing bills.
+        if (!bp) return this.planPractice(cmd);
         // The plan's requestId doubles as the task's id, so an error for the task settles the button that asked.
         return this.task(bp.prompt, cmd.requestId);
       }
@@ -362,6 +375,7 @@ export class ServerBackend implements AgentBackend {
         if (!what) return this.events.emit({ type: 'deploy.status', deployId: cmd.deployId, status: 'failed', message: 'I don’t know what that was any more.' });
         return this.task(`Please demolish what you built for me: ${what}. (Stop/terminate or delete it.)`);
       }
+      // v2.17: account.link may carry allowFixes (the setup link asks for AllowFixes=true).
       case 'account.link':
       case 'account.verify':
         return this.raw(cmd);
@@ -370,7 +384,49 @@ export class ServerBackend implements AgentBackend {
       case 'screenshot.presign':
       case 'quest.start':
         return; // handled via REST below / not needed
+      default: {
+        // Every command in the contract is handled above: a new one fails to compile here instead of being dropped.
+        const unknown: never = cmd;
+        console.warn('[server] command not sent', (unknown as { action?: string }).action);
+      }
     }
+  }
+
+  /**
+   * A curated template with no guarded build: the demo's practice build (a preview, then "built" on approve), made here
+   * and never sent. Nothing is created in the player's AWS account, and the preview says so. Its deploy.status complete
+   * carries the template id, so the quest's deploy step counts (src/state/store.ts matches templateId).
+   */
+  private planPractice({ requestId, templateId, taskId }: DeployPlan) {
+    const t = templatesJson.templates.find((x) => x.id === templateId);
+    if (!t) return this.events.emit({ type: 'error', requestId, message: `This backend can't build ${templateId}.` });
+    const deployId = `${PRACTICE_PREFIX}${uid().slice(0, 8)}`;
+    this.practice.set(deployId, templateId);
+    queueMicrotask(() =>
+      this.events.emit({
+        type: 'deploy.preview',
+        requestId,
+        deployId,
+        ...(taskId ? { taskId } : {}),
+        templateId,
+        stackName: `${t.title} (practice)`,
+        region: 'practice',
+        changes: t.resources.map((r) => ({ action: 'Add' as const, logicalId: r.logicalId, resourceType: r.type })),
+        costNote: 'Practice: free, nothing is created in your AWS account. The city can’t build this kind of stack for real yet; it still counts for your quest.',
+      }),
+    );
+  }
+
+  private answerPractice(cmd: DeployDecision) {
+    const templateId = this.practice.get(cmd.deployId);
+    this.practice.delete(cmd.deployId);
+    const deployId = cmd.deployId;
+    if (cmd.action === 'deploy.reject') return queueMicrotask(() => this.events.emit({ type: 'deploy.status', deployId, status: 'rejected', message: 'Nothing was created.' }));
+    const t = templatesJson.templates.find((x) => x.id === templateId);
+    queueMicrotask(() => {
+      this.events.emit({ type: 'deploy.status', deployId, status: 'creating' });
+      this.events.emit({ type: 'deploy.status', deployId, status: 'complete', message: `${t?.title ?? 'The stack'}: practice build done. Nothing was created in your AWS account.` });
+    });
   }
 
   private url(path: string) {
@@ -417,6 +473,13 @@ export class ServerBackend implements AgentBackend {
       .catch((e) => console.warn('[server] putProgress (will retry on reconnect)', e));
   }
 
+  /** v2.17: GET /me/export, everything the server keeps about the player (the account link as metadata only). */
+  async exportMe(): Promise<PlayerDataExport> {
+    const res = await fetch(this.url('/me/export'), { headers: await this.headers(), signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) throw new Error(`GET /me/export → ${res.status}`);
+    return (await res.json()) as PlayerDataExport;
+  }
+
   /** Deletes the player's data on the server (progress, account link, screenshots, sign-in). */
   async deleteAccount() {
     const res = await fetch(this.url('/me'), { method: 'DELETE', headers: await this.headers() });
@@ -441,12 +504,17 @@ export function subOf(token: string): string | undefined {
   }
 }
 
-/** Quest deploy steps name curated templates; on this backend the closest guarded build counts. */
+/**
+ * Quest deploy steps name curated templates; on this backend the closest guarded build counts. Only where it's the same
+ * kind of thing: a serverless template (hello-api, queue-worker) never becomes an EC2 house or a table. It's a practice
+ * build instead (planPractice), which counts by its own template id.
+ */
 export const GUARDED_EQUIV: Record<string, string> = {
   'static-site': 'warehouse',
   'dynamo-table': 'library',
-  'hello-api': 'house',
-  'queue-worker': 'library',
 };
+/** deployIds of practice builds (nothing in AWS): the UI says "practice", never "built in your AWS account". */
+export const PRACTICE_PREFIX = 'practice-';
+export const isPracticeDeploy = (deployId: string) => deployId.startsWith(PRACTICE_PREFIX);
 /** Server action type (deploy.preview templateId) → blueprint id. */
 export const ACTION_BLUEPRINT: Record<string, string> = { create_table: 'library', create_bucket: 'warehouse', launch_instance: 'house' };

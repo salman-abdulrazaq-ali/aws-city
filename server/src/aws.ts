@@ -28,11 +28,25 @@ export const refreshingProfile = (profile: string): AwsCredentialIdentityProvide
 };
 
 /**
- * A player's own account (hosted mode): short-lived credentials for AWSCityPlayerRole, assumed from our
- * task role with the player's ExternalId. The SDK caches them and refreshes before they expire.
+ * STS refused the player role itself (AssumeRole said no), not one call made with it: the AWSCity stack was deleted, its
+ * trust changed, or the credentials asking for it are no good. It keeps the cause's name, so classifyAwsError reads it
+ * as before ('denied' or 'expired'); the poller tells it apart from one service's AccessDenied by its class.
  */
-export const assumedRole = (opts: { roleArn: string; externalId: string; sub: string; region: string }): AwsCredentialIdentityProvider =>
-  fromTemporaryCredentials({
+export class RoleRefusedError extends Error {
+  constructor(cause: unknown) {
+    super((cause as Error)?.message ?? 'AssumeRole refused', { cause });
+    this.name = (cause as Error)?.name ?? 'AccessDenied';
+  }
+}
+export const isRoleRefused = (err: unknown): err is RoleRefusedError => err instanceof RoleRefusedError;
+
+/**
+ * A player's own account (hosted mode): short-lived credentials for AWSCityPlayerRole, assumed from our
+ * task role with the player's ExternalId. The SDK caches them and refreshes before they expire. A refusal
+ * ('denied' or 'expired') comes out as RoleRefusedError; anything else (throttling, the network) as it was.
+ */
+export const assumedRole = (opts: { roleArn: string; externalId: string; sub: string; region: string }): AwsCredentialIdentityProvider => {
+  const provider = fromTemporaryCredentials({
     masterCredentials: fromNodeProviderChain(),
     clientConfig: { ...SDK_DEFAULTS, region: opts.region },
     params: {
@@ -42,6 +56,19 @@ export const assumedRole = (opts: { roleArn: string; externalId: string; sub: st
       DurationSeconds: 3600,
     },
   });
+  return refusalsMarked(provider);
+};
+
+/** Wraps a credential provider so STS's refusals of it come out as RoleRefusedError (assumedRole's; a test seam too). */
+export const refusalsMarked =
+  (provider: AwsCredentialIdentityProvider): AwsCredentialIdentityProvider =>
+  async (...args) => {
+    try {
+      return await provider(...args);
+    } catch (err) {
+      throw classifyAwsError(err) === 'other' ? err : new RoleRefusedError(err);
+    }
+  };
 
 /** Credentials for our own infrastructure (Bedrock, the table, the bucket): the profile locally, the task role hosted. */
 export const serviceCredentials = (config: Config): AwsCredentialIdentityProvider =>

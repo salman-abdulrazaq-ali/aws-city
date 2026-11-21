@@ -1,9 +1,9 @@
 import { Listeners, type AgentBackend, type ConnectionStatus } from './AgentBackend';
-import type { ChatAsk, CityFinding, ClientCommand, DeployDecision, DeployPlan, FindingExplain, FindingFixCommand, LeaderboardStateEvent, PageClassify, PresenceStateEvent, Progress, ServerEvent, TaskSubmit } from './contract';
+import { CONTRACT_VERSION, type ChatAsk, type CityFinding, type ClientCommand, type DeployDecision, type DeployPlan, type FindingExplain, type FindingFixCommand, type LeaderboardStateEvent, type PageClassify, type PlayerDataExport, type PresenceStateEvent, type Progress, type ResourceRemove, type ServerEvent, type TaskSubmit } from './contract';
 import { isoWeekUtc } from '@/state/events';
 import { AMBIENT_CHATTER } from '@/world/dialogue';
 import { offlineAnswer } from './mockAnswer';
-import { DEMO, demoBill, demoFlow, demoExplain, demoFindings, demoHealth, demoInventory, demoNews, demoResourceType } from './mockAccount';
+import { DEMO, demoBill, demoFlow, demoExplain, demoFindings, demoHealth, demoInventory, demoItems, demoNews, demoResourceType } from './mockAccount';
 import templatesJson from '../../shared/templates.json' with { type: 'json' };
 import { ConsoleMock } from './consoleMock';
 import { SERVICES, matchText, serviceById, servicesIn, type DistrictId } from '@/world/taxonomy';
@@ -187,6 +187,11 @@ export class MockBackend implements AgentBackend {
   private billOn = false;
   private flowOn = false;
   private flowTimer?: ReturnType<typeof setInterval>;
+  /** v2.17: practice resources taken down (resource.remove), by ARN, and the removals waiting for approval. */
+  private removed = new Set<string>();
+  private removals = new Map<string, { arn: string; name: string }>();
+  /** The last progress the runtime saved (putProgress): what "Download my data" gives in the demo. */
+  private lastProgress?: Progress;
 
   constructor(private opts: MockOptions = {}) {
     this.speed = opts.speed ?? 1;
@@ -241,7 +246,7 @@ export class MockBackend implements AgentBackend {
     this.emit(demoHealth(new Date(), this.drill));
     this.emit(demoNews());
     if (this.drillReady) this.scheduleDrill();
-    this.emit(demoInventory(new Date(), { crossRegion: !!this.account }));
+    this.emit(demoInventory(new Date(), { crossRegion: !!this.account, without: this.removed }));
     if (this.billOn) this.emit(demoBill());
     if (this.flowOn) this.startFlow();
     if (!this.findings.size) for (const f of demoFindings()) this.findings.set(f.id, f);
@@ -500,24 +505,37 @@ export class MockBackend implements AgentBackend {
       }
       case 'account.verify':
         return void this.sleep(900).then(() => {
-          this.account = { accountId: /:(\d{12}):/.exec(cmd.roleArn)?.[1] ?? '123456789012', region: 'us-west-2' };
-          this.emit({ type: 'account.status', requestId: cmd.requestId, linked: true, ...this.account, message: 'Practice account linked.' });
+          // Like the server (v2.17): a refusal is an error for the request, never an account.status.
+          const id = /^\s*(\d{12})\s*$/.exec(cmd.roleArn)?.[1] ?? /:(\d{12}):/.exec(cmd.roleArn)?.[1];
+          if (!id) return this.emit({ type: 'error', requestId: cmd.requestId, message: 'Paste your 12-digit AWS account id (or the RoleArn from the AWSCity stack).' });
+          this.account = { accountId: id, region: 'us-west-2' };
+          // v2.17: the practice account allows fixes; it has no real role, so no role version.
+          this.emit({ type: 'account.status', requestId: cmd.requestId, linked: true, ...this.account, message: 'Practice account linked.', fixes: true });
           // Linked: the practice account's replication to other Regions shows now (world map arcs, highway tankers).
-          this.emit(demoInventory(new Date(), { crossRegion: true }));
+          this.emit(demoInventory(new Date(), { crossRegion: true, without: this.removed }));
         });
+      case 'account.unlink':
+        // v2.17: the practice account disconnects (no MFA, like the server); its links to other Regions go with it.
+        return void this.sleep(400).then(() => {
+          this.account = undefined;
+          this.emit({ type: 'account.status', requestId: cmd.requestId, linked: false, region: DEMO.region, message: 'Practice account disconnected. Nothing in it changed.' });
+          this.emit(demoInventory(new Date(), { crossRegion: false, without: this.removed }));
+        });
+      case 'resource.remove':
+        return void this.previewRemoval(cmd);
       case 'quest.start':
         return this.emit({ type: 'agent.message', from: 'concierge', to: 'user', text: 'Quest accepted! Follow the steps in your quest log.' });
       case 'deploy.plan':
         return void this.planDeploy(cmd);
       case 'deploy.approve':
         if (this.care.has(cmd.deployId)) return void this.runCare(cmd);
+        if (this.removals.has(cmd.deployId)) return void this.runRemoval(cmd.deployId);
         return void this.runDeploy(cmd.deployId);
       case 'deploy.reject':
         this.deploys.delete(cmd.deployId);
         this.care.delete(cmd.deployId);
+        this.removals.delete(cmd.deployId);
         return this.emit({ type: 'deploy.status', deployId: cmd.deployId, status: 'rejected', message: 'Nothing was created.' });
-      case 'deploy.teardown':
-        return void this.teardown(cmd.deployId);
       case 'console.start':
         return this.copilot.start(cmd.taskId, cmd.goal, cmd.snapshot, cmd.context.serviceId);
       case 'console.observe':
@@ -573,7 +591,62 @@ export class MockBackend implements AgentBackend {
         // The server reads Cost Explorer here (at most once a day); the demo has a small learner's bill ready.
         if (cmd.on) return void this.sleep(600).then(() => this.billOn && this.emit(demoBill()));
         return;
+      case 'deploy.teardown':
+        return void this.teardown(cmd.deployId);
+      default: {
+        // Every command in the contract is answered above: a new one fails to compile here instead of being ignored.
+        const unknown: never = cmd;
+        console.warn('[mock] command not handled', (unknown as { action?: string }).action);
+      }
     }
+  }
+
+  /**
+   * v2.17 resource.remove, like the server: only something the city built (managedByGame), only with the practice
+   * account linked, and only after the player approves the preview. Nothing real is touched.
+   */
+  private async previewRemoval({ requestId, kind, id }: ResourceRemove) {
+    if (!this.account) return this.emit({ type: 'error', requestId, code: 'unlinked', message: 'Link the practice account first (Deploy tab), then you can take things down.' });
+    const shape = { instance: ':instance/', table: ':table/', bucket: 'arn:aws:s3:::' }[kind];
+    const item = demoItems().find((it) => !this.removed.has(it.arn) && it.arn.includes(shape) && it.arn.split(/[:/]/).at(-1) === id);
+    if (!item) return this.emit({ type: 'error', requestId, message: `There’s nothing called “${id}” to take down in the practice account.` });
+    if (!item.managedByGame) return this.emit({ type: 'error', requestId, message: `“${item.name}” wasn’t built by the city, so the city won’t remove it.` });
+    await this.sleep(400);
+    const deployId = `rm-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    this.removals.set(deployId, { arn: item.arn, name: item.name });
+    const action = { instance: 'terminate_instance', table: 'delete_table', bucket: 'delete_bucket' }[kind];
+    this.emit({
+      type: 'deploy.preview',
+      requestId,
+      deployId,
+      templateId: action,
+      stackName: `Remove ${item.name}`,
+      region: this.account.region,
+      changes: [{ action: 'Remove', logicalId: item.name, resourceType: item.type }],
+      costNote: 'Practice: nothing real is removed. In your own account this stops its charges, permanently.',
+    });
+  }
+
+  private async runRemoval(deployId: string) {
+    const r = this.removals.get(deployId)!;
+    this.removals.delete(deployId);
+    this.emit({ type: 'deploy.status', deployId, status: 'creating' });
+    await this.work('builder', 'cloudformation', `Removing ${r.name}`, 1200);
+    this.removed.add(r.arn);
+    this.emit({ type: 'deploy.status', deployId, status: 'complete', message: `${r.name} is gone from the practice account.` });
+    this.emit(demoInventory(new Date(), { crossRegion: !!this.account, without: this.removed }));
+  }
+
+  /** v2.17 "Download my data" in the demo: this device's progress; no server keeps anything. */
+  async exportMe(): Promise<PlayerDataExport> {
+    return {
+      exportedAt: new Date().toISOString(),
+      contract: CONTRACT_VERSION,
+      progress: this.lastProgress ?? null,
+      ...(this.account ? { account: { status: 'linked' as const, region: this.account.region, accountId: this.account.accountId, fixes: true } } : {}),
+      social: [],
+      practice: true,
+    };
   }
 
   private async planDeploy({ requestId, templateId, taskId }: DeployPlan) {
@@ -653,6 +726,7 @@ export class MockBackend implements AgentBackend {
     return null; // mock has no server state; the local cache in chrome.storage is used
   }
   putProgress(p: Progress) {
+    this.lastProgress = p;
     // The practice leaderboards show the player's own row under their public name (the demo keeps nothing else).
     this.profile = p.profile;
     // What the player fixed stays fixed (City care never asks twice for the same fix).

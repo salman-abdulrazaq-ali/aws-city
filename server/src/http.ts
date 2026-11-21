@@ -27,7 +27,7 @@ const HEARTBEAT_MS = 25_000;
 /** Frames per socket: a burst of 30, refilled at 10 a second. */
 const FRAME_BURST = 30;
 const FRAMES_PER_SECOND = 10;
-/** account.link / account.verify each assume a role and rebuild the player's city: one per this window. */
+/** account.link / account.verify / account.unlink each rebuild the player's city (link and verify assume a role): one per this window. */
 const ACCOUNT_COOLDOWN_MS = 5_000;
 /** Tokens are checked at connect; long-lived sockets are closed so the client reconnects with a fresh one. */
 const MAX_CONNECTION_MS = 8 * 60 * 60_000;
@@ -125,7 +125,10 @@ export const singleTenant = (d: SingleTenantDeps & { config: Config }): TenantHu
     uploads: { create: (contentType) => d.uploads.create(contentType, 'local') },
     link: async (requestId, _region, emit) => emit({ type: 'account.status', requestId, linked: true, message: 'The local server uses the workshop AWS profile.' }),
     verify: async (requestId, _arn, emit) => emit({ type: 'account.status', requestId, linked: true, message: 'The local server uses the workshop AWS profile.' }),
+    unlink: async (requestId, emit) => emit({ type: 'account.status', requestId, linked: true, message: 'The local server uses the workshop AWS profile, so there’s no account to disconnect.' }),
+    remove: async ({ requestId }, emit) => emit({ type: 'error', requestId, message: 'This server can’t take things down directly. Ask the building’s agent instead.' }),
     deleteMe: async () => undefined,
+    exportMe: async () => ({ exportedAt: new Date().toISOString(), contract: CONTRACT_VERSION, progress: await d.progress.get(), social: await localSocial.mine('local') }),
   };
   return { acquire: async () => tenant, data: () => tenant, release: () => undefined, closeAll: () => undefined };
 };
@@ -146,9 +149,12 @@ const Command = z.discriminatedUnion('action', [
   z.object({ action: z.literal('console.start'), taskId: Id, goal: z.string().min(1).max(500), context: Context.default({}), snapshot: Snapshot }),
   z.object({ action: z.literal('console.observe'), taskId: Id, index: z.number().int().min(0).max(100), ok: z.boolean(), note: z.string().max(200).optional(), snapshot: Snapshot }),
   z.object({ action: z.literal('console.stop'), taskId: Id }),
-  // Connecting the player's own AWS account (hosted)
-  z.object({ action: z.literal('account.link'), requestId: Id, region: z.string().min(1).max(32) }),
+  // Connecting the player's own AWS account (hosted); v2.17: allowFixes, and disconnecting it
+  z.object({ action: z.literal('account.link'), requestId: Id, region: z.string().min(1).max(32), allowFixes: z.boolean().optional() }),
   z.object({ action: z.literal('account.verify'), requestId: Id, roleArn: z.string().min(1).max(200) }),
+  z.object({ action: z.literal('account.unlink'), requestId: Id }).strict(),
+  // contract v2.17: take down one thing the city built (no model; the ActionService and the player's approval)
+  z.object({ action: z.literal('resource.remove'), requestId: Id, kind: z.enum(['instance', 'table', 'bucket']), id: z.string().regex(/^[A-Za-z0-9._-]{1,255}$/) }).strict(),
   // contract v2.3: city care (the citizens' findings)
   z.object({ action: z.literal('finding.explain'), requestId: Id, findingId: Id }),
   z.object({ action: z.literal('finding.fix'), requestId: Id, findingId: Id }),
@@ -299,7 +305,7 @@ export const createHttpServer = (deps: Deps) => {
 
     const principal = await principalFor(req, url);
 
-    if (route === 'GET /progress' || route === 'PUT /progress' || route === 'POST /screenshots') await refuseDeleted(principal.sub);
+    if (route === 'GET /progress' || route === 'PUT /progress' || route === 'POST /screenshots' || route === 'GET /me/export') await refuseDeleted(principal.sub);
     if (route === 'GET /progress') {
       const p = await hub.data(principal).progress.get();
       return p ? send(res, 200, p) : send(res, 404, { error: 'No progress yet' });
@@ -316,6 +322,12 @@ export const createHttpServer = (deps: Deps) => {
         .safeParse(await readJson(req));
       if (!body.success) throw new HttpError(400, 'contentType must be image/jpeg or image/png');
       return send(res, 200, await hub.data(principal).uploads.create(body.data.contentType));
+    }
+    // v2.17: everything we store about the player, as a download (the account link as metadata: never the ExternalId).
+    if (route === 'GET /me/export') {
+      const body = JSON.stringify(await hub.data(principal).exportMe(), null, 2);
+      res.writeHead(200, { 'content-type': 'application/json', 'content-disposition': 'attachment; filename="aws-city-my-data.json"', 'cache-control': 'no-store' });
+      return res.end(body);
     }
     // Deletes everything we store about the player (Chrome Web Store / privacy requirement).
     if (route === 'DELETE /me') {
@@ -561,18 +573,31 @@ export const createHttpServer = (deps: Deps) => {
         void stepUp().then((verdict) => (verdict === 'ok' ? answer() : emit(stepUpRefused(verdict))));
         return;
       }
-      if (cmd.action === 'account.link' || cmd.action === 'account.verify') {
+      if (cmd.action === 'account.link' || cmd.action === 'account.verify' || cmd.action === 'account.unlink') {
         if (Date.now() - lastAccountCommand < ACCOUNT_COOLDOWN_MS) {
           emit({ type: 'error', message: 'Give it a few seconds before trying that again.', requestId: cmd.requestId });
           return;
         }
         lastAccountCommand = Date.now();
+        const failed = (err: unknown) => emit({ type: 'error', requestId: cmd.requestId, message: publicError('account change failed', err) });
+        // Taking access away needs no step-up: a player who can't pass MFA can still disconnect.
+        if (cmd.action === 'account.unlink') return void tenant.unlink(cmd.requestId, emit).catch(failed);
         void (async () => {
           const verdict = await stepUp();
           if (verdict !== 'ok') return emit(stepUpRefused(verdict, cmd.requestId));
-          if (cmd.action === 'account.link') return tenant.link(cmd.requestId, cmd.region, emit);
+          if (cmd.action === 'account.link') return tenant.link(cmd.requestId, cmd.region, emit, cmd.allowFixes);
           return tenant.verify(cmd.requestId, cmd.roleArn, emit);
-        })();
+        })().catch(failed);
+        return;
+      }
+      if (cmd.action === 'resource.remove') {
+        // Like a fix: a request on this socket that may wait minutes for approval; started only with MFA on (hosted),
+        // and deploy.approve checks it again.
+        if (requests >= MAX_REQUESTS_PER_SOCKET) return emit({ type: 'error', message: 'Still working on your last request. Try again in a moment.', requestId: cmd.requestId });
+        requests++;
+        const { action: _a, ...remove } = cmd;
+        const job = stepUp().then((verdict) => (verdict === 'ok' ? tenant.remove(remove, emit, approvals) : emit(stepUpRefused(verdict, cmd.requestId))));
+        void track(job.catch((err) => emit({ type: 'error', requestId: cmd.requestId, message: publicError('remove failed', err) }))).finally(() => requests--);
         return;
       }
       if (cmd.action === 'finding.explain' || cmd.action === 'finding.fix' || cmd.action === 'finding.undo') {

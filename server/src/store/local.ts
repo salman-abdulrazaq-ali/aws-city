@@ -155,7 +155,7 @@ export const localStores = (progressFile: string): Stores => {
   return {
     progress,
     bills,
-    accounts: { get: async (sub) => accounts.get(sub), put: async (sub, r) => void accounts.set(sub, r) },
+    accounts: { get: async (sub) => accounts.get(sub), put: async (sub, r) => void accounts.set(sub, r), delete: async (sub) => void accounts.delete(sub) },
     quota: memoryQuota(),
     mfa,
     locks: memoryLocks(),

@@ -21,11 +21,26 @@ export interface AccountRecord {
   linkedAt?: string;
   /** A linked player asked for a setup link in another Region: verify checks that Region; until then the link stays as is. */
   pendingRegion?: string;
+  /** v2.17: when the last setup link was made (ISO): verify is refused a day after it (a link phished from someone else ages out). */
+  linkIssuedAt?: string;
+  /** v2.17: the player-role template version that link pointed at (`v<N>` of its template URL). */
+  linkRoleVersion?: number;
+  /** v2.17: the template version installed: the link's, recorded at verify. Absent: linked before v2.17. */
+  roleVersion?: number;
+  /** v2.17: whether the role allows fixes (AllowFixes), from a DryRun at verify that changes nothing. Absent: unknown. */
+  fixes?: boolean;
+  /**
+   * v2.17: when STS refused the role on BROKEN_AFTER polls in a row (the stack was deleted or changed): the server stopped
+   * reading the account. A new setup link (back to pending) or a successful verify clears it.
+   */
+  brokenAt?: string;
 }
 
 export interface AccountStore {
   get(sub: string): Promise<AccountRecord | undefined>;
   put(sub: string, record: AccountRecord): Promise<void>;
+  /** v2.17 account.unlink: forgets the link (role ARN, account id and ExternalId); a no-op when there's none. */
+  delete(sub: string): Promise<void>;
 }
 
 /**

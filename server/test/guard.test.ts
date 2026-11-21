@@ -12,6 +12,8 @@ import {
   DisableEbsEncryptionByDefaultCommand,
   EC2Client,
   EnableEbsEncryptionByDefaultCommand,
+  type EnableEbsEncryptionByDefaultCommandInput,
+  type EnableEbsEncryptionByDefaultCommandOutput,
   ModifyInstanceMetadataOptionsCommand,
   RevokeSecurityGroupIngressCommand,
   RunInstancesCommand,
@@ -555,6 +557,36 @@ describe('the gate between the server and AWS', () => {
     expect(logged).not.toMatch(/\d{12}/);
     expect(logged).not.toContain('arn:');
     expect(logged).not.toContain(BUCKET);
+  });
+
+  it("v2.17: the EBS fix's DryRun goes through with no grant, exactly { DryRun: true } and as the checked copy; the change itself still needs its grant", async () => {
+    const info = vi.spyOn(log, 'info');
+    const { clients, sent } = recording();
+    await clients.ec2.send(new EnableEbsEncryptionByDefaultCommand({ DryRun: true }));
+    expect(info).toHaveBeenCalledWith('aws gate', expect.objectContaining({ decision: 'allow', client: 'EC2Client', command: 'EnableEbsEncryptionByDefaultCommand', kind: 'probe', grant: 'none', reason: 'dry run' }));
+    // The real change, a DryRun that isn't one, an extra field, another fix's DryRun, another Region: all refused.
+    expect((await refused(clients.ec2.send(new EnableEbsEncryptionByDefaultCommand({})))).message).toContain('need your approval');
+    await refused(clients.ec2.send(new EnableEbsEncryptionByDefaultCommand({ DryRun: false })));
+    await refused(clients.ec2.send(new EnableEbsEncryptionByDefaultCommand({ DryRun: true, Extra: 1 } as never)));
+    await refused(clients.ec2.send(new ModifyInstanceMetadataOptionsCommand({ InstanceId: I_ABC, HttpTokens: 'required', DryRun: true })));
+    await refused(clients.ec2For('eu-west-1').send(new EnableEbsEncryptionByDefaultCommand({ DryRun: true })));
+    // DryRun can't be dropped after the check: what goes out is the gate's copy.
+    const input: { DryRun?: boolean } = { DryRun: true };
+    const cmd = new EnableEbsEncryptionByDefaultCommand(input);
+    cmd.middlewareStack.addRelativeTo(
+      (next: InitializeHandler<EnableEbsEncryptionByDefaultCommandInput, EnableEbsEncryptionByDefaultCommandOutput>) => (args: InitializeHandlerArguments<EnableEbsEncryptionByDefaultCommandInput>) => {
+        delete input.DryRun;
+        return next(args);
+      },
+      { relation: 'after', toMiddleware: 'awsCityGate', name: 'lateChange' },
+    );
+    await clients.ec2.send(cmd);
+    expect(sent.map((s) => s.op)).toEqual(['EnableEbsEncryptionByDefault', 'EnableEbsEncryptionByDefault']);
+    for (const s of sent) expect(s.body).toContain('DryRun=true');
+    // The one probe sits on the fix's own rule, under the fix's IAM action (player-role.test.ts: only aws-city-fix grants it).
+    const probes = Object.entries(RULES).flatMap(([client, commands]) => Object.entries(commands).flatMap(([command, rule]) => ('probe' in rule && rule.probe ? [`${client}.${command}`] : [])));
+    expect(probes).toEqual(['EC2Client.EnableEbsEncryptionByDefaultCommand']);
+    expect(RULES.EC2Client.EnableEbsEncryptionByDefaultCommand).toMatchObject({ kind: 'fix', iam: ['ec2:EnableEbsEncryptionByDefault'] });
   });
 
   it('every write and fix in the table binds a target, and reads bind none', () => {
