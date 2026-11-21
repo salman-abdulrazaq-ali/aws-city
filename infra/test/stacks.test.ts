@@ -338,6 +338,10 @@ describe('the AI on AWS without Bedrock: an open model on a private Fargate serv
     expect(toAi).toHaveLength(1);
     expect(toAi[0].Properties).toMatchObject({ IpProtocol: 'tcp', ToPort: 11434, SourceSecurityGroupId: { 'Fn::GetAtt': [expect.stringMatching(/^ServiceSecurityGroup/), 'GroupId'] } });
     expect(JSON.stringify(toAi)).not.toContain('0.0.0.0/0');
+    // Out: HTTPS only (its image from ECR, its logs); never every port.
+    const groups = t.svc.findResources('AWS::EC2::SecurityGroup');
+    const aiGroup = Object.entries(groups).find(([id]) => id.startsWith('AiSecurityGroup'))?.[1] as { Properties: { SecurityGroupEgress: Record<string, unknown>[] } };
+    expect(aiGroup.Properties.SecurityGroupEgress).toEqual([expect.objectContaining({ IpProtocol: 'tcp', FromPort: 443, ToPort: 443, CidrIp: '0.0.0.0/0' })]);
     // Locked down: not root, read-only root filesystem (only /tmp writable), every capability dropped.
     const aiDef = Object.values(t.svc.findResources('AWS::ECS::TaskDefinition')).find((d) => JSON.stringify(d).includes('"Name":"ai"')) as { Properties: { ContainerDefinitions: Record<string, unknown>[]; Volumes: unknown[] } };
     expect(aiDef.Properties.ContainerDefinitions[0]).toMatchObject({
@@ -369,10 +373,15 @@ describe('the AI on AWS without Bedrock: an open model on a private Fargate serv
     const dockerfile = readFileSync(new URL('../ai-image/Dockerfile', import.meta.url), 'utf8');
     expect(dockerfile).toMatch(/^FROM ollama\/ollama:[\d.]+@sha256:[0-9a-f]{64}$/m);
     expect(dockerfile).toContain(`ARG MODEL=${CPU_MODEL.id}`);
-    // The whole manifest is pinned: exactly these digests (config, weights, template, licence, params), no others.
+    // The whole model is pinned: the registry manifest's own digest and the five files it lists, checked by
+    // verify-model.sh on Ollama's content-addressed blobs (infra/test/ai-image.test.ts tests the script).
+    expect(dockerfile).toContain(`ARG MODEL_MANIFEST=${CPU_MODEL.manifest}`);
     expect(dockerfile).toContain(`ARG MODEL_DIGESTS="${CPU_MODEL.digests.join(' ')}"`);
     expect(CPU_MODEL.digests).toHaveLength(5);
-    expect(dockerfile).toContain('if [ "$got" != "$want" ]; then');
+    expect(dockerfile).toContain('COPY --chmod=0755 verify-model.sh /usr/local/bin/verify-model');
+    expect(dockerfile).toContain('verify-model /root/.ollama/models "$MODEL_MANIFEST" $MODEL_DIGESTS &&');
+    // It calls nobody: no Ollama cloud, no model-recommendations fetch.
+    expect(dockerfile).toContain('OLLAMA_NO_CLOUD=1');
     expect(dockerfile).toMatch(/^USER 65534:65534$/m);
     expect(dockerfile).toContain('OLLAMA_NOPRUNE=1');
     // About $8.72 a day on demand in eu-west-2 (8 vCPU + 16 GB of Graviton Fargate).

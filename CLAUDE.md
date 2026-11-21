@@ -56,14 +56,17 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   Proof: `cd server && npx vitest run test/local-model.test.ts` (a real HTTP "Ollama" on 127.0.0.1), `npx vitest run tests/launcher.test.ts`.
 - **Hosted, the AI can run on AWS without Bedrock** (`EnvConfig.aiCpu`, offered by setup when Bedrock is held; a new
   account's GPU quotas start at 0 too): an open model (`CPU_MODEL` in `infra/lib/models.ts`, Qwen3 4B Instruct 2507,
-  Apache-2.0, 4-bit) served by Ollama (`infra/ai-image/Dockerfile`: the release pinned by digest, the model's whole manifest by its five digests,
-  pulled at build time in CodeBuild) on its own Fargate service: Graviton, 8 vCPU / 16 GB, `FARGATE_SPOT` or
-  `FARGATE`, a Cloud Map private name `ai.awscity-<env>.internal`, a security group open on 11434 to the server's
-  group only, a task role with no policy, and no desired count in the template, so `npm run ai -- on|off|status`
+  Apache-2.0, 4-bit) served by Ollama (`infra/ai-image/Dockerfile`: the release pinned by digest; the model pulled at build time in CodeBuild
+  and checked by `infra/ai-image/verify-model.sh`: the registry manifest by its own digest, `CPU_MODEL.manifest`, and its
+  five files by theirs, on Ollama's content-addressed blobs; `OLLAMA_NO_CLOUD=1`, so it calls nobody) on its own Fargate
+  service: Graviton, 8 vCPU / 16 GB, `FARGATE_SPOT` or
+  `FARGATE`, a Cloud Map private name `ai.awscity-<env>.internal`, its own security group (in: 11434 from the server's
+  group only; out: HTTPS only, for its image and logs), a task role with no policy, and no desired count in the template, so `npm run ai -- on|off|status`
   (`scripts/ai-switch.mjs`, the AWS CLI) sticks across deploys. The server gets `AWS_CITY_PRIVATE_DOMAIN`/`_LOCAL_URL`/
   `_LOCAL_MODEL` and, behind Nova, `AWS_CITY_LOCAL_FALLBACK` (Strands' ModelRouter: Bedrock first); behind Claude the
   model alone. Cost: `cpuAiHourly()` from `FARGATE_ARM_PRICE` (eu-west-2 Price List), shown in the review screen.
-  Proof: `cd infra && npm test` ("the AI on AWS without Bedrock", cdk-nag with it on), `cd server && npx vitest run test/local-model.test.ts`.
+  Proof: `cd infra && npm test` ("the AI on AWS without Bedrock", cdk-nag with it on; `test/ai-image.test.ts` runs the
+  model check), `cd server && npx vitest run test/local-model.test.ts`.
 - **A new account is walked through, not left to guess** (`docs/self-hosting.md`): root MFA, the Paid plan (upgraded as
   root; a Free plan account closes when its credits run out), an admin user with MFA, `aws login` as that user, Nova or
   Claude, and a new account's Bedrock hold (verifying, 0 tokens a day, Free plan, use-case form, each with its fix and a

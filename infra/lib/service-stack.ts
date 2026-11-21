@@ -326,9 +326,15 @@ export class ServiceStack extends Stack {
         healthCheck: { command: ['CMD', '/bin/ollama', 'list'], interval: Duration.seconds(30), timeout: Duration.seconds(10), retries: 3, startPeriod: Duration.seconds(60) },
       });
       aiContainer.addMountPoints({ containerPath: '/tmp', sourceVolume: 'tmp', readOnly: false });
+      // Its own group: in, only the city server on 11434 (below); out, only HTTPS, which pulling its image from ECR (and
+      // S3 for the layers) and writing logs need. The model server itself calls nobody (OLLAMA_NO_CLOUD, Dockerfile), and
+      // DNS to the VPC resolver isn't filtered by security groups.
+      const aiSg = new ec2.SecurityGroup(this, 'AiSecurityGroup', { vpc, description: 'AWS City AI model server', allowAllOutbound: false });
+      aiSg.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), 'HTTPS only: ECR image pull and CloudWatch Logs');
       const ai = new ecs.FargateService(this, 'AiService', {
         cluster,
         taskDefinition: aiTask,
+        securityGroups: [aiSg],
         // No desiredCount: CloudFormation starts it at 1 and later deploys leave the count alone, so `npm run ai -- off`
         // (desired count 0, no deploy) sticks until `npm run ai -- on`.
         capacityProviderStrategies: [{ capacityProvider: env.aiCpu.spot ? 'FARGATE_SPOT' : 'FARGATE', weight: 1 }],
