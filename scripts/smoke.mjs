@@ -222,7 +222,15 @@ await wait(800);
 const seededTabs = await page.locator('.tabs button').evaluateAll((bs) => bs.map((b) => b.title));
 if (seededTabs.join() !== 'City,Learn,Jobs,Deploy') errors.push(`seeded progress: expected every tab, got ${seededTabs.join()}`);
 // Learning modes
-const clickTab = async (label) => page.locator(`.tabs button[title="${label}"]`).click();
+// The demo's city care pops a finding card (or a citizen's question) up on a timer, so one can land mid-run on top of
+// the tabs, depending on how fast the machine is: close whatever popped up (Escape) before switching tabs.
+const clickTab = async (label) => {
+  for (let i = 0; i < 3 && (await page.locator('.finding-scrim').count()); i++) {
+    await page.keyboard.press('Escape');
+    await wait(200);
+  }
+  await page.locator(`.tabs button[title="${label}"]`).click();
+};
 await clickTab('Learn');
 await wait(400);
 await page.locator('.flash').click().catch(() => {});
