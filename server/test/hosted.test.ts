@@ -19,7 +19,7 @@ import { dynamoStores } from '../src/store/dynamo.js';
 import { localStores, memoryQuota } from '../src/store/local.js';
 import { LockLostError, today } from '../src/store/types.js';
 import { executeAction } from '../src/agents/executor.js';
-import type { AwsClients } from '../src/aws.js';
+import { type AwsClients, createRefusalBreaker, refusalsMarked } from '../src/aws.js';
 import type { Approvals } from '../src/contract/approvals.js';
 import { createTenants, type Tenant, UNLINKED_REASON } from '../src/tenants.js';
 import type { ServerEvent } from '../src/world.js';
@@ -244,7 +244,10 @@ describe('metered model calls', () => {
 });
 
 describe('account linking', () => {
-  const setup = (whoAmI: (roleArn: string) => { Account?: string; Arn?: string }, opts: { canFix?: () => Promise<boolean | undefined>; now?: () => number } = {}) => {
+  const setup = (
+    whoAmI: (roleArn: string) => { Account?: string; Arn?: string },
+    opts: { canFix?: () => Promise<boolean | undefined>; now?: () => number; deleted?: (sub: string) => Promise<boolean> } = {},
+  ) => {
     const stores = localStores('/tmp/aws-city-link-test.json');
     let lastArn = '';
     const canFix = vi.fn(opts.canFix ?? (async () => undefined));
@@ -260,6 +263,7 @@ describe('account linking', () => {
       // Never the network: the DryRun probe is stubbed (fixesAllowed has its own test in fixes.test.ts).
       canFix,
       now: opts.now,
+      deleted: opts.deleted,
     });
     const link = (sub: string, region: string, extra: { allowFixes?: boolean; label?: string } = {}) => linker.link(sub, region, { label: `Player ${sub}`, ...extra });
     return { linker, stores, link, canFix };
@@ -509,6 +513,123 @@ describe('account linking', () => {
     expect(await stores.accounts.get('u1')).toEqual(linked);
   });
 
+  /** Two server tasks' linkers on one store; `accounts` is what the first one reads and writes through (a test can wrap it). */
+  const twoTasks = (accounts: ReturnType<typeof localStores>['accounts'], raw: ReturnType<typeof localStores>['accounts'], canFix: () => Promise<boolean | undefined> = async () => undefined) => {
+    const make = (a: typeof accounts) =>
+      createAccountLinker({
+        accounts: a,
+        templateUrl: 'https://templates.example/player-role/v5.yaml',
+        selfAccountId: SELF,
+        credentialsFor: () => async () => ({ accessKeyId: 'x', secretAccessKey: 'y' }),
+        whoAmI: async () => ok(`arn:aws:iam::111122223333:role/${playerRoleName('us-west-2')}`),
+        canFix,
+      });
+    return { here: make(accounts), there: make(raw) };
+  };
+
+  it('v2.17 verify’s refusals never feed the shared refusal breaker (three players pressing Verify too early); Check again’s do', async () => {
+    const breaker = createRefusalBreaker();
+    let refuse = false;
+    const stores = localStores(`${process.env.TEMP ?? '/tmp'}/aws-city-breaker-${Date.now()}/progress.json`);
+    const role = `arn:aws:iam::111122223333:role/${playerRoleName('us-west-2')}`;
+    const refusal = () => Object.assign(new Error(`User: arn:aws:sts::${SELF}:assumed-role/Task/x is not authorized to perform: sts:AssumeRole on resource: ${role}`), { name: 'AccessDenied' });
+    const linker = createAccountLinker({
+      accounts: stores.accounts,
+      templateUrl: 'https://templates.example/player-role/v5.yaml',
+      selfAccountId: SELF,
+      // As assumedRole wraps STS (aws.ts), with the test's own breaker and a provider that never reaches AWS.
+      credentialsFor: (o) =>
+        refusalsMarked(async () => (refuse ? Promise.reject(refusal()) : { accessKeyId: 'x', secretAccessKey: 'y' }), o.roleArn, { player: o.sub, breaker, feedsBreaker: o.feedsBreaker }),
+      whoAmI: async (_region, credentials) => (await credentials(), ok(role)),
+      canFix: async () => undefined,
+    });
+    refuse = true;
+    for (const sub of ['v1', 'v2', 'v3']) {
+      await linker.link(sub, 'us-west-2', { label: `Player ${sub}` });
+      await expect(linker.verify(sub, '111122223333')).rejects.toThrow(/couldn’t use the AWSCity role/);
+    }
+    // Not tripped: a poller's refusal for another player is still that player's own.
+    expect(breaker.ourSide('poller-1')).toBe(false);
+    breaker.succeeded();
+    // Check again asks for a link already verified: its refusals count like a poller's.
+    refuse = false;
+    for (const sub of ['r1', 'r2', 'r3']) {
+      await linker.link(sub, 'us-west-2', { label: `Player ${sub}` });
+      await linker.verify(sub, '111122223333');
+    }
+    refuse = true;
+    for (const sub of ['r1', 'r2', 'r3']) await expect(linker.recheck(sub)).rejects.toThrow(/just now/);
+    expect(breaker.ourSide('poller-2')).toBe(true);
+  });
+
+  it('v2.17 Check again sets only fixes: a new setup link made on another task meanwhile (another Region, a new link window) is kept', async () => {
+    const stores = localStores(`${process.env.TEMP ?? '/tmp'}/aws-city-recheck-link-${Date.now()}/progress.json`);
+    let linkAfterNextRead = false;
+    let calls = 0;
+    const accounts = {
+      ...stores.accounts,
+      async get(sub: string) {
+        const r = await stores.accounts.get(sub);
+        if (linkAfterNextRead) {
+          linkAfterNextRead = false;
+          await tasks.there.link(sub, 'eu-west-1', { label: 'Player u1' }); // another task, right after this read
+        }
+        return r;
+      },
+    };
+    // verify's DryRun says no; Check again's (the second) says yes, and the re-read after it is the one a link races.
+    const tasks = twoTasks(accounts, stores.accounts, async () => (++calls === 2 ? ((linkAfterNextRead = true), true) : false));
+    await tasks.here.link('u1', 'us-west-2', { label: 'Player u1' });
+    expect(await tasks.here.verify('u1', '111122223333')).toMatchObject({ fixes: false });
+    const rechecked = await tasks.here.recheck('u1');
+    const stored = await stores.accounts.get('u1');
+    expect(stored).toMatchObject({ status: 'linked', region: 'us-west-2', fixes: true, pendingRegion: 'eu-west-1' });
+    expect(rechecked).toEqual(stored);
+  });
+
+  it('v2.17 a verify in flight while DELETE /me lands on another task writes nothing back (no ExternalId or role ARN after deletion)', async () => {
+    let held: Promise<boolean | undefined> | undefined;
+    let probe!: (allowed: boolean | undefined) => void;
+    const { linker, stores, link, canFix } = setup(ok, { canFix: async () => held ?? false });
+    await link('u1', 'us-west-2');
+    held = new Promise((r) => (probe = r));
+    const verifying = linker.verify('u1', '111122223333');
+    await vi.waitFor(() => expect(canFix).toHaveBeenCalledTimes(1)); // past AssumeRole, its DryRun in flight
+    await stores.accounts.delete('u1'); // another task: DELETE /me deletes the ACCOUNT row
+    probe(true);
+    await expect(verifying).rejects.toThrow('Your AWS account link changed meanwhile. Try again.');
+    expect(await stores.accounts.get('u1')).toBeUndefined();
+  });
+
+  it('v2.17 two first setup links at once (two tasks) never overwrite each other’s ExternalId', async () => {
+    const stores = localStores(`${process.env.TEMP ?? '/tmp'}/aws-city-first-link-${Date.now()}/progress.json`);
+    let theirs: string | undefined;
+    const accounts = {
+      ...stores.accounts,
+      async get(sub: string) {
+        const r = await stores.accounts.get(sub);
+        // Another task's first link lands right after this one found nothing.
+        if (!theirs) theirs = (await tasks.there.link(sub, 'us-west-2', { label: 'Player u1' })).externalId;
+        return r;
+      },
+    };
+    const tasks = twoTasks(accounts, stores.accounts);
+    await expect(tasks.here.link('u1', 'us-west-2', { label: 'Player u1' })).rejects.toThrow(/changed meanwhile/);
+    expect((await stores.accounts.get('u1'))?.externalId).toBe(theirs);
+    // Asked again, it finds theirs and keeps its ExternalId (a stack made from either link works).
+    expect((await tasks.here.link('u1', 'us-west-2', { label: 'Player u1' })).externalId).toBe(theirs);
+  });
+
+  it('v2.17 a player deleted a moment ago (a socket on another task) can neither link nor verify', async () => {
+    const gone = new Set<string>();
+    const { linker, stores, link } = setup(ok, { deleted: async (sub) => gone.has(sub) });
+    await link('u1', 'us-west-2');
+    gone.add('u1');
+    await expect(linker.verify('u1', '111122223333')).rejects.toThrow(/was just deleted/);
+    await expect(link('u1', 'us-west-2')).rejects.toThrow(/was just deleted/);
+    expect(await stores.accounts.get('u1')).toMatchObject({ status: 'pending' });
+  });
+
   it('verify refuses a role that turns out to be something else', async () => {
     const { linker, link } = setup(() => ({ Account: '444455556666', Arn: 'arn:aws:sts::444455556666:assumed-role/Other/x' }));
     await link('u1', 'us-west-2');
@@ -535,6 +656,19 @@ describe('account store: unlink forgets the link (v2.17)', () => {
     expect(await s.accounts.put('u1', { ...rec, fixes: false }, { ...rec, linkedAt: '2026-11-21T11:00:00.000Z' })).toBe(false);
     expect(await s.accounts.put('u1', { ...rec, fixes: false }, { ...rec, externalId: 'f'.repeat(32) })).toBe(false);
     expect(await s.accounts.get('u1')).toEqual({ ...rec, fixes: true });
+  });
+
+  it('local: a put with "new" only creates; update sets one field on the same link and keeps the rest', async () => {
+    const s = localStores(`${process.env.TEMP ?? '/tmp'}/aws-city-update-${Date.now()}/progress.json`);
+    const rec = { status: 'linked' as const, externalId: 'e'.repeat(32), region: 'us-west-2', accountId: '111122223333', linkedAt: '2026-11-21T10:00:00.000Z' };
+    expect(await s.accounts.update('u1', { fixes: true }, rec)).toBeUndefined(); // nothing stored yet
+    expect(await s.accounts.put('u1', rec, 'new')).toBe(true);
+    expect(await s.accounts.put('u1', { ...rec, region: 'eu-west-1' }, 'new')).toBe(false);
+    // Another task's new setup link (pendingRegion, a new window) since this one read the record: kept.
+    await s.accounts.put('u1', { ...rec, pendingRegion: 'eu-west-1', linkIssuedAt: '2026-11-21T11:00:00.000Z' }, rec);
+    expect(await s.accounts.update('u1', { fixes: true }, rec)).toEqual({ ...rec, pendingRegion: 'eu-west-1', linkIssuedAt: '2026-11-21T11:00:00.000Z', fixes: true });
+    expect(await s.accounts.update('u1', { brokenAt: '2026-11-21T12:00:00.000Z' }, { ...rec, linkedAt: undefined })).toBeUndefined(); // another link
+    expect(await s.accounts.get('u1')).toEqual({ ...rec, pendingRegion: 'eu-west-1', linkIssuedAt: '2026-11-21T11:00:00.000Z', fixes: true });
   });
 });
 
@@ -617,6 +751,55 @@ describe('DynamoDB store', () => {
     // A plain put has no condition, and a failure there is still an error.
     await expect(stores().accounts.put('u1', rec)).rejects.toThrow();
     expect(ddb.commandCalls(PutCommand).at(-1)!.args[0].input).not.toHaveProperty('ConditionExpression');
+  });
+
+  it('v2.17 a put with ifLink for a link not verified yet (no linkedAt) needs linkedAt still absent; "new" needs no record at all', async () => {
+    const pending = { status: 'pending' as const, externalId: 'e'.repeat(32), region: 'us-west-2' };
+    ddb.on(PutCommand).resolvesOnce({}).rejectsOnce(conditional());
+    expect(await stores().accounts.put('u1', { ...pending, accountId: '111122223333' }, pending)).toBe(true);
+    const ifPending = ddb.commandCalls(PutCommand)[0]!.args[0].input;
+    expect(ifPending).toMatchObject({
+      ConditionExpression: 'attribute_exists(pk) AND #r.#e = :e AND attribute_not_exists(#r.#l)',
+      ExpressionAttributeNames: { '#r': 'record', '#e': 'externalId', '#l': 'linkedAt' },
+      ExpressionAttributeValues: { ':e': pending.externalId },
+    });
+    expect(ifPending.ExpressionAttributeValues).not.toHaveProperty(':l'); // DynamoDB refuses an unused value
+    expect(await stores().accounts.put('u1', pending, 'new')).toBe(false);
+    const create = ddb.commandCalls(PutCommand)[1]!.args[0].input;
+    expect(create).toMatchObject({ Item: { pk: 'USER#u1', sk: 'ACCOUNT', record: pending }, ConditionExpression: 'attribute_not_exists(pk)' });
+    expect(create).not.toHaveProperty('ExpressionAttributeNames');
+    expect(create).not.toHaveProperty('ExpressionAttributeValues');
+  });
+
+  it('v2.17 accounts.update sets only the named field in place, on the same link (another task’s new setup link meanwhile is kept)', async () => {
+    const rec = { status: 'linked' as const, externalId: 'e'.repeat(32), region: 'us-west-2', accountId: '111122223333', linkedAt: '2026-11-21T10:00:00.000Z' };
+    const after = { ...rec, pendingRegion: 'eu-west-1', fixes: true };
+    ddb.on(UpdateCommand).resolvesOnce({ Attributes: { pk: 'USER#u1', sk: 'ACCOUNT', record: after } }).rejectsOnce(conditional()).rejectsOnce(new Error('throttled'));
+    expect(await stores().accounts.update('u1', { fixes: true }, rec)).toEqual(after);
+    expect(await stores().accounts.update('u1', { brokenAt: '2026-11-21T12:00:00.000Z' }, { externalId: rec.externalId })).toBeUndefined();
+    await expect(stores().accounts.update('u1', { fixes: false }, rec)).rejects.toThrow('throttled'); // only a failed condition is "not that link"
+    const [fixes, broken] = ddb.commandCalls(UpdateCommand).map((c) => c.args[0].input);
+    expect(fixes).toMatchObject({
+      Key: { pk: 'USER#u1', sk: 'ACCOUNT' },
+      UpdateExpression: 'SET #r.#f0 = :v0',
+      ConditionExpression: 'attribute_exists(pk) AND #r.#e = :e AND #r.#l = :l',
+      ExpressionAttributeNames: { '#r': 'record', '#e': 'externalId', '#l': 'linkedAt', '#f0': 'fixes' },
+      ExpressionAttributeValues: { ':e': rec.externalId, ':l': rec.linkedAt, ':v0': true },
+      ReturnValues: 'ALL_NEW',
+    });
+    expect(broken).toMatchObject({
+      ConditionExpression: 'attribute_exists(pk) AND #r.#e = :e AND attribute_not_exists(#r.#l)',
+      ExpressionAttributeNames: { '#f0': 'brokenAt' },
+      ExpressionAttributeValues: { ':v0': '2026-11-21T12:00:00.000Z' },
+    });
+    expect(broken!.ExpressionAttributeValues).not.toHaveProperty(':l');
+  });
+
+  it('v2.17 accounts.get reads strongly consistent (live() and the once-a-minute re-read must see another task’s Disconnect)', async () => {
+    const rec = { status: 'linked' as const, externalId: 'e'.repeat(32), region: 'us-west-2' };
+    ddb.on(GetCommand).resolves({ Item: { pk: 'USER#u1', sk: 'ACCOUNT', record: rec } });
+    expect(await stores().accounts.get('u1')).toEqual(rec);
+    expect(ddb.commandCalls(GetCommand)[0]!.args[0].input).toMatchObject({ TableName: 'aws-city-test', Key: { pk: 'USER#u1', sk: 'ACCOUNT' }, ConsistentRead: true });
   });
 
   it("v2.17 GET /me/export: the social rows are the player's own refs, each read by its key (the salted hash)", async () => {
@@ -1009,10 +1192,22 @@ describe('hosted server: Cognito players and tenants', () => {
 
   it('POST /me/mfa looks at once (the extension calls it right after turning an authenticator on)', async () => {
     mfaReady.mockClear();
-    const res = await fetch(`http://127.0.0.1:${port}/me/mfa`, { method: 'POST', headers: { authorization: 'Bearer jwt-bob', origin: EXT } });
+    const post = (jwt: string) => fetch(`http://127.0.0.1:${port}/me/mfa`, { method: 'POST', headers: { authorization: `Bearer ${jwt}`, origin: EXT } });
+    const res = await post('jwt-bob');
     expect(res.status).toBe(204);
     expect(mfaReady).toHaveBeenCalledWith(expect.objectContaining({ sub: 'bob' }));
     expect((await fetch(`http://127.0.0.1:${port}/me/mfa`, { method: 'POST', headers: { origin: EXT } })).status).toBe(401);
+  });
+
+  it('POST /me/mfa answers 204 only once the first sight is recorded: Cognito not showing the authenticator yet, or failing, is 503 (the extension tries again)', async () => {
+    const post = (jwt: string) => fetch(`http://127.0.0.1:${port}/me/mfa`, { method: 'POST', headers: { authorization: `Bearer ${jwt}`, origin: EXT } });
+    expect((await post('jwt-carol')).status).toBe(503); // 'enrol': AdminGetUser doesn't list SOFTWARE_TOKEN_MFA yet
+    mfaReady.mockRejectedValueOnce(new Error('AdminGetUser failed'));
+    const failed = await post('jwt-bob');
+    expect(failed.status).toBe(503);
+    expect(await failed.json()).toEqual({ error: expect.stringMatching(/authenticator/) });
+    mfaReady.mockResolvedValueOnce('reauth'); // recorded; this session just predates it
+    expect((await post('jwt-bob')).status).toBe(204);
   });
 
   it('linking an AWS account needs MFA first', async () => {

@@ -57,6 +57,9 @@ const stores = config.store === 'dynamodb' ? dynamoStores({ client: new DynamoDB
 const memoryUploads = config.uploads === 'memory' ? createUploadStore(config.publicUrl) : undefined;
 const uploads: UploadStore = memoryUploads ?? createS3UploadStore({ s3: new S3Client(ours), bucket: config.screenshotBucket! });
 const cognito = config.cognito ? new CognitoIdentityProviderClient(ours) : undefined;
+// Hosted: a deleted player's access token still verifies for up to an hour; the tombstone refuses it (local mode's one
+// player may start over at once). The linker checks it too: a socket on another task may still be open for a minute.
+const deleted = config.authMode === 'cognito' ? (sub: string) => stores.deletedRecently(sub) : undefined;
 
 const tenants = createTenants({
   config,
@@ -69,16 +72,13 @@ const tenants = createTenants({
   awsFor,
   linker:
     config.awsMode === 'assume-role'
-      ? createAccountLinker({ accounts: stores.accounts, templateUrl: config.playerRoleTemplateUrl!, selfAccountId: config.selfAccountId!, playerRolePrefix: config.playerRolePrefix })
+      ? createAccountLinker({ accounts: stores.accounts, templateUrl: config.playerRoleTemplateUrl!, selfAccountId: config.selfAccountId!, playerRolePrefix: config.playerRolePrefix, deleted })
       : undefined,
   onDelete: cognito ? async (p) => void (await cognito.send(new AdminDeleteUserCommand({ UserPoolId: config.cognito!.userPoolId, Username: p.username ?? p.sub }))) : undefined,
 });
 
 // Agents can change a linked AWS account, so linking it and approving writes to it need MFA (local token mode has no accounts to protect).
 const mfaReady = cognito && config.awsMode === 'assume-role' && config.requireMfaForLink ? createMfaCheck({ cognito, userPoolId: config.cognito!.userPoolId, since: stores.mfa }) : undefined;
-// Hosted: a deleted player's access token still verifies for up to an hour; the tombstone refuses it (local mode's one
-// player may start over at once).
-const deleted = config.authMode === 'cognito' ? (sub: string) => stores.deletedRecently(sub) : undefined;
 const http = createHttpServer({ config, tenants, authenticate: createAuthenticate(config), uploads: memoryUploads, mfaReady, deleted });
 
 http.server.listen(config.port, config.host, () => {

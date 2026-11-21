@@ -156,8 +156,8 @@ Screenshots in S3 expire after a day and aren't backed up; that's by design.
   keeps working, since the ExternalId doesn't change). A stack that fails with `iam:CreateRole` or CloudFormation denied
   is an account (workshop accounts, some Organizations) that can't create roles: nothing we can change. The player's
   steps and these messages are in `docs/connect-aws-account.md`.
-- **"Was the stack deleted? Link again, or disconnect.":** STS refused the player's role on three polls in a row while
-  their city was open (`BROKEN_AFTER` in `server/src/tenants.ts`), so the server stopped reading their account and marked
+- **"Was the stack deleted? Link again, or disconnect.":** STS refused the player's role on three polls in a row, the first
+  at least 5 minutes before, while their city was open (`BROKEN_AFTER` in `server/src/tenants.ts`), so the server stopped reading their account and marked
   the link record broken (`brokenAt`). It is not a revocation of anything and there's nothing to repair on our side: the
   record stays until the player links again (a new setup link, same ExternalId, then *Verify*), disconnects, or deletes
   their account. A restart doesn't retry a broken link.

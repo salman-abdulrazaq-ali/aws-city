@@ -468,7 +468,7 @@ export interface AccountStatusEvent {
   region?: string;
   message?: string;
   /**
-   * v2.17: the link is kept but its role can't be used any more (STS refused AssumeRole on 3 polls in a row: the AWSCity
+   * v2.17: the link is kept but its role can't be used any more (STS refused AssumeRole on 3 polls in a row over 5 minutes: the AWSCity
    * stack was deleted or changed): the server stopped reading the account. Sent with linked: false, the account id and
    * Region. The player links again (account.link clears it) or disconnects (account.unlink).
    */

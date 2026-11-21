@@ -7,7 +7,7 @@ import { withPresenceCache } from '../social.js';
 import { log } from '../log.js';
 import type { Resource } from '../state/model.js';
 import type { Progress } from '../world.js';
-import { type AccountLocks, type AccountRecord, type BillRecord, DELETED_TOMBSTONE_MS, LockLostError, type Stores } from './types.js';
+import { type AccountLocks, type AccountRecord, type BillRecord, DELETED_TOMBSTONE_MS, type LinkIdentity, LockLostError, type Stores } from './types.js';
 
 /**
  * Single-table design (infra/lib/data-stack.ts):
@@ -24,6 +24,12 @@ const RENEW_MS = 10_000;
 const isConditional = (err: unknown) => (err as { name?: string })?.name === 'ConditionalCheckFailedException';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const ttl = (ms: number) => Math.floor((Date.now() + ms) / 1000);
+/** The ACCOUNT item is still the link `id` names (sameLink: the same ExternalId, and linkedAt the same or still absent). */
+const sameLinkCondition = (id: LinkIdentity) => ({
+  ConditionExpression: `attribute_exists(pk) AND #r.#e = :e AND ${id.linkedAt === undefined ? 'attribute_not_exists(#r.#l)' : '#r.#l = :l'}`,
+  ExpressionAttributeNames: { '#r': 'record', '#e': 'externalId', '#l': 'linkedAt' },
+  ExpressionAttributeValues: { ':e': id.externalId, ...(id.linkedAt !== undefined ? { ':l': id.linkedAt } : {}) },
+});
 
 export const dynamoStores = (deps: { client: DynamoDBClient; table: string; now?: () => number; renewMs?: number }): Stores => {
   const db = DynamoDBDocumentClient.from(deps.client, { marshallOptions: { removeUndefinedValues: true } });
@@ -145,23 +151,42 @@ export const dynamoStores = (deps: { client: DynamoDBClient; table: string; now?
     },
     accounts: {
       async get(sub) {
-        const out = await db.send(new GetCommand({ TableName, Key: { pk: user(sub), sk: 'ACCOUNT' } }));
+        // Strongly consistent: live() and the once-a-minute re-read must see a Disconnect or a new link another task just wrote.
+        const out = await db.send(new GetCommand({ TableName, Key: { pk: user(sub), sk: 'ACCOUNT' }, ConsistentRead: true }));
         return out.Item?.record as AccountRecord | undefined;
       },
       async put(sub, record, ifLink) {
-        // With ifLink: only onto that same link, atomically (a Disconnect, DELETE /me or a new verify on another task wins).
-        const condition = ifLink
-          ? {
-              ConditionExpression: `attribute_exists(pk) AND #r.#e = :e AND ${ifLink.linkedAt === undefined ? 'attribute_not_exists(#r.#l)' : '#r.#l = :l'}`,
-              ExpressionAttributeNames: { '#r': 'record', '#e': 'externalId', '#l': 'linkedAt' },
-              ExpressionAttributeValues: { ':e': ifLink.externalId, ...(ifLink.linkedAt !== undefined ? { ':l': ifLink.linkedAt } : {}) },
-            }
-          : {};
+        // With ifLink: only onto that same link, atomically (a Disconnect, DELETE /me or a new verify on another task wins);
+        // 'new': only while nothing is stored (another task's first link wins).
+        const condition = ifLink === 'new' ? { ConditionExpression: 'attribute_not_exists(pk)' } : ifLink ? sameLinkCondition(ifLink) : {};
         try {
           await db.send(new PutCommand({ TableName, Item: { pk: user(sub), sk: 'ACCOUNT', record }, ...condition }));
           return true;
         } catch (err) {
           if (ifLink && isConditional(err)) return false;
+          throw err;
+        }
+      },
+      async update(sub, fields, ifLink) {
+        // Only these fields, in place: whatever else another task wrote on the same link since (a new setup link) stays.
+        const set = Object.entries(fields).filter(([, v]) => v !== undefined);
+        if (!set.length) throw new Error('accounts.update: nothing to set');
+        const same = sameLinkCondition(ifLink);
+        try {
+          const out = await db.send(
+            new UpdateCommand({
+              TableName,
+              Key: { pk: user(sub), sk: 'ACCOUNT' },
+              UpdateExpression: `SET ${set.map((_, i) => `#r.#f${i} = :v${i}`).join(', ')}`,
+              ConditionExpression: same.ConditionExpression,
+              ExpressionAttributeNames: { ...same.ExpressionAttributeNames, ...Object.fromEntries(set.map(([k], i) => [`#f${i}`, k])) },
+              ExpressionAttributeValues: { ...same.ExpressionAttributeValues, ...Object.fromEntries(set.map(([, v], i) => [`:v${i}`, v])) },
+              ReturnValues: 'ALL_NEW',
+            }),
+          );
+          return out.Attributes?.record as AccountRecord | undefined;
+        } catch (err) {
+          if (isConditional(err)) return undefined;
           throw err;
         }
       },

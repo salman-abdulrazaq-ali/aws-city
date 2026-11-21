@@ -15,7 +15,7 @@ import type { ActionName } from './agents/actions.js';
 import { type Approvals, DISCONNECTED_MESSAGE } from './contract/approvals.js';
 import { createJev } from './agents/jev.js';
 import type { Principal } from './auth.js';
-import { type AwsClients, clientsFor } from './aws.js';
+import { type AwsClients, clientsFor, REFUSAL_WINDOW_MS } from './aws.js';
 import type { Config } from './config.js';
 import { feedEvents, welcomeEvents } from './contract/aws-feed.js';
 import { createConsoleCopilot, type ConsoleCopilot } from './contract/console.js';
@@ -111,7 +111,12 @@ const unlinkedActions = (): ActionService =>
 /** How often the account's full resource list is re-read for the city's mirror (the poller itself runs every ~10 s). */
 const INVENTORY_EVERY_MS = 5 * 60_000;
 
-/** v2.17: polls in a row on which STS refused the player role before the link counts as broken and polling stops. */
+/**
+ * v2.17: polls in a row on which STS refused the player role before the link counts as broken and polling stops, and
+ * only once the first of them is REFUSAL_WINDOW_MS old, on a poll the breaker still takes for the player's own
+ * (aws.ts): when our side fails, players' cached credentials expire one by one over the hour, and polling on through the
+ * window keeps each refused player in the breaker while the next ones arrive.
+ */
 export const BROKEN_AFTER = 3;
 
 /**
@@ -305,8 +310,9 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
       };
       let care: CityCare | undefined;
       let self: World | undefined;
-      /** Polls in a row on which STS refused the role (BROKEN_AFTER of them break the link). */
+      /** Polls in a row on which STS refused the role, and when the first of them was (BROKEN_AFTER: what breaks the link). */
       let refusedPolls = 0;
+      let firstRefusedAt = 0;
       const poller = createPoller({
         clients: aws.clients,
         accountId: aws.accountId,
@@ -314,9 +320,10 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         intervalMs: deps.config.pollIntervalMs,
         onSnapshot(prev, next) {
           if (next.roleRefused) {
-            // Refusals the breaker took for our side (many players at once: aws.ts) never count against this link.
-            if (!next.refusedOurSide) refusedPolls++;
-            if (refusedPolls >= BROKEN_AFTER && self) {
+            // Refusals the breaker took for our side (many players at once: aws.ts) never count against this link, and
+            // never mark it: only a poll the breaker still takes for the player's own does, a breaker window after the first.
+            if (!next.refusedOurSide && refusedPolls++ === 0) firstRefusedAt = Date.now();
+            if (!next.refusedOurSide && refusedPolls >= BROKEN_AFTER && Date.now() - firstRefusedAt >= REFUSAL_WINDOW_MS && self) {
               poller.stop();
               void markBroken(self).catch((err) => log.warn('marking the link broken failed', { who: who(sub), err: (err as Error).name }));
             }
@@ -480,9 +487,10 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         // Only the very link this world was built from: an old world never marks a newer one (a disconnect and a new link
         // of the same account on another task) broken. A stale world is rebuilt from the record instead.
         if (record?.status !== 'linked' || linkKey(record) !== was.link) return resyncSoon();
-        const broken = { ...record, brokenAt: new Date().toISOString() };
-        // Written only onto that same link, atomically: a disconnect or new link landing after the read wins.
-        if (!(await deps.stores.accounts.put(sub, broken, record))) return resyncSoon();
+        // Only brokenAt, in place, onto that same link, atomically: a disconnect or new verify landing after the read wins,
+        // and a new setup link made on another task meanwhile (pendingRegion, its window) is kept.
+        const broken = await deps.stores.accounts.update(sub, { brokenAt: new Date().toISOString() }, record);
+        if (!broken) return resyncSoon();
         replaceWorld(await makeWorld(broken));
         log.warn('account role refused: polling stopped', { who: who(sub), polls: BROKEN_AFTER });
         broadcast([accountStatus()]);
@@ -613,10 +621,21 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         world.poller?.stop();
         clearInterval(world.inventoryTimer);
         world.retired.abort(DISCONNECTED_MESSAGE);
-        // The link goes under the account lock, like a Disconnect (a write already past its live check finishes first).
-        await forgetUnderLock(sub, () => deps.stores.deleteUser(sub), world.accountId);
-        await deps.uploads.deleteOwner(sub);
-        await deps.onDelete?.(p);
+        try {
+          // The link goes under the account lock, like a Disconnect (a write already past its live check finishes first).
+          await forgetUnderLock(sub, () => deps.stores.deleteUser(sub), world.accountId);
+          await deps.uploads.deleteOwner(sub);
+          await deps.onDelete?.(p);
+        } catch (err) {
+          // Not deleted after all (the lock timed out, a store failed; the request answers 500): the city goes on from what
+          // is stored, instead of staying retired (every write refused, nothing read) until it's evicted.
+          try {
+            replaceWorld(await makeWorld(await deps.stores.accounts.get(sub)));
+          } catch (e) {
+            log.warn('rebuilding the city after a failed delete failed', { who: who(sub), err: (e as Error).name });
+          }
+          throw err;
+        }
         replaceWorld(await makeWorld(undefined), DISCONNECTED_MESSAGE);
         log.info('player deleted', { who: who(sub) });
       }),

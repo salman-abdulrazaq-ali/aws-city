@@ -42,14 +42,24 @@ export type LinkIdentity = Pick<AccountRecord, 'externalId' | 'linkedAt'>;
 /** Whether `r` is still the link `id` names (same ExternalId and linkedAt). */
 export const sameLink = (r: AccountRecord | undefined, id: LinkIdentity) => r !== undefined && r.externalId === id.externalId && r.linkedAt === id.linkedAt;
 
+/** The fields written in place on a link (`AccountStore.update`): what Check again and a broken mark learn. */
+export type AccountFields = Partial<Pick<AccountRecord, 'fixes' | 'brokenAt'>>;
+
 export interface AccountStore {
+  /** Strongly consistent (DynamoDB ConsistentRead): live() and the once-a-minute re-read must see another task's write. */
   get(sub: string): Promise<AccountRecord | undefined>;
   /**
    * Saves the record; true when written. `ifLink`: only while the stored record is still that link (sameLink), checked
    * atomically with the write, so a Disconnect, DELETE /me or a new verify on another task meanwhile is never written
-   * over: false, and nothing written.
+   * over: false, and nothing written. `'new'`: only while nothing is stored (a first setup link).
    */
-  put(sub: string, record: AccountRecord, ifLink?: LinkIdentity): Promise<boolean>;
+  put(sub: string, record: AccountRecord, ifLink?: LinkIdentity | 'new'): Promise<boolean>;
+  /**
+   * Sets `fields` on the stored record in place, only while it's still that link (sameLink), atomically: the rest of it
+   * (a new setup link's pendingRegion or window, made on another task meanwhile) stays as it is now. The record as
+   * written, or undefined when it isn't that link any more (nothing written). At least one field is set.
+   */
+  update(sub: string, fields: AccountFields, ifLink: LinkIdentity): Promise<AccountRecord | undefined>;
   /** v2.17 account.unlink: forgets the link (role ARN, account id and ExternalId); a no-op when there's none. */
   delete(sub: string): Promise<void>;
 }

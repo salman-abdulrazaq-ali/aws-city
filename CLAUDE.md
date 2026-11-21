@@ -173,7 +173,8 @@ When a change touches a decision, update its entry and run its Proof.
   (`Stores.mfa` `since`, files or DynamoDB `USER#<sub> MFA`; seeing it off forgets it) and passes only an access token whose `auth_time` is at
   or after it; an older session gets code `auth` with `SIGN_IN_AGAIN_MESSAGE`, which the UI shows as sent (`errorText` keeps an
   `auth` error's own words). After enrolling, the extension calls `POST /me/mfa` (the server
-  looks now; `NOTE_TRIES` 3 tries, waits doubling from 250 ms, an older server's 404 counts as heard), then `GlobalSignOut` ends
+  looks now and answers 204 only once the first sight is recorded, else 503: Cognito not listing the authenticator yet, or
+  AdminGetUser failing; `NOTE_TRIES` 3 tries, waits doubling from 250 ms, an older server's 404 counts as heard), then `GlobalSignOut` ends
   every session and the player signs in again with the code (`src/backend/auth.ts`). If that call never landed, the first sight
   is dated when the server first looks (`now()`), never from AdminGetUser's `UserLastModifiedDate`: whether Cognito moves it when
   TOTP goes on is unconfirmed, and an earlier date could pass a session a stolen password opened before the authenticator. So
@@ -181,13 +182,14 @@ When a change touches a decision, update its entry and run its Proof.
   `resource.remove` is tracked like a fix (`StepUp` in `src/app/runtime.ts`: "press Take it down
   again"). `account.recheck` and `account.unlink` need no MFA (they change nothing, or take access away). Sign-out
   revokes the refresh token (`/oauth2/revoke`, bounded); an email change waits for its code (`keepOriginal`). A "TOTP is on" answer is
-  cached 60 s at most. Proof: `cd server && npx vitest run test/hosted.test.ts -t "MFA"` (includes "MFA step-up for writes"),
+  cached 60 s at most. Proof: `cd server && npx vitest run test/hosted.test.ts -t "MFA|me/mfa"` (includes "MFA step-up for writes"),
   `npx vitest run tests/auth.test.ts tests/ui-logic.test.ts tests/runtime-session.test.ts tests/server-backend.test.ts`, `cd infra && npm test`.
 - **A linked account can be disconnected, notices a deleted stack, and upgrades its role** (contract v2.17). `account.unlink`
   needs no MFA (taking access away): `AccountStore.delete` (files or DynamoDB `USER#<sub> ACCOUNT`), an unlinked world, the
   poller stopped, `account.status {linked: false}` to every tab. Unlink and DELETE /me forget the record holding that AWS
   account's lock (`forgetUnderLock` in `server/src/tenants.ts`; no account id: at once), so a write already past `live()` on any
-  task finishes first and once they return nothing more changes. Replacing a world retires the old one (`World.retired`, an
+  task finishes first and once they return nothing more changes; a DELETE /me that fails (the lock timed out after ~36 s, a
+  store error: a 500) rebuilds the city from the stored record instead of leaving it retired. Replacing a world retires the old one (`World.retired`, an
   AbortController aborted in `replaceWorld` with the reason): its pending previews (agent writes, fixes, removals) end
   `rejected` "That account was disconnected, so nothing changed." (`Approvals` watch the signal), and ActionService and
   CityCare ask `live()` inside the account lock right before minting a grant, which also re-reads the stored link before a
@@ -196,20 +198,31 @@ When a change touches a decision, update its entry and run its Proof.
   until eviction, still polling) re-reads its record once a minute (`ACCOUNT_CHECK_MS`, one read whether or not a tab is open)
   and rebuilds when it's gone or its status/account/Region/`brokenAt` or link changed (`linkKey`: also `linkedAt` and a hash
   of the ExternalId, kept in memory and never logged), so an unlink, a disconnect and new link of the same account and Region,
-  or a broken mark on another ECS task reaches it. A write that must not land on another link is conditional
-  (`AccountStore.put(sub, record, ifLink)`: the same ExternalId and `linkedAt`, DynamoDB `ConditionExpression`, files in one
-  synchronous step): "Check again" (`recheck`) re-reads the record, refuses "Your AWS account link changed meanwhile. Try
-  again." when it's gone or another link, and never writes a deleted link back; a DryRun that can't tell keeps the known
-  `fixes`. STS refusing the role itself (`RoleRefusedError`: only AccessDenied for `sts:AssumeRole` on the player's own role,
+  or a broken mark on another ECS task reaches it (`accounts.get` is strongly consistent, DynamoDB `ConsistentRead`). Every
+  write of the link record is conditional (`AccountStore.put(sub, record, ifLink)`: the same ExternalId and `linkedAt`,
+  DynamoDB `ConditionExpression`, files in one synchronous step; `'new'` only creates, `attribute_not_exists(pk)`), so a
+  DELETE /me or Disconnect on another task is never written back: verify writes onto the record it started from, link onto
+  the one it read (a first link only creates, so two tasks' first links never swap ExternalIds), and both refuse a player
+  deleted a moment ago (the linker's `deleted`: the tombstone); a refused write is `LINK_CHANGED_MESSAGE` ("Your AWS account
+  link changed meanwhile. Try again."). "Check again" (`recheck`) and the broken mark change one field in place
+  (`AccountStore.update`: DynamoDB `UpdateItem` `SET record.fixes`/`record.brokenAt`, the same condition, `ALL_NEW`), so a
+  new setup link made on another task meanwhile (`pendingRegion`, its window) is kept; recheck refuses a link that's gone or
+  another one, and a DryRun that can't tell keeps the known `fixes` and writes nothing. STS refusing the role itself (`RoleRefusedError`: only AccessDenied for `sts:AssumeRole` on the player's own role,
   `refusalsMarked`; our task credentials failing, ExpiredToken/InvalidClientTokenId, never mark a link broken, and
-  'expired' never persists `brokenAt`) on `BROKEN_AFTER` (3) polls in a row stops polling and marks the
-  record `brokenAt` (`broken: true`: "Was the stack deleted? Link again, or disconnect."), only when the record is still
+  'expired' never persists `brokenAt`) on `BROKEN_AFTER` (3) polls in a row, the first at least `REFUSAL_WINDOW_MS` (5 min)
+  old, on a poll the breaker still takes for the player's own (polling goes on meanwhile, so each refused player stays in
+  the breaker while other players' cached credentials expire), stops polling and marks the record `brokenAt` (`broken: true`: "Was the stack deleted? Link again, or disconnect."), only when the record is still
   the link that world was built from (`linkKey`, and the write is conditional; otherwise the world is rebuilt from the
-  record). The "identity-based policy" wording test has a breaker (`createRefusalBreaker`, `server/src/aws.ts`): the role
+  record). The our-side wording test (`OUR_POLICY` in `server/src/aws.ts`: an AccessDenied naming an identity-based
+  policy, a service control policy, a permissions boundary or a session policy, all evaluated on our own role) has a
+  breaker (`createRefusalBreaker`): the role
   refusing `REFUSAL_PLAYERS` (3) different players within `REFUSAL_WINDOW_MS` (5 min) on one server task, with no AssumeRole
   working in between, is our side (`ourSide`, the poll's `refusedOurSide`): not counted toward `BROKEN_AFTER`, and one
   `log.error` plus the `RoleRefusalBreaker` metric, which has its own alarm at 1 (a single line is under the `LoggedErrors`
-  alarm's 20 per 5 minutes), until an AssumeRole works again (a task with fewer than 3 players can't tell). A refused poll says nothing else
+  alarm's 20 per 5 minutes), until an AssumeRole works again (a task with fewer than 3 players can't tell). Only links
+  already verified feed it (pollers, `recheck`): verify's AssumeRole passes `feedsBreaker: false` (`assumedRole`,
+  `refusalsMarked`), so players pressing Verify before CREATE_COMPLETE, or with an older link's stack, never trip it (nor
+  clear it). A refused poll says nothing else
   (no lock lessons, no findings resolved), a restart doesn't retry it, and a new link (back to pending) or a verify clears it.
   A deleted stack's last role session can last an hour, so its districts may show locked first (`docs/connect-aws-account.md`).
   Verify learns fixes by DryRun; the role version is the template version the link points at (`v<N>` of its URL), recorded

@@ -170,9 +170,16 @@ export const localStores = (progressFile: string): Stores => {
       get: async (sub) => accounts.get(sub),
       // One process, and the check and the write are one synchronous step: nothing can land between them.
       put: async (sub, r, ifLink) => {
-        if (ifLink && !sameLink(accounts.get(sub), ifLink)) return false;
+        if (ifLink === 'new' ? accounts.has(sub) : ifLink && !sameLink(accounts.get(sub), ifLink)) return false;
         accounts.set(sub, r);
         return true;
+      },
+      update: async (sub, fields, ifLink) => {
+        const r = accounts.get(sub);
+        if (!r || !sameLink(r, ifLink)) return undefined;
+        const next = { ...r, ...Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined)) };
+        accounts.set(sub, next);
+        return next;
       },
       delete: async (sub) => void accounts.delete(sub),
     },

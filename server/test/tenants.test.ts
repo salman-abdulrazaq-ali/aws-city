@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AccountLinker } from '../src/accounts/link.js';
-import { type AwsClients, clientsFor } from '../src/aws.js';
+import { type AwsClients, clientsFor, REFUSAL_WINDOW_MS } from '../src/aws.js';
 import { loadConfig } from '../src/config.js';
 import { createApprovals } from '../src/contract/approvals.js';
 import { createUploadStore } from '../src/contract/uploads.js';
@@ -57,6 +57,20 @@ const setup = (verify: AccountLinker['verify']) => {
 };
 
 const running = () => pollers.filter((p) => p.running).length;
+
+/** Fakes only Date (timers stay real); the returned function moves the clock on. */
+const fakeClock = () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  return (ms: number) => vi.setSystemTime(Date.now() + ms);
+};
+afterEach(() => void vi.useRealTimers());
+
+/** What breaks a link: BROKEN_AFTER refused polls in a row, then one more once the first is a breaker window old. */
+const breakLink = (poller: { poll: (next: Snap) => void }, later: (ms: number) => void, refused: Snap) => {
+  for (let i = 0; i < BROKEN_AFTER; i++) poller.poll(refused);
+  later(REFUSAL_WINDOW_MS);
+  poller.poll(refused);
+};
 
 describe('tenant account changes', () => {
   it('two verifies at once leave exactly one poller running', async () => {
@@ -180,21 +194,30 @@ describe('the account lifecycle (v2.17)', () => {
     tenants.closeAll();
   });
 
-  it(`${BROKEN_AFTER} refused AssumeRoles in a row break the link: polling stops, the record says so, every tab hears it`, async () => {
+  it(`${BROKEN_AFTER} refused AssumeRoles in a row, the first a breaker window old, break the link: polling stops, the record says so, every tab hears it`, async () => {
+    const later = fakeClock();
     const { tenants, stores } = hub();
     await stores.accounts.put('u1', linkedRecord);
     const tenant = await tenants.acquire({ sub: 'u1' });
     const tab: ServerEvent[] = [];
     tenant.subscribe((e) => tab.push(e));
     const poller = pollers[0]!;
-    // One refused poll, then a good one: the count starts over (a passing STS hiccup isn't a deleted stack).
+    // One refused poll, then a good one: the count and its clock start over (a passing STS hiccup isn't a deleted stack).
     poller.poll(refused());
+    later(REFUSAL_WINDOW_MS);
     poller.poll({ ...emptyWorld('us-west-2'), accountId: ACCOUNT });
     poller.poll(refused());
+    poller.poll(refused());
+    poller.poll(refused());
+    // BROKEN_AFTER in a row, but the first not a breaker window old yet: other players' refusals arriving over the next
+    // minutes may still show it's our side, so polling goes on and nothing is written.
+    later(REFUSAL_WINDOW_MS - 1);
     poller.poll(refused());
     await new Promise((r) => setTimeout(r, 10));
     expect(running()).toBe(1);
     expect(statuses(tab)).toEqual([]);
+    expect(await stores.accounts.get('u1')).not.toHaveProperty('brokenAt');
+    later(1);
     poller.poll(refused());
     await vi.waitFor(() => expect(statuses(tab)).toHaveLength(1));
     expect(running()).toBe(0);
@@ -212,6 +235,31 @@ describe('the account lifecycle (v2.17)', () => {
     });
     // A refused poll says nothing else to the player (no "IAM locked" lesson per service, no findings resolved).
     expect(tab.filter((e) => e.type !== 'account.status')).toEqual([]);
+    tenants.closeAll();
+  });
+
+  it('a link is marked broken only on a poll the breaker still takes for the player’s own refusal', async () => {
+    const later = fakeClock();
+    const { tenants, stores } = hub();
+    await stores.accounts.put('u1', linkedRecord);
+    const tenant = await tenants.acquire({ sub: 'u1' });
+    const tab: ServerEvent[] = [];
+    tenant.subscribe((e) => tab.push(e));
+    const poller = pollers[0]!;
+    for (let i = 0; i < BROKEN_AFTER; i++) poller.poll(refused());
+    later(REFUSAL_WINDOW_MS);
+    // Meanwhile other players were refused too and the breaker tripped (our side): those polls mark nothing.
+    poller.poll({ ...refused(), refusedOurSide: true });
+    poller.poll({ ...refused(), refusedOurSide: true });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(running()).toBe(1);
+    expect(statuses(tab)).toEqual([]);
+    expect(await stores.accounts.get('u1')).not.toHaveProperty('brokenAt');
+    // The breaker cleared (an AssumeRole worked elsewhere) and this role still refuses: the player's own.
+    poller.poll(refused());
+    await vi.waitFor(() => expect(statuses(tab)).toEqual([expect.objectContaining({ broken: true })]));
+    expect(await stores.accounts.get('u1')).toMatchObject({ brokenAt: expect.any(String) });
+    expect(running()).toBe(0);
     tenants.closeAll();
   });
 
@@ -513,6 +561,7 @@ describe('a disconnected or changed account changes nothing (v2.17)', () => {
   });
 
   it('a disconnect and a new link of the same account and Region on another task: this task rebuilds, and never marks the new link broken', async () => {
+    const later = fakeClock();
     const { stores, clients } = await setupWorld();
     await stores.accounts.put('u1', { ...record, linkedAt: '2026-11-21T10:00:00.000Z' });
     const here = hubOn(stores, clients);
@@ -527,8 +576,7 @@ describe('a disconnected or changed account changes nothing (v2.17)', () => {
     const relinked = { ...record, externalId: 'z'.repeat(32), linkedAt: '2026-11-21T11:00:00.000Z' };
     await stores.accounts.put('u1', relinked);
     // This task's world still uses the old ExternalId, which the new stack refuses.
-    const refused: Snap = { ...emptyWorld('us-west-2'), accountId: ACCOUNT, roleRefused: true };
-    for (let i = 0; i < BROKEN_AFTER; i++) old.poll(refused);
+    breakLink(old, later, { ...emptyWorld('us-west-2'), accountId: ACCOUNT, roleRefused: true });
     await vi.waitFor(() => expect(tab).toContainEqual(expect.objectContaining({ type: 'account.status', linked: true, accountId: ACCOUNT })));
     expect(await stores.accounts.get('u1')).toEqual(relinked); // no brokenAt written onto the new link
     expect(old.running).toBe(false);
@@ -538,6 +586,7 @@ describe('a disconnected or changed account changes nothing (v2.17)', () => {
   });
 
   it('a link that broke is marked only if it is still the same link when the mark is written', async () => {
+    const later = fakeClock();
     const { stores, clients } = await setupWorld();
     await stores.accounts.put('u1', { ...record, linkedAt: '2026-11-21T10:00:00.000Z' });
     const relinked = { ...record, externalId: 'z'.repeat(32), linkedAt: '2026-11-21T11:00:00.000Z' };
@@ -553,11 +602,51 @@ describe('a disconnected or changed account changes nothing (v2.17)', () => {
     const tenant = await here.acquire({ sub: 'u1' });
     const tab: ServerEvent[] = [];
     tenant.subscribe((e) => tab.push(e));
-    const refused: Snap = { ...emptyWorld('us-west-2'), accountId: ACCOUNT, roleRefused: true };
-    for (let i = 0; i < BROKEN_AFTER; i++) pollers[0]!.poll(refused);
+    breakLink(pollers[0]!, later, { ...emptyWorld('us-west-2'), accountId: ACCOUNT, roleRefused: true });
     await vi.waitFor(() => expect(tab).toContainEqual(expect.objectContaining({ type: 'account.status', linked: true })));
     expect(await get('u1')).toEqual(relinked);
     here.closeAll();
+  });
+
+  it('a broken mark sets only brokenAt: a new setup link made on another task meanwhile (another Region, its window) is kept', async () => {
+    const later = fakeClock();
+    const { stores, clients } = await setupWorld();
+    const linkedAt = '2026-11-21T10:00:00.000Z';
+    await stores.accounts.put('u1', { ...record, linkedAt });
+    const asked = { pendingRegion: 'eu-west-1', linkIssuedAt: '2026-11-21T11:00:00.000Z' };
+    let reads = 0;
+    const get = stores.accounts.get.bind(stores.accounts);
+    stores.accounts.get = async (sub) => {
+      const r = await get(sub);
+      // Read 1 builds the world; read 2 is the mark's: another task's link() for eu-west-1 lands right after it.
+      if (++reads === 2 && r) await stores.accounts.put(sub, { ...r, ...asked }, r);
+      return r;
+    };
+    const here = hubOn(stores, clients);
+    const tenant = await here.acquire({ sub: 'u1' });
+    const tab: ServerEvent[] = [];
+    tenant.subscribe((e) => tab.push(e));
+    breakLink(pollers[0]!, later, { ...emptyWorld('us-west-2'), accountId: ACCOUNT, roleRefused: true });
+    await vi.waitFor(() => expect(tab).toContainEqual(expect.objectContaining({ type: 'account.status', broken: true })));
+    expect(await get('u1')).toEqual({ ...record, linkedAt, ...asked, brokenAt: expect.any(String) });
+    here.closeAll();
+  });
+
+  it('DELETE /me whose account lock times out (a 500) leaves the city running from the stored record, not retired', async () => {
+    const { stores, clients } = await setupWorld();
+    stores.locks.withLock = async () => {
+      throw new Error('Another change to this AWS account is still running. Try again in a moment.');
+    };
+    const tenants = hubOn(stores, clients);
+    const tenant = await tenants.acquire({ sub: 'u1' });
+    expect(running()).toBe(1);
+    await expect(tenant.deleteMe()).rejects.toThrow(/still running/);
+    expect(await stores.accounts.get('u1')).toEqual(record); // nothing was deleted
+    // A fresh world on the same link: polling again (the old one was retired before the lock was asked for).
+    expect(pollers).toHaveLength(2);
+    expect(running()).toBe(1);
+    expect(await tenant.snapshot()).toBeDefined();
+    tenants.closeAll();
   });
 
   it('refusals the breaker took for our side (many players at once) never count toward breaking the link', async () => {

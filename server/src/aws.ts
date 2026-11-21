@@ -48,8 +48,9 @@ export const isRoleRefused = (err: unknown): err is RoleRefusedError => err inst
  * A player's own account (hosted mode): short-lived credentials for AWSCityPlayerRole, assumed from our
  * task role with the player's ExternalId. The SDK caches them and refreshes before they expire. STS refusing this role
  * comes out as RoleRefusedError; anything else (our own task credentials failing, throttling, the network) as it was.
+ * `feedsBreaker: false` (verify): its refusals and successes stay out of the shared refusal breaker (refusalsMarked).
  */
-export const assumedRole = (opts: { roleArn: string; externalId: string; sub: string; region: string }): AwsCredentialIdentityProvider => {
+export const assumedRole = (opts: { roleArn: string; externalId: string; sub: string; region: string; feedsBreaker?: boolean }): AwsCredentialIdentityProvider => {
   const provider = fromTemporaryCredentials({
     masterCredentials: fromNodeProviderChain(),
     clientConfig: { ...SDK_DEFAULTS, region: opts.region },
@@ -60,18 +61,25 @@ export const assumedRole = (opts: { roleArn: string; externalId: string; sub: st
       DurationSeconds: 3600,
     },
   });
-  return refusalsMarked(provider, opts.roleArn, { player: who(opts.sub) });
+  return refusalsMarked(provider, opts.roleArn, { player: who(opts.sub), ...(opts.feedsBreaker === false ? { feedsBreaker: false } : {}) });
 };
 
 /**
+ * The policies IAM evaluates on the caller of AssumeRole, i.e. our own task role: an AccessDenied naming one ("no
+ * identity-based policy allows", "explicit deny in a service control policy", a permissions boundary or a session policy)
+ * is our side. The player's side names their role's trust policy (resource-based) or nothing at all (no such role).
+ */
+const OUR_POLICY = /identity-based policy|service control policy|permissions boundary|session policy/i;
+
+/**
  * Whether a failed AssumeRole is the player's role refusing us: AccessDenied for sts:AssumeRole on that role (`roleArn`,
- * when known). Never our own task credentials failing (ExpiredToken, InvalidClientTokenId: 'expired', or our role's
- * identity policy not allowing the call): those would mark every player's link broken at once.
+ * when known). Never our own task credentials failing (ExpiredToken, InvalidClientTokenId: 'expired', or a policy on our
+ * role not allowing the call: OUR_POLICY): those would mark every player's link broken at once.
  */
 const isPlayerRoleRefusal = (err: unknown, roleArn?: string): boolean => {
   const e = err as { name?: string; message?: string } | undefined;
   const message = e?.message ?? '';
-  return e?.name === 'AccessDenied' && message.includes('sts:AssumeRole') && (!roleArn || message.includes(roleArn)) && !/identity-based policy/i.test(message);
+  return e?.name === 'AccessDenied' && message.includes('sts:AssumeRole') && (!roleArn || message.includes(roleArn)) && !OUR_POLICY.test(message);
 };
 
 /** The refusal breaker: this many different players refused within REFUSAL_WINDOW_MS, with no AssumeRole working between. */
@@ -123,18 +131,23 @@ const roleRefusals = createRefusalBreaker();
 /**
  * Wraps a credential provider so the player role refusing it comes out as RoleRefusedError (assumedRole's; a test seam
  * too), marked `ourSide` when the breaker says so. `player`: who it's for (who(sub)), as the breaker counts players.
+ * `feedsBreaker: false`: neither counted nor clearing (verify: pressed before CREATE_COMPLETE, or with a stack from an older
+ * link, it's refused the same way, so a few players, or one with a few sign-ups, would trip the breaker and page us,
+ * and while it's tripped real deleted stacks wouldn't count). Only links already verified feed it: pollers and recheck.
  */
 export const refusalsMarked =
-  (provider: AwsCredentialIdentityProvider, roleArn?: string, opts: { player?: string; breaker?: RefusalBreaker } = {}): AwsCredentialIdentityProvider =>
+  (provider: AwsCredentialIdentityProvider, roleArn?: string, opts: { player?: string; breaker?: RefusalBreaker; feedsBreaker?: boolean } = {}): AwsCredentialIdentityProvider =>
   async (...args) => {
     const breaker = opts.breaker ?? roleRefusals;
+    const feeds = opts.feedsBreaker !== false;
     let credentials: Awaited<ReturnType<AwsCredentialIdentityProvider>>;
     try {
       credentials = await provider(...args);
     } catch (err) {
-      throw isPlayerRoleRefusal(err, roleArn) ? new RoleRefusedError(err, breaker.ourSide(opts.player ?? roleArn ?? 'unknown')) : err;
+      if (!isPlayerRoleRefusal(err, roleArn)) throw err;
+      throw new RoleRefusedError(err, feeds && breaker.ourSide(opts.player ?? roleArn ?? 'unknown'));
     }
-    breaker.succeeded();
+    if (feeds) breaker.succeeded();
     return credentials;
   };
 

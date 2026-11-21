@@ -15,6 +15,10 @@ const ROLE_ARN = /^arn:aws:iam::(\d{12}):role\/(AWSCityPlayerRole-[a-z0-9-]+)$/;
 
 export class LinkError extends Error {}
 
+/** A conditional write found another link (or none) than the one read: a Disconnect, DELETE /me or link on another task. */
+export const LINK_CHANGED_MESSAGE = 'Your AWS account link changed meanwhile. Try again.';
+const DELETED_MESSAGE = 'This AWS City account was just deleted, so I won’t link an AWS account to it.';
+
 /** A setup link is good for a day: verify refuses an older one, so a link phished from another player ages out. */
 export const LINK_TTL_MS = 24 * 60 * 60_000;
 
@@ -60,7 +64,9 @@ export const connectsPlayerLabel = (p: { sub: string; email?: string }, profile?
  *     account, or `updated`): the account can't be read for it. A template version that changes what the role allows
  *     must add a probe like fixes' DryRun, or the city would trust a version the stack doesn't have.
  *  3. recheck ("Check again"): the same DryRun for the linked role, read-only; the role version stays as it was.
- * We never see or store the player's keys; only the role ARN and the ExternalId.
+ * We never see or store the player's keys; only the role ARN and the ExternalId. Every write is conditional on the record
+ * it read (a first link only creates), so a DELETE /me or Disconnect on another task is never written back, and a player
+ * deleted a moment ago (`deleted`) can neither link nor verify.
  */
 export const createAccountLinker = (deps: {
   accounts: AccountStore;
@@ -68,8 +74,13 @@ export const createAccountLinker = (deps: {
   selfAccountId: string;
   /** AWSCityPlayerRole (prod) or AWSCityPlayerRole-<env>. */
   playerRolePrefix?: string;
-  /** Test seam: credentials for a role. */
-  credentialsFor?: (o: { roleArn: string; externalId: string; sub: string; region: string }) => AwsCredentialIdentityProvider;
+  /** Hosted: the player's DELETE /me tombstone (Stores.deletedRecently). */
+  deleted?: (sub: string) => Promise<boolean>;
+  /**
+   * Credentials for a role (a test seam; assumedRole). `feedsBreaker: false` (verify): its refusals stay out of the shared
+   * refusal breaker (aws.ts): a stack not finished yet, or made from an older link, is refused the same way.
+   */
+  credentialsFor?: (o: { roleArn: string; externalId: string; sub: string; region: string; feedsBreaker?: boolean }) => AwsCredentialIdentityProvider;
   /** Test seam: GetCallerIdentity with those credentials. */
   whoAmI?: (region: string, credentials: AwsCredentialIdentityProvider) => Promise<{ Account?: string; Arn?: string }>;
   /** Test seam: whether the role allows fixes (fixesAllowed's DryRun), or undefined when it can't tell. */
@@ -110,6 +121,7 @@ export const createAccountLinker = (deps: {
 
     async link(sub: string, region: string, opts: LinkOptions) {
       if (!REGION.test(region)) throw new LinkError('That doesn’t look like an AWS region (e.g. us-west-2).');
+      if (await deps.deleted?.(sub)) throw new LinkError(DELETED_MESSAGE);
       const existing = await deps.accounts.get(sub);
       // Every link starts a fresh day to verify in, and names the template version it points at.
       const issued = { linkIssuedAt: new Date(now()).toISOString(), ...(latestRoleVersion !== undefined ? { linkRoleVersion: latestRoleVersion } : {}) };
@@ -120,7 +132,8 @@ export const createAccountLinker = (deps: {
         const { pendingRegion: _, linkRoleVersion: _v, ...linked } = existing;
         record = { ...(existing.region === region ? linked : { ...linked, pendingRegion: region }), ...issued };
       } else record = { status: 'pending', externalId: existing?.externalId ?? randomBytes(24).toString('base64url'), region, ...issued };
-      await deps.accounts.put(sub, record);
+      // Onto the record read (a first link only creates): another task's first link, a DELETE /me or Disconnect since wins.
+      if (!(await deps.accounts.put(sub, record, existing ?? 'new'))) throw new LinkError(LINK_CHANGED_MESSAGE);
       return { url: quickCreateUrl(region, record.externalId, opts), externalId: record.externalId };
     },
 
@@ -129,6 +142,7 @@ export const createAccountLinker = (deps: {
      * stack with the latest link's template ("I've updated the stack"), so its version becomes the role version.
      */
     async verify(sub: string, input: string, opts: { updated?: boolean } = {}): Promise<AccountRecord & { status: 'linked' }> {
+      if (await deps.deleted?.(sub)) throw new LinkError(DELETED_MESSAGE);
       const stored = await deps.accounts.get(sub);
       if (!stored) throw new LinkError('Start with “Get my setup link” first.');
       const issuedAt = stored.linkIssuedAt ? Date.parse(stored.linkIssuedAt) : Number.NaN;
@@ -144,7 +158,8 @@ export const createAccountLinker = (deps: {
       if (!m || !m[2]!.startsWith(`${prefix}-`)) throw new LinkError('Paste your 12-digit AWS account id (or the RoleArn from the AWSCity stack).');
       if (m[1] === deps.selfAccountId) throw new LinkError('That’s the city’s own account — use your account.');
       let id: { Account?: string; Arn?: string };
-      const credentials = credentialsFor({ roleArn, externalId: record.externalId, sub, region: record.region });
+      // Not a link that worked yet: a refusal here (Verify before CREATE_COMPLETE, an older link's stack) is no outage.
+      const credentials = credentialsFor({ roleArn, externalId: record.externalId, sub, region: record.region, feedsBreaker: false });
       try {
         id = await whoAmI(record.region, credentials);
       } catch {
@@ -165,7 +180,8 @@ export const createAccountLinker = (deps: {
         ...(roleVersion !== undefined ? { roleVersion } : {}),
         ...(fixes !== undefined ? { fixes } : {}),
       };
-      await deps.accounts.put(sub, linked);
+      // Onto the record it started from: a DELETE /me or Disconnect on another task meanwhile is never written back.
+      if (!(await deps.accounts.put(sub, linked, stored))) throw new LinkError(LINK_CHANGED_MESSAGE);
       return linked;
     },
 
@@ -187,18 +203,17 @@ export const createAccountLinker = (deps: {
         throw new LinkError(`I couldn’t use the AWSCity role in ${accountId} (${region}) just now. Is the stack still there? Try again in a minute.`);
       }
       const probed = await canFix(region, credentials, accountId).catch(() => undefined);
-      // Only `fixes` changes, on the record as it is now (a new setup link since may have changed the rest), and only
-      // while it's still this link: a Disconnect, DELETE /me or a new link on another task meanwhile is never written back
-      // (the ExternalId and role ARN would outlive them). The write itself is conditional on the same link.
-      const changed = () => new LinkError('Your AWS account link changed meanwhile. Try again.');
+      // Only while it's still this link: a Disconnect, DELETE /me or a new link on another task meanwhile is never written
+      // back (the ExternalId and role ARN would outlive them).
       const latest = await deps.accounts.get(sub);
-      if (latest?.status !== 'linked' || latest.accountId !== accountId || latest.region !== region || !sameLink(latest, stored)) throw changed();
-      // A DryRun that can't tell keeps the known answer.
-      const fixes = probed ?? latest.fixes;
-      const { fixes: _f, ...rest } = latest;
-      const next = { ...rest, status: 'linked' as const, ...(fixes !== undefined ? { fixes } : {}) };
-      if (!(await deps.accounts.put(sub, next, stored))) throw changed();
-      return next;
+      if (latest?.status !== 'linked' || latest.accountId !== accountId || latest.region !== region || !sameLink(latest, stored)) throw new LinkError(LINK_CHANGED_MESSAGE);
+      // A DryRun that can't tell keeps the known answer: nothing to write.
+      if (probed === undefined) return { ...latest, status: 'linked' };
+      // Only `fixes`, in place and conditional on the same link: whatever else changed since (a new setup link on another
+      // task: pendingRegion, its window) stays.
+      const next = await deps.accounts.update(sub, { fixes: probed }, stored);
+      if (next?.status !== 'linked') throw new LinkError(LINK_CHANGED_MESSAGE);
+      return { ...next, status: 'linked' };
     },
   };
 };

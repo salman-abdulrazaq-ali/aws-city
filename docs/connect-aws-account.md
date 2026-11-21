@@ -148,8 +148,8 @@ your current link keeps working until the new one is verified.
 
 ### If you delete the stack first
 
-Nothing tells AWS City. Its next reads of your account are refused by AWS. After **three failed reads in a row** (about
-30 seconds at the default 10-second poll, and only while your city is open) the city stops reading your account and the
+Nothing tells AWS City. Its next reads of your account are refused by AWS. After **failed reads in a row for about 5 minutes**
+(only while your city is open) the city stops reading your account and the
 card says "Was the stack deleted? Link again, or disconnect." Nothing else changes: no lessons, no findings are marked
 resolved, and a server restart doesn't retry it. For up to an hour after you delete the stack, the role's last session
 (it lasts up to an hour) may still be in use: AWS then refuses the city service by service, so some districts may show

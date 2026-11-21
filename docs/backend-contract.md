@@ -62,7 +62,7 @@ A client needs a server of its version or newer, so deploy the server first; the
 | `presence.beat` | `region, rank?` | v2.11: the player is in this city now (on connect, on arriving, every 30 s while a tab is visible). |
 | `score.submit` | `board, score` | v2.11: a best for a weekly leaderboard (a game id or `mayors:<region>`). |
 | `leaderboard.get` | `board` | v2.11: this week's top of a board. |
-| `progress.get/put`, `screenshot.presign`, `quest.start` | | On `aws`/`hosted`, handled over REST (`/progress`, `/screenshots`) or locally by `ServerBackend`. `DELETE /me` removes everything stored for the player. Hosted: `POST /me/mfa` (204) right after the player turns TOTP on records when MFA started, so the step-up accepts the next sign-in. |
+| `progress.get/put`, `screenshot.presign`, `quest.start` | | On `aws`/`hosted`, handled over REST (`/progress`, `/screenshots`) or locally by `ServerBackend`. `DELETE /me` removes everything stored for the player. Hosted: `POST /me/mfa` right after the player turns TOTP on records when MFA started, so the step-up accepts the next sign-in: 204 once it's recorded, 503 when Cognito doesn't show the authenticator yet or can't be asked (the client tries again). |
 
 Client-internal, not on the wire: `storage.local` keeps `progress.parked` (a signed-out player's unsynced progress, tagged with the player's id, their Cognito `sub`, and only ever restored to that same player), and the optional `AgentBackend.playerId()` (hosted only; absent on local/mock) exists just to tag it. It is not a security check: the server authorizes every request by the JWT.
 
@@ -398,7 +398,7 @@ minutes of that socket's own successful `account.link` (link, then verify as soo
   a write already approved is refused inside the account lock; another server task notices within about a minute (it
   re-reads the link once a minute while a tab is open, and before every write).
 - `account.status` v2.17 fields: `broken: true` (with `linked: false`, `accountId`, `region`): STS refused the player
-  role on 3 polls in a row (the stack was deleted or changed), so the server stopped reading the account; a new
+  role on 3 polls in a row, the first at least 5 minutes before (the stack was deleted or changed), so the server stopped reading the account; a new
   `account.link` (back to pending) or a successful `account.verify` clears it. `fixes`: whether the role allows fixes
   (absent = unknown; the local server sends its own setting). Hosted only: `roleVersion` (the template version the
   player installed from the city's link; absent if linked before v2.17), `latestRoleVersion` and `templateUrl` (the

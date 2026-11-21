@@ -375,9 +375,12 @@ export const createHttpServer = (deps: Deps) => {
       return send(res, 204);
     }
     // The extension just turned an authenticator on, before it signs every session out: look now, so the sign-in
-    // that follows counts as after it (accounts/mfa.ts). The answer is the same whatever was found.
+    // that follows counts as after it (accounts/mfa.ts). 204 only once the first sight is recorded ('ok' or 'reauth'); an
+    // authenticator Cognito doesn't show yet ('enrol') or a failed look is 503, so the extension tries again and, if it
+    // never lands, tells the player they may have to sign in twice.
     if (route === 'POST /me/mfa') {
-      if (mfaReady) await mfaReady(principal).catch((err) => log.warn('mfa look failed', { who: who(principal.sub), err: (err as Error).name }));
+      const seen = mfaReady ? await mfaReady(principal).catch((err) => (log.warn('mfa look failed', { who: who(principal.sub), err: (err as Error).name }), undefined)) : 'ok';
+      if (seen !== 'ok' && seen !== 'reauth') throw new HttpError(503, 'The city couldn’t see your authenticator yet. Try again in a moment.');
       return send(res, 204);
     }
     // Debug view of what the state layer sees (local server only).

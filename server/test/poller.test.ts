@@ -103,6 +103,40 @@ describe('a refused role (v2.17)', () => {
     expect(other.name).toBe('Throttling');
   });
 
+  it('an AccessDenied that names a policy on our own principal (SCP, permissions boundary, session policy) is our side, never the player’s role', async () => {
+    const ROLE = 'arn:aws:iam::111122223333:role/AWSCityPlayerRole-us-west-2';
+    const caught = (message: string) => refusalsMarked(async () => Promise.reject(Object.assign(new Error(message), { name: 'AccessDenied' })), ROLE)().catch((e: unknown) => e);
+    const ours = `User: arn:aws:sts::999999999999:assumed-role/Task/x is not authorized to perform: sts:AssumeRole on resource: ${ROLE}`;
+    for (const why of [
+      'with an explicit deny in a service control policy',
+      'because no service control policy allows the sts:AssumeRole action',
+      'with an explicit deny in a permissions boundary',
+      'because no permissions boundary allows the sts:AssumeRole action',
+      'with an explicit deny in a session policy',
+      'because no session policy allows the sts:AssumeRole action',
+    ])
+      expect(isRoleRefused(await caught(`${ours} ${why}`))).toBe(false);
+    // The player's role's own trust policy (resource-based) refusing us is still theirs.
+    expect(isRoleRefused(await caught(`${ours} with an explicit deny in a resource-based policy`))).toBe(true);
+  });
+
+  it('refusals with feedsBreaker: false (a verify) never count toward the shared breaker, nor clear it', async () => {
+    const ROLE = 'arn:aws:iam::111122223333:role/AWSCityPlayerRole-us-west-2';
+    const breaker = createRefusalBreaker({ now: () => 0 });
+    const refusal = () => Object.assign(new Error(`User: arn:aws:sts::999999999999:assumed-role/Task/x is not authorized to perform: sts:AssumeRole on resource: ${ROLE}`), { name: 'AccessDenied' });
+    for (const player of ['v1', 'v2', 'v3']) {
+      const err: unknown = await refusalsMarked(async () => Promise.reject(refusal()), ROLE, { player, breaker, feedsBreaker: false })().catch((e: unknown) => e);
+      expect(isRoleRefused(err)).toBe(true);
+      expect((err as RoleRefusedError).ourSide).toBe(false);
+    }
+    // Not tripped: two pollers' refusals are still those players' own.
+    expect(breaker.ourSide('p1')).toBe(false);
+    expect(breaker.ourSide('p2')).toBe(false);
+    // A verify that works doesn't clear what the pollers counted either.
+    await refusalsMarked(async () => ({ accessKeyId: 'a', secretAccessKey: 'b' }), ROLE, { player: 'v4', breaker, feedsBreaker: false })();
+    expect(breaker.ourSide('p3')).toBe(true);
+  });
+
   it('a real SDK client hands the refusal on unchanged (it is still RoleRefusedError when send() fails), before any request', async () => {
     const sent: string[] = [];
     const requestHandler = { handle: async () => (sent.push('request'), { response: { statusCode: 200, headers: {}, body: new Uint8Array() } }) };
