@@ -9,14 +9,14 @@
 //   npm run setup -- --dry-run            ask + check and write aws-city.config.json; changes nothing in AWS
 //   npm run setup -- --yes --env staging  non-interactive: reuse aws-city.config.json (CI)
 //   npm run setup -- --destroy --env staging
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as p from '@clack/prompts';
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
-import { CloudFormationClient, DescribeStacksCommand } from '@aws-sdk/client-cloudformation';
+import { CloudFormationClient, DescribeStackEventsCommand, DescribeStacksCommand } from '@aws-sdk/client-cloudformation';
 import { FreeTierClient, GetAccountPlanStateCommand } from '@aws-sdk/client-freetier';
 import { CognitoIdentityProviderClient, DescribeUserPoolDomainCommand } from '@aws-sdk/client-cognito-identity-provider';
 import { IAMClient, ListOpenIDConnectProvidersCommand } from '@aws-sdk/client-iam';
@@ -34,6 +34,7 @@ const CONFIG = `${ROOT}aws-city.config.json`;
 const { NOVA_MODELS, SUPPORTED_REGIONS, geoFor, modelsForChoice, unsupportedRegionMessage } = await import(new URL('../lib/models.ts', import.meta.url));
 // The review screen's text (pure, tested in test/review.test.ts).
 const { cloudFrontNote, isFreeMail, plannedActions, reviewRows, reviewText } = await import(new URL('../lib/review.ts', import.meta.url));
+const { progressLine } = await import(new URL('../lib/deploy-progress.ts', import.meta.url));
 const GOOGLE_SECRET = 'aws-city/google-oauth';
 
 const args = process.argv.slice(2);
@@ -62,6 +63,15 @@ const ask = async (kind, o, savedValue) => {
 const run = (cmd, argv, cwd = ROOT, env = {}) => {
   const r = spawnSync(cmd, argv, { cwd, stdio: 'inherit', env: { ...process.env, ...env } });
   if (r.status !== 0) bye(`${cmd} ${argv.join(' ')} failed (exit ${r.status}). Fix the error above and run setup again — it picks up where it left off.`);
+};
+/** Like `run`, without blocking: the deploy's progress line keeps ticking while cdk works. */
+const runAsync = async (cmd, argv, cwd = ROOT, env = {}) => {
+  const code = await new Promise((resolve) => {
+    const child = spawn(cmd, argv, { cwd, stdio: 'inherit', env: { ...process.env, ...env } });
+    child.on('exit', (c) => resolve(c ?? 1));
+    child.on('error', () => resolve(1));
+  });
+  if (code !== 0) bye(`${cmd} ${argv.join(' ')} failed (exit ${code}). Fix the error above and run setup again — it picks up where it left off.`);
 };
 const approve = async (what) => {
   if (DRY) {
@@ -426,20 +436,12 @@ const askAll = async (was, kept) => {
   );
   const extensionIds = [...(allowDev ? [DEV_EXTENSION_ID] : []), ...(storeId ? [storeId] : [])];
   if (!extensionIds.length) p.log.warn('No extension can sign in, so you won’t be able to try the city: allow the local build, or publish to the Chrome Web Store and run setup again with its id.');
-  // Chrome/Edge are always on; Firefox and Safari players sign in with the same accounts when enabled.
-  const browsers = await ask(
-    'multiselect',
-    {
-      message: 'Which other browsers should players be able to use? (Chrome and Edge always work)',
-      options: [
-        { value: 'firefox', label: 'Firefox', hint: `add-on id ${FIREFOX_ADDON_ID}` },
-        { value: 'safari', label: 'Safari', hint: 'needs Xcode + an Apple Developer account to publish' },
-      ],
-      initialValues: [...(was.firefoxAddonId ? ['firefox'] : []), ...(was.safari ? ['safari'] : [])],
-      required: false,
-    },
-    [...(was.firefoxAddonId ? ['firefox'] : []), ...(was.safari ? ['safari'] : [])],
-  );
+  // Chrome/Edge are always on; Firefox and Safari players sign in with the same accounts when enabled. One yes/no each:
+  // a multiselect needed Space before Enter, and Enter alone quietly chose none.
+  p.log.info('Browsers: Chrome and Edge always work. Firefox and Safari are optional (the same accounts sign in there).');
+  const firefox = await ask('confirm', { message: `Let players use Firefox too? (add-on id ${FIREFOX_ADDON_ID})`, initialValue: Boolean(was.firefoxAddonId) }, Boolean(was.firefoxAddonId));
+  const safariOn = await ask('confirm', { message: 'Let players use Safari too? (on a Mac: npm run safari:xcode builds it; publishing needs an Apple Developer account)', initialValue: Boolean(was.safari) }, Boolean(was.safari));
+  const browsers = [...(firefox ? ['firefox'] : []), ...(safariOn ? ['safari'] : [])];
 
   // GitHub CI/CD (optional).
   let githubRepo = was.githubRepo ?? '';
@@ -538,8 +540,28 @@ for (const r of offline ? [] : [...new Set([region, ...(domainName ? [] : ['us-e
 }
 const outputsFile = `${INFRA}outputs.${envName}.json`;
 if (await approve(`deploy AWS City (${envName}) — about 15–25 minutes the first time`)) {
-  // Interactive runs show IAM/security changes and ask before applying them.
-  run('npx', ['cdk', 'deploy', '--all', '-c', `env=${envName}`, '--require-approval', YES ? 'never' : 'broadening', '--outputs-file', outputsFile], INFRA, cdkEnv);
+  // Interactive runs show IAM/security changes and ask before applying them. Events as plain lines (no redrawn bar), and
+  // every minute a line saying what AWS is doing, from the busy stack's events (infra/lib/deploy-progress.ts).
+  p.log.info('Deploying. The server takes longest: after a code change AWS CodeBuild builds its image (3–6 minutes), then ECS swaps the servers and watches them for errors. A ⏳ line every minute says what AWS is doing, so you can tell it isn’t stuck.');
+  const started = Date.now();
+  const watched = [...new Set([region, ...(domainName ? [] : ['us-east-1'])])].map((r) => new CloudFormationClient({ region: r, credentials }));
+  const tick = async () => {
+    for (const cfn of watched) {
+      const stacks = (await cfn.send(new DescribeStacksCommand({})).catch(() => undefined))?.Stacks ?? [];
+      const busy = stacks.find((st) => st.StackName?.startsWith(`AWSCity-${envName}-`) && st.StackStatus?.endsWith('_IN_PROGRESS'));
+      if (!busy) continue;
+      const events = (await cfn.send(new DescribeStackEventsCommand({ StackName: busy.StackName })).catch(() => undefined))?.StackEvents ?? [];
+      console.log(progressLine(busy.StackName, busy.StackStatus, events, Date.now() - started));
+      return;
+    }
+  };
+  const timer = setInterval(() => void tick(), 60_000);
+  try {
+    await runAsync('npx', ['cdk', 'deploy', '--all', '-c', `env=${envName}`, '--require-approval', YES ? 'never' : 'broadening', '--progress', 'events', '--outputs-file', outputsFile], INFRA, cdkEnv);
+  } finally {
+    clearInterval(timer);
+  }
+  p.log.success(`Deployed in ${Math.max(1, Math.round((Date.now() - started) / 60_000))} min.`);
   run('node', ['scripts/smoke-hosted.mjs', outputsFile, envName]);
 }
 if (DRY || !existsSync(outputsFile)) {
