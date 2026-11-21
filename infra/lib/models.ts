@@ -53,13 +53,15 @@ export const NOVA_MODELS = { main: 'amazon.nova-pro-v1:0', light: 'amazon.nova-l
 
 /**
  * The open model the city runs on Fargate when Bedrock can't (EnvConfig.aiCpu): Qwen3 4B Instruct 2507 (Apache-2.0,
- * tool calling, no thinking step, which a CPU can't afford), 4-bit, from the Ollama registry. `digests` pins the whole
- * model (config, weights, chat template, licence, params): infra/ai-image/Dockerfile fails the build if the manifest it
- * pulled lists anything else.
+ * tool calling, no thinking step, which a CPU can't afford), 4-bit, from the Ollama registry. `manifest` is the sha256 of
+ * the registry's manifest document (registry.ollama.ai, 21 Nov 2026; infra/ai-image/model-manifest.json) and `digests`
+ * the five files it lists (config, weights, chat template, licence, params): infra/ai-image/verify-model.sh fails the
+ * image build if what Ollama pulled differs in any byte.
  */
 export const CPU_MODEL = {
   id: 'qwen3:4b-instruct-2507-q4_K_M',
   name: 'Qwen3 4B',
+  manifest: 'sha256:0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0',
   digests: [
     'sha256:b72accf9724e93698c57cbd3b1af2d3341b3d05ec2089d86d273d97964853cd2',
     'sha256:85e4a5b7b8ef0e48af0e8658f5aaab9c2324c76c1641493f4d1e25fce54b18b9',
