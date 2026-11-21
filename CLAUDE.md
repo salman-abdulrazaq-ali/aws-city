@@ -167,7 +167,7 @@ When a change touches a decision, update its entry and run its Proof.
   `in`; there is no `apac` profile, so e.g. Tokyo is refused). Each geo gets the newest pair with a profile there for
   both models (`GEO_MODELS`, from the Bedrock model cards): Claude Opus 5.5 / Sonnet 5.5 in `us`/`eu`/`au`; India has no
   5.5 profile and keeps Opus 5 / Sonnet 5. Model ids and their IAM ARNs derive from the Region; synth and the setup
-  wizard refuse other Regions. Local mode keeps the `us.` defaults in `server/src/config.ts` (Opus 5.5 / Sonnet 5.5).
+  wizard refuse other Regions. Local mode follows the same table: the launcher (`localModels` in `scripts/launcher/lib.mjs`) picks the Region's models, passes them as `AWS_CITY_MODEL`/`AWS_CITY_LIGHT_MODEL`/`AWS_CITY_FALLBACK_MODEL` and refuses a Region with no profile; `server/src/config.ts` keeps the `us.` defaults only when started by hand.
   Proof: `cd infra && npm test`.
 - **Bedrock calls never force `tool_choice`** (Bedrock rejects it while thinking is on, and always for
   Claude 5.5-generation models; the defaults are Opus 5.5 / Sonnet 5.5, `server/src/config.ts`, but any model can be

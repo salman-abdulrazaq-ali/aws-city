@@ -1,6 +1,7 @@
 // Pure helpers for `npm start` (scripts/start.mjs). No prompts or side effects here, so they're unit-tested
 // (tests/launcher.test.ts).
 import path from 'node:path';
+import { geoFor, modelsFor, SUPPORTED_REGIONS } from '../../infra/lib/models.ts';
 
 /** Browsers AWS City can open in. `cft` is Playwright's Chrome for Testing, the one that loads the extension by itself. */
 export const BROWSERS = [
@@ -145,6 +146,26 @@ export const browserFromArg = (value) => {
 };
 
 export const REGION_RE = /^[a-z]{2}(-gov)?-[a-z]+-\d$/;
+
+/**
+ * The Claude models the local server uses for a Region (infra/lib/models.ts, the same table the deploy wizard reads):
+ * `{ ok: true, main, light }`, or `{ ok: false, message }` where Claude has no geo inference profile.
+ */
+export const localModels = (region) => {
+  if (!geoFor(region)) return { ok: false, message: unsupportedRegionText(region) };
+  const { main, light } = modelsFor(region);
+  return { ok: true, main, light };
+};
+
+/** Plain words for a Region Claude can't run in, naming the ones that work. */
+export const unsupportedRegionText = (region) =>
+  `Claude on Bedrock isn't available through ${region} for AWS City. Pick one of these Regions instead: ${SUPPORTED_REGIONS.join(', ')}.`;
+
+/** What the server gets so it calls Claude through the Region's own inference profiles (server/src/config.ts reads these). */
+export const modelEnv = ({ main, light }) => ({ AWS_CITY_MODEL: main, AWS_CITY_LIGHT_MODEL: light, AWS_CITY_FALLBACK_MODEL: light });
+
+/** Where to turn Claude on: Bedrock has no Model access page in commercial Regions; this is AWS's guide to the steps. */
+export const BEDROCK_ACCESS_URL = 'https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html';
 
 /**
  * `npm start` flags → { help, mode?, browser?, intro?, rebuild?, profile?, region?, allowFixes?, error? }. Pure, so it's unit-tested.

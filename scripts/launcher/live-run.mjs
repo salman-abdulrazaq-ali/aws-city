@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEV_EXTENSION_ID, FIREFOX_ADDON_ID } from '../extension-id.mjs';
 import { track } from './cleanup.mjs';
+import { modelEnv } from './lib.mjs';
 import { browserById } from './open-browser.mjs';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -54,7 +55,7 @@ export const portBusy = (port, host = '127.0.0.1') =>
  * Starts the AWS City server with the player's AWS profile. Its output goes to .cache/server.log and to `onLog`
  * line by line. `ready` resolves true once /health answers (false if it exits or takes over a minute).
  */
-export function startServer({ profile, region, cfg, onLog = () => {} }) {
+export function startServer({ profile, region, models, cfg, onLog = () => {} }) {
   mkdirSync(path.dirname(SERVER_LOG), { recursive: true });
   const file = createWriteStream(SERVER_LOG, { flags: 'w' });
   // Its own process group (not on Windows), so stopping it stops npm, tsx and the server under them together.
@@ -67,6 +68,7 @@ export function startServer({ profile, region, cfg, onLog = () => {} }) {
       ...process.env,
       AWS_CITY_PROFILE: profile,
       ...(region ? { AWS_CITY_REGION: region } : {}),
+      ...(models ? modelEnv(models) : {}),
       EXTENSION_ORIGIN: cfg.origin,
       PORT: cfg.port,
       AWS_CITY_TOKEN: cfg.token,

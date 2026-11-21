@@ -24,9 +24,11 @@ import {
   explainAwsError,
   explainDownloadError,
   extensionsPage,
+  BEDROCK_ACCESS_URL,
   helpText,
   introPlays,
   listProfiles,
+  localModels,
   meaningfulLines,
   parseArgs,
   parsePastedKeys,
@@ -49,9 +51,6 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PREFS = path.join(ROOT, '.cache/launcher.json');
 const AWS_DIR = path.join(os.homedir(), '.aws');
 const PROFILE = 'aws-city';
-// server/src/config.ts defaults: the main model, and the fallback/light model it drops to.
-const MAIN_MODEL = 'us.anthropic.claude-opus-5-5';
-const LIGHT_MODEL = 'us.anthropic.claude-sonnet-5-5';
 const interactive = isInteractive();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -212,13 +211,13 @@ async function connectAws(tools, region, prefs, wanted) {
 }
 
 /** One tiny Claude call on Bedrock, so missing model access shows up now instead of in the game. */
-async function bedrockHello(tools, profile, region) {
+async function bedrockHello(tools, profile, region, models) {
   try {
     const client = new tools.bedrock.AnthropicBedrock({ awsRegion: region, providerChainResolver: async () => tools.providers.fromIni({ profile }) });
     const hello = (model) => client.messages.create({ model, max_tokens: 64, messages: [{ role: 'user', content: 'Reply with OK.' }] });
-    await hello(LIGHT_MODEL);
+    await hello(models.light);
     // The server falls back to Sonnet when Opus isn't enabled: fine to play, but say so instead of "ready".
-    const main = await hello(MAIN_MODEL).then(
+    const main = await hello(models.main).then(
       () => true,
       () => false,
     );
@@ -227,7 +226,7 @@ async function bedrockHello(tools, profile, region) {
     return {
       ok: false,
       message: explainAwsError(err),
-      hint: `If Claude isn't enabled here, turn it on: https://${region}.console.aws.amazon.com/bedrock/home?region=${region}#/modelaccess`,
+      hint: `If Claude isn't enabled here, open the Bedrock console in ${region}, pick a Claude model in the Model catalog and send the one-time use-case form: ${BEDROCK_ACCESS_URL}`,
     };
   }
 }
@@ -630,8 +629,14 @@ async function main() {
     (plan.kind !== 'ask' && REGION_RE.test(prefs.region ?? '')
       ? prefs.region
       : interactive
-        ? ((sceneDirty = true), await ask(p.text({ message: 'AWS Region (where Claude runs for you)', initialValue: prefs.region ?? 'us-west-2', validate: (v) => (REGION_RE.test(v ?? '') ? undefined : 'e.g. us-west-2') })))
+        ? ((sceneDirty = true), await ask(p.text({ message: 'AWS Region (where Claude runs for you)', initialValue: prefs.region ?? 'us-west-2', validate: (v) => (!REGION_RE.test(v ?? '') ? 'e.g. us-west-2' : localModels(v).ok ? undefined : localModels(v).message) })))
         : 'us-west-2');
+  // One Region drives Claude and the mirrored account, and not every Region has Claude: say so before signing in.
+  const models = localModels(region);
+  if (!models.ok) {
+    p.log.error(models.message);
+    bye(`Run ${pc.cyan('npm start -- --region us-west-2')} (or another Region above) to try again.`);
+  }
   const { profile, account } = await connectAws(tools, region, prefs, args.profile);
   savePrefs({ mode, browser, profile, region });
 
@@ -651,7 +656,7 @@ async function main() {
   let server;
   let stopping = false;
   const go =
-    (await runStep(dash, 'bedrock', () => bedrockHello(tools, profile, region), { canSkip: true })) &&
+    (await runStep(dash, 'bedrock', () => bedrockHello(tools, profile, region, models), { canSkip: true })) &&
     (await runStep(dash, 'prepare', prepareStep(dash, browser, mode))) &&
     (await runStep(dash, 'build', buildStep(dash, browser, cfg.extEnv))) &&
     (await runStep(dash, 'server', async () => {
@@ -664,7 +669,7 @@ async function main() {
       dash.status(`Starting the server with AWS profile "${profile}"…`);
       let ready = false;
       dash.logTitle('Server log');
-      server = startServer({ profile, region, cfg, onLog: (l) => (dash.log(l), !ready && dash.status(`server: ${l}`)) });
+      server = startServer({ profile, region, models, cfg, onLog: (l) => (dash.log(l), !ready && dash.status(`server: ${l}`)) });
       void server.exited.then((code) => {
         if (!ready || stopping) return;
         dash.set('server', { status: 'failed', detail: `stopped (exit ${code ?? '?'})` });

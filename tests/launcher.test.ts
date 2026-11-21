@@ -18,6 +18,8 @@ import {
   helpText,
   introPlays,
   listProfiles,
+  localModels,
+  modelEnv,
   parseArgs,
   parseBuildProgress,
   parseDownloadProgress,
@@ -25,6 +27,7 @@ import {
   pickProfile,
   progressBar,
   startPlan,
+  unsupportedRegionText,
   upsertProfile,
 } from '../scripts/launcher/lib.mjs';
 
@@ -495,5 +498,27 @@ describe('real AWS: the local server and the build share a fresh token', () => {
     expect(liveConfig('cft').allowFixes).toBe(false);
     expect(liveConfig('cft', { allowFixes: true }).allowFixes).toBe(true);
     expect(liveConfig('cft', { port: '9999' }).url).toBe('http://127.0.0.1:9999');
+  });
+});
+
+describe('real AWS: Claude models follow the Region', () => {
+  it('picks the geo inference profiles and hands them to the server', () => {
+    expect(localModels('us-west-2')).toEqual({ ok: true, main: 'us.anthropic.claude-opus-5-5', light: 'us.anthropic.claude-sonnet-5-5' });
+    expect(localModels('eu-central-1')).toEqual({ ok: true, main: 'eu.anthropic.claude-opus-5-5', light: 'eu.anthropic.claude-sonnet-5-5' });
+    expect(localModels('ap-south-1')).toEqual({ ok: true, main: 'in.anthropic.claude-opus-5', light: 'in.anthropic.claude-sonnet-5' });
+    const m = localModels('eu-west-1');
+    if (!m.ok) throw new Error('eu-west-1 should work');
+    expect(modelEnv(m)).toEqual({ AWS_CITY_MODEL: m.main, AWS_CITY_LIGHT_MODEL: m.light, AWS_CITY_FALLBACK_MODEL: m.light });
+  });
+
+  it('refuses a Region with no Claude profile, in plain words that name the ones that work', () => {
+    const r = localModels('ap-northeast-1');
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.message).toBe(unsupportedRegionText('ap-northeast-1'));
+    expect(r.message).toMatch(/ap-northeast-1/);
+    expect(r.message).toMatch(/us-west-2/);
+    expect(r.message).toMatch(/eu-central-1/);
+    expect(r.message).not.toMatch(/inference profile|ARN/);
   });
 });

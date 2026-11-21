@@ -17,6 +17,10 @@ export declare const explainDownloadError: (output?: string) => string;
 export declare const browserFromArg: (value: unknown) => string | undefined;
 export interface LaunchArgs { help: boolean; intro?: boolean; rebuild?: boolean; mode?: 'demo' | 'live'; browser?: string; profile?: string; region?: string; allowFixes?: boolean; error?: string }
 export declare const REGION_RE: RegExp;
+export declare const localModels: (region: string) => { ok: true; main: string; light: string } | { ok: false; message: string };
+export declare const unsupportedRegionText: (region: string) => string;
+export declare const modelEnv: (models: { main: string; light: string }) => { AWS_CITY_MODEL: string; AWS_CITY_LIGHT_MODEL: string; AWS_CITY_FALLBACK_MODEL: string };
+export declare const BEDROCK_ACCESS_URL: string;
 export type StartPlan = { kind: 'go' | 'again'; mode: 'demo' | 'live'; browser: string } | { kind: 'ask'; browser?: string; mode?: undefined };
 export declare const startPlan: (args: LaunchArgs, prefs?: { mode?: string; browser?: string }, o?: { interactive?: boolean; installed?: string[] }) => StartPlan;
 export declare const introPlays: (args: LaunchArgs) => boolean;
