@@ -278,6 +278,36 @@ describe('Amazon Nova: on demand in the deploy Region (Converse, Strands Agents)
   });
 });
 
+describe('the AI in another Region (a new account whose Bedrock answers elsewhere)', () => {
+  const cfg = { region: 'eu-west-2', cognitoDomainPrefix: 'cloud-city-x', extensionIds: [], modelChoice: 'nova' as const };
+  it('aiRegion defaults to the deploy Region; novaLiteOnly puts Lite in every slot', () => {
+    expect(loadEnv(new App({ context: { env: 'staging', staging: cfg } })).aiRegion).toBe('eu-west-2');
+    const away = loadEnv(new App({ context: { env: 'staging', staging: { ...cfg, aiRegion: 'us-west-2', novaLiteOnly: true } } }));
+    expect(away).toMatchObject({ region: 'eu-west-2', aiRegion: 'us-west-2', models: { main: NOVA_MODELS.light, light: NOVA_MODELS.light } });
+    expect(modelsForChoice('eu-west-2', 'nova', { liteOnly: true })).toEqual({ main: 'amazon.nova-lite-v1:0', light: 'amazon.nova-lite-v1:0' });
+    // Claude in another Region takes that Region's geo profile.
+    expect(loadEnv(new App({ context: { env: 'staging', staging: { ...cfg, modelChoice: 'claude', aiRegion: 'us-west-2' } } })).models.main).toBe('us.anthropic.claude-opus-5-5');
+  });
+
+  it('the task role may invoke exactly Nova Lite in the AI Region (once), and the server is told where to call it', () => {
+    const away = build({ region: 'eu-west-2', aiRegion: 'us-west-2', modelChoice: 'nova', novaLiteOnly: true, models: modelsForChoice('us-west-2', 'nova', { liteOnly: true }) });
+    away.svc.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({ Sid: 'Bedrock', Action: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'], Resource: 'arn:aws:bedrock:us-west-2::foundation-model/amazon.nova-lite-v1:0' }),
+        ]),
+      },
+    });
+    const task = JSON.stringify(away.svc.findResources('AWS::ECS::TaskDefinition'));
+    expect(task).toContain('"Name":"AWS_CITY_REGION","Value":"eu-west-2"');
+    expect(task).toContain('"Name":"AWS_CITY_BEDROCK_REGION","Value":"us-west-2"');
+    expect(task).toContain('"Name":"AWS_CITY_MODEL","Value":"amazon.nova-lite-v1:0"');
+    expect(task).not.toContain('nova-pro');
+    // Without aiRegion the server calls Bedrock where it runs.
+    expect(JSON.stringify(build().svc.findResources('AWS::ECS::TaskDefinition'))).toContain(`"Name":"AWS_CITY_BEDROCK_REGION","Value":"${env.region}"`);
+  });
+});
+
 describe('SSM parameter names AWS accepts', () => {
   it('no parameter starts with a reserved prefix ("aws" or "ssm", any case), in either environment or model family', () => {
     for (const over of [{}, { name: 'prod' as const }, { region: 'eu-west-2', modelChoice: 'nova' as const, models: modelsForChoice('eu-west-2', 'nova') }]) {

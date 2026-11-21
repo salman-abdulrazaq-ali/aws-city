@@ -22,6 +22,10 @@ export interface ReviewAnswers {
   githubRepo: string;
   /** False: deploy with the kill switch off (Bedrock wasn't ready). */
   aiEnabled: boolean;
+  /** Where the AI runs when Bedrock answers only in another Region ('' or absent = `region`). */
+  aiRegion?: string;
+  /** Amazon Nova on Lite alone (no Pro quota yet). */
+  novaLiteOnly?: boolean;
 }
 
 /** Big free email providers. Their addresses make a poor SES "from" address: mail sent as them is often filtered. */
@@ -52,8 +56,9 @@ export const cloudFrontNote = (region: string) =>
 /** The answers, as label/value rows. */
 export const reviewRows = (a: ReviewAnswers): [string, string][] => [
   ['Environment', a.envName === 'staging' ? 'staging (a test copy)' : 'prod (the one players use)'],
-  ['AI models', a.modelChoice === 'nova' ? 'Amazon Nova' : 'Claude'],
+  ['AI models', a.modelChoice === 'nova' ? (a.novaLiteOnly ? 'Amazon Nova Lite (no Pro quota yet)' : 'Amazon Nova') : 'Claude'],
   ['AI at first', a.aiEnabled ? 'on' : 'off until Bedrock answers (run setup again to switch it on)'],
+  ...(a.aiRegion && a.aiRegion !== a.region ? ([['AI runs in', `${a.aiRegion} (only the agents' questions; data stays in ${a.region})`]] as [string, string][]) : []),
   ['Region', a.domainName ? a.region : `${a.region} (CloudFront's firewall: us-east-1)`],
   ['Web address', a.domainName || 'CloudFront HTTPS (https://xxxx.cloudfront.net)'],
   ['Sign-in page', `${a.cognitoDomainPrefix}.auth.${a.region}.amazoncognito.com`],

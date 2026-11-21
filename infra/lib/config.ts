@@ -40,6 +40,14 @@ export interface EnvConfig {
    * e.g. a new account's hold). Absent = on. Re-running setup once Bedrock answers turns it back on.
    */
   aiEnabled?: boolean;
+  /**
+   * Where the server calls Bedrock (absent = `region`). A new account's Bedrock can be held at 0 tokens a day in its
+   * Region and not in another: the wizard finds one that answers and offers it. Data, sign-in and the server stay in
+   * `region`; only the agents' prompts are processed in `aiRegion`.
+   */
+  aiRegion?: string;
+  /** Amazon Nova with Lite in every slot: the AI Region has a Lite quota but none for Pro yet. */
+  novaLiteOnly?: boolean;
   models: { main: string; light: string };
 }
 
@@ -56,14 +64,16 @@ export const loadEnv = (app: App): EnvConfig => {
   // Cognito rejects prefix domains containing reserved words: fail at synth, not 10 minutes into a deploy.
   if (/aws|amazon|cognito/.test(raw.cognitoDomainPrefix ?? '')) throw new Error(`cognitoDomainPrefix "${raw.cognitoDomainPrefix}" can't contain aws, amazon or cognito`);
   const region = raw.region ?? process.env.CDK_DEFAULT_REGION ?? 'us-west-2';
+  const aiRegion = raw.aiRegion || region;
   return {
     ...raw,
     name,
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region,
-    // Claude: the inference-profile geo (us./eu./au./in.) follows the Region, and a Region without one fails here, at
+    aiRegion,
+    // Claude: the inference-profile geo (us./eu./au./in.) follows the AI Region, and a Region without one fails here, at
     // synth. Amazon Nova: on-demand ids, the same in every Region that offers them (the wizard checks it answers).
-    models: modelsForChoice(region, raw.modelChoice === 'nova' ? 'nova' : 'claude'),
+    models: modelsForChoice(aiRegion, raw.modelChoice === 'nova' ? 'nova' : 'claude', { liteOnly: raw.novaLiteOnly }),
   };
 };
 

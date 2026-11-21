@@ -39,8 +39,8 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   `server/src/agents/once.ts`. Locally: `npm run live -- --model nova` (the launcher checks Nova with Converse and passes
   the ids as env). Hosted: the setup wizard asks (Nova recommended; saved as `modelChoice`, `loadEnv` →
   `modelsForChoice`); the task role may invoke exactly the two Nova foundation models in its Region (`bedrockResources`:
-  no wildcard, no cdk-nag acknowledgement; Claude keeps its profile + wildcard), and the budget's deny covers both.
-  Proof: `cd server && npx vitest run test/nova.test.ts`, `npx vitest run tests/launcher.test.ts`, `cd infra && npm test`.
+  no wildcard, no cdk-nag acknowledgement; Claude keeps its profile + wildcard), and the budget's deny covers both. A new account's hold can be Region by Region and model by model: the wizard then looks for a Region where Nova answers (`NOVA_ELSEWHERE`) and offers `aiRegion` (the server calls Bedrock there, `AWS_CITY_BEDROCK_REGION`; data, sign-in and the server stay in `region`; the task role may invoke Nova only there) and `novaLiteOnly` (Lite in every slot); the launcher plays on Lite when Pro has no quota.
+  Proof: `cd server && npx vitest run test/nova.test.ts` (includes "the AI can run in another Region"), `npx vitest run tests/launcher.test.ts`, `cd infra && npm test`.
 - **A new account is walked through, not left to guess** (`docs/self-hosting.md`): root MFA, the Paid plan (upgraded as
   root; a Free plan account closes when its credits run out), an admin user with MFA, `aws login` as that user, Nova or
   Claude, and a new account's Bedrock hold (verifying, 0 tokens a day, Free plan, use-case form, each with its fix and a

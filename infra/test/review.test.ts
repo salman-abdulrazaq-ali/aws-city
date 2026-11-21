@@ -43,6 +43,15 @@ describe('the review screen', () => {
     expect(text).toContain('In AWS, confirming will:\n  1. Deploy');
   });
 
+  it('says where the AI runs when Bedrock answers only in another Region, and when Nova runs on Lite alone', () => {
+    const away = Object.fromEntries(reviewRows({ ...answers, aiEnabled: true, aiRegion: 'us-west-2', novaLiteOnly: true }));
+    expect(away['AI runs in']).toBe("us-west-2 (only the agents' questions; data stays in eu-west-2)");
+    expect(away['AI models']).toBe('Amazon Nova Lite (no Pro quota yet)');
+    // At home: no extra row.
+    expect(Object.fromEntries(reviewRows({ ...answers, aiRegion: '' }))['AI runs in']).toBeUndefined();
+    expect(Object.fromEntries(reviewRows({ ...answers, aiRegion: 'eu-west-2' }))['AI runs in']).toBeUndefined();
+  });
+
   it('explains us-east-1 in one sentence', () => {
     expect(cloudFrontNote('eu-west-2')).toMatch(/AWS WAF.*us-east-1.*stay in eu-west-2/);
   });
