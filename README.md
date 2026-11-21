@@ -102,7 +102,7 @@ away again; nothing you've earned is lost either way.
   are always your click. In the demo it (and the Lookout's camera) uses the **practice console**, a page inside the
   extension that looks like the AWS console, where nothing touches AWS.
 - **Deploy for real.** Connect *your own* AWS account with a small, restricted role. Every change waits for your
-  **Approve**.
+  **Approve**. [How to connect, update and disconnect it](docs/connect-aws-account.md).
 - **City care.** Citizens spot real issues in your account (a public bucket, a table without backups) and explain
   the fix. You approve each one.
 - **Live AWS status.** Real outages from the public AWS Health Dashboard arrive as a news ticker, a throbbing Region on
@@ -308,6 +308,8 @@ contains no secrets):
 - **Try it (staging):** in `chrome://extensions`, click **Load unpacked** and pick `.output/chrome-mv3-staging`.
 - **Publish:** upload `.output/*-chrome.zip` to the Chrome Web Store (and, if you like, Edge Add-ons)
   ([guide](docs/chrome-web-store.md)), then run `npm run setup` again and enter the store ids.
+- **Players connect their own AWS account** from ⋯ → Account: the steps, the role's exact permissions, updating,
+  disconnecting and troubleshooting are in [docs/connect-aws-account.md](docs/connect-aws-account.md) (point your players there).
 - **Builds from now on:** plain builds (`npm run build`, `zip`, `zip:firefox`, `safari:xcode`) read `.env.production`,
   so they build for your server; `npm start`'s demo, `npm run smoke` and `smoke:copilot` always build the demo
   (`WXT_BACKEND=mock`). For a store, add `WXT_STORE_BUILD=true`: it leaves out the manifest key and the `awsCity`
@@ -318,7 +320,9 @@ contains no secrets):
   writes your answers to `aws-city.config.json`). This also works without an AWS login.
 - `npm run setup -- --env staging`: skip the environment question (`--yes` accepts every saved answer).
 - `npm run setup -- --destroy --env staging`: remove that environment's stacks. Tables and buckets are kept,
-  so no data is lost by accident.
+  so no data is lost by accident. That also means a redeploy with the same names fails, and prod's user pool must never be
+  recreated (new players' ids would orphan everyone's progress): read the runbook's
+  [Destroy and redeploy](docs/runbook.md#destroy-and-redeploy) first.
 
 **Cost while idle:**
 - **prod:** roughly **$60–85/month** for two small Fargate tasks, the load balancer, WAF and logs.
@@ -362,7 +366,9 @@ flowchart LR
 - **We never hold your keys.** Agents act in your account only through the role you install
   (`infra/player-role/player-role.yaml`). It's least-privilege: tiny, tagged, name-prefixed
   resources, locked to one Region, and it trusts only this deployment's server role. Delete the
-  `AWSCity` stack to revoke it.
+  `AWSCity` stack to revoke it, or press **Disconnect** (⋯ → Account) to have the city forget the link at once.
+  **Download my data** (⋯ → Account) saves everything the server keeps about you, without the role's secret ExternalId.
+  Players' guide: [docs/connect-aws-account.md](docs/connect-aws-account.md).
 - **Console Copilot runs only when you start it, only on console pages.** It never clicks
   delete / IAM / billing controls and never reads secret fields; press Esc to stop.
 - **A second check on every write.** After you approve, a deterministic gate lets through exactly the approved request,
@@ -382,7 +388,7 @@ art/          pixel-art generators (characters, city tiles, landmarks) → publi
 server/       the backend (Node + TS): agents on Bedrock, approvals, tenants, stores — local or hosted
 infra/        CDK stacks (data, auth, service, edge WAF, budget, CI) + setup wizard + player role
 scripts/      open / live / smoke tests / asset fetchers
-docs/         contract, runbook, privacy policy, store listing, Google & Chrome Web Store guides
+docs/         contract, runbook, connect-your-AWS-account guide, privacy policy, store listing, Google & Chrome Web Store guides
 ```
 
 | Command | What it does |
@@ -409,7 +415,7 @@ The backend contract is [docs/backend-contract.md](docs/backend-contract.md); it
 | No alarm or budget emails | Click **Confirm subscription** in the AWS Notifications email. |
 | "Sign in" loops in the extension | That build's extension id isn't allowed: re-run `npm run setup` (allow the local build, or add the store id). |
 | "The city's AI is resting" | The kill switch is off or the budget was hit (see the [runbook](docs/runbook.md)). |
-| Player can't link their account | Create the stack from the in-game link *in the same Region*, then paste the 12-digit account id. |
+| Player can't link their account | Create the stack from the in-game link *in the same Region*, then paste the 12-digit account id. More in [docs/connect-aws-account.md](docs/connect-aws-account.md#troubleshooting). |
 
 ## For contributors using Claude Code
 

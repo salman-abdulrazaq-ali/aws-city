@@ -98,7 +98,9 @@ them with errors (`LoggedErrors`, `UnhandledRejections`) and model throttles.
   for MFA on medium risk. Cognito console → User pool → Threat protection shows the events.
 - **A player says someone used their account:** disable the user (`aws cognito-idp admin-disable-user`), then
   `admin-user-global-sign-out`. Their sockets close within the token's lifetime (≤ 1 hour, sooner when idle).
-  They should also delete the `AWSCity` stack in their own AWS account, which removes our access.
+  They should also **Disconnect** in the game (⋯ → Account → Your AWS account: it forgets the link record at once) and delete
+  the `AWSCity` stack in their own AWS account, which removes our access. Only the player can remove that role: the
+  stack lives in their account.
 
 ## Deploys and restarts
 
@@ -138,17 +140,83 @@ Screenshots in S3 expire after a day and aren't backed up; that's by design.
 
 ## Player support
 
-- **"It says turn on an authenticator first":** linking an AWS account needs TOTP MFA (agents can change that
-  account). Deploy tab → *Set up an authenticator*. Players who signed up before this need to sign out and in
-  once. Google sign-ins are exempt (MFA is at Google). Turn the check off only for testing:
-  `REQUIRE_MFA_FOR_LINK=false`.
+- **"It says turn on an authenticator first":** linking an AWS account, approving a change and applying a fix need TOTP
+  MFA (agents can change that account). Deploy tab → *Set up an authenticator*; after enrolling the extension ends every
+  session and the player signs in again with the code. Google sign-ins are exempt (MFA is at Google). Turn the check off
+  only for testing: `REQUIRE_MFA_FOR_LINK=false`.
+- **"Sign out, then sign in again with your app's code":** the player has TOTP on, but this session started before the
+  server first saw it on (`server/src/accounts/mfa.ts` keeps that time and accepts only an access token whose `auth_time`
+  is at or after it). Signing out and in fixes it. Nothing to do on the server.
 - **Lost authenticator:** `aws cognito-idp admin-set-user-mfa-preference --user-pool-id <pool> --username <user> --software-token-mfa-settings Enabled=false`
   after verifying who they are by email.
 - **"Can't link my account":** they must create the stack from the link in the *same* region, then paste the
   12-digit account id. The role is `AWSCityPlayerRole-<region>`
-  (`AWSCityPlayerRole-staging-<region>` on staging); its trust is fixed to our account.
-- **Delete a player:** they can do it themselves (Deploy → Delete my account = `DELETE /me`): every table item,
-  their screenshots and their Cognito user are removed, and their open tabs are disconnected.
+  (`AWSCityPlayerRole-staging-<region>` on staging); its trust is fixed to our account. A setup link is good for 24 hours
+  for *Verify* ("Your setup link is more than a day old": they press *Get a new setup link*; the stack they already made
+  keeps working, since the ExternalId doesn't change). A stack that fails with `iam:CreateRole` or CloudFormation denied
+  is an account (workshop accounts, some Organizations) that can't create roles: nothing we can change. The player's
+  steps and these messages are in `docs/connect-aws-account.md`.
+- **"Was the stack deleted? Link again, or disconnect.":** STS refused the player's role on three polls in a row while
+  their city was open (`BROKEN_AFTER` in `server/src/tenants.ts`), so the server stopped reading their account and marked
+  the link record broken (`brokenAt`). It is not a revocation of anything and there's nothing to repair on our side: the
+  record stays until the player links again (a new setup link, same ExternalId, then *Verify*), disconnects, or deletes
+  their account. A restart doesn't retry a broken link.
+- **A player wants to disconnect:** ⋯ → Account → Your AWS account → *Disconnect* (no MFA; the link record, with its
+  ExternalId, is deleted and polling stops). It leaves the `AWSCity` stack and anything the city built in their account:
+  the game tells them to take builds down first (Deploy → My builds) and then delete the stack in CloudFormation.
+- **"Download my data":** ⋯ → Account → *Download my data* is `GET /me/export` (JSON: progress, the account link as
+  metadata without the ExternalId or role ARN, their presence and leaderboard rows); `410` for a deleted player.
+- **Delete a player:** they can do it themselves (⋯ → Account → Delete my account…, or Deploy → Your data; it is
+  `DELETE /me`): every table item (the account link record included), their screenshots and their Cognito user are
+  removed, and their open tabs are disconnected. It doesn't touch their own AWS account: the `AWSCity` stack and anything
+  the city built there are theirs to remove (the confirmation warns them).
+
+## Destroy and redeploy
+
+`npm run setup -- --destroy --env <env>` (`cdk destroy --all -c env=<env> --force`) removes the stacks but, by design,
+**keeps what holds player data or identity** (`RemovalPolicy.RETAIN`, checked in the synthesized prod templates):
+
+| Kept | Where |
+|---|---|
+| The player table `aws-city-<env>` (deletion protection on) and its KMS key | `infra/lib/data-stack.ts` |
+| The AWS Backup vault `AWSCity<env>DataTableBackupVault<hash>` and its recovery points | `infra/lib/data-stack.ts` |
+| The Cognito user pool `aws-city-<env>` (**prod only**, with deletion protection; staging's pool is destroyed) | `infra/lib/auth-stack.ts` |
+| The task role `AWSCityTaskRole-<env>` | `infra/lib/service-stack.ts` |
+| The screenshot, template and log buckets (generated names) | `data-stack.ts`, `service-stack.ts` |
+
+The KMS **alias** (`alias/aws-city-<env>-table`) is *not* kept: it has no retain policy, so the key survives without its
+alias (the table still works) and a redeploy makes a new key with that alias.
+
+What this means:
+
+- **A redeploy with the same names fails:** the stacks try to create a table named `aws-city-<env>`, a role named
+  `AWSCityTaskRole-<env>` and a backup vault with the same generated name, and they already exist.
+- **Never "fix" that by letting a new user pool be created.** A new pool issues new user ids (`sub`), and every player's
+  progress is stored under `USER#<sub>`, so all of it would be orphaned and every player would start from nothing. Their
+  account link, ExternalId and MFA state sit under the same `sub`.
+- So **destroying prod is effectively permanent** unless the kept resources are adopted back into the new stacks
+  (`cdk import`, or CloudFormation resource import). Not verified here: whether each of these resource types can be
+  imported (the table is an `AWS::DynamoDB::GlobalTable`). Check CloudFormation's import support and rehearse on staging
+  first. The alternative is to delete the retained table and pool on purpose and accept that every player's data is gone
+  (then say so on your privacy page).
+- Staging is easier: its pool is destroyed, so only the table, role and vault block a redeploy, and its players start
+  again anyway (new `sub`s) unless you adopt the old table.
+- The retained task role keeps its permissions, including assuming players' `AWSCityPlayerRole-<region>`. With no tasks
+  running nobody can use it, but if you are decommissioning rather than redeploying, delete it yourself.
+
+To see what was kept:
+
+```
+aws dynamodb describe-table --table-name aws-city-<env> --query "Table.[TableStatus,DeletionProtectionEnabled,ItemCount]"
+aws cognito-idp list-user-pools --max-results 60 --query "UserPools[?Name=='aws-city-<env>'].[Id,Name]"
+aws kms list-keys     # then: aws kms describe-key --key-id <id> --query KeyMetadata.Description
+aws iam get-role --role-name AWSCityTaskRole-<env> --query Role.Arn
+aws backup list-backup-vaults --query "BackupVaultList[?contains(BackupVaultName,'<env>')].BackupVaultName"
+aws s3 ls
+```
+
+A destroy doesn't touch players' own AWS accounts: their `AWSCityPlayerRole` keeps trusting our account until they delete
+their `AWSCity` stack.
 
 ## Local development (unchanged)
 
