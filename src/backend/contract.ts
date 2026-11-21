@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// AWS City ⇄ backend contract v2.16. SOURCE OF TRUTH — docs/backend-contract.md mirrors this, and the
+// AWS City ⇄ backend contract v2.17. SOURCE OF TRUTH — docs/backend-contract.md mirrors this, and the
 // server (server/) imports it, so drift breaks its build.
 //
 // Transport: ONE WebSocket to the AWS City server (server/src/http.ts): ws://127.0.0.1:<port>/ws locally,
@@ -16,7 +16,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A string since v2.10 (the number 2.10 is 2.1, which reads as older than 2.9). */
-export const CONTRACT_VERSION = '2.16';
+export const CONTRACT_VERSION = '2.17';
 
 // ── Console Copilot shapes (also used by the content script in src/console/) ──
 export type ConsoleAction = 'click' | 'type' | 'select' | 'point' | 'done';
@@ -217,6 +217,16 @@ interface FlowEnable {
 }
 
 /**
+ * v2.17: a fresh sign-in on an open socket (step-up, after reauth_required). The server checks the access token like a
+ * new connection's and, when it is the same player's, takes its sign-in time; the socket and any pending approval stay
+ * (closing the socket would cancel them). Another player's token, or a bad one, changes nothing.
+ */
+export interface AuthRenew {
+  action: 'auth.renew';
+  token: string;
+}
+
+/**
  * v2.10: check that a workshop step really happened in the player's account (shared/workshops/*.json). The server runs
  * the step's one read-only check (server/src/workshops/checks.ts, a fixed registry: no writes, no CLI) with the values
  * the player typed for the step's placeholders (a table or function name), and answers with workshop.verified.
@@ -276,6 +286,7 @@ export type ClientCommand =
   | FindingUndo
   | BillEnable
   | FlowEnable
+  | AuthRenew
   | WorkshopVerify
   | PresenceBeat
   | ScoreSubmit
@@ -692,10 +703,11 @@ export interface ErrorEvent {
   /**
    * v2.2, optional: why, so the UI can explain it kindly. quota = the player's daily AI calls are used up;
    * paused = the city's AI is switched off (kill switch or global cap); auth = sign in again;
-   * unlinked = connect an AWS account first; mfa_required = turn on an authenticator app before linking an
+   * unlinked = connect an AWS account first; reauth_required = sign in again (a sign-in within 30 minutes is needed to
+   * link, approve or fix); mfa_required = turn on an authenticator app before linking an
    * AWS account, approving a write (deploy.approve) or applying a fix (finding.fix) (hosted).
    */
-  code?: 'quota' | 'paused' | 'auth' | 'unlinked' | 'mfa_required';
+  code?: 'quota' | 'paused' | 'auth' | 'unlinked' | 'mfa_required' | 'reauth_required';
 }
 
 /** v2.10: the answer to workshop.verify. `detail` is one plain sentence (what was found, or what to try). */

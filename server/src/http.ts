@@ -9,12 +9,13 @@ import { createApprovals } from './contract/approvals.js';
 import { type ConsoleCopilot, Snapshot } from './contract/console.js';
 import type { ProgressStore } from './contract/progress.js';
 import { MAX_UPLOAD_BYTES, type MemoryUploadStore, UPLOAD_PATH } from './contract/uploads.js';
-import { MFA_REQUIRED_MESSAGE } from './accounts/mfa.js';
+import { MFA_REQUIRED_MESSAGE, REAUTH_MESSAGE, recentSignIn } from './accounts/mfa.js';
 import { log, publicError, who } from './log.js';
 import { verifyStep } from './workshops/checks.js';
 import { isBoard, memorySocial, socialFor } from './social.js';
 import type { Poller } from './state/poller.js';
 import type { Tenant, TenantHub } from './tenants.js';
+import { redactSecrets } from './secrets.js';
 import { CLOSE_CODES, type ServerEvent } from './world.js';
 
 const JSON_LIMIT = 64 * 1024;
@@ -37,7 +38,18 @@ const MAX_CONNECTION_MS = 8 * 60 * 60_000;
 const EXPIRED_GRACE_MS = 10 * 60_000;
 /** How long this task remembers a deleted player without asking the store again (the tombstone itself lasts longer). */
 const DELETED_CACHE_MS = 10 * 60_000;
+/** How often an open socket re-checks that its player wasn't deleted on another task. */
+const DELETED_CHECK_MS = 60_000;
+/** A socket's last "not deleted" answer is reused this long for cheap writes (presence, scores); step-up always asks. */
+const HERE_CACHE_MS = 15_000;
 const IDLE_CHECK_MS = 15_000;
+/** At most one auth.renew per socket in this long (each is a token verification). */
+const RENEW_MIN_MS = 5_000;
+/** Screenshot uploads per player (each up to 5 MB, kept a day): a burst of 10, then one every 6 s. */
+const SCREENSHOT_BURST = 10;
+const SCREENSHOTS_PER_SECOND = 1 / 6;
+/** Exactly the keys uploads.create makes: screenshots/<owner folder>/<uuid>.<jpg|png>. */
+const SCREENSHOT_KEY = /^screenshots\/(local|[0-9a-f]{24})\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png)$/;
 
 /** WebSocket close codes the extension understands (CLOSE_CODES in src/backend/contract.ts; see ServerBackend). */
 const CLOSE = CLOSE_CODES;
@@ -122,18 +134,19 @@ const singleTenant = (d: SingleTenantDeps & { config: Config }): TenantHub => {
 
 // ── Client → server command validation (mirrors ClientCommand in src/backend/contract.ts) ──
 const Context = z
-  .object({ url: z.string().max(2048).optional(), title: z.string().max(512).optional(), serviceId: z.string().max(64).optional(), screenshotKey: z.string().max(200).optional() })
+  .object({ url: z.string().max(2048).optional(), title: z.string().max(512).optional(), serviceId: z.string().max(64).optional(), screenshotKey: z.string().regex(SCREENSHOT_KEY).optional() })
   .strip();
 const Id = z.string().min(1).max(100);
 const Command = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('task.submit'), taskId: Id, prompt: z.string().min(1).max(2000), context: Context.default({}) }),
-  z.object({ action: z.literal('chat.ask'), requestId: Id, districtId: z.string().max(64), question: z.string().min(1).max(2000), context: Context.default({}) }),
+  // Player text loses any credentials before it reaches a model or the docs search (secrets.ts).
+  z.object({ action: z.literal('task.submit'), taskId: Id, prompt: z.string().min(1).max(2000).transform(redactSecrets), context: Context.default({}) }),
+  z.object({ action: z.literal('chat.ask'), requestId: Id, districtId: z.string().max(64), question: z.string().min(1).max(2000).transform(redactSecrets), context: Context.default({}) }),
   z.object({ action: z.literal('page.classify'), requestId: Id, context: Context }),
   // contract v2: the player's answer to a deploy.preview (approval of a guarded write)
   z.object({ action: z.literal('deploy.approve'), deployId: Id, confirm: z.string().max(300).optional() }),
   z.object({ action: z.literal('deploy.reject'), deployId: Id }),
   // contract v2.1: Console Copilot
-  z.object({ action: z.literal('console.start'), taskId: Id, goal: z.string().min(1).max(500), context: Context.default({}), snapshot: Snapshot }),
+  z.object({ action: z.literal('console.start'), taskId: Id, goal: z.string().min(1).max(500).transform(redactSecrets), context: Context.default({}), snapshot: Snapshot }),
   z.object({ action: z.literal('console.observe'), taskId: Id, index: z.number().int().min(0).max(100), ok: z.boolean(), note: z.string().max(200).optional(), snapshot: Snapshot }),
   z.object({ action: z.literal('console.stop'), taskId: Id }),
   // Connecting the player's own AWS account (hosted)
@@ -147,8 +160,10 @@ const Command = z.discriminatedUnion('action', [
   z.object({ action: z.literal('bill.enable'), on: z.boolean() }).strict(),
   // contract v2.8: live traffic on or off
   z.object({ action: z.literal('flow.enable'), on: z.boolean() }).strict(),
+  // contract v2.17: a fresh sign-in on this socket (step-up)
+  z.object({ action: z.literal('auth.renew'), token: z.string().min(1).max(8192) }).strict(),
   // contract v2.11: the live city and leaderboards (server/src/social.ts)
-  z.object({ action: z.literal('presence.beat'), region: z.string().regex(/^[a-z]{2}(-[a-z]+)+-\d$/), rank: z.enum(['Village', 'Town', 'City', 'Metropolis', 'Megacity', 'Global City']).optional() }).strict(),
+  z.object({ action: z.literal('presence.beat'), region: z.string().max(32).regex(/^[a-z]{2}(-[a-z]+)+-\d$/), rank: z.enum(['Village', 'Town', 'City', 'Metropolis', 'Megacity', 'Global City']).optional() }).strict(),
   z.object({ action: z.literal('score.submit'), board: z.string().min(1).max(40), score: z.number().finite().min(0).max(1_000_000) }).strict(),
   z.object({ action: z.literal('leaderboard.get'), board: z.string().min(1).max(40) }).strict(),
   // contract v2.10: check a workshop step in the account (read-only; server/src/workshops/checks.ts)
@@ -199,6 +214,13 @@ export const createHttpServer = (deps: Deps) => {
   const deleted = 'deleted' in deps ? deps.deleted : undefined;
   /** Players known to be deleted (sub → until): one store read finds out, then it's remembered here. */
   const gone = new Map<string, number>();
+  const screenshotLimits = new Map<string, () => boolean>();
+  const screenshotRate = (sub: string) => {
+    if (screenshotLimits.size > 10_000) screenshotLimits.clear(); // bounded: forgetting a bucket only refills it
+    let ok = screenshotLimits.get(sub);
+    if (!ok) screenshotLimits.set(sub, (ok = rateLimiter(SCREENSHOT_BURST, SCREENSHOTS_PER_SECOND)));
+    return ok();
+  };
   /** Refuses a player who deleted their account (410), before anything is stored for them again. */
   const refuseDeleted = async (sub: string) => {
     if (!deleted) return;
@@ -295,6 +317,7 @@ export const createHttpServer = (deps: Deps) => {
         .object({ contentType: z.enum(['image/jpeg', 'image/png']), url: z.string().max(2048).optional(), title: z.string().max(512).optional() })
         .safeParse(await readJson(req));
       if (!body.success) throw new HttpError(400, 'contentType must be image/jpeg or image/png');
+      if (!screenshotRate(principal.sub)) throw new HttpError(429, 'Too many screenshots. Try again in a moment.');
       return send(res, 200, await hub.data(principal).uploads.create(body.data.contentType));
     }
     // Deletes everything we store about the player (Chrome Web Store / privacy requirement).
@@ -424,6 +447,7 @@ export const createHttpServer = (deps: Deps) => {
     let requests = 0;
     /** v2.11: when this socket last beat (presence.beat answers at most every BEAT_MIN_MS). */
     let lastBeat = 0;
+    let lastRenew = 0;
     let alive = true;
     const withinRate = rateLimiter(FRAME_BURST, FRAMES_PER_SECOND);
     let lastAccountCommand = 0;
@@ -433,14 +457,51 @@ export const createHttpServer = (deps: Deps) => {
     const approvals = createApprovals({ region: tenant.region });
     /** Aborted on close: this socket's agent turns stop (other tabs' turns run on). */
     const turns = new AbortController();
-    /** MFA step-up (hosted); a failed check counts as "not ready". */
-    const stepUp = async () => !mfaReady || (await mfaReady(principal).catch(() => false));
+    /**
+     * Deleted elsewhere (DELETE /me lands on one task; this socket may be on another): close with CLOSE.deleted. Only a
+     * confirmed deletion closes it; a store hiccup doesn't.
+     */
+    let hereAt = 0;
+    const stillHere = async (fresh = true) => {
+      if (!fresh && Date.now() - hereAt < HERE_CACHE_MS) return true;
+      try {
+        await refuseDeleted(principal.sub);
+        hereAt = Date.now();
+        return true;
+      } catch (err) {
+        if (err instanceof HttpError && err.status === 410) {
+          ws.close(CLOSE.deleted, 'Account deleted');
+          return false;
+        }
+        return true;
+      }
+    };
+    let nextDeletedCheck = Date.now() + DELETED_CHECK_MS;
+    /**
+     * Step-up (hosted) for linking, approving and fixing: MFA on (a failed check counts as "not ready") AND a sign-in in
+     * the last 30 minutes (recentSignIn), so a stolen refresh token can't act on a player's AWS account. A player deleted
+     * on another task is refused (and their socket closed) first.
+     */
+    const stepUp = async (): Promise<'ok' | 'mfa_required' | 'reauth_required' | 'deleted'> => {
+      if (!(await stillHere())) return 'deleted';
+      if (!mfaReady) return 'ok';
+      if (!(await mfaReady(principal).catch(() => false))) return 'mfa_required';
+      return recentSignIn(principal) ? 'ok' : 'reauth_required';
+    };
+    const refuse = (why: 'mfa_required' | 'reauth_required' | 'deleted', requestId?: string) => {
+      if (why === 'deleted') return; // the socket is already closing with CLOSE.deleted
+      emit({ type: 'error', ...(requestId ? { requestId } : {}), code: why, message: why === 'mfa_required' ? MFA_REQUIRED_MESSAGE : REAUTH_MESSAGE });
+    };
     const copilot = tenant.createCopilot();
     const unsubscribe = tenant.subscribe(emit);
     const heartbeat = setInterval(() => {
       if (!alive) return ws.terminate();
       alive = false;
       ws.ping();
+      if (deleted && Date.now() >= nextDeletedCheck) {
+        nextDeletedCheck = Date.now() + DELETED_CHECK_MS;
+        void stillHere();
+      }
     }, HEARTBEAT_MS);
     const maxAge = setTimeout(() => ws.close(CLOSE.reauth, 'Session refresh'), MAX_CONNECTION_MS);
     // After the token expires: close when idle, or at the end of the grace period regardless.
@@ -516,7 +577,7 @@ export const createHttpServer = (deps: Deps) => {
         // Every AWS write is approved here: a player who turned MFA off can't approve one. The preview stays
         // pending, so it can still be approved once MFA is back on (or rejected, which needs no step-up).
         if (cmd.action === 'deploy.reject' || !mfaReady) return answer();
-        void stepUp().then((ok) => (ok ? answer() : emit({ type: 'error', code: 'mfa_required', message: MFA_REQUIRED_MESSAGE })));
+        void stepUp().then((why) => (why === 'ok' ? answer() : refuse(why)));
         return;
       }
       if (cmd.action === 'account.link' || cmd.action === 'account.verify') {
@@ -526,7 +587,8 @@ export const createHttpServer = (deps: Deps) => {
         }
         lastAccountCommand = Date.now();
         void (async () => {
-          if (!(await stepUp())) return emit({ type: 'error', requestId: cmd.requestId, code: 'mfa_required', message: MFA_REQUIRED_MESSAGE });
+          const why = await stepUp();
+          if (why !== 'ok') return refuse(why, cmd.requestId);
           if (cmd.action === 'account.link') return tenant.link(cmd.requestId, cmd.region, emit);
           return tenant.verify(cmd.requestId, cmd.roleArn, emit);
         })();
@@ -543,7 +605,7 @@ export const createHttpServer = (deps: Deps) => {
         const job =
           cmd.action === 'finding.explain'
             ? care.explain(cmd.findingId, emit)
-            : stepUp().then((ok) => (ok ? care.fix(cmd.requestId, cmd.findingId, emit, approvals) : emit({ type: 'error', requestId: cmd.requestId, code: 'mfa_required', message: MFA_REQUIRED_MESSAGE })));
+            : stepUp().then((why) => (why === 'ok' ? care.fix(cmd.requestId, cmd.findingId, emit, approvals) : refuse(why, cmd.requestId)));
         void track(Promise.resolve(job).catch(failed)).finally(() => requests--);
         return;
       }
@@ -552,7 +614,7 @@ export const createHttpServer = (deps: Deps) => {
         const now = Date.now();
         if (cmd.action === 'presence.beat' && now - lastBeat < BEAT_MIN_MS) return;
         if (cmd.action === 'presence.beat') lastBeat = now;
-        const job =
+        const run = (): Promise<ServerEvent> =>
           cmd.action === 'presence.beat'
             ? tenant.social.beat(cmd.region, cmd.rank)
             : cmd.action === 'score.submit'
@@ -560,7 +622,9 @@ export const createHttpServer = (deps: Deps) => {
               : isBoard(cmd.board)
                 ? tenant.social.board(cmd.board)
                 : Promise.reject(new Error('unknown board'));
-        void track(job.then(emit).catch((err) => emit({ type: 'error', message: publicError('live city failed', err) })));
+        // A write must not bring back a player deleted on another task (their name on a board, their presence).
+        const job = cmd.action === 'leaderboard.get' ? run() : stillHere(false).then((ok) => (ok ? run() : undefined));
+        void track(job.then((e) => e && emit(e)).catch((err) => emit({ type: 'error', message: publicError('live city failed', err) })));
         return;
       }
       if (cmd.action === 'workshop.verify') {
@@ -576,6 +640,18 @@ export const createHttpServer = (deps: Deps) => {
         ).finally(() => requests--);
         return;
       }
+      if (cmd.action === 'auth.renew') {
+        // A fresh sign-in (step-up) on this socket: the same player's new token moves their sign-in time forward, so a
+        // pending approval survives. It's checked exactly like a new connection's; another player's token changes nothing.
+        if (Date.now() - lastRenew < RENEW_MIN_MS) return;
+        lastRenew = Date.now();
+        void authenticate({ headers: { authorization: `Bearer ${cmd.token}` } } as IncomingMessage, new URL('http://localhost/ws'))
+          .then((p) => {
+            if (p?.sub === principal.sub && p.authTime !== undefined && p.authTime > (principal.authTime ?? 0)) principal.authTime = p.authTime;
+          })
+          .catch(() => undefined);
+        return;
+      }
       if (cmd.action === 'flow.enable') {
         // At most one CloudWatch read every 5 minutes per player (flow.ts), however often this is sent.
         void tenant.flow(cmd.on, emit).catch((err) => emit({ type: 'error', message: publicError('flow failed', err) }));
@@ -583,7 +659,9 @@ export const createHttpServer = (deps: Deps) => {
       }
       if (cmd.action === 'bill.enable') {
         // At most one Cost Explorer read a day per player (bill.ts), however often this is sent.
-        void tenant.bill(cmd.on, emit).catch((err) => emit({ type: 'error', message: publicError('bill failed', err) }));
+        void (cmd.on ? stillHere() : Promise.resolve(true))
+          .then((ok) => (ok ? tenant.bill(cmd.on, emit) : undefined))
+          .catch((err) => emit({ type: 'error', message: publicError('bill failed', err) }));
         return;
       }
       if (cmd.action === 'task.submit') {

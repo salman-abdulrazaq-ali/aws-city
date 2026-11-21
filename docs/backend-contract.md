@@ -1,4 +1,4 @@
-# Backend contract v2.16
+# Backend contract v2.17
 
 **Source of truth:** `src/backend/contract.ts`. If this doc and that file disagree, the file wins,
 so fix this doc. Both backends import or mirror that file:
@@ -58,12 +58,18 @@ Client-internal, not on the wire: `storage.local` keeps `progress.parked` (a sig
 | `page.classified`, `chat.answer` (streamed), `screenshot.url`, `progress.state`, `error` | The same as in v1. |
 
 **v2.2 additions (all optional):**
-- `error.code`: `quota` (the player's daily AI calls are used up), `paused` (the city's AI is switched off), `auth` (sign in again), `unlinked` (connect an AWS account first) or `mfa_required` (hosted: `account.link`/`account.verify`, `deploy.approve` and `finding.fix` need an authenticator app on first; the Deploy tab enrols one). The UI shows friendly text for each.
+- `error.code`: `quota` (the player's daily AI calls are used up), `paused` (the city's AI is switched off), `auth` (sign in again), `unlinked` (connect an AWS account first) `mfa_required` (hosted: `account.link`/`account.verify`, `deploy.approve` and `finding.fix` need an authenticator app on first; the Deploy tab enrols one) or `reauth_required` (hosted: those same actions also need a sign-in from the last 30 minutes, the access token's `auth_time`; the client signs in again with `prompt=login` and sends the new token on the open socket with `auth.renew`, v2.17). The UI shows friendly text for each.
 - `sources: [{title, url}]` on `task.done` and on the final `chat.answer`: the AWS documentation pages (docs.aws.amazon.com / aws.amazon.com only) the answer was grounded in, from the AWS Knowledge MCP server.
 - WebSocket close codes (`CLOSE_CODES` in `contract.ts`): `4401` = reconnect with a fresh token, `4403` = the account was deleted
   (`DELETE /me`, from this tab or another): sign out and don't reconnect, `1012` = server restarting (reconnect with jitter),
   `4429` = too many tabs. Hosted, a deleted player is refused for two hours (longer than an access token lives): the WebSocket
   upgrade, `GET`/`PUT /progress` and `POST /screenshots` answer `410`, so a still-valid token can't recreate their data.
+  A socket open on another server task closes with `4403` within a minute (its heartbeat checks), and at once on its
+  next step-up action, bill opt-in, score or presence write.
+- Limits (hosted and local): `POST /screenshots` allows a burst of 10, then one every 6 s per player (`429` past that);
+  a `screenshotKey` must be exactly one the server made; `presence.beat` regions are at most 32 characters. Player
+  text (`task.submit` prompt, `chat.ask` question, `console.start` goal) loses anything shaped like an access key,
+  secret key, session token or email before it reaches a model (`server/src/secrets.ts`).
 
 **v2.3 additions, city care (all additive):** citizens look after a city that mirrors the account.
 - `city.inventory {takenAt, region, source, complete, counts, items[], truncated}`: what's in the account. `source` is
@@ -299,6 +305,14 @@ Everything here is earned and cosmetic: no coins or stars inside, nothing bought
 - `Progress.codex?: {combos: {[comboId]: day}}`: the Service Codex's combos found (`shared/combos.json`), each with the
   local date first found (at most 200). Service cards and sets are read from the rest of Progress. On merge: the union,
   the earlier date per combo.
+
+**v2.17 additions, step-up on an open socket:**
+
+- `auth.renew {token}` (client → server): after `reauth_required`, the client signs in again (`prompt=login`) and
+  sends the fresh access token on the socket it already has. The server verifies it exactly like a new connection's
+  token and, only when it belongs to the same player, takes its newer sign-in time. Pending approvals and running tasks
+  stay (closing the socket would cancel them). Another player's token, or a bad one, changes nothing; at most one
+  renewal per socket every 5 s. A v2.16 server answers it with "Bad command".
 
 **v2.16 additions, merges that never lose a freeze, a refund or a removal (optional):**
 

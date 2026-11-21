@@ -4,12 +4,15 @@
 //  - Safari (no identity API): the sign-in page opens in a tab that redirects to a static relay page
 //    (infra: templates bucket auth/callback.html); the extension reads the code from that tab's URL and
 //    closes it. The code is useless without the PKCE verifier, which never leaves the extension.
-// The access token is what the hosted server verifies (server/src/auth.ts: this app client only). Tokens
-// live in storage.session (cleared when the browser closes); the refresh token in storage.local.
+// The access token is what the hosted server verifies (server/src/auth.ts: this app client only). It lives in
+// storage.session (trusted contexts only, cleared when the browser closes). The refresh token lives in the extension's
+// own IndexedDB (vault.ts), out of reach of content scripts; storage.local holds only a "signed in" marker, so the side
+// panel and the full-city tab hear each other sign in and out.
 
 const SIGN_IN_TIMEOUT_MS = 10 * 60_000;
 
 import { browser } from 'wxt/browser';
+import { vault } from './vault';
 
 export interface CognitoConfig {
   /** e.g. https://aws-city.auth.us-west-2.amazoncognito.com */
@@ -36,7 +39,12 @@ class TokenError extends Error {
 const SCOPES = ['openid', 'email', 'profile', 'aws.cognito.signin.user.admin'];
 
 const SESSION_KEY = 'auth.tokens';
-const REFRESH_KEY = 'auth.refresh';
+/** The refresh token's name in the vault. */
+const REFRESH_KEY = 'refresh';
+/** storage.local: set (to a time) while signed in. Not a secret, and never trusted for anything but "look again". */
+const MARKER_KEY = 'auth.signedIn';
+/** Where builds before 21 Nov 2026 kept the refresh token (readable by content scripts). Removed, never read. */
+const LEGACY_REFRESH_KEY = 'auth.refresh';
 
 const b64url = (bytes: Uint8Array) =>
   btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -103,22 +111,29 @@ export class CognitoAuth {
   }
 
   private async refresh(): Promise<string | undefined> {
-    const refresh = (await browser.storage.local.get(REFRESH_KEY))[REFRESH_KEY] as string | undefined;
+    await browser.storage.local.remove(LEGACY_REFRESH_KEY);
+    const refresh = await vault.get(REFRESH_KEY);
     if (!refresh) return undefined;
     try {
       return await this.exchange({ grant_type: 'refresh_token', refresh_token: refresh });
     } catch (err) {
       // Only a rejected refresh token signs the player out; a network blip or 5xx is retried later.
       if (err instanceof TokenError && err.code === 'invalid_grant') {
-        await browser.storage.local.remove(REFRESH_KEY);
+        await this.forgetRefresh();
         return undefined;
       }
       throw err;
     }
   }
 
-  /** Must be triggered by a user gesture (button click). */
-  async signIn(): Promise<string> {
+  private async forgetRefresh() {
+    await vault.remove(REFRESH_KEY);
+    await browser.storage.local.remove([MARKER_KEY, LEGACY_REFRESH_KEY]);
+  }
+
+  /** Must be triggered by a user gesture (button click). `fresh`: make Cognito ask for the password and code again
+   *  (prompt=login), for step-up, instead of reusing its saved session. */
+  async signIn(opts: { fresh?: boolean } = {}): Promise<string> {
     const { verifier, challenge } = await pkce();
     const state = b64url(crypto.getRandomValues(new Uint8Array(16)));
     const url = new URL('/oauth2/authorize', this.cfg.domain);
@@ -130,6 +145,7 @@ export class CognitoAuth {
       code_challenge_method: 'S256',
       code_challenge: challenge,
       state,
+      ...(opts.fresh ? { prompt: 'login' } : {}),
     }).toString();
     const result = this.viaIdentity ? await browser.identity.launchWebAuthFlow({ url: url.toString(), interactive: true }) : await signInTab(url.toString(), this.redirectUri);
     if (!result) throw new Error('Sign-in was cancelled');
@@ -142,7 +158,7 @@ export class CognitoAuth {
 
   async signOut() {
     await browser.storage.session.remove(SESSION_KEY);
-    await browser.storage.local.remove(REFRESH_KEY);
+    await this.forgetRefresh();
   }
 
   /** The server rejected the access token: drop it so the next token() refreshes (or asks for sign-in). */
@@ -152,11 +168,11 @@ export class CognitoAuth {
 
   /**
    * The side panel and the full-city tab share these keys. Calls back with 'signed-in' when another
-   * surface stores a fresh sign-in and 'signed-out' when the refresh token is removed.
+   * surface stores a fresh sign-in and 'signed-out' when it signs out (the marker; the token itself is in the vault).
    */
   onChange(cb: (change: 'signed-in' | 'signed-out') => void): () => void {
     const listener = (changes: Record<string, { oldValue?: unknown; newValue?: unknown }>, area: string) => {
-      const c = changes[REFRESH_KEY];
+      const c = changes[MARKER_KEY];
       if (area !== 'local' || !c) return;
       if (c.newValue && !c.oldValue) cb('signed-in');
       else if (!c.newValue && c.oldValue) cb('signed-out');
@@ -175,7 +191,10 @@ export class CognitoAuth {
     const body = (await res.json()) as { access_token: string; expires_in: number; refresh_token?: string };
     const tokens: Tokens = { accessToken: body.access_token, expiresAt: Date.now() + body.expires_in * 1000 };
     await browser.storage.session.set({ [SESSION_KEY]: tokens });
-    if (body.refresh_token) await browser.storage.local.set({ [REFRESH_KEY]: body.refresh_token });
+    if (body.refresh_token) {
+      await vault.set(REFRESH_KEY, body.refresh_token);
+      await browser.storage.local.set({ [MARKER_KEY]: Date.now() });
+    }
     return tokens.accessToken;
   }
 

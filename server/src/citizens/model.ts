@@ -69,12 +69,18 @@ export class MeteredAnthropicModel extends AnthropicModel {
   }
 }
 
+/** Each player's turn on the self-hosted model: their calls run one at a time (keyed by their gate, one per player). */
+const lanes = new WeakMap<object, Promise<void>>();
+
 /**
- * Strands' OpenAI model (Chat Completions) on a model served on this computer (Ollama's OpenAI-compatible endpoint), for
- * when Bedrock is held or offline, with the same gate as every other model call. Local mode only: config.ts refuses it
- * hosted and refuses any address off this computer. Ollama ignores the API key, but the OpenAI client wants one, so it
- * gets a placeholder (never a real key). The limit goes as `max_tokens`, which every local server reads (Strands'
- * `maxTokens` sends OpenAI's newer `max_completion_tokens`).
+ * Strands' OpenAI model (Chat Completions) on a model we serve ourselves (Ollama's OpenAI-compatible endpoint): on this
+ * computer in local mode, or hosted, the city's own AI service in its VPC (config.ts refuses any other address). Same
+ * gate as every other model call. Ollama ignores the API key, but the OpenAI client wants one, so it gets a placeholder
+ * (never a real key). The limit goes as `max_tokens`, which every local server reads (Strands' `maxTokens` sends
+ * OpenAI's newer `max_completion_tokens`).
+ *
+ * One model serves everyone hosted (a few requests at a time), so a player's calls queue behind each other instead of
+ * filling it, and a failed call isn't retried (a retry would queue again behind everyone else).
  */
 export class MeteredOpenAIModel extends OpenAIModel {
   constructor(
@@ -85,16 +91,25 @@ export class MeteredOpenAIModel extends OpenAIModel {
       api: 'chat',
       modelId: opts.modelId,
       params: { max_tokens: opts.maxTokens },
-      // A local model can be slow on a laptop; still well inside the 100 s deploy drain. One retry for a cold start.
-      client: new OpenAI({ baseURL: opts.baseURL, apiKey: 'local', timeout: 90_000, maxRetries: 1 }),
+      // A model on CPU can be slow; still well inside the 100 s deploy drain.
+      client: new OpenAI({ baseURL: opts.baseURL, apiKey: 'local', timeout: 90_000, maxRetries: 0 }),
     });
   }
 
   override async *stream(messages: Message[], options?: StreamOptions) {
     await this.gate();
-    for await (const event of super.stream(messages, options)) {
-      if (event.type === 'modelMetadataEvent') recordUsage(event.usage);
-      yield event;
+    const before = lanes.get(this.gate) ?? Promise.resolve();
+    let release!: () => void;
+    const mine = new Promise<void>((r) => (release = r));
+    lanes.set(this.gate, before.then(() => mine));
+    await before;
+    try {
+      for await (const event of super.stream(messages, options)) {
+        if (event.type === 'modelMetadataEvent') recordUsage(event.usage);
+        yield event;
+      }
+    } finally {
+      release();
     }
   }
 }

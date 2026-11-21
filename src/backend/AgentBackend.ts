@@ -26,7 +26,7 @@ export interface AgentBackend {
   putProgress(p: Progress): void;
 
   /** Interactive sign-in (hosted server). Must be called from a user gesture. */
-  signIn?(): Promise<void>;
+  signIn?(opts?: { fresh?: boolean }): Promise<void>;
   signOut?(): Promise<void>;
   /** Hosted: enrol an authenticator app (step-up MFA before linking an AWS account). */
   startTotp?(): Promise<{ secret: string; uri: string }>;

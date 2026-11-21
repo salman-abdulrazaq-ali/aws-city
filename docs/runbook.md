@@ -46,6 +46,15 @@ Amazon Nova or Claude, and a new account's Bedrock hold). This section is the op
    also `WXT_AWS_WS_URL`, `WXT_AWS_API_URL`, `WXT_COGNITO_DOMAIN`, `WXT_COGNITO_CLIENT_ID` (stack outputs).
    From then on: merge to `main` → CI → staging deploys the exact commit CI tested; the staging run's summary
    shows the **prod `cdk diff`**; a reviewer approves → prod.
+   Before turning this on (security review, 21 Nov 2026; not live while `githubRepo` is empty):
+   - `staging` deploys only from protected branches (set 21 Nov). Staging and prod still share one deploy role that
+     can reach every CDK bootstrap role, so also add a required reviewer on `staging`, or give each environment its
+     own role (better: its own account). Check: `gh api repos/<owner>/<repo>/environments --jq '.environments[]|{name,protection_rules}'`.
+   - The repo uses GitHub's immutable OIDC subject (`repo:<owner>@<id>/<repo>@<id>:…`); `ci-stack.ts`'s trust policy
+     and setup's check expect `repo:<owner>/<repo>:…`, so the role would refuse GitHub until they match.
+     Check: `gh api repos/<owner>/<repo>/actions/oidc/customization/sub`.
+   - Releases (`release.yml`) publish through the `prod` environment, which allows only `main`: add a `v*` tag rule
+     to it (and a tag ruleset limiting who may push `v*`) before the first release.
 5. One-time account settings CDK doesn't manage:
    - **Amazon Inspector** ECR scanning for the CDK assets repository: `aws inspector2 enable --resource-types ECR`.
    - **Cost allocation tags**: activate `env` and `app` in Billing → Cost allocation tags (lets you split
@@ -184,8 +193,10 @@ Screenshots in S3 expire after a day and aren't backed up; that's by design.
 
 - **"It says turn on an authenticator first":** linking an AWS account needs TOTP MFA (agents can change that
   account). Deploy tab → *Set up an authenticator*. Players who signed up before this need to sign out and in
-  once. Google sign-ins are exempt (MFA is at Google). Turn the check off only for testing:
-  `REQUIRE_MFA_FOR_LINK=false`.
+  once. Google sign-ins are exempt (MFA is at Google). There is no switch to turn this off in hosted mode.
+- **"Sign in again to confirm this":** linking, approving a change and applying a fix need a sign-in from the last
+  30 minutes (`STEP_UP_MAX_AGE_MS`, `server/src/accounts/mfa.ts`), so a stolen refresh token can't act on a
+  player's AWS account. The *Sign in again* button asks for the password and authenticator code again.
 - **Lost authenticator:** `aws cognito-idp admin-set-user-mfa-preference --user-pool-id <pool> --username <user> --software-token-mfa-settings Enabled=false`
   after verifying who they are by email.
 - **"Can't link my account":** they must create the stack from the link in the *same* region, then paste the

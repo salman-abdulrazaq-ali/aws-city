@@ -124,6 +124,37 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   scan it?"), and only then the three linking steps (step 2 opens CloudFormation, or Copy link for an AWS session in another browser, and names the Region to keep, `linkRegion` from the link's `?region=`; step 3, the account number, opens when they say the stack is
   CREATE_COMPLETE; `accountInput` accepts the console's 1234-5678-9012 and a stray full stop; step 2 tells a host to use a different account from the one the city runs in, and `docs/self-hosting.md` step 9 shows how to make one). Proof: `cd server && npx vitest run
   test/hosted.test.ts -t "MFA"` (includes "MFA step-up for writes"), `cd infra && npm test`, `npx vitest run tests/link-steps.test.tsx`.
+  Step-up also needs a sign-in from the last 30 minutes (the token's `auth_time`, `recentSignIn` in
+  `server/src/accounts/mfa.ts`; error `reauth_required`, "Sign in again" → `prompt=login`, then the fresh token goes
+  over the open socket as `auth.renew` (v2.17) so a pending approval survives), so a stolen 30-day refresh token can't
+  approve anything; there is no switch to turn step-up off hosted. Proof: `cd server && npx vitest run
+  test/hosted.test.ts -t "30 minutes|auth.renew"`.
+- **Red-team pass, 21 Nov 2026: what an attacker with a page, a token or a laptop process can't do.**
+  - The Console Copilot fills fields and points; the player presses anything that commits (create, save, launch, add,
+    attach… or any submit button) and types any value that opens access (`0.0.0.0/0`, `*`) or names an account
+    (`isCommitControl`/`isRiskyValue`, `src/console/risk.ts`, checked in the extension and on the server). Page text is
+    fenced as `<console_page>` data. Proof: `npx vitest run tests/console.test.ts tests/practice-console.test.ts`,
+    `npm run smoke:copilot` (it plays the player through `[data-awscity-your-turn]`).
+  - The local server takes only its token, never an Origin alone; every local build carries `.cache/local-token`
+    (mode 0600) and the token is never printed. Proof: `cd server && npx vitest run test/http.test.ts -t "token"`.
+  - A deleted account's sockets on other tasks close with `4403` (heartbeat check each minute, and before step-up, the
+    bill, scores and presence); an approval given before a re-link never writes to the old account
+    (`ACCOUNT_CHANGED_REASON`). Proof: `cd server && npx vitest run test/hosted.test.ts -t "another task"
+    test/service.test.ts -t "re-linked"`.
+  - Model input is bounded and clean: the snapshot is capped (100 resources, 64-char names, 8k chars), player text loses
+    keys, secrets, tokens and emails (`server/src/secrets.ts`), every persona carries `NO_SECRETS_RULE`, and on the
+    self-hosted model each player's calls take turns with no retries. Proof: `cd server && npx vitest run
+    test/runner.test.ts test/secrets.test.ts test/local-model.test.ts -t "take turns"`.
+  - The refresh token lives in the extension's own IndexedDB (`src/backend/vault.ts`), never in `storage.local`
+    (content scripts can read that); auto-snap skips pages that can show a secret (`isSensitivePage`); page focus and
+    Copilot messages from a web page's content script are ignored (`fromWebPage`). Proof: `npx vitest run
+    tests/auth.test.ts tests/runtime-session.test.ts`.
+  - Limits: screenshots 10 then 1 per 6 s per player, server-made `screenshotKey`s only, board reads cached 15 s per
+    player, a private profile leaves the boards whichever task saves it. CloudFront adds AWS's managed security
+    headers (HSTS, nosniff). CI installs before AWS credentials exist, saves no git credentials, pins the binfmt image,
+    CodeQL also scans the workflows, Dependabot waits 7 days, and releases build read-only and publish separately;
+    the `staging` environment deploys only from protected branches (`gh api repos/salman-abdulrazaq-ali/aws-city/environments
+    --jq '.environments[]|{name,deployment_branch_policy}'`). Proof: `cd server && npm test`, `cd infra && npm test`.
 - **The repo and the AWS account are locked down.** GitHub: `main` changes only through a pull request with CI green
   (ruleset "main": the `extension`, `server`, `infra`, `fresh-clone` ×3 and `analyze` checks, no force-push or deletion,
   only the admin may bypass); Actions run only GitHub-owned, verified-creator and `softprops/action-gh-release` actions,

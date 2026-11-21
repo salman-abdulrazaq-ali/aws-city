@@ -105,4 +105,17 @@ describe('untrusted names in the model prompt', () => {
     expect(text).not.toMatch(/[<>]/);
     expect(JSON.parse(text).resources[0].name).toBe(evil.name);
   });
+
+  it('a flood of long-named resources can’t blow up the prompt: capped, the city’s own first, the rest counted', async () => {
+    const { snapshotForModel, SNAPSHOT_MAX_CHARS, SNAPSHOT_MAX_NAME } = await import('../src/agents/runner.js');
+    const { snapshot, instance } = await import('./fixtures.js');
+    const many = Array.from({ length: 500 }, (_, i) => ({ ...instance(`i-${String(i).padStart(17, '0')}`, 'running'), name: 'x'.repeat(256), managedByGame: i === 499 }));
+    const text = snapshotForModel(snapshot(many));
+    expect(text.length).toBeLessThanOrEqual(SNAPSHOT_MAX_CHARS);
+    const parsed = JSON.parse(text);
+    expect(parsed.resources.length).toBeGreaterThan(0);
+    expect(parsed.resources.length + parsed.moreResources).toBe(500);
+    expect(parsed.resources[0].builtByGame).toBe(true);
+    for (const r of parsed.resources) expect(r.name.length).toBeLessThanOrEqual(SNAPSHOT_MAX_NAME);
+  });
 });

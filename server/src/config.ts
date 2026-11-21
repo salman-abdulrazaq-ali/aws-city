@@ -79,8 +79,6 @@ export interface Config {
   playerRolePrefix: string;
   /** SSM parameter: "false" turns every model call off (manual kill switch). */
   killSwitchParam?: string;
-  /** Hosted: players must turn on MFA before linking an AWS account (REQUIRE_MFA_FOR_LINK, default on). */
-  requireMfaForLink: boolean;
   dailyModelCalls: number;
   globalDailyModelCalls: number;
   maxSocketsPerUser: number;
@@ -195,7 +193,6 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
     taskRoleName: env.TASK_ROLE_NAME ?? 'AWSCityTaskRole-prod',
     playerRolePrefix: env.PLAYER_ROLE_PREFIX ?? 'AWSCityPlayerRole',
     killSwitchParam: env.KILL_SWITCH_PARAM,
-    requireMfaForLink: oneOf('REQUIRE_MFA_FOR_LINK', env.REQUIRE_MFA_FOR_LINK, ['true', 'false'], 'true') === 'true',
     dailyModelCalls: positiveInt('DAILY_MODEL_CALLS', env.DAILY_MODEL_CALLS, 100, 0),
     globalDailyModelCalls: positiveInt('GLOBAL_DAILY_MODEL_CALLS', env.GLOBAL_DAILY_MODEL_CALLS, 20_000, 0),
     maxSocketsPerUser: positiveInt('MAX_SOCKETS_PER_USER', env.MAX_SOCKETS_PER_USER, 4),

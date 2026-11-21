@@ -26,6 +26,10 @@ const bodies: Body[] = [];
 let reply: (body: Body) => object[] = () => [];
 let server: Server;
 let url = '';
+/** How long the fake model takes to answer, and the most requests it has had at once. */
+let delayMs = 0;
+let inFlight = 0;
+let maxInFlight = 0;
 
 const chunk = (delta: object, finish: string | null = null) => ({ id: 'c', object: 'chat.completion.chunk', created: 0, model: DEFAULT_LOCAL_MODEL, choices: [{ index: 0, delta, finish_reason: finish }] });
 const usage = { id: 'c', object: 'chat.completion.chunk', created: 0, model: DEFAULT_LOCAL_MODEL, choices: [], usage: { prompt_tokens: 12, completion_tokens: 3, total_tokens: 15 } };
@@ -47,9 +51,13 @@ beforeAll(async () => {
       }
       const body = JSON.parse(raw) as Body;
       bodies.push(body);
-      res.writeHead(200, { 'content-type': 'text/event-stream' });
-      for (const c of reply(body)) res.write(`data: ${JSON.stringify(c)}\n\n`);
-      res.end('data: [DONE]\n\n');
+      maxInFlight = Math.max(maxInFlight, ++inFlight);
+      setTimeout(() => {
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        for (const c of reply(body)) res.write(`data: ${JSON.stringify(c)}\n\n`);
+        res.end('data: [DONE]\n\n');
+        inFlight--;
+      }, delayMs);
     });
   });
   await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
@@ -60,6 +68,8 @@ afterAll(() => new Promise<void>((ok) => server.close(() => ok())));
 const bedrock = mockClient(BedrockRuntimeClient);
 beforeEach(() => {
   bodies.length = 0;
+  delayMs = 0;
+  maxInFlight = 0;
   bedrock.reset();
 });
 afterEach(() => bedrock.reset());
@@ -140,6 +150,18 @@ describe('Strands on the local model', () => {
     // The wire: the configured model, a streamed call, max_tokens (every local server reads it), the system prompt.
     expect(bodies[0]).toMatchObject({ model: DEFAULT_LOCAL_MODEL, stream: true, max_tokens: 200 });
     expect(bodies[0].messages[0]).toMatchObject({ role: 'system' });
+  });
+
+  it('one player’s calls take turns on the shared model; two players run side by side', async () => {
+    reply = () => text('ok');
+    delayMs = 60;
+    const ask = (llm: Llm) => say(llm, { system: 's', prompt: 'p', model: { light: true, maxTokens: 20 }, onText: () => {} });
+    const ada = localLlm().llm;
+    await Promise.all([ask(ada), ask(ada), ask(ada)]);
+    expect(maxInFlight).toBe(1); // queued behind each other, not filling the model
+    maxInFlight = 0;
+    await Promise.all([ask(ada), ask(localLlm().llm)]);
+    expect(maxInFlight).toBe(2);
   });
 
   it('pick: the tool is offered, never forced, and its input comes back', async () => {

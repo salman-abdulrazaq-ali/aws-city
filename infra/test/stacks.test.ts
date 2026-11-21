@@ -178,6 +178,10 @@ describe('no custom domain: CloudFront in front of a private load balancer', () 
     t.svc.hasResourceProperties('AWS::CloudFront::Distribution', {
       DistributionConfig: Match.objectLike({ DefaultCacheBehavior: Match.objectLike({ ViewerProtocolPolicy: 'https-only', AllowedMethods: Match.arrayWith(['POST', 'DELETE']) }) }),
     });
+    // AWS's managed SecurityHeadersPolicy (HSTS, nosniff, X-Frame-Options, Referrer-Policy) on every response.
+    t.svc.hasResourceProperties('AWS::CloudFront::Distribution', {
+      DistributionConfig: Match.objectLike({ DefaultCacheBehavior: Match.objectLike({ ResponseHeadersPolicyId: '67f7725c-6f97-4210-82d7-5512b31e9d03' }) }),
+    });
     t.svc.hasResourceProperties('AWS::ElasticLoadBalancingV2::LoadBalancer', { Scheme: 'internal' });
     // Nothing is open to the internet inbound: only CloudFront's origin-facing prefix list reaches the ALB.
     const inbound = JSON.stringify([

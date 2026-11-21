@@ -16,7 +16,7 @@ const { executeAction } = vi.hoisted(() => {
 });
 vi.mock('../src/agents/executor.js', () => ({ executeAction }));
 
-const { createActionService, NEEDS_APPROVAL_REASON, REJECTED_REASON } = await import('../src/agents/service.js');
+const { ACCOUNT_CHANGED_REASON, createActionService, NEEDS_APPROVAL_REASON, REJECTED_REASON } = await import('../src/agents/service.js');
 
 const pollerFor = (resources = snapshot([])) => ({ current: () => resources, refresh: async () => resources, start() {}, stop() {} }) as Poller;
 
@@ -38,6 +38,19 @@ describe('action service', () => {
     expect(await service.submit('launch_instance', { name: 'house' })).toEqual({ status: 'denied', reason: NEEDS_APPROVAL_REASON });
     expect(await service.submit('create_table', { name: 'city-quest' })).toEqual({ status: 'denied', reason: NEEDS_APPROVAL_REASON });
     expect(await service.submit('stop_instance', { instanceId: mine.id })).toEqual({ status: 'denied', reason: NEEDS_APPROVAL_REASON });
+    expect(executeAction).not.toHaveBeenCalled();
+  });
+
+  it('an approval that arrives after the player re-linked another account never writes to the old one', async () => {
+    executeAction.mockClear();
+    let live = true;
+    const service = createActionService({ clients: {} as AwsClients, poller: pollerFor(), region: 'us-west-2', live: () => live });
+    // The player approves on the card, but meanwhile linked a different AWS account (the old world was retired).
+    const approve = async () => {
+      live = false;
+      return true;
+    };
+    expect(await service.submit('launch_instance', { name: 'house' }, { approve })).toEqual({ status: 'denied', reason: ACCOUNT_CHANGED_REASON });
     expect(executeAction).not.toHaveBeenCalled();
   });
 

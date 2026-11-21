@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { canDeleteAccount, canSetUpMfa, confirmMfaSetup, decideDeploy, deleteAccount, isSafeAwsUrl, linkAccount, openUrl, planDeploy, signIn, signOut, startMfaSetup, teardownDeploy, verifyAccount } from '@/app/runtime';
 import { useCity, type DeployView } from '@/state/store';
+import { ReauthPrompt } from './ReauthPrompt';
 import { GUARDED_BLUEPRINTS } from '@/backend/ServerBackend';
 import { TEMPLATES } from '@/world/content';
 import { TemplateView } from './TemplateView';
@@ -358,7 +359,7 @@ export function DeployPanel() {
         <div className="card">
           <b>Sign in to your AWS City account</b>
           <p className="muted">Your progress and deploys are tied to your login.</p>
-          <PendingButton className="btn primary" pending={signingIn} busyLabel="Waiting for sign-in…" onClick={signIn}>
+          <PendingButton className="btn primary" pending={signingIn} busyLabel="Waiting for sign-in…" onClick={() => signIn()}>
             Sign in
           </PendingButton>
         </div>
@@ -373,6 +374,7 @@ export function DeployPanel() {
         ) : (
           <>
             {account.mfaRequired && canSetUpMfa() && <MfaSetup />}
+            <ReauthPrompt />
             {account.message && (
               <p className="field-error" role="alert">
                 ⚠️ {account.message}
@@ -490,6 +492,7 @@ export function DeployPanel() {
                   </table>
                 </ForLearners>
                 {d.costNote && <CostNote note={d.costNote} />}
+                <ReauthPrompt />
                 <div className="actions">
                   <PendingButton
                     buttonRef={(el) => {

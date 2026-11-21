@@ -2,7 +2,6 @@ node_modules
 .output
 .wxt
 dist
-.env.local
 *.log
 .DS_Store
 public/assets/kenney/_zips
@@ -13,5 +12,11 @@ server/.data
 .omc
 .claude/worktrees/
 aws-city.config.json
-.env.production
-infra/outputs.*.json
+
+# Secrets and per-deploy files never go in git: env files (except the example), deploy outputs, and CDK's context
+# cache (its lookups record the AWS account id).
+.env
+.env.*
+!.env.example
+infra/outputs*.json
+infra/cdk.context.json

@@ -32,14 +32,16 @@ jobs:
         with:
           # Deploy exactly the commit CI tested (workflow_run otherwise checks out the latest main).
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 24, cache: npm, cache-dependency-path: infra/package-lock.json }
+      # Install before any AWS credentials exist, so no package's install script ever runs with them.
+      - run: npm ci
+        working-directory: infra
       - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
-      - run: npm ci
-        working-directory: infra
       - run: npx cdk deploy --all -c env=staging --require-approval never --outputs-file outputs.json
         working-directory: infra
       - name: Hosted smoke test
@@ -66,14 +68,16 @@ jobs:
         with:
           # Deploy exactly the commit CI tested (workflow_run otherwise checks out the latest main).
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 24, cache: npm, cache-dependency-path: infra/package-lock.json }
+      # Install before any AWS credentials exist, so no package's install script ever runs with them.
+      - run: npm ci
+        working-directory: infra
       - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
-      - run: npm ci
-        working-directory: infra
       - run: npx cdk deploy --all -c env=prod --require-approval never --outputs-file outputs.json
         working-directory: infra
       - run: node scripts/smoke-hosted.mjs infra/outputs.json prod

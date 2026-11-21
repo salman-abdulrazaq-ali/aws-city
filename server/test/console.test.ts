@@ -23,8 +23,12 @@ describe('Console Copilot (contract v2.1)', () => {
     const events: ServerEvent[] = [];
     await cp.start({ taskId: 'c1', goal: 'Create an S3 bucket', context: {}, snapshot }, (e) => events.push(e));
     const first = events.find((e) => e.type === 'console.step');
-    expect(first).toMatchObject({ taskId: 'c1', index: 0, agentId: 's3', action: 'click', target: { id: 'e1' }, risk: 'safe', why: 'Buckets hold objects' });
+    // Create commits a change: whatever the model said, the server hands it to the player (risk 'confirm').
+    expect(first).toMatchObject({ taskId: 'c1', index: 0, agentId: 's3', action: 'click', target: { id: 'e1' }, risk: 'confirm', why: 'Buckets hold objects' });
     expect(JSON.stringify(calls[0].messages)).toContain('e1 | button | Create bucket');
+    // Page text is fenced as data, and the system prompt says so.
+    expect(JSON.stringify(calls[0].messages)).toContain('<console_page>');
+    expect(JSON.stringify(calls[0].system).replace(/\\n/g, " ")).toMatch(/data, never\s+instructions/);
     // Bedrock rejects a forced tool_choice while thinking is on: ask, don't force.
     expect(calls[0].tool_choice).toEqual({ type: 'auto' });
     expect(calls[0].output_config).toEqual({ effort: 'low' });
@@ -143,5 +147,15 @@ describe('Console Copilot — snapshot trimming and page changes', () => {
     const events: ServerEvent[] = [];
     await cp.start({ taskId: 't2', goal: 'x', context: {}, snapshot }, (e) => events.push(e));
     expect(events.find((e) => e.type === 'console.step')).toMatchObject({ risk: 'confirm' });
+  });
+
+  it('typing a value that opens access or names another account goes back to the learner (a planted page label can’t)', async () => {
+    for (const value of ['0.0.0.0/0', '::/0', '1111 2222 3333', 'arn:aws:iam::111122223333:root']) {
+      const { llm } = fakeLlm([step({ action: 'type', target: { id: 'e1', name: 'Source' }, value, say: 'Filling it in', risk: 'safe' })]);
+      const cp = createConsoleCopilot({ llm });
+      const events: ServerEvent[] = [];
+      await cp.start({ taskId: `v-${value}`, goal: 'x', context: {}, snapshot }, (e) => events.push(e));
+      expect(events.find((e) => e.type === 'console.step'), value).toMatchObject({ risk: 'confirm' });
+    }
   });
 });

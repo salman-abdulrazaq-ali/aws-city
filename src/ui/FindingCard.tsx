@@ -6,6 +6,7 @@ import { decideDeploy, explainFinding, fixFinding, openDocs, wasExplained } from
 import { bus } from '@/state/bus';
 import { CITIZEN_XP, citizenLevel, citizenXp, FIX_LEVEL, fixGate, LEVEL_XP, levelName } from '@/state/citizens';
 import { isDiscovered, openFindings, severityRank, useCity, type DeployView, type FindingView } from '@/state/store';
+import { ReauthPrompt } from './ReauthPrompt';
 import { citizenById, citizenRole, PILLAR_LABEL, type CitizenDef } from '@/world/citizens';
 import { placeFor } from '@/world/places';
 import { cardsFor, PUZZLES } from '@/world/content';
@@ -113,7 +114,7 @@ function Approve({ d, offline, preview }: { d: DeployView; offline?: string; pre
   const [typed, setTyped] = useState('');
   const [sent, setSent] = useState(false);
   // An approval refused for MFA stays pending on the server: once the step-up card shows, let them press it again.
-  const mfaRequired = useCity((s) => s.account.mfaRequired);
+  const mfaRequired = useCity((s) => s.account.mfaRequired || s.account.reauthRequired);
   useEffect(() => {
     if (mfaRequired) setSent(false);
   }, [mfaRequired]);
@@ -163,6 +164,7 @@ function Approve({ d, offline, preview }: { d: DeployView; offline?: string; pre
           <input id={`confirm-${d.deployId}`} value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" spellCheck={false} placeholder={d.confirmText} />
         </div>
       )}
+      <ReauthPrompt />
       <div className="finding-actions">
         <button
           className="btn"

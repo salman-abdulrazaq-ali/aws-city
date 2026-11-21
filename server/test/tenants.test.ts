@@ -1,3 +1,6 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { AccountLinker } from '../src/accounts/link.js';
 import type { AwsClients } from '../src/aws.js';
@@ -75,6 +78,18 @@ describe('tenant account changes', () => {
     expect(running()).toBe(1);
     await tenant.deleteMe();
     expect(running()).toBe(0);
+  });
+
+  it('a profile turned private leaves the boards even when no city is open on this task (2+ tasks)', async () => {
+    const stores = localStores(join(mkdtempSync(join(tmpdir(), 'aws-city-private-')), 'progress.json'));
+    const forget = vi.spyOn(stores.social, 'forget');
+    const tenants = createTenants({ config: loadConfig({}), stores, uploads: createUploadStore('http://127.0.0.1:1'), llm: fakeLlm([]).llm, enabled: async () => true, awsFor: () => undefined, walkMs: 0 });
+    const data = tenants.data({ sub: 'goes-private' });
+    const progress = (pub: boolean) => ({ version: 1, landmarks: {}, updatedAt: new Date().toISOString(), profile: { public: pub, name: 'Ada Lovelace' } });
+    expect((await data.progress.put(progress(true))).ok).toBe(true);
+    expect(forget).not.toHaveBeenCalled();
+    expect((await data.progress.put(progress(false))).ok).toBe(true);
+    expect(forget).toHaveBeenCalledWith('goes-private');
   });
 
   it('REST data for a player with no open city never assumes their role or polls AWS', async () => {

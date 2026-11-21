@@ -1130,15 +1130,12 @@ await panel.screenshot({ path: `${out}/12-lookout.png` });
       // The demo's Copilot works in the practice console (nothing there touches AWS); its run finishing does the job.
       await page.getByRole('button', { name: /Do it with the Copilot/ }).click();
       const at = Date.now();
-      // A step that bills (Create database) is handed to the player on the practice page: play the player and press it.
-      const CONFIRM = { rds: 'Create database', ec2: 'Launch instance', iam: 'Create role' }[t.click.flow];
-      let confirmed = false;
+      // Every step that commits a change (create, launch, save…) is handed to the player on the practice page, and the
+      // overlay marks the element it's waiting on: play the player and press it.
       while (Date.now() - at < 60_000 && !(await city((id) => (window.awsCity.useCity.getState().progress.clients?.bank?.done ?? []).includes(id), t.id))) {
         const tab = ctx.pages().find((p) => p.url().startsWith(`chrome-extension://${id}/practice`));
-        if (tab && CONFIRM && !confirmed && (await tab.locator('[data-awscity-overlay]').getByText('needs your OK').count().catch(() => 0))) {
-          await tab.getByRole('button', { name: CONFIRM, exact: true }).click().catch(() => {});
-          confirmed = true;
-        }
+        const turn = tab?.locator('[data-awscity-your-turn]');
+        if (turn && (await turn.count().catch(() => 0))) await turn.first().click().catch(() => {});
         await wait(500);
       }
       await page.bringToFront();

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
 import { choose, findExact, findTarget, typeInto } from '@/console/act';
-import { redact } from '@/console/risk';
+import { isCommit, isRiskyValue, redact } from '@/console/risk';
 import { isConsoleUrl, isRisky, mayAct } from '@/console/safety';
 import { takeSnapshot } from '@/console/snapshot';
 
@@ -55,12 +55,32 @@ describe('safety', () => {
     for (const n of ['Create bucket', 'Next', 'Bucket name', 'Create table']) expect(isRisky(n), n).toBe(false);
   });
 
+  it('flags the labels a security review found missing: camelCase managed policies, opening access, other accounts', () => {
+    for (const n of ['IAMFullAccess', 'AmazonS3FullAccess', 'PowerUserAccess', 'Anywhere-IPv4', '0.0.0.0/0', '::/0', 'Another AWS account', 'Account ID', 'Trusted entity type', 'Share with', 'Make object public', 'Block public access'])
+      expect(isRisky(n), n).toBe(true);
+  });
+
+  it('commit controls are the player’s to press; filling and navigating are the agent’s', () => {
+    for (const n of ['Create bucket', 'Save rules', 'Launch instance', 'Add rule', 'Attach', 'Create role', 'Save changes', 'Apply', 'Update', 'Submit', 'Edit inbound rules'])
+      expect(isCommit(n), n).toBe(true);
+    for (const n of ['Next', 'Previous', 'Cancel', 'Bucket name', 'Instance type', 'Services', 'Learn more', 'Settings']) expect(isCommit(n), n).toBe(false);
+  });
+
+  it('values that open access or name an AWS account are the player’s to type', () => {
+    for (const v of ['0.0.0.0/0', '::/0', '*', ' * ', '1111 2222 3333', '1111-2222-3333', '111122223333', 'arn:aws:iam::111122223333:root'])
+      expect(isRiskyValue(v), v).toBe(true);
+    for (const v of ['aws-city-demo-1', 'city-web-ab12', '10.0.0.0/16', 't4g.micro', '30']) expect(isRiskyValue(v), v).toBe(false);
+  });
+
   it('mayAct refuses risky clicks and secret fields, allows safe ones', () => {
     const items = takeSnapshot(document, { requireLayout: false }).items;
     const by = (n: string) => items.find((i) => i.name === n);
     expect(mayAct(by('Delete bucket'), 'click')).toMatchObject({ ok: false, reason: 'risky' });
     expect(mayAct(by('Password'), 'type')).toMatchObject({ ok: false, reason: 'sensitive' });
-    expect(mayAct(by('Create bucket'), 'click')).toEqual({ ok: true });
+    // Create commits a change: the agent points at it and the player presses it.
+    expect(mayAct(by('Create bucket'), 'click')).toMatchObject({ ok: false, reason: 'commit' });
+    expect(mayAct(by('Bucket name'), 'type', undefined, '0.0.0.0/0')).toMatchObject({ ok: false, reason: 'risky' });
+    expect(mayAct(by('Bucket name'), 'type', undefined, 'aws-city-demo-1')).toEqual({ ok: true });
     expect(mayAct(undefined, 'click')).toMatchObject({ ok: false, reason: 'missing' });
   });
 

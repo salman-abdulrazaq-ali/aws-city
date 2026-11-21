@@ -2,6 +2,7 @@
 // they never touch the backend or chrome.* directly.
 
 import { browser } from 'wxt/browser';
+import { fromWebPage } from './sender';
 import { createBackend, type AgentBackend } from '@/backend';
 import type { ConsoleStepEvent, PageSnapshot } from '@/backend/contract';
 import { agentName, emptyProgress } from '@/state/store';
@@ -430,8 +431,9 @@ export function setFlow(on: boolean) {
 // ── Page focus (from background.ts) ──
 
 async function initFocus() {
-  browser.runtime.onMessage.addListener((msg: RuntimeMessage) => {
-    if (msg?.type === 'page.focus') handleFocus(msg.focus);
+  browser.runtime.onMessage.addListener((msg: RuntimeMessage, sender) => {
+    // Only the background reports focus: a content script faking it could aim auto-snap at any tab.
+    if (msg?.type === 'page.focus' && !fromWebPage(sender)) handleFocus(msg.focus);
   });
   const saved = (await browser.storage.session.get(FOCUS_STORAGE_KEY))[FOCUS_STORAGE_KEY] as PageFocus | undefined;
   if (saved) handleFocus(saved);
@@ -447,8 +449,9 @@ function handleFocus(f: PageFocus) {
   // A screenshot of the last page must not ride along with a task about this one.
   lastScreenshotKey = undefined;
   clearTimeout(autoSnapTimer);
-  // Auto-snap covers AWS pages only (like pageContext): other sites are photographed only when the player asks.
-  if (store().autoSnap && isAwsPage(f) && layout === 'panel') {
+  // Auto-snap covers AWS pages only (like pageContext): other sites are photographed only when the player asks. Pages
+  // that can show a secret (a new access key, a secret's value) are never photographed on their own either.
+  if (store().autoSnap && isAwsPage(f) && !isSensitivePage(f.url) && layout === 'panel') {
     autoSnapTimer = setTimeout(() => void snap(), 1500);
   }
 }
@@ -471,6 +474,14 @@ export function pageContext(f: PageFocus | undefined = store().focus) {
 
 /** AWS console and docs pages: the only ones whose URL and title the agents see, and the only ones auto-snapped. */
 const isAwsPage = (f: Pick<PageFocus, 'kind'>) => f.kind === 'console' || f.kind === 'console-home' || f.kind === 'docs';
+
+/**
+ * Console pages that can show a secret: IAM access keys and security credentials, Secrets Manager, Parameter Store,
+ * KMS, Cognito app clients (their secrets), IAM Identity Center credentials. Auto-snap skips them (the DOM snapshot is
+ * redacted; a screenshot isn't); the player can still snap one on purpose.
+ */
+const SENSITIVE_PAGE = [/\/secretsmanager\//, /\/systems-manager\/parameters/, /\/kms\//, /security[_-]credentials/i, /access[_-]?keys?/i, /\/cognito\/.*app-?clients?/i, /\/singlesignon\//, /\/iam\/home.*\/credentials/i];
+export const isSensitivePage = (url: string | undefined) => !!url && SENSITIVE_PAGE.some((r) => r.test(url));
 
 export function submitPrompt(prompt: string) {
   const text = prompt.trim();
@@ -621,11 +632,12 @@ export function setAutoSnap(on: boolean) {
 
 // ── Account linking + real deploys (curated templates, change-set approval) ──
 
-export function signIn() {
+export function signIn(opts?: { fresh?: boolean }) {
   if (!backend?.signIn || store().signingIn) return;
   store().setSigningIn(true);
   void backend
-    .signIn()
+    .signIn(opts)
+    .then(() => store().clearReauth())
     .catch((e: unknown) => {
       const msg = e instanceof Error ? e.message : String(e);
       if (/cancel|closed|did not approve/i.test(msg)) return store().log({ kind: 'system', text: 'Sign-in cancelled.' });

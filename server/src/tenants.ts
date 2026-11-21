@@ -9,7 +9,7 @@ import { type CityCare, createCityCare } from './agents/care.js';
 import { type AgentRunner, createAgentRunner } from './agents/runner.js';
 import { createStrandsRunner } from './citizens/engine.js';
 import { isCitizen } from './citizens/roles.js';
-import { type ActionService, createActionService } from './agents/service.js';
+import { ACCOUNT_CHANGED_REASON, type ActionService, createActionService } from './agents/service.js';
 import type { Principal } from './auth.js';
 import { type AwsClients, clientsFor } from './aws.js';
 import type { Config } from './config.js';
@@ -114,6 +114,8 @@ interface World {
   linked: boolean;
   region: string;
   accountId?: string;
+  /** Replaced (a re-link) or stopped: approvals and fixes still waiting on this world never write to its account. */
+  retire?: () => void;
 }
 
 export interface TenantDeps {
@@ -140,6 +142,16 @@ export interface TenantDeps {
 
 export const createTenants = (deps: TenantDeps): TenantHub => {
   const tenants = new Map<string, { tenant: Tenant; refs: number; evict?: NodeJS.Timeout; stop: () => void }>();
+  /**
+   * Saves progress. A profile turned private leaves the live city and every leaderboard at once, whichever task saves
+   * it: with 2+ tasks, PUT /progress often lands on one with no live tenant for this player.
+   */
+  const putProgress = async (sub: string, input: unknown) => {
+    const was = (await deps.stores.progress.get(sub))?.profile?.public;
+    const res = await deps.stores.progress.put(sub, input);
+    if (res.ok && was && !(input as { profile?: { public?: boolean } })?.profile?.public) await deps.stores.social.forget(sub);
+    return res;
+  };
 
   const build = async (p: Principal) => {
     const sub = p.sub;
@@ -176,7 +188,8 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
       });
       const snapshot = async () => poller.current() ?? poller.refresh();
       const locks = deps.stores.locks ?? memoryLocks();
-      const actions = createActionService({ clients: aws.clients, poller, region: aws.region, locks, accountKey: () => aws.accountId });
+      let retired = false;
+      const actions = createActionService({ clients: aws.clients, poller, region: aws.region, locks, accountKey: () => aws.accountId, live: () => !retired });
       const runnerDeps = { llm, actions, snapshot, knowledge: deps.knowledge };
       const strands = createStrandsRunner(runnerDeps);
       const runner = routedRunner(createAgentRunner(runnerDeps), strands, deps.config.agentEngine === 'strands');
@@ -185,7 +198,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         region: aws.region,
         accountId: aws.accountId,
         runner: strands,
-        withLock: (fn) => locks.withLock(aws.accountId, fn),
+        withLock: (fn) => (retired ? Promise.reject(new Error(ACCOUNT_CHANGED_REASON)) : locks.withLock(aws.accountId, fn)),
         refresh: () => poller.refresh(),
         progress: () => deps.stores.progress.get(sub),
         snapshot: () => poller.current(),
@@ -209,7 +222,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         void flow.tick().catch((err) => log.warn('flow failed', { who: who(sub), err: (err as Error).name }));
       }, INVENTORY_EVERY_MS);
       inventoryTimer.unref?.();
-      return { poller, care, bill, flow, inventoryTimer, orchestrator: createOrchestrator({ llm, runner, snapshot, uploads: deps.uploads, owner: sub, walkMs: deps.walkMs, knowledge: deps.knowledge }), snapshot, linked: true, region: aws.region, accountId: aws.accountId };
+      return { poller, care, bill, flow, inventoryTimer, orchestrator: createOrchestrator({ llm, runner, snapshot, uploads: deps.uploads, owner: sub, walkMs: deps.walkMs, knowledge: deps.knowledge }), snapshot, linked: true, region: aws.region, accountId: aws.accountId, retire: () => void (retired = true) };
     };
 
     let world = await makeWorld(await deps.stores.accounts.get(sub));
@@ -222,6 +235,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
     const replaceWorld = (next: World) => {
       const old = world;
       world = next;
+      old.retire?.();
       old.poller?.stop();
       clearInterval(old.inventoryTimer);
       if (stopped) {
@@ -276,13 +290,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
       fresh: async () => (world.linked && world.poller ? world.poller.refresh() : undefined),
       progress: {
         get: () => deps.stores.progress.get(sub),
-        put: async (input) => {
-          const was = (await deps.stores.progress.get(sub))?.profile?.public;
-          const res = await deps.stores.progress.put(sub, input);
-          // A profile turned private leaves the live city and every leaderboard at once.
-          if (res.ok && was && !(input as { profile?: { public?: boolean } })?.profile?.public) await deps.stores.social.forget(sub);
-          return res;
-        },
+        put: (input) => putProgress(sub, input),
       },
       social: socialFor({ store: deps.stores.social, sub, profile: async () => (await deps.stores.progress.get(sub))?.profile }),
       uploads: { create: (contentType) => deps.uploads.create(contentType, sub) },
@@ -324,6 +332,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
       stop: () => {
         stopped = true;
         unsubscribeNews?.();
+        world.retire?.();
         world.poller?.stop();
         clearInterval(world.inventoryTimer);
       },
@@ -337,7 +346,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
       const live = tenants.get(p.sub)?.tenant;
       if (live) return live;
       return {
-        progress: { get: () => deps.stores.progress.get(p.sub), put: (input) => deps.stores.progress.put(p.sub, input) },
+        progress: { get: () => deps.stores.progress.get(p.sub), put: (input) => putProgress(p.sub, input) },
         uploads: { create: (contentType) => deps.uploads.create(contentType, p.sub) },
         async deleteMe() {
           await deps.stores.deleteUser(p.sub);

@@ -2,7 +2,7 @@
 // its output captured. Used by `npm start` (dashboard) and `npm run live` (plain output).
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { createWriteStream, mkdirSync } from 'node:fs';
+import { chmodSync, createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,13 +15,31 @@ const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 export const SERVER_LOG = path.join(ROOT, '.cache/server.log');
 
 // Firefox gives each install a random moz-extension:// UUID; pinning it with a Firefox pref keeps the local server's
-// exact-origin check. Safari's can't be pinned, so its build carries a one-off token for this run instead.
+// exact-origin check (on top of the token). Safari's can't be pinned, so it's allowed by scheme.
 const FIREFOX_DEV_UUID = '6a1c0b5e-3c2d-4f7a-9b8e-a5c17c17c117';
+
+/**
+ * The local server's token, which every local build carries (the server never accepts an Origin alone: any program on
+ * the computer can forge one). Made once per computer and kept in .cache/local-token, readable only by you, so builds
+ * stay cached between runs.
+ */
+export function localToken(root = ROOT) {
+  const file = path.join(root, '.cache', 'local-token');
+  if (existsSync(file)) {
+    const saved = readFileSync(file, 'utf8').trim();
+    if (/^[\w-]{32,}$/.test(saved)) return saved;
+  }
+  mkdirSync(path.dirname(file), { recursive: true });
+  const token = randomBytes(32).toString('base64url');
+  writeFileSync(file, `${token}\n`, { mode: 0o600 });
+  chmodSync(file, 0o600);
+  return token;
+}
 
 /** Everything that ties one browser's build to the local server: origin, token, build env, Firefox prefs. */
 export function liveConfig(browser, port = process.env.PORT ?? '8787') {
   const kind = browserById(browser).build;
-  const token = kind === 'safari' ? randomBytes(24).toString('base64url') : undefined;
+  const token = localToken();
   const origin = {
     chrome: `chrome-extension://${process.env.AWS_CITY_EXTENSION_ID ?? DEV_EXTENSION_ID}`,
     firefox: `moz-extension://${FIREFOX_DEV_UUID}`,
@@ -32,7 +50,7 @@ export function liveConfig(browser, port = process.env.PORT ?? '8787') {
     origin,
     token,
     url: `http://127.0.0.1:${port}`,
-    extEnv: { WXT_BACKEND: 'aws', WXT_AWS_WS_URL: `ws://127.0.0.1:${port}/ws`, WXT_AWS_API_URL: `http://127.0.0.1:${port}`, ...(token ? { WXT_AWS_TOKEN: token } : {}) },
+    extEnv: { WXT_BACKEND: 'aws', WXT_AWS_WS_URL: `ws://127.0.0.1:${port}/ws`, WXT_AWS_API_URL: `http://127.0.0.1:${port}`, WXT_AWS_TOKEN: token },
     firefoxPrefs: [`extensions.webextensions.uuids=${JSON.stringify({ [FIREFOX_ADDON_ID]: FIREFOX_DEV_UUID })}`],
   };
 }
@@ -53,7 +71,9 @@ export const portBusy = (port, host = '127.0.0.1') =>
  */
 export function startServer({ profile, region, models, env = {}, cfg, onLog = () => {} }) {
   mkdirSync(path.dirname(SERVER_LOG), { recursive: true });
-  const file = createWriteStream(SERVER_LOG, { flags: 'w' });
+  // Only you can read the server's log (it names your AWS account and resources).
+  const file = createWriteStream(SERVER_LOG, { flags: 'w', mode: 0o600 });
+  file.on('open', () => chmodSync(SERVER_LOG, 0o600));
   // Its own process group (not on Windows), so stopping it stops npm, tsx and the server under them together.
   const group = process.platform !== 'win32';
   const child = spawn('npm', ['start'], {
