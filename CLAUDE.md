@@ -97,7 +97,7 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   A "TOTP is on" answer is cached 60 s at most. The Deploy tab walks a player through it one step at a time: the
   authenticator first (a QR code of the `otpauth://` link to scan, `src/ui/QrCode.tsx` with `uqr`, the key behind "Can't
   scan it?"), and only then the three linking steps (step 2 opens CloudFormation, or Copy link for an AWS session in another browser, and names the Region to keep, `linkRegion` from the link's `?region=`; step 3, the account number, opens when they say the stack is
-  CREATE_COMPLETE; `accountInput` accepts the console's 1234-5678-9012). Proof: `cd server && npx vitest run
+  CREATE_COMPLETE; `accountInput` accepts the console's 1234-5678-9012 and a stray full stop; step 2 tells a host to use a different account from the one the city runs in, and `docs/self-hosting.md` step 9 shows how to make one). Proof: `cd server && npx vitest run
   test/hosted.test.ts -t "MFA"` (includes "MFA step-up for writes"), `cd infra && npm test`, `npx vitest run tests/link-steps.test.tsx`.
 - **The repo and the AWS account are locked down.** GitHub: `main` changes only through a pull request with CI green
   (ruleset "main": the `extension`, `server`, `infra`, `fresh-clone` ×3 and `analyze` checks, no force-push or deletion,

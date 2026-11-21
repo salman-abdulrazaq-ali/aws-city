@@ -79,8 +79,14 @@ export const linkRegion = (url?: string): { code: string; name: string } | undef
   }
 };
 
-/** What the player typed in step 3: the console shows an account id as 1234-5678-9012, so dashes and spaces go. */
-export const accountInput = (raw: string) => (/^[\d\s-]+$/.test(raw.trim()) ? raw.replace(/\D/g, '') : raw.trim());
+/**
+ * What the player typed in step 3: the console shows an account id as 1234-5678-9012, and a number copied from a
+ * sentence brings its full stop, so dashes, spaces and trailing punctuation go. A role ARN is kept as typed.
+ */
+export const accountInput = (raw: string) => {
+  const t = raw.trim().replace(/[.,;:]+$/, '');
+  return /^[\d\s.-]+$/.test(t) ? t.replace(/\D/g, '') : t;
+};
 
 function Step({ n, state, title, children }: { n: number; state: 'done' | 'now' | 'todo'; title: string; children?: ReactNode }) {
   return (
@@ -271,7 +277,8 @@ export function DeployPanel() {
           </p>
           <ol className="how">
             <li>
-              Click <b>Open CloudFormation</b> and sign in to the AWS account you want to connect.
+              Click <b>Open CloudFormation</b> and sign in to <b>your own AWS account</b>, the one you want the city to look after. Check the
+              account at the top right before you click <b>Create stack</b>.
             </li>
             {where && (
               <li>
@@ -298,6 +305,10 @@ export function DeployPanel() {
             </button>
           </div>
           <p className="muted">Signed in to AWS in another browser? Copy the link and open it there.</p>
+          <p className="muted">
+            Hosting AWS City yourself? Use a different AWS account from the one it runs in. The city refuses that one, so it can never act inside the account
+            that holds everyone’s data.
+          </p>
           <details className="why">
             <summary>Details</summary>
             <div className="muted">
