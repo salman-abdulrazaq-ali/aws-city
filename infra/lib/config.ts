@@ -53,7 +53,8 @@ export interface EnvConfig {
    * service (Graviton, 8 vCPU, 16 GB), behind Bedrock in the server's Strands ModelRouter. `spot`: Fargate Spot (cheaper;
    * AWS can stop the task with two minutes' notice and ECS starts another). Absent = no AI service. The setup wizard asks.
    */
-  aiCpu?: { spot: boolean };
+  /** `primary`: Bedrock is held, so the server asks only this model (one call and one quota count per answer). */
+  aiCpu?: { spot: boolean; primary?: boolean };
   models: { main: string; light: string };
 }
 

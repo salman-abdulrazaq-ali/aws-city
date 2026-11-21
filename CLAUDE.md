@@ -160,6 +160,11 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
     CodeQL also scans the workflows, Dependabot waits 7 days, and releases build read-only and publish separately;
     the `staging` environment deploys only from protected branches (`gh api repos/salman-abdulrazaq-ali/aws-city/environments
     --jq '.environments[]|{name,deployment_branch_policy}'`). Proof: `cd server && npm test`, `cd infra && npm test`.
+- **Security Hub's best-practice checks are each fixed, suppressed with a reason, or deferred** (`docs/runbook.md` →
+  Security Hub). In code: the server task runs as its nonroot user, Cognito threat protection covers custom flows, the VPC's default
+  security group allows nothing. While Bedrock is held the server asks only the Fargate model (`aiCpu.primary`: one
+  call and one quota count per answer, not a failed Bedrock try first). Proof: `cd infra && npm test` ("Security Hub
+  basics", "Bedrock held"), and the runbook's `aws securityhub get-findings` command.
 - **The repo and the AWS account are locked down.** GitHub: `main` changes only through a pull request with CI green
   (ruleset "main": the `extension`, `server`, `infra`, `fresh-clone` ×3 and `analyze` checks, no force-push or deletion,
   only the admin may bypass); Actions run only GitHub-owned, verified-creator and `softprops/action-gh-release` actions,
