@@ -90,9 +90,18 @@ export function memorySocial(now: () => number = Date.now): SocialStore {
   };
 }
 
-/** Presence answers are cached per Region for `ms` (each socket beats every 30 s; one Query serves them all). */
+/** Most board answers kept at once; past this the cache starts again (forgetting one only costs a read). */
+const MAX_CACHED_BOARDS = 5_000;
+
+/**
+ * Presence answers are cached per Region for `ms` (each socket beats every 30 s; one Query serves them all). Board
+ * answers are cached per player and board for `ms` too: a board read is up to 4 pages, and a socket may otherwise ask
+ * 10 times a second. A player's own submit clears theirs, so they see their new score at once.
+ */
 export function withPresenceCache(store: SocialStore, ms = 15_000, now: () => number = Date.now): SocialStore {
   const cache = new Map<string, { at: number; value: Promise<{ online: number; mayors: Mayor[] }> }>();
+  const boards = new Map<string, { at: number; value: Promise<BoardEntry[]> }>();
+  const boardKey = (board: string, week: string, sub: string, limit: number) => `${board}#${week}#${limit}#${whoOf(sub)}`;
   return {
     ...store,
     presence(region) {
@@ -102,6 +111,20 @@ export function withPresenceCache(store: SocialStore, ms = 15_000, now: () => nu
       cache.set(region, { at: now(), value });
       value.catch(() => cache.delete(region));
       return value;
+    },
+    top(board, week, sub, limit) {
+      const key = boardKey(board, week, sub, limit);
+      const hit = boards.get(key);
+      if (hit && now() - hit.at < ms) return hit.value;
+      if (boards.size >= MAX_CACHED_BOARDS) boards.clear();
+      const value = store.top(board, week, sub, limit);
+      boards.set(key, { at: now(), value });
+      value.catch(() => boards.delete(key));
+      return value;
+    },
+    async submit(board, week, sub, name, score) {
+      await store.submit(board, week, sub, name, score);
+      for (const key of boards.keys()) if (key.startsWith(`${board}#${week}#`) && key.endsWith(`#${whoOf(sub)}`)) boards.delete(key);
     },
   };
 }

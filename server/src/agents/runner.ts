@@ -45,20 +45,42 @@ export interface TurnHooks {
  * Names and tags come from the AWS account (anyone with access can set them): < and > are JSON-escaped so a
  * name like "</city_snapshot>…" can't close the data wrapper.
  */
-export const snapshotForModel = (s: WorldSnapshot) =>
-  escapeTags(JSON.stringify({
-    region: s.region,
-    credentials: s.credentials,
-    services: s.services,
-    resources: s.resources.map((r) => ({
-      id: r.id,
-      kind: r.kind,
-      name: r.name,
-      state: r.state,
-      builtByGame: r.managedByGame,
-      ...(r.kind === 'instance' ? { type: r.meta.instanceType } : {}),
-    })),
-  }));
+/**
+ * What one snapshot may cost in a prompt. A player could fill their own account with long-named resources, and the
+ * snapshot rides in every agent turn while quotas count calls, not tokens: unbounded, a few players could spend the
+ * budget that switches the AI off for everyone (security review, 21 Nov). The city's own resources come first, the
+ * rest are counted; describe_resource still reads any one in full.
+ */
+export const SNAPSHOT_MAX_RESOURCES = 100;
+export const SNAPSHOT_MAX_NAME = 64;
+export const SNAPSHOT_MAX_CHARS = 8_000;
+const clip = (v: string | undefined, n: number) => (v !== undefined && v.length > n ? `${v.slice(0, n - 1)}…` : v);
+
+export const snapshotForModel = (s: WorldSnapshot) => {
+  const all = [...s.resources].sort((a, b) => Number(b.managedByGame) - Number(a.managedByGame));
+  const render = (n: number) =>
+    escapeTags(JSON.stringify({
+      region: s.region,
+      credentials: s.credentials,
+      services: s.services,
+      resources: all.slice(0, n).map((r) => ({
+        id: clip(r.id, 128),
+        kind: r.kind,
+        name: clip(r.name, SNAPSHOT_MAX_NAME),
+        state: r.state,
+        builtByGame: r.managedByGame,
+        ...(r.kind === 'instance' ? { type: typeof r.meta.instanceType === 'string' ? clip(r.meta.instanceType, 32) : r.meta.instanceType } : {}),
+      })),
+      ...(all.length > n ? { moreResources: all.length - n } : {}),
+    }));
+  let keep = Math.min(all.length, SNAPSHOT_MAX_RESOURCES);
+  let out = render(keep);
+  while (out.length > SNAPSHOT_MAX_CHARS && keep > 0) {
+    keep = Math.floor(keep * 0.7);
+    out = render(keep);
+  }
+  return out;
+};
 
 /** Valid JSON, but no tag can be formed: \u003c / \u003e instead of < / >. */
 export const escapeTags = (json: string) => json.replace(/</g, '\\u003c').replace(/>/g, '\\u003e');

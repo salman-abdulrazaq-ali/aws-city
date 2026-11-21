@@ -63,4 +63,21 @@ describe('live city and leaderboards', () => {
     await cached.presence('us-west-2');
     expect(calls).toBe(1);
   });
+
+  it('board reads are cached per player for 15 s, and a player’s own submit shows at once', async () => {
+    let reads = 0;
+    let t = 0;
+    const base = memorySocial();
+    const cached = withPresenceCache({ ...base, top: async (...a) => (reads++, base.top(...a)) }, 15_000, () => t);
+    for (let i = 0; i < 20; i++) await cached.top('shield', 'W1', 'a', 10);
+    expect(reads).toBe(1); // a socket asking 10 times a second costs one read
+    await cached.top('shield', 'W1', 'b', 10);
+    expect(reads).toBe(2); // each player's own view (it marks "you")
+    await cached.submit('shield', 'W1', 'a', 'Ada Lovelace', 5);
+    expect(await cached.top('shield', 'W1', 'a', 10)).toEqual([{ name: 'Ada Lovelace', score: 5, you: true }]);
+    expect(reads).toBe(3);
+    t = 16_000;
+    await cached.top('shield', 'W1', 'b', 10);
+    expect(reads).toBe(4);
+  });
 });

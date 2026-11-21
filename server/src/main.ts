@@ -74,7 +74,8 @@ const tenants = createTenants({
 });
 
 // Agents can change a linked AWS account, so linking it and approving writes to it need MFA (local token mode has no accounts to protect).
-const mfaReady = cognito && config.awsMode === 'assume-role' && config.requireMfaForLink ? createMfaCheck({ cognito, userPoolId: config.cognito!.userPoolId }) : undefined;
+// Hosted, step-up (MFA on + a recent sign-in) always guards linking, approving and fixing: there is no switch to turn it off.
+const mfaReady = cognito && config.awsMode === 'assume-role' ? createMfaCheck({ cognito, userPoolId: config.cognito!.userPoolId }) : undefined;
 // Hosted: a deleted player's access token still verifies for up to an hour; the tombstone refuses it (local mode's one
 // player may start over at once).
 const deleted = config.authMode === 'cognito' ? (sub: string) => stores.deletedRecently(sub) : undefined;
@@ -85,14 +86,8 @@ http.server.listen(config.port, config.host, () => {
   if (config.authMode === 'token') {
     const base = `http://${config.host}:${config.port}`;
     console.log(`  frontend .env.local:  WXT_BACKEND=aws  WXT_AWS_WS_URL=ws://${config.host}:${config.port}/ws  WXT_AWS_API_URL=${base}`);
-    const exact = config.extensionOrigins.filter((o) => !o.endsWith('://*'));
-    console.log(
-      exact.length
-        ? `  extension allowed without token: ${exact.join(', ')}`
-        : '  no exact EXTENSION_ORIGIN: the extension needs the token (set EXTENSION_ORIGIN=chrome-extension://<id> to allow it directly)',
-    );
-    // The token is only for local curl/tests; it is never printed in hosted mode.
-    if (!process.env.AWS_CITY_TOKEN) console.log(`  token (for curl/tests): ${config.token}`);
+    // Every caller needs the token (auth.ts tokenAuth). It's never printed: logs are files other programs can read.
+    console.log(process.env.AWS_CITY_TOKEN ? '  token: from AWS_CITY_TOKEN' : '  token: a random one for this run (set AWS_CITY_TOKEN to choose one; npm run live does)');
   }
 });
 

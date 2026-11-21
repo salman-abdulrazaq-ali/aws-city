@@ -7,7 +7,7 @@ import { mockClient } from 'aws-sdk-client-mock';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { createAccountLinker, playerRoleName } from '../src/accounts/link.js';
-import { createMfaCheck } from '../src/accounts/mfa.js';
+import { createMfaCheck, recentSignIn } from '../src/accounts/mfa.js';
 import { metered, ModelLimitError, QUOTA_MESSAGE, withErrorCodes } from '../src/agents/metered.js';
 import { cognitoAuth, type JwtVerifier } from '../src/auth.js';
 import { ConfigError, loadConfig } from '../src/config.js';
@@ -360,10 +360,11 @@ describe('hosted server: Cognito players and tenants', () => {
   let close: () => void;
   const verifier: JwtVerifier = {
     async verify(token) {
-      if (token === 'jwt-alice') return { sub: 'alice' };
-      if (token === 'jwt-bob') return { sub: 'bob' };
-      if (token === 'jwt-carol') return { sub: 'carol' };
-      if (token === 'jwt-frank') return { sub: 'frank' };
+      const auth_time = Math.floor(Date.now() / 1000);
+      if (token === 'jwt-alice') return { sub: 'alice', auth_time };
+      if (token === 'jwt-bob') return { sub: 'bob', auth_time };
+      if (token === 'jwt-carol') return { sub: 'carol', auth_time };
+      if (token === 'jwt-frank') return { sub: 'frank', auth_time };
       // A token that expires the moment the socket opens.
       if (token === 'jwt-dave') return { sub: 'dave', exp: Math.floor(Date.now() / 1000) };
       throw new Error('bad');
@@ -577,7 +578,7 @@ describe('MFA step-up for writes', () => {
     } as unknown as Tenant;
     const tenants = { acquire: async () => tenant, data: () => tenant, release: () => undefined, closeAll: () => undefined };
     const base = { ...loadConfig({}), authMode: 'cognito' as const, extensionOrigins: [EXT] };
-    const deps = { tenants, authenticate: async () => ({ sub: 'erin' }), mfaReady: async () => mfa };
+    const deps = { tenants, authenticate: async () => ({ sub: 'erin', authTime: Date.now() }), mfaReady: async () => mfa };
     const probe = createHttpServer({ config: { ...base, port: 0 }, ...deps });
     await new Promise<void>((r) => probe.server.listen(0, '127.0.0.1', r));
     const port = (probe.server.address() as AddressInfo).port;
@@ -612,6 +613,168 @@ describe('MFA step-up for writes', () => {
       expect(fix).toHaveBeenCalledWith('f2', 'x', expect.any(Function), expect.anything());
     } finally {
       ws.close();
+      server.close();
+    }
+  });
+
+  it('a sign-in older than 30 minutes is refused with reauth_required, even with MFA on (a stolen refresh token)', async () => {
+    const fix = vi.fn();
+    const link = vi.fn();
+    const tenant = {
+      sub: 'gina',
+      region: 'us-west-2',
+      orchestrator: () => ({ submitTask: async () => undefined }),
+      care: () => ({ fix, explain: async () => undefined, undo: () => undefined }),
+      link,
+      verify: link,
+      createCopilot: () => undefined,
+      welcome: async () => [],
+      subscribe: () => () => undefined,
+      emitter: (emit: unknown) => emit,
+    } as unknown as Tenant;
+    const tenants = { acquire: async () => tenant, data: () => tenant, release: () => undefined, closeAll: () => undefined };
+    const base = { ...loadConfig({}), authMode: 'cognito' as const, extensionOrigins: [EXT] };
+    // Signed in 2 hours ago and refreshed since: the token is valid, but the sign-in is old.
+    const deps = { tenants, authenticate: async () => ({ sub: 'gina', authTime: Date.now() - 2 * 3600_000 }), mfaReady: async () => true };
+    const probe = createHttpServer({ config: { ...base, port: 0 }, ...deps });
+    await new Promise<void>((r) => probe.server.listen(0, '127.0.0.1', r));
+    const port = (probe.server.address() as AddressInfo).port;
+    probe.server.close();
+    const { server } = createHttpServer({ config: { ...base, port }, ...deps });
+    await new Promise<void>((r) => server.listen(port, '127.0.0.1', r));
+    const events: ServerEvent[] = [];
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, bearerSubprotocols('x'), { origin: EXT });
+    ws.on('message', (raw) => events.push(JSON.parse(raw.toString())));
+    await new Promise((r) => ws.on('open', r));
+    try {
+      ws.send(JSON.stringify({ action: 'finding.fix', requestId: 'f1', findingId: 'x' }));
+      ws.send(JSON.stringify({ action: 'account.link', requestId: 'l1', region: 'us-west-2' }));
+      for (const end = Date.now() + 3000; events.filter((e) => e.type === 'error').length < 2 && Date.now() < end; ) await new Promise((r) => setTimeout(r, 10));
+      expect(events).toContainEqual(expect.objectContaining({ type: 'error', requestId: 'f1', code: 'reauth_required' }));
+      expect(events).toContainEqual(expect.objectContaining({ type: 'error', requestId: 'l1', code: 'reauth_required' }));
+      expect(fix).not.toHaveBeenCalled();
+      expect(link).not.toHaveBeenCalled();
+    } finally {
+      ws.close();
+      server.close();
+    }
+  });
+
+  it('a fresh sign-in on the open socket (auth.renew) unlocks step-up without dropping the socket; another player’s token doesn’t', async () => {
+    const fix = vi.fn();
+    const tenant = {
+      sub: 'hana',
+      region: 'us-west-2',
+      orchestrator: () => ({ submitTask: async () => undefined }),
+      care: () => ({ fix, explain: async () => undefined, undo: () => undefined }),
+      createCopilot: () => undefined,
+      welcome: async () => [],
+      subscribe: () => () => undefined,
+      emitter: (emit: unknown) => emit,
+    } as unknown as Tenant;
+    const tenants = { acquire: async () => tenant, data: () => tenant, release: () => undefined, closeAll: () => undefined };
+    const base = { ...loadConfig({}), authMode: 'cognito' as const, extensionOrigins: [EXT] };
+    // The socket's own token: signed in 2 hours ago. Renewals arrive as a Bearer header.
+    const authenticate = async (req: import('node:http').IncomingMessage) => {
+      const bearer = req.headers.authorization;
+      if (bearer === 'Bearer fresh-hana') return { sub: 'hana', authTime: Date.now() };
+      if (bearer === 'Bearer fresh-mallory') return { sub: 'mallory', authTime: Date.now() };
+      if (bearer) return undefined;
+      return { sub: 'hana', authTime: Date.now() - 2 * 3600_000 };
+    };
+    const deps = { tenants, authenticate, mfaReady: async () => true };
+    const probe = createHttpServer({ config: { ...base, port: 0 }, ...deps });
+    await new Promise<void>((r) => probe.server.listen(0, '127.0.0.1', r));
+    const port = (probe.server.address() as AddressInfo).port;
+    probe.server.close();
+    const { server } = createHttpServer({ config: { ...base, port }, ...deps });
+    await new Promise<void>((r) => server.listen(port, '127.0.0.1', r));
+    const events: ServerEvent[] = [];
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, bearerSubprotocols('x'), { origin: EXT });
+    ws.on('message', (raw) => events.push(JSON.parse(raw.toString())));
+    let closed = false;
+    ws.on('close', () => (closed = true));
+    await new Promise((r) => ws.on('open', r));
+    const errorFor = async (id: string) => {
+      for (const end = Date.now() + 3000; !events.some((e) => e.type === 'error' && 'requestId' in e && e.requestId === id) && Date.now() < end; ) await new Promise((r) => setTimeout(r, 10));
+      return events.find((e) => e.type === 'error' && 'requestId' in e && e.requestId === id);
+    };
+    try {
+      ws.send(JSON.stringify({ action: 'finding.fix', requestId: 'f1', findingId: 'x' }));
+      expect(await errorFor('f1')).toMatchObject({ code: 'reauth_required' });
+      // Someone else's fresh token on this socket changes nothing.
+      ws.send(JSON.stringify({ action: 'auth.renew', token: 'fresh-mallory' }));
+      await new Promise((r) => setTimeout(r, 100));
+      ws.send(JSON.stringify({ action: 'finding.fix', requestId: 'f2', findingId: 'x' }));
+      expect(await errorFor('f2')).toMatchObject({ code: 'reauth_required' });
+      // The player's own fresh sign-in does, on the same socket (the 5 s renew limit has passed by then in real use).
+      await new Promise((r) => setTimeout(r, 5_100));
+      ws.send(JSON.stringify({ action: 'auth.renew', token: 'fresh-hana' }));
+      await new Promise((r) => setTimeout(r, 100));
+      ws.send(JSON.stringify({ action: 'finding.fix', requestId: 'f3', findingId: 'x' }));
+      for (const end = Date.now() + 3000; fix.mock.calls.length === 0 && Date.now() < end; ) await new Promise((r) => setTimeout(r, 10));
+      expect(fix).toHaveBeenCalledWith('f3', 'x', expect.any(Function), expect.anything());
+      expect(closed).toBe(false);
+    } finally {
+      ws.close();
+      server.close();
+    }
+  }, 15_000);
+
+  it('recentSignIn: within 30 minutes, never without an auth_time, never from the future', () => {
+    const now = Date.now();
+    expect(recentSignIn({ sub: 'a', authTime: now - 5 * 60_000 }, now)).toBe(true);
+    expect(recentSignIn({ sub: 'a', authTime: now - 31 * 60_000 }, now)).toBe(false);
+    expect(recentSignIn({ sub: 'a' }, now)).toBe(false);
+    expect(recentSignIn({ sub: 'a', authTime: now + 10 * 60_000 }, now)).toBe(false);
+  });
+});
+
+describe('an account deleted on another task', () => {
+  it('its open socket here can no longer write: a score or a fix closes it with CLOSE.deleted', async () => {
+    const submit = vi.fn(async () => ({ type: 'leaderboard.state' as const, board: 'b', week: 'w', entries: [] }));
+    const fix = vi.fn();
+    const tenant = {
+      sub: 'ivy',
+      region: 'us-west-2',
+      orchestrator: () => ({ submitTask: async () => undefined }),
+      care: () => ({ fix, explain: async () => undefined, undo: () => undefined }),
+      social: { submit, beat: submit, board: submit },
+      createCopilot: () => undefined,
+      welcome: async () => [],
+      subscribe: () => () => undefined,
+      emitter: (emit: unknown) => emit,
+    } as unknown as Tenant;
+    const tenants = { acquire: async () => tenant, data: () => tenant, release: () => undefined, closeAll: () => undefined };
+    const base = { ...loadConfig({}), authMode: 'cognito' as const, extensionOrigins: [EXT] };
+    // DELETE /me ran on another task: this one only sees the tombstone in the shared store.
+    let tombstone = false;
+    const deps = { tenants, authenticate: async () => ({ sub: 'ivy', authTime: Date.now() }), mfaReady: async () => true, deleted: async () => tombstone };
+    const probe = createHttpServer({ config: { ...base, port: 0 }, ...deps });
+    await new Promise<void>((r) => probe.server.listen(0, '127.0.0.1', r));
+    const port = (probe.server.address() as AddressInfo).port;
+    probe.server.close();
+    const { server } = createHttpServer({ config: { ...base, port }, ...deps });
+    await new Promise<void>((r) => server.listen(port, '127.0.0.1', r));
+    const open = async () => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, bearerSubprotocols('x'), { origin: EXT });
+      await new Promise((r) => ws.on('open', r));
+      return { ws, closed: new Promise<number>((r) => ws.on('close', (c) => r(c))) };
+    };
+    try {
+      const a = await open();
+      const b = await open();
+      a.ws.send(JSON.stringify({ action: 'score.submit', board: 'b', score: 1 }));
+      for (const end = Date.now() + 3000; submit.mock.calls.length === 0 && Date.now() < end; ) await new Promise((r) => setTimeout(r, 10));
+      expect(submit).toHaveBeenCalledTimes(1); // still here: the write goes through
+      tombstone = true;
+      a.ws.send(JSON.stringify({ action: 'score.submit', board: 'b', score: 2 }));
+      b.ws.send(JSON.stringify({ action: 'finding.fix', requestId: 'f1', findingId: 'x' }));
+      // b's step-up always asks; a's score reuses its last answer for 15 s at most, so a closes on its next check.
+      expect(await b.closed).toBe(CLOSE_CODES.deleted);
+      expect(fix).not.toHaveBeenCalled();
+      a.ws.close();
+    } finally {
       server.close();
     }
   });

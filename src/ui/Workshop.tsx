@@ -408,8 +408,9 @@ function ErrorHelp({ w, errors }: { w: WorkshopDef; errors?: TerminalError[] }) 
     if (k) return feel.good();
     const svc = serviceById(w.serviceId);
     if (!svc) return;
-    // The pasted text is data for the agent, not instructions: quoted, trimmed and with keys and emails taken out.
-    const clean = redact(t).slice(0, 1200);
+    // The pasted text is data for the agent, not instructions: quoted, trimmed, with keys and emails taken out, and
+    // no < or > so it can't close the <error> fence.
+    const clean = redact(t).replace(/[<>]/g, ' ').slice(0, 1200);
     askDistrict(svc.districtId, `I'm doing the "${w.title}" workshop and got this error. What does it mean and how do I fix it?\n<error>\n${clean}\n</error>`, `I got an error in ${w.title}`);
     setAsked(true);
     feel.send();

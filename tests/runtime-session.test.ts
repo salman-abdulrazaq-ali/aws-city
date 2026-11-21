@@ -297,6 +297,24 @@ describe('runtime sessions', () => {
     expect(JSON.stringify(asked)).not.toMatch(/mail\.example|bank/);
   });
 
+  it('auto-snap never photographs a console page that can show a secret', async () => {
+    const { rt } = await boot();
+    fake.status('connected');
+    rt.setAutoSnap(true);
+    for (const url of [
+      'https://us-east-1.console.aws.amazon.com/iam/home#/users/details/ada/create-access-key',
+      'https://us-east-1.console.aws.amazon.com/iam/home#/security_credentials',
+      'https://us-west-2.console.aws.amazon.com/secretsmanager/secret?name=db',
+      'https://us-west-2.console.aws.amazon.com/systems-manager/parameters/prod/db/details',
+      'https://us-west-2.console.aws.amazon.com/kms/home#/kms/keys',
+    ]) {
+      rt.simulateFocus(url, 'AWS');
+      await settle();
+    }
+    expect(fake.sent.filter((c) => c.action === 'page.classify')).toEqual([]);
+    expect(rt.isSensitivePage('https://us-west-2.console.aws.amazon.com/s3/home')).toBe(false);
+  });
+
   it('a screenshot is forgotten when the page changes and when the session ends', async () => {
     const { rt } = await boot();
     fake.status('connected');

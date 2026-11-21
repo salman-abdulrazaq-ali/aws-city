@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { frame, introGrowth, introLines, INTRO_SECONDS, sceneLayout, sceneLines, STILL_T } from '../scripts/launcher/banner.mjs';
-import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { localToken } from '../scripts/launcher/live-run.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { depsPlan, explainNpmError, installMessage, readDepsFacts } from '../scripts/launcher/boot.mjs';
@@ -568,5 +569,45 @@ describe('the AI on this computer (Ollama)', () => {
     // The launcher and the server agree on the defaults.
     expect(LOCAL_URL).toBe(SERVER_LOCAL_URL);
     expect(DEFAULT_LOCAL_MODEL).toBe(SERVER_LOCAL_MODEL);
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('the local server token file', () => {
+  const root = () => mkdtempSync(path.join(os.tmpdir(), 'aws-city-token-'));
+
+  it('is made once, readable only by you, and reused', () => {
+    const r = root();
+    const token = localToken(r);
+    expect(token).toMatch(/^[\w-]{43}$/);
+    const file = path.join(r, '.cache', 'local-token');
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(localToken(r)).toBe(token);
+    rmSync(r, { recursive: true, force: true });
+  });
+
+  it('a copy others can read is replaced, not used', () => {
+    const r = root();
+    const file = path.join(r, '.cache', 'local-token');
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, `${'x'.repeat(43)}\n`);
+    chmodSync(file, 0o644);
+    const token = localToken(r);
+    expect(token).not.toBe('x'.repeat(43));
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    rmSync(r, { recursive: true, force: true });
+  });
+
+  it('a planted symlink is never read or written through', () => {
+    const r = root();
+    const target = path.join(r, 'elsewhere');
+    writeFileSync(target, `${'y'.repeat(43)}\n`, { mode: 0o600 });
+    const file = path.join(r, '.cache', 'local-token');
+    mkdirSync(path.dirname(file), { recursive: true });
+    symlinkSync(target, file);
+    const token = localToken(r);
+    expect(token).not.toBe('y'.repeat(43)); // not read through the link
+    expect(readFileSync(target, 'utf8')).toBe(`${'y'.repeat(43)}\n`); // not written through it
+    expect(lstatSync(file).isSymbolicLink()).toBe(false);
+    rmSync(r, { recursive: true, force: true });
   });
 });

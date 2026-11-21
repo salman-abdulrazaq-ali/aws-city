@@ -4,6 +4,16 @@ import type { Principal } from '../auth.js';
 export const MFA_REQUIRED_MESSAGE = 'Turn on an authenticator app first (Deploy tab → Protect your account). It keeps your AWS account safe if your password leaks.';
 
 /**
+ * How recent a sign-in must be to link an AWS account, approve a write or apply a fix. "MFA is on" alone isn't enough:
+ * a refresh token lasts 30 days and refreshing keeps the original auth_time, so someone holding a stolen token could
+ * otherwise approve without ever entering a code. A fresh sign-in asks for the password and the authenticator code.
+ */
+export const STEP_UP_MAX_AGE_MS = 30 * 60_000;
+export const REAUTH_MESSAGE = 'For your safety, sign in again to confirm this. It’s been a while since you entered your password and code.';
+/** Signed in within STEP_UP_MAX_AGE_MS. No auth_time (an unexpected token) counts as not recent. */
+export const recentSignIn = (p: Principal, now = Date.now()) => p.authTime !== undefined && now - p.authTime <= STEP_UP_MAX_AGE_MS && p.authTime <= now + 60_000;
+
+/**
  * Step-up for linking an AWS account and for every write to it (hosted): agents can change that account, so the
  * player must have TOTP MFA on. Once TOTP is enrolled Cognito challenges every sign-in, so "enrolled now" is the
  * check (turning MFA off after linking stops writes within a minute: the cache time). Players who sign in with Google

@@ -94,7 +94,7 @@ for (const [n, flow] of FLOWS.entries()) {
   let paused = false;
   let explained = false;
   let speedSet = false;
-  let confirmed = false;
+  const pressed = [];
   while (Date.now() - t0 < 90_000) {
     await wait(1500);
     // The chip: set the speed once (persists to later flows), pause/resume once, explain again once.
@@ -121,12 +121,15 @@ for (const [n, flow] of FLOWS.entries()) {
       await wait(300);
       await snap('explain');
     }
-    // A step that bills or changes access (risk 'confirm') is handed to the player: play the player and click it.
-    if (flow.confirm && !confirmed && (await tab.locator('[data-awscity-overlay]').getByText('needs your OK').count())) {
-      await snap('your-turn');
-      await tab.getByRole('button', { name: flow.confirm, exact: true }).click();
-      confirmed = true;
-      console.log(`[${flow.id}] player confirmed: ${flow.confirm}`);
+    // Every step that commits a change (create, launch, save…) or needs the player's OK is handed to the player, and the
+    // overlay marks the element it's waiting on: play the player and press it.
+    const turn = tab.locator('[data-awscity-your-turn]');
+    if (await turn.count()) {
+      const name = ((await turn.first().innerText().catch(() => '')) || (await turn.first().getAttribute('aria-label')) || '').trim().slice(0, 60);
+      if (!pressed.length) await snap('your-turn');
+      await turn.first().click();
+      pressed.push(name);
+      console.log(`[${flow.id}] player pressed: ${name}`);
     }
     if (shot < 14) await snap();
     created = await tab.evaluate(() => document.body.dataset.created);
@@ -136,7 +139,7 @@ for (const [n, flow] of FLOWS.entries()) {
   await wait(2500);
   await snap('final');
   const risky = await tab.evaluate(() => document.body.dataset.risky ?? '');
-  const ok = !!created && flow.expect.test(created) && !risky && (!flow.confirm || confirmed);
+  const ok = !!created && flow.expect.test(created) && !risky && pressed.length > 0 && (!flow.confirm || pressed.some((n) => n.includes(flow.confirm)));
   results.push({ flow: flow.id, created, risky: risky || 'none', ok });
   console.log(`[${flow.id}] created: ${created ?? '(nothing)'} · risky clicks: ${risky || 'none'} · ${ok ? 'OK' : 'FAIL'}`);
   const busy = await asker.evaluate(() => window.awsCity.useCity.getState().copilotTaskId);

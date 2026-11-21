@@ -4,7 +4,7 @@
 import type { SnapshotItem } from './types';
 
 import { byIdFrom } from './dom';
-import { isRisky } from './risk';
+import { isCommitControl, isRisky, isRiskyValue } from './risk';
 
 export { isRisky };
 
@@ -31,7 +31,7 @@ export function isConsoleUrl(raw: string): boolean {
   }
 }
 
-export type Verdict = { ok: true } | { ok: false; reason: 'risky' | 'sensitive' | 'missing' | 'disabled'; message: string };
+export type Verdict = { ok: true } | { ok: false; reason: 'risky' | 'commit' | 'sensitive' | 'missing' | 'disabled'; message: string };
 
 /**
  * Every label a control carries — a page could name a Delete button "Next" in one place but not all.
@@ -48,7 +48,8 @@ export function riskSignals(el: Element): string {
     el.getAttribute('data-testid'),
     el.getAttribute('name'),
     el.getAttribute('value'),
-    h.innerText ?? el.textContent,
+    // A <select>'s text is every option glued together; the option actually chosen is checked on its own (optionFor).
+    el.tagName === 'SELECT' ? '' : (h.innerText ?? el.textContent),
     el.closest('label')?.textContent,
     // what a screen reader reads with it (Cloudscape puts option and tile descriptions here)
     ...refs('aria-describedby'),
@@ -104,6 +105,10 @@ export function mayChoose(option: Element, fieldName = ''): Verdict {
   return { ok: true };
 }
 
+/** A form's submit control: type=submit, or a <button> with no type inside a form (which submits by default). */
+const isSubmitControl = (el: Element) =>
+  el.matches('button[type="submit" i], input[type="submit" i], input[type="image" i]') || (el.tagName === 'BUTTON' && !el.hasAttribute('type') && !!el.closest('form'));
+
 /** Decide whether the agent may act on this element itself. */
 export function mayAct(item: SnapshotItem | undefined, action: string, el?: Element, value?: string): Verdict {
   if (!item) return { ok: false, reason: 'missing', message: 'I can’t find that on the page.' };
@@ -123,6 +128,11 @@ export function mayAct(item: SnapshotItem | undefined, action: string, el?: Elem
   if (el && action === 'type' && (isRisky(riskSignals(el)) || isRisky(value ?? '') || /\b(confirm|to confirm)\b/i.test(riskSignals(el))))
     return { ok: false, reason: 'risky', message: 'This field confirms something important — please type it yourself.' };
   if (item.disabled) return { ok: false, reason: 'disabled', message: `“${item.name}” is disabled right now.` };
+  // The player presses anything that commits a change, and types anything that opens access (risk.ts isCommit).
+  if (action === 'click' && (isCommitControl(item.role, item.name) || (el !== undefined && isSubmitControl(el))))
+    return { ok: false, reason: 'commit', message: `“${item.name}” makes the change — your turn to press it.` };
+  if ((action === 'type' || action === 'select') && isRiskyValue(value ?? ''))
+    return { ok: false, reason: 'risky', message: 'That value opens access widely or names an AWS account — please enter it yourself.' };
   if (item.sensitive) return { ok: false, reason: 'sensitive', message: 'That field holds a secret — please fill it in yourself.' };
   if ((action === 'click' || action === 'select' || action === 'type') && (isRisky(item.name, item.context) || isRisky(value ?? ''))) {
     return { ok: false, reason: 'risky', message: `“${item.name}” can change or cost something important — your turn to click it.` };

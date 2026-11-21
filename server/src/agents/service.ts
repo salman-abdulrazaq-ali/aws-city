@@ -35,6 +35,8 @@ export type Approve = (req: ApprovalRequest) => Promise<boolean>;
  * Writes are serialised, and resources just created are counted before the (eventually consistent)
  * AWS listings show them, so parallel requests can't all slip under the same limit.
  */
+export const ACCOUNT_CHANGED_REASON = 'Your AWS account connection changed since this was asked, so nothing was changed. Ask again.';
+
 export const createActionService = (deps: {
   clients: AwsClients;
   poller: Poller;
@@ -43,6 +45,8 @@ export const createActionService = (deps: {
   locks?: AccountLocks;
   /** Which AWS account these writes go to (the lock key). */
   accountKey?: () => string;
+  /** False once the player re-linked or the city stopped: an approval given before that never writes to the old account. */
+  live?: () => boolean;
 }) => {
   const locks = deps.locks ?? memoryLocks();
   const accountKey = deps.accountKey ?? (() => deps.poller.current()?.accountId ?? 'local');
@@ -64,6 +68,7 @@ export const createActionService = (deps: {
 
   const run = (action: Action, confirmed: boolean) =>
     serialised(async (lease): Promise<SubmitOutcome> => {
+      if (deps.live && !deps.live()) return { status: 'denied', reason: ACCOUNT_CHANGED_REASON };
       const snapshot = await withJustCreated(deps.poller.current() ?? (await deps.poller.refresh()));
       const decision = checkAction(action, snapshot, { confirmed });
       if (decision.verdict === 'deny') return { status: 'denied', reason: decision.reason };

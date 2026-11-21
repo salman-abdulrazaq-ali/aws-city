@@ -376,8 +376,8 @@ describe('MockBackend speaks the contract', () => {
   describe('AWS public status (v2.6)', () => {
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-    it('is contract 2.16 (2.6 added these), and both new events pass the frame guard', () => {
-      expect(CONTRACT_VERSION).toBe('2.16');
+    it('is contract 2.17 (2.6 added these), and both new events pass the frame guard', () => {
+      expect(CONTRACT_VERSION).toBe('2.17');
       expect(isServerEvent(demoHealth())).toBe(true);
       expect(isServerEvent(demoNews())).toBe(true);
     });

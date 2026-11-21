@@ -29,7 +29,7 @@ export function keysForError(
     return key ? [key] : [];
   }
   const keys = [...startedAt.keys()];
-  if (e.code === 'mfa_required') return keys.filter((k) => k.startsWith('decide:'));
+  if (e.code === 'mfa_required' || e.code === 'reauth_required') return keys.filter((k) => k.startsWith('decide:'));
   return keys.filter((k) => now - startedAt.get(k)! <= RECENT_MS);
 }
 

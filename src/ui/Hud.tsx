@@ -146,7 +146,7 @@ function ConnectionPill() {
         </button>
       )}
       {kind !== 'mock' && status === 'signed-out' && canSignIn() && (
-        <button className="btn tiny primary" onClick={signIn} disabled={signingIn} aria-busy={signingIn}>
+        <button className="btn tiny primary" onClick={() => signIn()} disabled={signingIn} aria-busy={signingIn}>
           {signingIn ? 'Signing in…' : 'Sign in'}
         </button>
       )}

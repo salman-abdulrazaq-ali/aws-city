@@ -222,7 +222,15 @@ await wait(800);
 const seededTabs = await page.locator('.tabs button').evaluateAll((bs) => bs.map((b) => b.title));
 if (seededTabs.join() !== 'City,Learn,Jobs,Deploy') errors.push(`seeded progress: expected every tab, got ${seededTabs.join()}`);
 // Learning modes
-const clickTab = async (label) => page.locator(`.tabs button[title="${label}"]`).click();
+// The demo's city care pops a finding card (or a citizen's question) up on a timer, so one can land mid-run on top of
+// the tabs, depending on how fast the machine is: close whatever popped up (Escape) before switching tabs.
+const clickTab = async (label) => {
+  for (let i = 0; i < 3 && (await page.locator('.finding-scrim').count()); i++) {
+    await page.keyboard.press('Escape');
+    await wait(200);
+  }
+  await page.locator(`.tabs button[title="${label}"]`).click();
+};
 await clickTab('Learn');
 await wait(400);
 await page.locator('.flash').click().catch(() => {});
@@ -1130,15 +1138,12 @@ await panel.screenshot({ path: `${out}/12-lookout.png` });
       // The demo's Copilot works in the practice console (nothing there touches AWS); its run finishing does the job.
       await page.getByRole('button', { name: /Do it with the Copilot/ }).click();
       const at = Date.now();
-      // A step that bills (Create database) is handed to the player on the practice page: play the player and press it.
-      const CONFIRM = { rds: 'Create database', ec2: 'Launch instance', iam: 'Create role' }[t.click.flow];
-      let confirmed = false;
+      // Every step that commits a change (create, launch, save…) is handed to the player on the practice page, and the
+      // overlay marks the element it's waiting on: play the player and press it.
       while (Date.now() - at < 60_000 && !(await city((id) => (window.awsCity.useCity.getState().progress.clients?.bank?.done ?? []).includes(id), t.id))) {
         const tab = ctx.pages().find((p) => p.url().startsWith(`chrome-extension://${id}/practice`));
-        if (tab && CONFIRM && !confirmed && (await tab.locator('[data-awscity-overlay]').getByText('needs your OK').count().catch(() => 0))) {
-          await tab.getByRole('button', { name: CONFIRM, exact: true }).click().catch(() => {});
-          confirmed = true;
-        }
+        const turn = tab?.locator('[data-awscity-your-turn]');
+        if (turn && (await turn.count().catch(() => 0))) await turn.first().click().catch(() => {});
         await wait(500);
       }
       await page.bringToFront();

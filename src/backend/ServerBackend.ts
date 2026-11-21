@@ -110,9 +110,14 @@ export class ServerBackend implements AgentBackend {
     void this.open();
   }
 
-  async signIn() {
+  async signIn(opts?: { fresh?: boolean }) {
     if (!this.cfg.auth) return;
-    await this.cfg.auth.signIn();
+    await this.cfg.auth.signIn(opts);
+    // Step-up on an open socket: hand it the fresh token (auth.renew) so a pending approval stays; otherwise connect.
+    if (opts?.fresh && this.ws?.readyState === WebSocket.OPEN) {
+      const token = await this.cfg.auth.token();
+      if (token) return this.raw({ action: 'auth.renew', token });
+    }
     this.reconnect();
   }
 

@@ -184,6 +184,8 @@ export class ServiceStack extends Stack {
           cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
           // Forwards Host, Origin, Authorization and the Sec-WebSocket-* headers (the JWT rides in one).
           originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+          // AWS's managed security headers on every response: HSTS, nosniff, frame and referrer rules (no CORS change).
+          responseHeadersPolicy: cloudfront.ResponseHeadersPolicy.SECURITY_HEADERS,
         },
         httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
         priceClass: cloudfront.PriceClass.PRICE_CLASS_100,

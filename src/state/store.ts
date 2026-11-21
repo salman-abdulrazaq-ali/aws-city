@@ -178,6 +178,8 @@ export interface AccountState {
   message?: string;
   /** The server wants an authenticator app on before linking (error code mfa_required). */
   mfaRequired?: boolean;
+  /** The server wants a fresh sign-in before linking, approving or fixing (error code reauth_required). */
+  reauthRequired?: boolean;
   /** Bumped on every account.status, so a repeated reply (same message) still settles a pending button. */
   seq?: number;
 }
@@ -526,6 +528,8 @@ export interface CityState {
   /** A sign-in window is open (buttons disable until it settles). */
   signingIn: boolean;
   setSigningIn(on: boolean): void;
+  /** A fresh sign-in finished: step-up can go ahead. */
+  clearReauth(): void;
   /** Signed out (here or in another surface): forget everything that belonged to that player. */
   resetSession(): void;
   /** Coach-mark tour overlay (UI-only, not persisted here — the done flag lives in localStorage). */
@@ -1300,6 +1304,7 @@ export const useCity = create<CityState>()((set, get) => ({
         const care = e.requestId ? Object.entries(s.careRequests).find(([, r]) => r.requestId === e.requestId) : undefined;
         if (care) get().noteCare(care[0]);
         if (e.code === 'mfa_required') set({ account: { ...s.account, mfaRequired: true } });
+        if (e.code === 'reauth_required') set({ account: { ...s.account, reauthRequired: true } });
         const text = errorText(e);
         s.log({ kind: 'system', text: `⚠️ ${text}` });
         s.toast('⚠️', text, 'error');
@@ -1337,6 +1342,7 @@ export const useCity = create<CityState>()((set, get) => ({
 
   setMfaRequired: (on) => set((s) => ({ account: { ...s.account, mfaRequired: on } })),
   setSigningIn: (signingIn) => set({ signingIn }),
+  clearReauth: () => set((st) => (st.account.reauthRequired ? { account: { ...st.account, reauthRequired: false } } : {})),
   resetSession: () => {
     // Findings held for this player must not reach the next one.
     heldFindings.clear();
