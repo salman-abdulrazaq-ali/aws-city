@@ -29,6 +29,21 @@ export interface Config {
   fallbackModel: string;
   /** Cheaper model for chat answers and page classification. */
   lightModel: string;
+  /**
+   * Where the agents' model runs (AWS_CITY_MODEL_PROVIDER): `bedrock` (default), or `local`, a model on this computer
+   * behind an OpenAI-compatible server (Ollama), for when Bedrock is held or there's no network. Local mode only.
+   */
+  modelProvider: 'bedrock' | 'local';
+  /**
+   * The model on this computer (AWS_CITY_LOCAL_URL, loopback only; AWS_CITY_LOCAL_MODEL; AWS_CITY_LOCAL_VISION when it
+   * reads images), for `local` and `localFallback`.
+   */
+  localModel: { url: string; model: string; vision: boolean };
+  /**
+   * Bedrock first, then the model on this computer when a Bedrock call fails (AWS_CITY_LOCAL_FALLBACK=true): a held
+   * account's 0 tokens a day, throttling, no network. Strands Agents' ModelRouter. Amazon Nova only, local mode only.
+   */
+  localFallback: boolean;
   /** Landmark agents' engine (citizens always run on Strands): classic = the tool loop in agents/runner.ts. */
   agentEngine: 'classic' | 'strands';
   /**
@@ -79,6 +94,20 @@ export const originMatches = (origin: string, allowed: readonly string[]) => {
 };
 const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost']);
 
+/** Ollama's OpenAI-compatible endpoint, and a model with tool calling that fits a 16 GB laptop. */
+export const DEFAULT_LOCAL_URL = 'http://127.0.0.1:11434/v1';
+export const DEFAULT_LOCAL_MODEL = 'qwen3:8b';
+
+/** http(s) on this computer only: the local model never becomes a way to send players' questions elsewhere. */
+export const isLoopbackUrl = (value: string) => {
+  try {
+    const u = new URL(value);
+    return (u.protocol === 'http:' || u.protocol === 'https:') && LOOPBACK.has(u.hostname.replace(/^\[|\]$/g, '')) && !u.username && !u.password;
+  } catch {
+    return false;
+  }
+};
+
 export class ConfigError extends Error {}
 
 /** A typo like AUTH_MODE=Cognito must fail startup, never fall back to a looser mode. */
@@ -117,6 +146,14 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
     model: env.AWS_CITY_MODEL ?? 'us.anthropic.claude-opus-5-5',
     fallbackModel: env.AWS_CITY_FALLBACK_MODEL ?? 'us.anthropic.claude-sonnet-5-5',
     lightModel: env.AWS_CITY_LIGHT_MODEL ?? env.AWS_CITY_FALLBACK_MODEL ?? 'us.anthropic.claude-sonnet-5-5',
+    modelProvider: oneOf('AWS_CITY_MODEL_PROVIDER', env.AWS_CITY_MODEL_PROVIDER, ['bedrock', 'local'], 'bedrock'),
+    localModel: {
+      url: env.AWS_CITY_LOCAL_URL || DEFAULT_LOCAL_URL,
+      model: env.AWS_CITY_LOCAL_MODEL || DEFAULT_LOCAL_MODEL,
+      // Most small local models read text only: the Lookout then reads the page's address and title (AWS_CITY_LOCAL_VISION=true for a vision model).
+      vision: oneOf('AWS_CITY_LOCAL_VISION', env.AWS_CITY_LOCAL_VISION, ['true', 'false'], 'false') === 'true',
+    },
+    localFallback: oneOf('AWS_CITY_LOCAL_FALLBACK', env.AWS_CITY_LOCAL_FALLBACK, ['true', 'false'], 'false') === 'true',
     // Strands Agents for every agent turn (landmark agents too); 'classic' keeps the hand-written loop as a fallback.
     agentEngine: oneOf('AWS_CITY_AGENT_ENGINE', env.AWS_CITY_AGENT_ENGINE, ['classic', 'strands'], 'strands'),
     allowFixes: oneOf('AWS_CITY_ALLOW_FIXES', env.AWS_CITY_ALLOW_FIXES, ['true', 'false'], hosted ? 'true' : 'false') === 'true',
@@ -169,6 +206,13 @@ export const validate = (c: Config) => {
     need(c.selfAccountId && c.playerRoleTemplateUrl, 'AWS_MODE=assume-role needs SELF_ACCOUNT_ID and PLAYER_ROLE_TEMPLATE_URL');
   }
   if (!LOOPBACK.has(c.host)) need(c.publicHosts.length, `HOST=${c.host} needs PUBLIC_HOSTS (accepted Host headers)`);
+  // A model on this computer serves the one player at it. Hosted players' questions go to Bedrock in our account only.
+  if (c.modelProvider === 'local' || c.localFallback) {
+    need(c.authMode === 'token' && c.awsMode === 'profile', 'AWS_CITY_MODEL_PROVIDER=local and AWS_CITY_LOCAL_FALLBACK are for local mode only (hosted runs on Bedrock)');
+    need(isLoopbackUrl(c.localModel.url), `AWS_CITY_LOCAL_URL=${c.localModel.url} must be an http(s) address on this computer (127.0.0.1, ::1 or localhost)`);
+  }
+  // The same test as familyOf (agents/llm.ts): Claude's routes don't all run on Strands, so its fallback stays its own.
+  if (c.localFallback) need(c.modelProvider === 'bedrock' && !/(^|\.)anthropic\./.test(c.model), 'AWS_CITY_LOCAL_FALLBACK works with Amazon Nova on Bedrock (Claude keeps its own fallback)');
   for (const o of c.extensionOrigins)
     need(!o.includes('*') || (ORIGIN_WILDCARDS as readonly string[]).includes(o), `EXTENSION_ORIGIN ${o}: wildcards only as ${ORIGIN_WILDCARDS.join(' or ')}`);
 };

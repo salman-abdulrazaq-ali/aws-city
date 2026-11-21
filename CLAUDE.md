@@ -41,6 +41,16 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   `modelsForChoice`); the task role may invoke exactly the two Nova foundation models in its Region (`bedrockResources`:
   no wildcard, no cdk-nag acknowledgement; Claude keeps its profile + wildcard), and the budget's deny covers both. A new account's hold can be Region by Region and model by model: the wizard then looks for a Region where Nova answers (`NOVA_ELSEWHERE`) and offers `aiRegion` (the server calls Bedrock there, `AWS_CITY_BEDROCK_REGION`; data, sign-in and the server stay in `region`; the task role may invoke Nova only there) and `novaLiteOnly` (Lite in every slot); the launcher plays on Lite when Pro has no quota.
   Proof: `cd server && npx vitest run test/nova.test.ts` (includes "the AI can run in another Region"), `npx vitest run tests/launcher.test.ts`, `cd infra && npm test`.
+- **Locally, the agents' AI can run on this computer** (for a Bedrock hold, or no network): `AWS_CITY_MODEL_PROVIDER=local`
+  runs every route on Strands' `OpenAIModel` against Ollama's OpenAI-compatible endpoint (`MeteredOpenAIModel`,
+  `server/src/citizens/model.ts`: the same gate; family `converse`, so the one-shot routes go through `once.ts`), and
+  `AWS_CITY_LOCAL_FALLBACK=true` puts it behind Amazon Nova with Strands' `ModelRouter` (Bedrock with one attempt, then
+  the local model). `server/src/config.ts` refuses both hosted, refuses any address off this computer (`isLoopbackUrl`)
+  and refuses the fallback behind Claude. A text-only local model gets the Lookout's page address, not the screenshot
+  (`llm.sees`; `AWS_CITY_LOCAL_VISION=true` for a vision model). The launcher: `npm run live -- --model local`
+  (`--local-model`, default `qwen3:8b`; `--local-fallback` with `--model nova`) offers to install Ollama with
+  Homebrew, start it and pull the model (`ensureOllama`, `scripts/start.mjs`). The hosted city stays on Bedrock.
+  Proof: `cd server && npx vitest run test/local-model.test.ts` (a real HTTP "Ollama" on 127.0.0.1), `npx vitest run tests/launcher.test.ts`.
 - **A new account is walked through, not left to guess** (`docs/self-hosting.md`): root MFA, the Paid plan (upgraded as
   root; a Free plan account closes when its credits run out), an admin user with MFA, `aws login` as that user, Nova or
   Claude, and a new account's Bedrock hold (verifying, 0 tokens a day, Free plan, use-case form, each with its fix and a

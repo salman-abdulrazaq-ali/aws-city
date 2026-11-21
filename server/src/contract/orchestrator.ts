@@ -267,8 +267,9 @@ export const createOrchestrator = (deps: {
       const report = await working(emit, 'lookout', 'bedrock', image ? 'InvokeModel (vision) on screenshot' : 'InvokeModel on page title', async () => {
         const ask = `${describeContext(context) || 'No URL or title.'}\n\nWhat is this page about?`;
         if (deps.llm.family === 'converse') {
-          // Amazon Nova (Converse) on Strands Agents: the screenshot as an image block when there is one, then the text.
-          const format = imageFormat(image?.contentType);
+          // Amazon Nova (Converse) or a local model on Strands Agents: the screenshot as an image block when there is one
+          // and the model reads images (a text-only local model gets the page's address and title), then the text.
+          const format = deps.llm.sees ? imageFormat(image?.contentType) : undefined;
           return pick(deps.llm, {
             system: lookoutPrompt,
             prompt: [...(image && format ? [{ image: { format, source: { bytes: new Uint8Array(image.bytes) } } }] : []), { text: `${ask}\n\nCall ${REPORT_TOOL.name}.` }],

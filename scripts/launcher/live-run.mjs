@@ -51,7 +51,7 @@ export const portBusy = (port, host = '127.0.0.1') =>
  * line by line. `ready` resolves true once /health answers (false if it exits or takes over a minute).
  * `models` is the Region's Claude pair (`modelsFor`); without it the server keeps its own `us.` defaults.
  */
-export function startServer({ profile, region, models, cfg, onLog = () => {} }) {
+export function startServer({ profile, region, models, env = {}, cfg, onLog = () => {} }) {
   mkdirSync(path.dirname(SERVER_LOG), { recursive: true });
   const file = createWriteStream(SERVER_LOG, { flags: 'w' });
   // Its own process group (not on Windows), so stopping it stops npm, tsx and the server under them together.
@@ -60,7 +60,7 @@ export function startServer({ profile, region, models, cfg, onLog = () => {} }) 
     cwd: path.join(ROOT, 'server'),
     shell: !group,
     detached: group,
-    env: { ...process.env, AWS_CITY_PROFILE: profile, ...(region ? { AWS_CITY_REGION: region } : {}), ...(models ? modelEnv(models, process.env) : {}), EXTENSION_ORIGIN: cfg.origin, PORT: cfg.port, ...(cfg.token ? { AWS_CITY_TOKEN: cfg.token } : {}) },
+    env: { ...process.env, AWS_CITY_PROFILE: profile, ...(region ? { AWS_CITY_REGION: region } : {}), ...(models ? modelEnv(models, process.env) : {}), ...env, EXTENSION_ORIGIN: cfg.origin, PORT: cfg.port, ...(cfg.token ? { AWS_CITY_TOKEN: cfg.token } : {}) },
   });
   let partial = '';
   const read = (chunk) => {

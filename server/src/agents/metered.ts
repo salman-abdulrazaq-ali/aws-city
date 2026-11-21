@@ -83,6 +83,7 @@ export const metered = (llm: Llm, deps: { sub: string; quota: QuotaStore; daily:
   return {
     model: llm.model,
     family: llm.family,
+    sees: llm.sees,
     client: llm.client,
     /** The same checks for model calls made outside create/stream (the Strands citizens' model). */
     gate,

@@ -8,6 +8,10 @@ export declare const pickProfile: (profiles: string[], env?: Record<string, stri
 export declare const upsertProfile: (text: string, name: string, keys: { accessKeyId: string; secretAccessKey: string; sessionToken?: string }) => string;
 export declare const parsePastedKeys: (text: string) => { accessKeyId: string; secretAccessKey: string; sessionToken?: string } | undefined;
 export declare const explainAwsError: (err: unknown) => string;
+export declare const LOCAL_URL: string;
+export declare const DEFAULT_LOCAL_MODEL: string;
+export declare const hasLocalModel: (ids: string[], model: string) => boolean;
+export declare const localEnv: (o: { model: string; fallback?: boolean }, env?: Record<string, string | undefined>) => Record<string, string>;
 export declare const profileRegion: (config?: string, profile?: string) => string | undefined;
 export declare const modelEnv: (
   models: { main: string; light: string },
@@ -20,7 +24,7 @@ export declare const elapsed: (ms: number) => string;
 export declare const parseDownloadProgress: (chunk: string | Buffer) => { fraction: number; total: string } | undefined;
 export declare const explainDownloadError: (output?: string) => string;
 export declare const browserFromArg: (value: unknown) => string | undefined;
-export interface LaunchArgs { help: boolean; intro?: boolean; rebuild?: boolean; mode?: 'demo' | 'live'; browser?: string; profile?: string; region?: string; model?: 'claude' | 'nova'; error?: string }
+export interface LaunchArgs { help: boolean; intro?: boolean; rebuild?: boolean; mode?: 'demo' | 'live'; browser?: string; profile?: string; region?: string; model?: 'claude' | 'nova' | 'local'; localFallback?: boolean; localModel?: string; error?: string }
 export declare const REGION_RE: RegExp;
 export type StartPlan = { kind: 'go' | 'again'; mode: 'demo' | 'live'; browser: string } | { kind: 'ask'; browser?: string; mode?: undefined };
 export declare const startPlan: (args: LaunchArgs, prefs?: { mode?: string; browser?: string }, o?: { interactive?: boolean; installed?: string[] }) => StartPlan;

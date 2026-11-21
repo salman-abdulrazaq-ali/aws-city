@@ -327,10 +327,18 @@ contains no secrets):
 npm start                             # pick "Real AWS": signs you in, checks Claude on Bedrock, then runs live
 npm run live                          # the same, without the questions: profile aws-city / workshop / default
 npm run live -- --profile me --region eu-west-1 --browser firefox
+npm run live -- --model local         # the agents' AI on this computer (Ollama): when Bedrock is held, or offline
+npm run live -- --model nova --local-fallback   # Amazon Nova first, this computer when Bedrock is held
 ```
 
 The local server listens on `127.0.0.1` only and uses your profile. Each change still needs your
 Approve. It picks up refreshed keys within a minute.
+
+**The AI on this computer.** `--model local` runs every agent on [Strands Agents](https://strandsagents.com) with a
+model in [Ollama](https://ollama.com) instead of Bedrock: the same tools, approvals and MFA, no model costs, and the
+questions never leave your computer. The launcher offers to install Ollama (Homebrew), start it and download the
+model once (`qwen3:8b`, about 5 GB; `--local-model` picks another). `--local-fallback` puts it behind Amazon Nova
+with Strands' `ModelRouter`, so the city keeps talking when Bedrock is held. The hosted city stays on Bedrock only.
 
 ---
 
