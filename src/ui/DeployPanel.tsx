@@ -174,6 +174,7 @@ export function DeployPanel() {
   const [role, setRole] = useState('');
   /** Step 2 done: the player says the AWSCity stack is created, so step 3 (the account number) opens. */
   const [stackMade, setStackMade] = useState(false);
+  const [linkCopied, copyLink] = useCopy();
   const findings = useCity((s) => s.findings);
   // Fixes are approved in their finding's card; here they're only a history, never next to Tear down.
   const stacks = deploys.filter((d) => !d.findingId);
@@ -272,10 +273,15 @@ export function DeployPanel() {
             <button className="btn primary" onClick={() => openUrl(account.linkUrl!)}>
               Open CloudFormation ↗
             </button>
+            {/* Signed in to AWS in another browser (or a passkey that only works there): open the same link there. */}
+            <button className="btn" onClick={() => copyLink(account.linkUrl!)}>
+              {linkCopied ? 'Copied ✓' : 'Copy link'}
+            </button>
             <button className="btn" onClick={() => setStackMade(true)}>
               Done: it says CREATE_COMPLETE
             </button>
           </div>
+          <p className="muted">Signed in to AWS in another browser? Copy the link and open it there.</p>
           <details className="why">
             <summary>Details</summary>
             <div className="muted">

@@ -47,6 +47,9 @@ describe('linking an AWS account, step by step', () => {
     expect(screen.queryByLabelText('AWS account ID or role ARN')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Open CloudFormation ↗' }));
     expect(calls.open).toEqual(['https://eu-west-2.console.aws.amazon.com/cloudformation/home']);
+    // Signed in to AWS in another browser: the same link can be copied and opened there.
+    expect(screen.getByRole('button', { name: 'Copy link' })).toBeTruthy();
+    expect(screen.getByText('Signed in to AWS in another browser? Copy the link and open it there.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Done: it says CREATE_COMPLETE' }));
     const id = screen.getByLabelText('AWS account ID or role ARN');
     fireEvent.change(id, { target: { value: '0474-6343-8585' } });
