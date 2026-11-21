@@ -12,7 +12,7 @@ so fix this doc. Both backends import or mirror that file:
 | `WXT_BACKEND` | Backend | Transport | Deploys |
 |---|---|---|---|
 | `mock` (default) | `src/backend/MockBackend.ts`, runs in the browser | none | Simulated curated templates |
-| `aws` | **`server/`**, the team's local Node server with a real account and Claude on Bedrock | WebSocket `/ws` + REST `/progress`, `/screenshots`; the Origin allowlist is `EXTENSION_ORIGIN` | **Guarded actions** (EC2 t4g, DynamoDB, S3); every write needs the player's approval |
+| `aws` | **`server/`**, the team's local Node server with a real account and Claude on Bedrock | WebSocket `/ws` + REST `/progress`, `/screenshots`; every request needs the bearer token, and `EXTENSION_ORIGIN` is the browser (Origin) check | **Guarded actions** (EC2 t4g, DynamoDB, S3); every write needs the player's approval |
 | `hosted` | **`server/`** deployed by `infra/` (ECS Fargate): players sign in with Cognito (JWT in `Sec-WebSocket-Protocol`, `Authorization: Bearer` on REST) and link their own AWS account | Same as `aws` | Guarded actions in the **player's own account** through `AWSCityPlayerRole-<region>` (ExternalId), each needing approval |
 
 The workshop account denies CloudFormation and `iam:CreateRole`, so `aws` is the backend in use.
@@ -35,7 +35,7 @@ The workshop account denies CloudFormation and `iam:CreateRole`, so `aws` is the
 | `presence.beat` | `region, rank?` | v2.11: the player is in this city now (on connect, on arriving, every 30 s while a tab is visible). |
 | `score.submit` | `board, score` | v2.11: a best for a weekly leaderboard (a game id or `mayors:<region>`). |
 | `leaderboard.get` | `board` | v2.11: this week's top of a board. |
-| `progress.get/put`, `screenshot.presign`, `quest.start` | | On `aws`/`hosted`, handled over REST (`/progress`, `/screenshots`) or locally by `ServerBackend`. `DELETE /me` removes everything stored for the player. |
+| `progress.get/put`, `screenshot.presign`, `quest.start` | | On `aws`/`hosted`, handled over REST (`/progress`, `/screenshots`) or locally by `ServerBackend`. `DELETE /me` removes everything stored for the player. Hosted: `POST /me/mfa` (204) right after the player turns TOTP on records when MFA started, so the step-up accepts the next sign-in. |
 
 Client-internal, not on the wire: `storage.local` keeps `progress.parked` (a signed-out player's unsynced progress, tagged with the player's id, their Cognito `sub`, and only ever restored to that same player), and the optional `AgentBackend.playerId()` (hosted only; absent on local/mock) exists just to tag it. It is not a security check: the server authorizes every request by the JWT.
 

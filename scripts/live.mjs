@@ -1,7 +1,7 @@
 // Real mode: the AWS City server on this computer (your AWS account + Claude on Bedrock) + the extension wired to it.
 // It's `npm start`'s real-AWS mode with no questions: the same checks (packages, AWS sign-in, Claude on Bedrock, the
 // browser download, a free port), the same panel and keys. Only Node built-ins here, so it runs on a fresh clone.
-// npm run live [-- --browser cft|chrome|edge|brave|firefox|safari] [--profile <aws profile>] [--region <region>]
+// npm run live [-- --browser cft|chrome|edge|brave|firefox|safari] [--profile <aws profile>] [--region <region>] [--allow-fixes]
 import './launcher/require-node.mjs';
 
 const argv = process.argv.slice(2);
@@ -12,6 +12,7 @@ if (argv.includes('--help') || argv.includes('-h')) {
   --profile <name>  AWS profile (default: the one that worked last time, then AWS_CITY_PROFILE, aws-city, workshop, default)
   --region <name>   Bedrock + AWS region for the server (default: last time's, else us-west-2)
   --rebuild         build the extension even if nothing changed
+  --allow-fixes     the citizens may fix what they find in your account (you approve each fix)
 
 It checks your AWS sign-in and Claude on Bedrock, downloads the AWS City browser if needed, checks the port (8787,
 or PORT), builds, starts the server and opens the city. Not signed in yet? It offers the ways to sign in.

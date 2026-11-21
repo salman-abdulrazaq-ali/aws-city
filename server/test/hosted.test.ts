@@ -7,9 +7,11 @@ import { mockClient } from 'aws-sdk-client-mock';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { createAccountLinker, playerRoleName } from '../src/accounts/link.js';
-import { createMfaCheck } from '../src/accounts/mfa.js';
-import { metered, ModelLimitError, QUOTA_MESSAGE, withErrorCodes } from '../src/agents/metered.js';
-import { cognitoAuth, type JwtVerifier } from '../src/auth.js';
+import { APIUserAbortError, PermissionDeniedError, RateLimitError } from '@anthropic-ai/sdk';
+import { createMfaCheck, memoryMfa, SIGN_IN_AGAIN_MESSAGE, type StepUp } from '../src/accounts/mfa.js';
+import { metered, ModelLimitError, NEW_PLAYERS_KEY, PAUSED_MESSAGE, QUOTA_MESSAGE, withErrorCodes } from '../src/agents/metered.js';
+import { cognitoAuth, type JwtVerifier, type Principal } from '../src/auth.js';
+import { publicError, setPublicErrors } from '../src/log.js';
 import { ConfigError, loadConfig } from '../src/config.js';
 import { createUploadStore } from '../src/contract/uploads.js';
 import { createHttpServer } from '../src/http.js';
@@ -75,8 +77,90 @@ describe('metered model calls', () => {
     // Daily quota of 1: the fallback is a second call, so it's refused rather than run for free.
     await expect(m.create({ max_tokens: 10, messages: [] })).rejects.toThrow(QUOTA_MESSAGE);
     expect(calls).toHaveLength(1);
+    await quota.firstSeen('u2', '2026-01-01'); // an established player: their full daily quota
     const roomy = metered(fakeLlm([refused, message([text('ok')], 'end_turn')]).llm, { sub: 'u2', quota, daily: 5, globalDaily: 10, enabled: async () => true });
     expect((await roomy.create({ max_tokens: 10, messages: [] })).stop_reason).toBe('end_turn');
+  });
+
+  it('a player first seen today gets a fifth of the daily calls; a returning player all of them', async () => {
+    const replies = () => Array.from({ length: 30 }, () => message([text('a')], 'end_turn'));
+    const quota = memoryQuota();
+    const fresh = metered(fakeLlm(replies()).llm, { sub: 'new', quota, daily: 10, globalDaily: 1000, enabled: async () => true });
+    for (let i = 0; i < 2; i++) await fresh.create({ max_tokens: 10, messages: [] });
+    await expect(fresh.create({ max_tokens: 10, messages: [] })).rejects.toMatchObject({ code: 'quota' });
+    await quota.firstSeen('old', '2026-01-01');
+    const old = metered(fakeLlm(replies()).llm, { sub: 'old', quota, daily: 10, globalDaily: 1000, enabled: async () => true });
+    for (let i = 0; i < 10; i++) await old.create({ max_tokens: 10, messages: [] });
+    await expect(old.create({ max_tokens: 10, messages: [] })).rejects.toMatchObject({ code: 'quota' });
+    // The local server's one player is never "new".
+    const local = metered(fakeLlm(replies()).llm, { sub: 'local', quota, daily: 10, globalDaily: 1000, enabled: async () => true });
+    for (let i = 0; i < 10; i++) await local.create({ max_tokens: 10, messages: [] });
+  });
+
+  it('players first seen today share at most a quarter of the city’s cap, so throwaway sign-ups can’t use up its day', async () => {
+    const quota = memoryQuota();
+    const signUp = (sub: string) => metered(fakeLlm(Array.from({ length: 5 }, () => message([text('a')], 'end_turn'))).llm, { sub, quota, daily: 100, globalDaily: 100, enabled: async () => true });
+    // 200 throwaway accounts, 20 calls each at most: the new players' share (25 of 100) runs out, the rest stays.
+    let served = 0;
+    for (let i = 0; i < 200; i++) {
+      const m = signUp(`bot-${i}`);
+      for (let c = 0; c < 2; c++) served += await m.create({ max_tokens: 10, messages: [] }).then(() => 1, () => 0);
+    }
+    expect(served).toBe(25);
+    expect(await quota.used(NEW_PLAYERS_KEY, today())).toBe(25);
+    expect(await quota.used('GLOBAL', today())).toBe(25);
+    await quota.firstSeen('regular', '2026-01-01');
+    const regular = metered(fakeLlm([message([text('a')], 'end_turn')]).llm, { sub: 'regular', quota, daily: 100, globalDaily: 100, enabled: async () => true });
+    expect((await regular.create({ max_tokens: 10, messages: [] })).stop_reason).toBe('end_turn');
+  });
+
+  it('a call Bedrock refused (throttled, denied) is given back; an aborted one is not', async () => {
+    const quota = memoryQuota();
+    await quota.firstSeen('u1', '2026-01-01');
+    const { llm } = fakeLlm([]);
+    const m = metered(llm, { sub: 'u1', quota, daily: 5, globalDaily: 10, enabled: async () => true });
+    const create = llm.create as unknown as ReturnType<typeof vi.fn>;
+    create.mockRejectedValueOnce(new RateLimitError(429, { message: 'slow down' }, 'slow down', new Headers()));
+    await expect(m.create({ max_tokens: 10, messages: [] })).rejects.toBeInstanceOf(RateLimitError);
+    expect(await quota.used('u1', today())).toBe(0);
+    expect(await quota.used('GLOBAL', today())).toBe(0);
+    create.mockRejectedValueOnce(new APIUserAbortError());
+    await expect(m.create({ max_tokens: 10, messages: [] })).rejects.toBeInstanceOf(APIUserAbortError);
+    expect(await quota.used('u1', today())).toBe(1);
+    // A stream that failed before its first word gives the call back too.
+    (llm.stream as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new RateLimitError(429, undefined, 'busy', new Headers()));
+    await expect(m.stream({ max_tokens: 10, messages: [] }, () => undefined)).rejects.toBeInstanceOf(RateLimitError);
+    expect(await quota.used('u1', today())).toBe(1);
+    // The citizens' model: gate takes a call, refund gives it back.
+    await m.gate();
+    expect(await quota.used('u1', today())).toBe(2);
+    await m.refund();
+    expect(await quota.used('u1', today())).toBe(1);
+  });
+
+  it('Bedrock AccessDenied (the budget’s deny policy) reads as the city’s AI resting, code paused, for hosted players', async () => {
+    const denied = () => new PermissionDeniedError(403, { message: 'not authorized to perform bedrock:InvokeModel' }, 'denied', new Headers());
+    const quota = memoryQuota();
+    const { llm } = fakeLlm([]);
+    const create = llm.create as unknown as ReturnType<typeof vi.fn>;
+    const m = metered(llm, { sub: 'u1', quota, daily: 5, globalDaily: 10, enabled: async () => true });
+    setPublicErrors(true);
+    try {
+      create.mockRejectedValueOnce(denied());
+      const err = await m.create({ max_tokens: 10, messages: [] }).catch((e: unknown) => e);
+      expect(err).toMatchObject({ code: 'paused', message: PAUSED_MESSAGE });
+      expect(await quota.used('u1', today())).toBe(0); // and the call is given back
+      // A denial that reaches publicError some other way (the Strands citizens) says the same.
+      expect(publicError('task failed', denied())).toBe(PAUSED_MESSAGE);
+      expect(publicError('task failed', Object.assign(new Error('wrapped'), { cause: denied() }))).toBe(PAUSED_MESSAGE);
+      // An AWS AccessDenied from the player's account is not the city's AI.
+      expect(publicError('task failed', Object.assign(new Error('no'), { name: 'AccessDeniedException', $metadata: { httpStatusCode: 403 } }))).toMatch(/Something went wrong/);
+    } finally {
+      setPublicErrors(false);
+    }
+    // The local server shows its developer the real error (a missing model grant).
+    create.mockRejectedValueOnce(denied());
+    await expect(m.create({ max_tokens: 10, messages: [] })).rejects.toBeInstanceOf(PermissionDeniedError);
   });
 
   it('a global refusal doesn’t burn the player’s quota, and a player at their quota doesn’t burn the global one', async () => {
@@ -176,6 +260,21 @@ describe('account linking', () => {
   });
 });
 
+describe('local store: step-up MFA times', () => {
+  it('the first sight of an authenticator is kept on disk, forgotten when it goes off, and deleted with the player', async () => {
+    const file = `${process.env.TEMP ?? '/tmp'}/aws-city-mfa-${Date.now()}/progress.json`;
+    const a = localStores(file);
+    expect(await a.mfa.since('u1', 1000)).toBe(1000);
+    expect(await a.mfa.since('u1', 5000)).toBe(1000);
+    // Another process (a restart) reads the same time.
+    expect(await localStores(file).mfa.since('u1', 9000)).toBe(1000);
+    await a.mfa.forget('u1');
+    expect(await a.mfa.since('u1', 7000)).toBe(7000);
+    await a.deleteUser('u1');
+    expect(await localStores(file).mfa.since('u1', 8000)).toBe(8000);
+  });
+});
+
 describe('DynamoDB store', () => {
   // Cast: aws-sdk-client-mock's types pin a slightly different @smithy version than lib-dynamodb.
   type Loose = {
@@ -235,6 +334,31 @@ describe('DynamoDB store', () => {
     expect(await s.quota.consume('u1', '2026-09-25', 100)).toBe(true);
     expect(await s.quota.consume('u1', '2026-09-25', 100)).toBe(false);
     expect(ddb.commandCalls(UpdateCommand)[0]!.args[0].input).toMatchObject({ Key: { pk: 'USER#u1', sk: 'QUOTA#2026-09-25' }, ExpressionAttributeValues: { ':limit': 100 } });
+  });
+
+  it('quota: a refund is a conditional ADD of -1; the new players’ counter is the city’s; the first day is kept', async () => {
+    ddb.on(UpdateCommand).resolvesOnce({}).rejectsOnce(conditional()).resolvesOnce({}).resolves({ Attributes: { firstDay: '2026-09-01' } });
+    const s = stores();
+    await s.quota.refund('u1', '2026-09-25');
+    await s.quota.refund('u1', '2026-09-25'); // already at zero: nothing to give back, no error
+    await s.quota.consume(NEW_PLAYERS_KEY, '2026-09-25', 50);
+    expect(await s.quota.firstSeen('u1', '2026-09-25')).toBe('2026-09-01');
+    const calls = ddb.commandCalls(UpdateCommand).map((c) => c.args[0].input);
+    expect(calls[0]).toMatchObject({ Key: { pk: 'USER#u1', sk: 'QUOTA#2026-09-25' }, UpdateExpression: 'ADD calls :minus', ConditionExpression: 'calls > :zero', ExpressionAttributeValues: { ':minus': -1 } });
+    expect(calls[2]).toMatchObject({ Key: { pk: 'QUOTA#GLOBAL#NEW', sk: '2026-09-25' } });
+    expect(calls[3]).toMatchObject({ Key: { pk: 'USER#u1', sk: 'SEEN' }, UpdateExpression: 'SET firstDay = if_not_exists(firstDay, :d)', ReturnValues: 'ALL_NEW' });
+  });
+
+  it('mfa: the first sight is kept atomically under the player’s key, and forgetting deletes it', async () => {
+    ddb.on(UpdateCommand).resolves({ Attributes: { since: 1234 } });
+    ddb.on(DeleteCommand).resolves({});
+    const s = stores();
+    expect(await s.mfa.since('u1', 9999)).toBe(1234);
+    expect(ddb.commandCalls(UpdateCommand)[0]!.args[0].input).toMatchObject({
+      Key: { pk: 'USER#u1', sk: 'MFA' }, UpdateExpression: 'SET since = if_not_exists(since, :t)', ExpressionAttributeValues: { ':t': 9999 }, ReturnValues: 'ALL_NEW',
+    });
+    await s.mfa.forget('u1');
+    expect(ddb.commandCalls(DeleteCommand)[0]!.args[0].input).toMatchObject({ Key: { pk: 'USER#u1', sk: 'MFA' } });
   });
 
   it('account lock: a lease per AWS account, released by its owner', async () => {
@@ -358,6 +482,7 @@ describe('screenshots are scoped to their owner', () => {
 describe('hosted server: Cognito players and tenants', () => {
   let port: number;
   let close: () => void;
+  let mfaReady: ReturnType<typeof vi.fn<(p: Principal) => Promise<StepUp>>>;
   const verifier: JwtVerifier = {
     async verify(token) {
       if (token === 'jwt-alice') return { sub: 'alice' };
@@ -382,7 +507,7 @@ describe('hosted server: Cognito players and tenants', () => {
     const uploads = createUploadStore('http://127.0.0.1:1');
     const tenants = createTenants({ config, stores, uploads, llm, enabled: async () => true, awsFor: () => undefined, walkMs: 0 });
     // carol hasn't turned MFA on yet.
-    const mfaReady = async (p: { sub: string }) => p.sub !== 'carol';
+    mfaReady = vi.fn(async (p: Principal): Promise<StepUp> => (p.sub === 'carol' ? 'enrol' : 'ok'));
     const deleted = (sub: string) => stores.deletedRecently(sub);
     const probe = createHttpServer({ config, tenants, authenticate: cognitoAuth(config, verifier), uploads, mfaReady, deleted });
     await new Promise<void>((r) => probe.server.listen(0, '127.0.0.1', r));
@@ -498,6 +623,14 @@ describe('hosted server: Cognito players and tenants', () => {
     expect(put.status).toBe(410);
   });
 
+  it('POST /me/mfa looks at once (the extension calls it right after turning an authenticator on)', async () => {
+    mfaReady.mockClear();
+    const res = await fetch(`http://127.0.0.1:${port}/me/mfa`, { method: 'POST', headers: { authorization: 'Bearer jwt-bob', origin: EXT } });
+    expect(res.status).toBe(204);
+    expect(mfaReady).toHaveBeenCalledWith(expect.objectContaining({ sub: 'bob' }));
+    expect((await fetch(`http://127.0.0.1:${port}/me/mfa`, { method: 'POST', headers: { origin: EXT } })).status).toBe(401);
+  });
+
   it('linking an AWS account needs MFA first', async () => {
     const { ws, events } = await open('jwt-carol');
     ws!.send(JSON.stringify({ action: 'account.link', requestId: 'm1', region: 'us-west-2' }));
@@ -516,45 +649,86 @@ describe('MFA step-up check', () => {
     const send = vi.fn(async (_cmd: unknown) => user);
     return { send } as unknown as { send: typeof send };
   };
+  const totp = { UserStatus: 'CONFIRMED', UserMFASettingList: ['SOFTWARE_TOKEN_MFA'] };
 
   it('needs TOTP for email players, trusts Google for federated ones, and asks Cognito by username', async () => {
     const none = cognito({ UserStatus: 'CONFIRMED', UserMFASettingList: [] });
-    expect(await createMfaCheck({ cognito: none as never, userPoolId: 'p' })({ sub: 's1' })).toBe(false);
-    const totp = cognito({ UserStatus: 'CONFIRMED', UserMFASettingList: ['SOFTWARE_TOKEN_MFA'] });
-    const check = createMfaCheck({ cognito: totp as never, userPoolId: 'p' });
-    expect(await check({ sub: 's1' })).toBe(true);
-    expect(await check({ sub: 's1' })).toBe(true);
-    expect(totp.send).toHaveBeenCalledTimes(1); // a yes is cached
+    expect(await createMfaCheck({ cognito: none as never, userPoolId: 'p' })({ sub: 's1', authTime: Date.now() })).toBe('enrol');
+    const on = cognito(totp);
+    let t = 10_000;
+    const check = createMfaCheck({ cognito: on as never, userPoolId: 'p', now: () => t });
+    expect(await check({ sub: 's1', authTime: 5_000 })).toBe('reauth'); // signed in at 5 s, before TOTP was first seen (10 s)
+    t = 30_000;
+    expect(await check({ sub: 's1', authTime: 20_000 })).toBe('ok');
+    expect(on.send).toHaveBeenCalledTimes(1); // a yes is cached
     const google = cognito({ UserStatus: 'EXTERNAL_PROVIDER' });
-    expect(await createMfaCheck({ cognito: google as never, userPoolId: 'p' })({ sub: 's2', username: 'google_123' })).toBe(true);
+    expect(await createMfaCheck({ cognito: google as never, userPoolId: 'p' })({ sub: 's2', username: 'google_123' })).toBe('ok');
     expect((google.send.mock.calls[0]![0] as { input: { Username: string } }).input.Username).toBe('google_123');
+  });
+
+  it('a session that signed in before the authenticator was first seen must sign in again; one after passes', async () => {
+    let t = 1_000_000;
+    const since = memoryMfa();
+    const check = createMfaCheck({ cognito: cognito(totp) as never, userPoolId: 'p', since, now: () => t });
+    // An attacker signed in with only the password at 900 s; the player turned TOTP on and the server saw it at 1000 s.
+    expect(await check({ sub: 's1', authTime: 900_000 })).toBe('reauth');
+    expect(await check({ sub: 's1' })).toBe('reauth'); // no auth_time: never assumed fresh
+    // The player signs in again (with their code) at 1000.4 s: auth_time has whole seconds, so it reads 1000 s.
+    t = 1_001_000;
+    expect(await check({ sub: 's1', authTime: 1_000_000 })).toBe('ok');
+    expect(await since.since('s1', 0)).toBe(1_000_000);
+    expect(SIGN_IN_AGAIN_MESSAGE).toMatch(/sign in again/);
+  });
+
+  it('the first sight is kept in the store, so another task (or a restart) agrees', async () => {
+    const since = memoryMfa();
+    const at = (t: number) => createMfaCheck({ cognito: cognito(totp) as never, userPoolId: 'p', since, now: () => t });
+    expect(await at(5_000)({ sub: 's1', authTime: 6_000 })).toBe('ok');
+    // Another task sees it later: the stored first sight still decides.
+    expect(await at(50_000)({ sub: 's1', authTime: 6_000 })).toBe('ok');
+    expect(await at(50_000)({ sub: 's1', authTime: 4_000 })).toBe('reauth');
+  });
+
+  it('seeing TOTP off forgets the first sight, so turning it on again starts over', async () => {
+    let t = 1_000;
+    const user = { ...totp };
+    const since = memoryMfa();
+    const check = createMfaCheck({ cognito: cognito(user) as never, userPoolId: 'p', since, now: () => t });
+    expect(await check({ sub: 's1', authTime: 2_000 })).toBe('ok');
+    t = 100_000; // past the cache
+    user.UserMFASettingList = [];
+    expect(await check({ sub: 's1', authTime: 2_000 })).toBe('enrol');
+    // Someone signs in with the password while it's off (50 s), then TOTP goes back on (seen at 200 s).
+    t = 200_000;
+    user.UserMFASettingList = ['SOFTWARE_TOKEN_MFA'];
+    expect(await check({ sub: 's1', authTime: 50_000 })).toBe('reauth');
   });
 
   it('a cached yes expires, so turning MFA off is noticed', async () => {
     let t = 0;
-    const user = { UserStatus: 'CONFIRMED', UserMFASettingList: ['SOFTWARE_TOKEN_MFA'] };
+    const user = { ...totp };
     const c = cognito(user);
     const check = createMfaCheck({ cognito: c as never, userPoolId: 'p', cacheMs: 1000, now: () => t });
-    expect(await check({ sub: 's1' })).toBe(true);
+    expect(await check({ sub: 's1', authTime: 0 })).toBe('ok');
     user.UserMFASettingList = [];
     t = 999;
-    expect(await check({ sub: 's1' })).toBe(true);
+    expect(await check({ sub: 's1', authTime: 0 })).toBe('ok');
     t = 61_000;
-    expect(await check({ sub: 's1' })).toBe(false);
+    expect(await check({ sub: 's1', authTime: 0 })).toBe('enrol');
     expect(c.send).toHaveBeenCalledTimes(2);
   });
 
   it('by default a yes is trusted for 60 s at most', async () => {
     let t = 0;
-    const user = { UserStatus: 'CONFIRMED', UserMFASettingList: ['SOFTWARE_TOKEN_MFA'] };
+    const user = { ...totp };
     const c = cognito(user);
     const check = createMfaCheck({ cognito: c as never, userPoolId: 'p', now: () => t });
-    expect(await check({ sub: 's1' })).toBe(true);
+    expect(await check({ sub: 's1', authTime: 0 })).toBe('ok');
     user.UserMFASettingList = [];
     t = 59_999;
-    expect(await check({ sub: 's1' })).toBe(true); // still cached
+    expect(await check({ sub: 's1', authTime: 0 })).toBe('ok'); // still cached
     t = 60_000;
-    expect(await check({ sub: 's1' })).toBe(false); // MFA turned off: writes stop within a minute
+    expect(await check({ sub: 's1', authTime: 0 })).toBe('enrol'); // MFA turned off: writes stop within a minute
     expect(c.send).toHaveBeenCalledTimes(2);
   });
 });
@@ -562,7 +736,7 @@ describe('MFA step-up check', () => {
 // Every AWS write is approved through deploy.approve (task writes) or started by finding.fix: both need MFA on.
 describe('MFA step-up for writes', () => {
   it('deploy.approve and finding.fix are refused while MFA is off; the preview waits until it is on', async () => {
-    let mfa = false;
+    let mfa: StepUp = 'enrol';
     const fix = vi.fn(async (requestId: string, _f: string, emit: (e: ServerEvent) => void) => emit({ type: 'error', requestId, message: 'fixed' }));
     const tenant = {
       sub: 'erin',
@@ -607,7 +781,17 @@ describe('MFA step-up for writes', () => {
       expect(fix).not.toHaveBeenCalled();
       expect(events.some((e) => e.type === 'task.done' || e.type === 'deploy.status')).toBe(false);
 
-      mfa = true;
+      // TOTP is on, but this session signed in before it: sign in again (code auth), nothing runs.
+      mfa = 'reauth';
+      events.length = 0;
+      ws.send(JSON.stringify({ action: 'deploy.approve', deployId }));
+      ws.send(JSON.stringify({ action: 'finding.fix', requestId: 'f3', findingId: 'x' }));
+      await until(() => events.filter((e) => e.type === 'error').length >= 2);
+      expect(events).toContainEqual({ type: 'error', code: 'auth', message: SIGN_IN_AGAIN_MESSAGE });
+      expect(events).toContainEqual({ type: 'error', requestId: 'f3', code: 'auth', message: SIGN_IN_AGAIN_MESSAGE });
+      expect(fix).not.toHaveBeenCalled();
+
+      mfa = 'ok';
       ws.send(JSON.stringify({ action: 'deploy.approve', deployId }));
       ws.send(JSON.stringify({ action: 'finding.fix', requestId: 'f2', findingId: 'x' }));
       await until(() => events.some((e) => e.type === 'task.done') && fix.mock.calls.length > 0);

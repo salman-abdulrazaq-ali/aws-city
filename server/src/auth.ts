@@ -11,6 +11,11 @@ export interface Principal {
   email?: string;
   /** When the token proving this expires (epoch ms); the socket must not outlive it for long. */
   expiresAt?: number;
+  /**
+   * When the player signed in for this session (epoch ms, the access token's auth_time; a refresh keeps it). MFA
+   * step-up passes only for a session that started after the authenticator was turned on (accounts/mfa.ts).
+   */
+  authTime?: number;
 }
 
 /** Resolves the caller or undefined (→ 401). Never throws for a bad token. */
@@ -39,22 +44,19 @@ const safeEqual = (a: string, b: string) => {
 };
 
 /**
- * Local server: a caller with the token, or (only when EXTENSION_ORIGIN is pinned) the pinned extension
- * itself. Browsers don't let web pages forge Origin, and token mode only listens on loopback.
+ * Local server: only a caller with the token. An Origin header never authenticates on its own: the dev extension's
+ * id is public (scripts/extension-id.mjs) and any local program can send that header. Origin stays a browser check
+ * (http.ts `guard`: a web page can't reach us). The launcher mints a fresh token each run and builds it into the
+ * extension (WXT_AWS_TOKEN, scripts/launcher/live-run.mjs).
  */
-export const tokenAuth = (config: Config): Authenticate => {
-  const pinned = config.extensionOrigins.length > 0;
-  return async (req) => {
-    // Never from the query string: URLs end up in logs and history.
-    const bearer = req.headers.authorization?.replace(/^Bearer /, '') ?? bearerFromProtocols(req.headers['sec-websocket-protocol']);
-    if (bearer) return safeEqual(bearer, config.token) ? { sub: 'local' } : undefined;
-    // Exact origins only: a scheme wildcard (moz-extension://*) would let ANY Firefox extension in without the token.
-    return pinned && req.headers.origin !== undefined && config.extensionOrigins.includes(req.headers.origin) ? { sub: 'local' } : undefined;
-  };
+export const tokenAuth = (config: Config): Authenticate => async (req) => {
+  // Never from the query string: URLs end up in logs and history.
+  const bearer = req.headers.authorization?.replace(/^Bearer /, '') ?? bearerFromProtocols(req.headers['sec-websocket-protocol']);
+  return bearer && safeEqual(bearer, config.token) ? { sub: 'local' } : undefined;
 };
 
 export interface JwtVerifier {
-  verify(token: string): Promise<{ sub: string; username?: string; email?: unknown; exp?: number }>;
+  verify(token: string): Promise<{ sub: string; username?: string; email?: unknown; exp?: number; auth_time?: number }>;
 }
 
 /**
@@ -75,6 +77,7 @@ export const cognitoAuth = (config: Config, verifier?: JwtVerifier): Authenticat
         username: claims.username,
         email: typeof claims.email === 'string' ? claims.email : undefined,
         expiresAt: typeof claims.exp === 'number' ? claims.exp * 1000 : undefined,
+        authTime: typeof claims.auth_time === 'number' ? claims.auth_time * 1000 : undefined,
       };
     } catch {
       return undefined;

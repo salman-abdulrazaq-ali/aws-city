@@ -147,7 +147,7 @@ export const browserFromArg = (value) => {
 export const REGION_RE = /^[a-z]{2}(-gov)?-[a-z]+-\d$/;
 
 /**
- * `npm start` flags → { help, mode?, browser?, intro?, rebuild?, profile?, region?, error? }. Pure, so it's unit-tested.
+ * `npm start` flags → { help, mode?, browser?, intro?, rebuild?, profile?, region?, allowFixes?, error? }. Pure, so it's unit-tested.
  * `intro` is set only by --intro / --no-intro (the intro plays every run unless --no-intro).
  * `npm start --demo` (no `--`) never reaches argv: npm keeps it as npm_config_demo, so that's read too.
  */
@@ -161,6 +161,7 @@ export const parseArgs = (argv, env = {}) => {
     if (env.npm_config_intro === 'false') args.push('--no-intro');
     if (env.npm_config_intro === 'true') args.push('--intro');
     if (env.npm_config_rebuild === 'true') args.push('--rebuild');
+    if (env.npm_config_allow_fixes === 'true') args.push('--allow-fixes');
     if (env.npm_config_browser === 'true') return fail('npm kept the browser name for itself: put -- before the flags, e.g. npm start -- --demo --browser chrome');
     if (env.npm_config_browser) args.push('--browser', env.npm_config_browser);
   }
@@ -175,6 +176,7 @@ export const parseArgs = (argv, env = {}) => {
     } else if (flag === '--no-intro') out.intro = false;
     else if (flag === '--intro') out.intro = true;
     else if (flag === '--rebuild') out.rebuild = true;
+    else if (flag === '--allow-fixes') out.allowFixes = true;
     else if (flag === '--browser' || flag === '-b') {
       const v = value();
       if (!v || v.startsWith('-')) return fail('--browser needs a name, e.g. --browser chrome');
@@ -191,7 +193,7 @@ export const parseArgs = (argv, env = {}) => {
       out.region = v;
     } else return fail(`Unknown option "${args[i]}".`);
   }
-  if ((out.profile || out.region) && out.mode === 'demo') return fail('--profile and --region are for real AWS (--live); the demo needs no AWS account.');
+  if ((out.profile || out.region || out.allowFixes) && out.mode === 'demo') return fail('--profile, --region and --allow-fixes are for real AWS (--live); the demo needs no AWS account.');
   return out;
 };
 
@@ -239,6 +241,7 @@ export const helpText = () =>
     ...BROWSERS.map((b) => `                         ${b.id.padEnd(9)}${HELP_NOTES[b.id] ?? `${b.name} (3 guided clicks the first time)`}`),
     '  --profile <name>     real AWS: the AWS profile to use (default: the one that worked last time)',
     '  --region <name>      real AWS: where Claude runs (default: last time, or us-west-2)',
+    '  --allow-fixes        real AWS: the citizens may fix what they find (you approve each fix; AWS_CITY_ALLOW_FIXES=true)',
     '  --rebuild            build the extension even if nothing changed since the last build',
     '  --no-intro           skip the 2 s title animation (any key skips it too)',
     '  -h, --help           show this help',

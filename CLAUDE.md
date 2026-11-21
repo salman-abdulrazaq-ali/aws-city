@@ -76,9 +76,12 @@ When a change touches a decision, update its entry and run its Proof.
   The AgentCore/Strands backend is parked on `parked/agentcore-backend`. Proof: `cd server && npm test`
   (the server imports `src/backend/contract.ts`, so contract drift breaks its build: `npx tsc --noEmit -p server`).
 - **Two deployments of one server:** local (`AUTH_MODE=token`, workshop profile, files; loopback
-  only) and hosted (`AWS_CITY_MODE=hosted`: Cognito JWT in the WebSocket subprotocol, one tenant
+  only; every caller needs the token, an Origin header never authenticates: the launcher mints one per run and builds it into
+  the extension as `WXT_AWS_TOKEN`, `scripts/launcher/live-run.mjs`) and hosted (`AWS_CITY_MODE=hosted`: Cognito JWT in the WebSocket subprotocol, one tenant
   per player, DynamoDB/S3, each player's own account via `AWSCityPlayerRole-<region>` + ExternalId).
-  `server/src/config.ts` refuses unsafe mixes. Proof: `cd server && npx vitest run test/hosted.test.ts`.
+  `server/src/config.ts` refuses unsafe mixes. A deleted player's sockets close within about a minute on every task
+  (`DELETED_CHECK_MS`). "Your data" (sign out, delete) shows only for hosted builds. Proof: `cd server && npx vitest run test/hosted.test.ts`,
+  `cd server && npx vitest run test/http.test.ts -t "origins|deleted|token"`.
 - **The player role allows exactly what the server calls, and trusts only our account.** The trust is
   fixed at publish time, not a parameter. Proof: `cd server && npx vitest run test/player-role.test.ts`.
 - **Infra is CDK with cdk-nag AwsSolutions clean.** Every acknowledgement carries a reason. Deploys need no
@@ -110,7 +113,7 @@ When a change touches a decision, update its entry and run its Proof.
   other options) and EBS to enable-only; for S3 Block Public Access, DynamoDB PITR and security-group revokes it can't, so the code does (and the
   template says so). Undo is the player's, in the console. Outside the city's own resources the player types the
   resource id, and the citizen must be level 3 (a teaching gate, not a security control). Local mode needs
-  `AWS_CITY_ALLOW_FIXES=true`.
+  `AWS_CITY_ALLOW_FIXES=true` (`npm run live -- --allow-fixes`), and its "fixes are off" message says so (`howToAllowFixes`).
   Proof: `cd server && npx vitest run test/fixes.test.ts test/player-role.test.ts test/care.test.ts`.
 - **AWS plugins for Claude Code** (`.claude/settings.json`): `aws-core` and `aws-agents` from
   `claude-plugins-official` (Agent Toolkit for AWS). Use their skills (aws-cdk, aws-iam, aws-containers,
@@ -153,8 +156,13 @@ When a change touches a decision, update its entry and run its Proof.
   Proof: `cd server && npx vitest run test/jev.test.ts test/service.test.ts test/guard.test.ts`.
 - **Linking an AWS account, approving a write and applying a fix need MFA (step-up).** Hosted players must have TOTP
   on for `account.link`/`account.verify`, `deploy.approve` and `finding.fix` (Google sign-ins are exempt); prod Cognito runs Plus with threat protection.
-  A "TOTP is on" answer is cached 60 s at most. Proof: `cd server && npx vitest run test/hosted.test.ts -t "MFA"`
-  (includes "MFA step-up for writes"), `cd infra && npm test`.
+  On isn't enough: the session must have signed in after it (`server/src/accounts/mfa.ts`). The server keeps the first time it saw TOTP on
+  (`Stores.mfa` `since`, files or DynamoDB `USER#<sub> MFA`; seeing it off forgets it) and passes only an access token whose `auth_time` is at
+  or after it; an older session gets code `auth` ("sign in again"). After enrolling, the extension calls `POST /me/mfa` (the server
+  looks now), then `GlobalSignOut` ends every session and the player signs in again with the code (`src/backend/auth.ts`). Sign-out
+  revokes the refresh token (`/oauth2/revoke`, bounded); an email change waits for its code (`keepOriginal`). A "TOTP is on" answer is
+  cached 60 s at most. Proof: `cd server && npx vitest run test/hosted.test.ts -t "MFA"` (includes "MFA step-up for writes"),
+  `npx vitest run tests/auth.test.ts`, `cd infra && npm test`.
 - **Hosted deploys only run in Regions with a Claude geo inference profile** (`infra/lib/models.ts`: `us`, `eu`, `au`,
   `in`; there is no `apac` profile, so e.g. Tokyo is refused). Each geo gets the newest pair with a profile there for
   both models (`GEO_MODELS`, from the Bedrock model cards): Claude Opus 5.5 / Sonnet 5.5 in `us`/`eu`/`au`; India has no
@@ -168,7 +176,13 @@ When a change touches a decision, update its entry and run its Proof.
   where depth matters), and agent histories stay append-only (edited turns are refused).
   Proof: `cd server && npx vitest run test/console.test.ts`.
 - **Players see no internal errors.** Hosted errors are a sentence plus a `ref` that finds the log line
-  (`publicError` in `server/src/log.ts`). Proof: `cd server && npx vitest run test/log.test.ts`.
+  (`publicError` in `server/src/log.ts`); Bedrock's AccessDenied (the budget's deny policy) reads as the city's AI resting (code `paused`).
+  Proof: `cd server && npx vitest run test/log.test.ts`, `cd server && npx vitest run test/hosted.test.ts -t "metered"`.
+- **Shared AI calls can't be farmed with free sign-ups** (`server/src/agents/metered.ts`). A player first seen today (`QuotaStore.firstSeen`)
+  gets a fifth of `DAILY_MODEL_CALLS` (100 → 20), and those players together at most a quarter of `GLOBAL_DAILY_MODEL_CALLS`
+  (`GLOBAL#NEW`, 20,000 → 5,000); a call Bedrock refused before answering (throttled, denied) is refunded, an aborted one isn't. Scores and
+  leaderboard reads are rate-limited per socket (burst 5, then one per 5 s). Proof: `cd server && npx vitest run test/hosted.test.ts -t "metered"`,
+  `cd server && npx vitest run test/http.test.ts -t "rate-limited"`.
 - **One seam to the backend.** Only `src/backend/` does network I/O. `contract.ts` is the source of
   truth; `docs/backend-contract.md` mirrors it. UI code reading the extension's own files goes through
   `readAsset` (`src/backend/assets.ts`: same-origin `/assets/` paths only). A client needs a server of its contract version or newer

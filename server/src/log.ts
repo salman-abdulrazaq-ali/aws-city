@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { PermissionDeniedError } from '@anthropic-ai/sdk';
 
 /**
  * Structured JSON logs (one line each) for CloudWatch, and metrics in Embedded Metric Format.
@@ -36,6 +37,16 @@ let hosted = process.env.AWS_CITY_MODE === 'hosted';
 export const setPublicErrors = (on: boolean) => void (hosted = on);
 export const publicErrors = () => hosted;
 
+/** The city's AI is off (kill switch, global cap, or Bedrock denied by the budget's deny policy). Shown as is. */
+export const PAUSED_MESSAGE = 'The city’s AI is resting right now. Learning, cards and games still work.';
+
+/**
+ * Bedrock refused the model call with AccessDenied: the budget action's deny policy on the task role (or model access
+ * not granted). Our Bedrock client is the Anthropic SDK's, which turns a 403 into PermissionDeniedError; AWS SDK errors
+ * from the player's account never are one. Strands may wrap it (`cause`).
+ */
+export const isModelDenied = (err: unknown): boolean => err instanceof PermissionDeniedError || (err instanceof Error && err.cause instanceof PermissionDeniedError);
+
 /**
  * Logs a failure and returns what the player may see. AWS and Bedrock errors can carry our account id,
  * role and model ARNs, so hosted players get a plain sentence plus a reference to find the log line;
@@ -48,6 +59,7 @@ export const publicError = (scope: string, err: unknown, fields: Fields = {}): s
   const ref = randomBytes(3).toString('hex');
   write('error', scope, { ref, err: e?.name ?? 'Error', status: e?.status, detail: e?.message?.slice(0, 300), ...fields });
   if (!hosted) return e?.message ?? String(err);
+  if (isModelDenied(err)) return PAUSED_MESSAGE;
   if (e?.status === 429 || e?.name === 'ThrottlingException') return 'The city’s AI is busy right now. Try again in a minute.';
   if (e?.name === 'TimeoutError' || /timed? ?out/i.test(e?.message ?? '')) return 'That took too long. Try again.';
   return `Something went wrong on our side (ref ${ref}). Try again.`;

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { depsPlan, explainNpmError, installMessage, readDepsFacts } from '../scripts/launcher/boot.mjs';
 import { panelReserve, renderPanel, wrap, type PanelState } from '../scripts/launcher/panel.mjs';
 import { buildEnv, sourceEntries, sourceStamp, stampOf } from '../scripts/launcher/stamp.mjs';
+import { liveConfig } from '../scripts/launcher/live-run.mjs';
 import {
   browserFromArg,
   choiceLabel,
@@ -76,6 +77,8 @@ describe('npm start options (the stage one-liner)', () => {
     expect(parseArgs(['--live', '--browser=firefox', '--no-intro'])).toEqual({ help: false, intro: false, mode: 'live', browser: 'firefox' });
     expect(parseArgs(['--demo', '--intro', '--rebuild'])).toEqual({ help: false, intro: true, rebuild: true, mode: 'demo' });
     expect(parseArgs(['--live', '--profile', 'workshop', '--region=eu-west-1'])).toEqual({ help: false, mode: 'live', profile: 'workshop', region: 'eu-west-1' });
+    expect(parseArgs(['--live', '--allow-fixes'])).toEqual({ help: false, mode: 'live', allowFixes: true });
+    expect(helpText()).toContain('--allow-fixes');
     expect(parseArgs(['-b', 'Edge']).browser).toBe('edge');
     expect(parseArgs(['--browser', 'city']).browser).toBe('cft');
     expect(parseArgs(['--browser', 'safari']).browser).toBe('safari');
@@ -94,12 +97,14 @@ describe('npm start options (the stage one-liner)', () => {
     expect(parseArgs(['--region', 'nowhere']).error).toMatch(/"nowhere" isn't one/);
     expect(parseArgs(['--profile']).error).toMatch(/needs the name/);
     expect(parseArgs(['--demo', '--profile', 'x']).error).toMatch(/for real AWS/);
+    expect(parseArgs(['--demo', '--allow-fixes']).error).toMatch(/for real AWS/);
   });
 
   it('understands npm start --demo without the -- (npm keeps those flags as npm_config_*)', () => {
     const npm = { npm_lifecycle_event: 'start' };
     expect(parseArgs([], { ...npm, npm_config_demo: 'true' })).toEqual({ help: false, mode: 'demo' });
     expect(parseArgs([], { ...npm, npm_config_rebuild: 'true' })).toEqual({ help: false, rebuild: true });
+    expect(parseArgs([], { ...npm, npm_config_live: 'true', npm_config_allow_fixes: 'true' })).toEqual({ help: false, mode: 'live', allowFixes: true });
     expect(parseArgs([], { ...npm, npm_config_live: 'true', npm_config_browser: 'firefox' })).toMatchObject({ mode: 'live', browser: 'firefox' });
     // `npm start --demo --browser chrome` loses "chrome": say how to pass it instead of guessing.
     expect(parseArgs([], { ...npm, npm_config_demo: 'true', npm_config_browser: 'true' }).error).toMatch(/npm start -- --demo --browser chrome/);
@@ -475,5 +480,20 @@ describe('an AWS City window that is already open', async () => {
     const lines = meaningfulLines(out);
     expect(lines[0]).toMatch(/has been closed/);
     expect(lines.join(' ')).not.toMatch(/cleanup|gracefully|Node\.js/);
+  });
+});
+
+describe('real AWS: the local server and the build share a fresh token', () => {
+  it('every browser gets its own random token each run, built into the extension and given to the server', () => {
+    for (const browser of ['cft', 'chrome', 'firefox', 'safari']) {
+      const a = liveConfig(browser);
+      const b = liveConfig(browser);
+      expect(a.token.length).toBeGreaterThanOrEqual(32); // the server's minimum (server/src/config.ts)
+      expect(a.token).not.toBe(b.token);
+      expect(a.extEnv.WXT_AWS_TOKEN).toBe(a.token);
+    }
+    expect(liveConfig('cft').allowFixes).toBe(false);
+    expect(liveConfig('cft', { allowFixes: true }).allowFixes).toBe(true);
+    expect(liveConfig('cft', { port: '9999' }).url).toBe('http://127.0.0.1:9999');
   });
 });

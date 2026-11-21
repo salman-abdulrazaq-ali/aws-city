@@ -1,18 +1,19 @@
 import { connect } from 'node:net';
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { loadConfig } from '../src/config.js';
 import type { Approvals } from '../src/contract/approvals.js';
 import type { Orchestrator } from '../src/contract/orchestrator.js';
 import { createProgressStore } from '../src/contract/progress.js';
 import { createUploadStore } from '../src/contract/uploads.js';
-import { createHttpServer, health, rateLimiter } from '../src/http.js';
+import { createHttpServer, DELETED_CHECK_MS, health, rateLimiter } from '../src/http.js';
 import type { Poller } from '../src/state/poller.js';
+import type { Tenant } from '../src/tenants.js';
 import { CONTRACT_VERSION, type ServerEvent } from '../src/world.js';
 import pkg from '../package.json' with { type: 'json' };
 import { snapshot } from './fixtures.js';
-import { bearerSubprotocols } from '../../src/backend/contract.js';
+import { bearerSubprotocols, CLOSE_CODES } from '../../src/backend/contract.js';
 
 const TOKEN = 'test-token';
 let base: string;
@@ -77,11 +78,13 @@ const until = async (ok: () => boolean, ms = 3000) => {
 };
 
 describe('HTTP/WebSocket guards', () => {
-  it('REST needs the token (or the pinned extension origin)', async () => {
+  it('REST needs the token; the pinned extension origin alone is refused (its id is public)', async () => {
     expect((await fetch(`${base}/progress`)).status).toBe(401);
     expect((await fetch(`${base}/progress`, { headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(404);
-    expect((await fetch(`${base}/progress`, { headers: { origin: 'chrome-extension://abc' } })).status).toBe(404);
-    expect((await fetch(`${base}/progress`, { headers: { origin: 'chrome-extension://other' } })).status).toBe(403);
+    expect((await fetch(`${base}/progress`, { headers: { origin: 'chrome-extension://abc' } })).status).toBe(401);
+    expect((await fetch(`${base}/progress`, { headers: { origin: 'chrome-extension://abc', authorization: `Bearer ${TOKEN}` } })).status).toBe(404);
+    // Origin stays the browser check: a foreign one is refused even with the token.
+    expect((await fetch(`${base}/progress`, { headers: { origin: 'chrome-extension://other', authorization: `Bearer ${TOKEN}` } })).status).toBe(403);
   });
 
   it('rejects a foreign Host header (DNS rebinding), except the health check', async () => {
@@ -102,8 +105,9 @@ describe('HTTP/WebSocket guards', () => {
     expect(health(true)).toEqual({ status: 503, body: { status: 'draining', version: pkg.version, contract: CONTRACT_VERSION } });
   });
 
-  it('WebSocket: token or pinned origin required, then welcome + contract events', async () => {
+  it('WebSocket: the token is required (the pinned origin alone is refused), then welcome + contract events', async () => {
     expect((await openWs('')).status).toBe(401);
+    expect((await openWs('', 'chrome-extension://abc')).status).toBe(401);
     expect((await openWs('x', 'https://evil.example')).status).toBe(403);
     expect((await openWs('wrong')).status).toBe(401);
     const { ws } = await openWs(TOKEN);
@@ -117,12 +121,12 @@ describe('HTTP/WebSocket guards', () => {
   });
 
   it('survives clients that reset the connection around an upgrade (rejected or accepted)', async () => {
-    const upgrade = (query: string, origin: string) =>
-      `GET /ws${query} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nOrigin: ${origin}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
-      `Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n`;
-    for (const [query, origin] of [['', 'https://evil.example'], ['', 'chrome-extension://abc']] as const) {
+    const upgrade = (protocols: string, origin: string) =>
+      `GET /ws HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nOrigin: ${origin}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
+      `Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n${protocols ? `Sec-WebSocket-Protocol: ${protocols}\r\n` : ''}\r\n`;
+    for (const [protocols, origin] of [['', 'https://evil.example'], [bearerSubprotocols(TOKEN).join(', '), 'chrome-extension://abc']] as const) {
       await new Promise<void>((resolve) => {
-        const s = connect(port, '127.0.0.1', () => s.write(upgrade(query, origin)));
+        const s = connect(port, '127.0.0.1', () => s.write(upgrade(protocols, origin)));
         // Reset right after the server answered: this is what crashed the live server (ECONNRESET, no listener).
         s.once('data', () => {
           s.resetAndDestroy();
@@ -132,6 +136,17 @@ describe('HTTP/WebSocket guards', () => {
     }
     await new Promise((r) => setTimeout(r, 150));
     expect((await fetch(`${base}/health`)).status).toBe(200);
+  });
+
+  it('scores and leaderboards are rate-limited per socket: a burst of 5, then a plain refusal', async () => {
+    const { ws } = await openWs(TOKEN);
+    const refusals = () => received.filter((e) => e.type === 'error' && /Too many scores/.test(e.message)).length;
+    const before = refusals();
+    for (let i = 0; i < 7; i++) ws!.send(JSON.stringify(i % 2 ? { action: 'leaderboard.get', board: 'shield' } : { action: 'score.submit', board: 'shield', score: i }));
+    await until(() => refusals() - before >= 2);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(refusals() - before).toBe(2);
+    ws!.close();
   });
 
   it('screenshot upload URLs are single-use and signed', async () => {
@@ -253,15 +268,76 @@ describe('extension origins per browser', () => {
     expect(originMatches('https://evil.example', [])).toBe(false);
   });
 
-  it('a wildcard never authenticates by Origin alone, and only scheme wildcards are accepted', async () => {
+  it('Origin alone never authenticates (not even an exact one), and only scheme wildcards are accepted', async () => {
     const { ConfigError, loadConfig } = await import('../src/config.js');
     const { tokenAuth } = await import('../src/auth.js');
     const config = loadConfig({ EXTENSION_ORIGIN: 'chrome-extension://abc,moz-extension://*' });
     const auth = tokenAuth(config);
-    const req = (origin: string) => ({ headers: { origin } }) as never;
-    expect(await auth(req('chrome-extension://abc'), new URL('http://x/'))).toEqual({ sub: 'local' });
+    const req = (origin: string, authorization?: string) => ({ headers: { origin, ...(authorization ? { authorization } : {}) } }) as never;
+    // The dev extension's id is public: any local program can send its Origin header.
+    expect(await auth(req('chrome-extension://abc'), new URL('http://x/'))).toBeUndefined();
     expect(await auth(req('moz-extension://any-firefox-extension'), new URL('http://x/'))).toBeUndefined();
+    expect(await auth(req('chrome-extension://abc', `Bearer ${config.token}`), new URL('http://x/'))).toEqual({ sub: 'local' });
+    expect(await auth(req('chrome-extension://abc', 'Bearer wrong'), new URL('http://x/'))).toBeUndefined();
     expect(() => loadConfig({ EXTENSION_ORIGIN: 'chrome-extension://*' })).toThrow(ConfigError);
     expect(() => loadConfig({ EXTENSION_ORIGIN: 'https://*.example.com' })).toThrow(ConfigError);
+  });
+});
+
+describe('deleted accounts', () => {
+  it('every open socket asks about once a minute whether its player was deleted, and closes for good', async () => {
+    let gone = false;
+    const deleted = vi.fn(async () => gone);
+    const tenant = {
+      sub: 'p1',
+      region: 'us-west-2',
+      orchestrator: () => ({}),
+      care: () => undefined,
+      createCopilot: () => undefined,
+      welcome: async () => [],
+      subscribe: () => () => undefined,
+      emitter: (emit: unknown) => emit,
+    } as unknown as Tenant;
+    const tenants = { acquire: async () => tenant, data: () => tenant, release: () => undefined, closeAll: () => undefined };
+    const config = { ...loadConfig({}), authMode: 'cognito' as const, extensionOrigins: ['chrome-extension://abc'] };
+    const deps = { tenants, authenticate: async () => ({ sub: 'p1' }), deleted };
+    const probe = createHttpServer({ config: { ...config, port: 0 }, ...deps });
+    await new Promise<void>((r) => probe.server.listen(0, '127.0.0.1', r));
+    const p = (probe.server.address() as AddressInfo).port;
+    probe.server.close();
+    // Only intervals are fake (the heartbeat and the check): sockets and the waits below run on real time.
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const { server } = createHttpServer({ config: { ...config, port: p }, ...deps });
+    await new Promise<void>((r) => server.listen(p, '127.0.0.1', r));
+    try {
+      const ws = new WebSocket(`ws://127.0.0.1:${p}/ws`, bearerSubprotocols('x'), { origin: 'chrome-extension://abc' });
+      let pings = 0;
+      ws.on('ping', () => pings++);
+      const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)));
+      await new Promise((r) => ws.on('open', r));
+      expect(deleted).toHaveBeenCalledTimes(1); // at the handshake
+      // Moves the clock on, letting each heartbeat's pong come back first (or the socket would count as dead).
+      const advance = async (ms: number) => {
+        for (let left = ms; left > 0; ) {
+          const step = Math.min(left, 25_000);
+          const n = pings;
+          vi.advanceTimersByTime(step);
+          left -= step;
+          if (step === 25_000) {
+            await vi.waitFor(() => expect(pings).toBe(n + 1));
+            await new Promise((r) => setTimeout(r, 100));
+          }
+        }
+      };
+      await advance(DELETED_CHECK_MS);
+      await vi.waitFor(() => expect(deleted).toHaveBeenCalledTimes(2));
+      expect(ws.readyState).toBe(WebSocket.OPEN); // not deleted: it stays open
+      gone = true; // deleted on another task, or another device
+      await advance(DELETED_CHECK_MS);
+      expect(await closed).toBe(CLOSE_CODES.deleted);
+    } finally {
+      vi.useRealTimers();
+      server.close();
+    }
   });
 });

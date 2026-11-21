@@ -635,7 +635,7 @@ async function main() {
   const { profile, account } = await connectAws(tools, region, prefs, args.profile);
   savePrefs({ mode, browser, profile, region });
 
-  const cfg = liveConfig(browser);
+  const cfg = liveConfig(browser, { allowFixes: args.allowFixes === true });
   const dash = panel(
     [
       { id: 'aws', title: 'AWS sign-in' },

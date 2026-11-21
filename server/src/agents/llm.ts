@@ -31,6 +31,8 @@ export const createLlm = (config: Config) => {
     client: client as unknown as Anthropic,
     /** No limits here; `metered` replaces this with the kill switch and quotas. */
     gate: async (): Promise<void> => undefined,
+    /** Gives back a call `gate` took that failed before Bedrock answered (nothing to give back here; see `metered`). */
+    refund: async (): Promise<void> => undefined,
 
     /**
      * `light` = the cheaper model (page classification); planning, agents and the Copilot use the main one.

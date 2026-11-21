@@ -30,12 +30,12 @@ with a pref; Safari gets a one-off token).
 ### By hand (advanced)
 
 ```bash
-cd server && npm ci && EXTENSION_ORIGIN=chrome-extension://<id> AWS_CITY_PROFILE=<profile> npm start
+cd server && npm ci && EXTENSION_ORIGIN=chrome-extension://<id> AWS_CITY_PROFILE=<profile> AWS_CITY_TOKEN=<token> npm start
 ```
 
 and build the extension with `WXT_BACKEND=aws`, `WXT_AWS_WS_URL=ws://127.0.0.1:8787/ws`,
-`WXT_AWS_API_URL=http://127.0.0.1:8787`. Comma-separate several origins. Anything else (curl, tests) must
-send the printed token: `Authorization: Bearer <token>`, or `?token=` on the WebSocket.
+`WXT_AWS_API_URL=http://127.0.0.1:8787` and `WXT_AWS_TOKEN=<token>` (the same token). Comma-separate several origins.
+Every client (the extension, curl, tests) sends the token: `Authorization: Bearer <token>`, or `?token=` on the WebSocket.
 
 ## How the contract is implemented
 
@@ -80,7 +80,7 @@ npm run build    # type-check
 | `AWS_CITY_PROFILE` | `workshop` | AWS CLI profile |
 | `AWS_CITY_REGION` | `us-west-2` | |
 | `PORT` | `8787` | |
-| `EXTENSION_ORIGIN` | unset | extension origin(s) allowed without a token |
+| `EXTENSION_ORIGIN` | unset | extension origin(s) the browser check accepts (every request still needs the token) |
 | `AWS_CITY_TOKEN` | random per start | fix it to keep the same token across restarts |
 | `AWS_CITY_MODEL` | `us.anthropic.claude-opus-5` | Bedrock inference profile |
 | `AWS_CITY_FALLBACK_MODEL` | `us.anthropic.claude-sonnet-5` | retried once if the main model refuses |

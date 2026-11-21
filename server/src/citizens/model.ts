@@ -2,6 +2,7 @@ import type Anthropic from '@anthropic-ai/sdk';
 import type { Message, StreamOptions } from '@strands-agents/sdk';
 import { AnthropicModel } from '@strands-agents/sdk/models/anthropic';
 import { log } from '../log.js';
+import { isAbort, modelError } from '../agents/metered.js';
 
 /**
  * Strands' Anthropic model on our Bedrock client (InvokeModel, the workshop's route to the 5.x models), with every
@@ -13,6 +14,8 @@ export class MeteredAnthropicModel extends AnthropicModel {
   constructor(
     opts: { client: Anthropic; modelId: string; maxTokens: number; effort?: 'low' | 'medium' | 'high' },
     private readonly gate: () => Promise<void>,
+    /** Gives the call back when Bedrock refused it before answering (throttled, denied); never after it streamed. */
+    private readonly refund?: () => Promise<void>,
   ) {
     super({
       client: opts.client,
@@ -25,13 +28,20 @@ export class MeteredAnthropicModel extends AnthropicModel {
 
   override async *stream(messages: Message[], options?: StreamOptions) {
     await this.gate();
-    for await (const event of super.stream(messages, options)) {
-      if (event.type === 'modelMetadataEvent' && event.usage) {
-        log.metric('InputTokens', event.usage.inputTokens ?? 0);
-        log.metric('OutputTokens', event.usage.outputTokens ?? 0);
-        log.metric('CacheReadTokens', event.usage.cacheReadInputTokens ?? 0);
+    let answered = false;
+    try {
+      for await (const event of super.stream(messages, options)) {
+        answered = true;
+        if (event.type === 'modelMetadataEvent' && event.usage) {
+          log.metric('InputTokens', event.usage.inputTokens ?? 0);
+          log.metric('OutputTokens', event.usage.outputTokens ?? 0);
+          log.metric('CacheReadTokens', event.usage.cacheReadInputTokens ?? 0);
+        }
+        yield event;
       }
-      yield event;
+    } catch (err) {
+      if (!answered && !isAbort(err)) await this.refund?.().catch(() => undefined);
+      throw modelError(err);
     }
   }
 }

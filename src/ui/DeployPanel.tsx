@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { canDeleteAccount, canSetUpMfa, confirmMfaSetup, decideDeploy, deleteAccount, isSafeAwsUrl, linkAccount, openUrl, planDeploy, signIn, signOut, startMfaSetup, teardownDeploy, verifyAccount } from '@/app/runtime';
+import { canDeleteAccount, canSetUpMfa, confirmMfaSetup, decideDeploy, deleteAccount, isSafeAwsUrl, linkAccount, mfaStatus, openUrl, planDeploy, signIn, signOut, startMfaSetup, teardownDeploy, verifyAccount } from '@/app/runtime';
 import { useCity, type DeployView } from '@/state/store';
 import { GUARDED_BLUEPRINTS } from '@/backend/ServerBackend';
 import { TEMPLATES } from '@/world/content';
@@ -79,8 +79,11 @@ function Step({ n, state, title, children }: { n: number; state: 'done' | 'now' 
   );
 }
 
-/** Step-up MFA: an authenticator app protects the AWS account agents can change (server/src/accounts/mfa.ts). */
-function MfaSetup() {
+/**
+ * Step-up MFA: an authenticator app protects the AWS account agents can change (server/src/accounts/mfa.ts). `replace`:
+ * the player already has one and sets up a new one (same steps). Either way every session ends after: sign in again.
+ */
+function MfaSetup({ replace = false }: { replace?: boolean }) {
   const [setup, setSetup] = useState<{ secret: string; uri: string }>();
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
@@ -96,11 +99,16 @@ function MfaSetup() {
   };
   return (
     <div className="card mfa">
-      <b>🔐 Protect your account first</b>
-      <p className="muted">Agents can change your AWS account, so linking it needs an authenticator app (Google Authenticator, 1Password, Authy…).</p>
+      <b>{replace ? '🔐 Replace your authenticator' : '🔐 Protect your account first'}</b>
+      <p className="muted">
+        {replace
+          ? 'Add AWS City to your new app (or phone) with a new key. The old one stops working.'
+          : 'Agents can change your AWS account, so linking it, approving a change and applying a fix need an authenticator app (Google Authenticator, 1Password, Authy…).'}{' '}
+        Then you sign in again with its code.
+      </p>
       {!setup ? (
         <PendingButton className="btn primary" pending={busy} busyLabel="Starting…" onClick={() => void run(async () => setSetup(await startMfaSetup()))}>
-          Set up an authenticator
+          {replace ? 'Get a new key' : 'Set up an authenticator'}
         </PendingButton>
       ) : (
         <>
@@ -132,6 +140,33 @@ function MfaSetup() {
         </>
       )}
     </div>
+  );
+}
+
+/** Your data's "Authenticator: on · Replace" row (hosted email players; Google keeps its own second step). */
+function AuthenticatorRow() {
+  const [state, setState] = useState<'on' | 'off' | 'external'>();
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void mfaStatus().then((s) => live && setState(s));
+    return () => {
+      live = false;
+    };
+  }, []);
+  if (!canSetUpMfa() || !state || state === 'external') return null;
+  return (
+    <>
+      <p className="row">
+        <span>
+          Authenticator: <b>{state}</b> ·{' '}
+        </span>
+        <button className="btn" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+          {state === 'on' ? 'Replace' : 'Set up'}
+        </button>
+      </p>
+      {open && <MfaSetup replace={state === 'on'} />}
+    </>
   );
 }
 
@@ -289,6 +324,8 @@ export function DeployPanel() {
       )}
       <div className="card">
         <h3>Your AWS account</h3>
+        {/* A linked player is asked too (approving a change, applying a fix): the setup shows whenever the server asks. */}
+        {account.mfaRequired && canSetUpMfa() && <MfaSetup />}
         {account.linked ? (
           <p className="linked">
             <span className="linked-badge">✓ Linked</span> <b>{account.accountId}</b> · {account.region}
@@ -296,7 +333,6 @@ export function DeployPanel() {
           </p>
         ) : (
           <>
-            {account.mfaRequired && canSetUpMfa() && <MfaSetup />}
             {account.message && (
               <p className="field-error" role="alert">
                 ⚠️ {account.message}
@@ -504,6 +540,7 @@ export function DeployPanel() {
         <div className="card">
           <h3>Your data</h3>
           <p className="muted">Progress, your account link and sign-in are stored for you. Screenshots expire after a day.</p>
+          <AuthenticatorRow />
           <div className="row">
             <button className="btn" onClick={signOut}>
               Sign out

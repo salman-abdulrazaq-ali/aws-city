@@ -1,4 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
+import { RateLimitError } from '@anthropic-ai/sdk';
 import { describe, expect, it, vi } from 'vitest';
 import { createStrandsRunner, TOOL_BUDGET_MESSAGE } from '../src/citizens/engine.js';
 import { CITIZENS } from '../src/citizens/roles.js';
@@ -107,6 +108,27 @@ describe('Strands runner (citizens and landmark agents)', () => {
     ]);
     await runner.turn('ec2', 'look at i-1');
     expect(gate).toHaveBeenCalledTimes(2);
+  });
+
+  it('a model call Bedrock refused before answering is given back to the quota', async () => {
+    const throttled = new RateLimitError(429, { message: 'slow down' }, 'slow down', new Headers());
+    const client = {
+      messages: {
+        stream() {
+          return (async function* () {
+            yield* [];
+            throw throttled;
+          })();
+        },
+      },
+    } as unknown as Anthropic;
+    const { llm } = fakeLlm([]);
+    const gate = vi.fn(async () => undefined);
+    const refund = vi.fn(async () => undefined);
+    const runner = createStrandsRunner({ llm: { ...llm, gate, refund }, actions: fakeActions(), snapshot: emptySnapshot, client });
+    await expect(runner.turn('ec2', 'hello')).rejects.toThrow();
+    expect(gate).toHaveBeenCalledTimes(1);
+    expect(refund).toHaveBeenCalledTimes(1);
   });
 
   it('stops after the tool budget and tells the model why', async () => {

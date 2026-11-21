@@ -17,7 +17,7 @@ import { shows } from '@/state/simple';
 import { consoleUrl, DEFAULT_CONSOLE_SERVICE, matchText, matchUrl } from '@/world/taxonomy';
 import { isPracticeService, isPracticeUrl, PRACTICE_PATH, practiceRoute, practiceUrl } from '@/console/practice';
 import type { CopilotMessage } from '@/console/agent';
-import { isSecretPage } from '@/console/risk';
+import { isSecretPage, redactConsoleUrl } from '@/console/risk';
 import { isReadingUrl } from '@/world/reading';
 import { isWorkshopUrl } from '@/world/workshops';
 import { SURFACE, SURFACE_NAME, type Surface } from '@/app/surface';
@@ -651,7 +651,20 @@ const optional = () => backend as (AgentBackend & MaybeRecoverable) | undefined;
 
 export const canSignIn = () => typeof backend?.signIn === 'function';
 export const canReconnect = () => typeof optional()?.reconnect === 'function';
-export const canDeleteAccount = () => typeof optional()?.deleteAccount === 'function';
+/**
+ * "Your data" (sign out, delete my account) is for signed-in players: the local server has no accounts (its one player
+ * runs the developer's own profile, and its sign-out does nothing).
+ */
+export const canDeleteAccount = () => backend?.hosted === true && typeof optional()?.deleteAccount === 'function';
+
+/** Whether the player's authenticator is on (hosted); undefined when unknown (signed out, offline, no sign-in). */
+export async function mfaStatus() {
+  try {
+    return await backend?.mfaStatus?.();
+  } catch {
+    return undefined;
+  }
+}
 
 /** Deletes everything the server stores about the player (privacy policy: "Delete my account"). */
 export async function deleteAccount() {
@@ -708,11 +721,23 @@ export function refusedBy(e: { requestId?: string }, sent: ReadonlyMap<string, S
   return e.requestId ? sent.get(e.requestId) : { action: 'deploy.approve' };
 }
 
+/** What to press once signed in again (a closed socket dropped the pending approval, so that change is asked for anew). */
+const AGAIN: Record<StepUp['action'], string> = {
+  'account.link': ', then press Get my setup link again',
+  'account.verify': ', then press Verify again',
+  'deploy.approve': ', then ask for the change again',
+  'finding.fix': ', then press Fix again',
+};
+
 /**
- * What to do once the authenticator is on: resend a refused link or verify as it was sent; an approval or a fix is
- * the player's to press again (the server keeps the preview pending; a refused fix never made one).
+ * What to do once the authenticator is on. The hosted backend then ends every session (`signedOut`): the player signs
+ * in again and presses the button once more. A backend that stays signed in resends a refused link or verify as it
+ * was sent; an approval or a fix is the player's to press again (the server keeps the preview pending; a refused fix
+ * never made one).
  */
-export function afterMfa(refused: StepUp | undefined): { resend?: StepUp; message: string } {
+export function afterMfa(refused: StepUp | undefined, signedOut = false): { resend?: StepUp; message: string } {
+  // Turning it on ended every session (src/backend/auth.ts): nothing can be resent until the player signs in again.
+  if (signedOut) return { message: `Authenticator on. Every older sign-in has ended: sign in again with your app’s code${refused ? AGAIN[refused.action] : ''}.` };
   switch (refused?.action) {
     case 'account.link':
       return { resend: refused, message: 'Authenticator on. Linking your AWS account now.' };
@@ -730,8 +755,10 @@ export function afterMfa(refused: StepUp | undefined): { resend?: StepUp; messag
 /** Step 2: confirm with a code, then retry the link or verify the server refused (an approval or fix is pressed again). */
 export async function confirmMfaSetup(code: string) {
   try {
+    // Read first: turning it on ends the session, and the session's end forgets what was refused.
+    const refused = mfaRefused;
     await backend!.confirmTotp!(code);
-    const next = afterMfa(mfaRefused);
+    const next = afterMfa(refused, store().backendStatus === 'signed-out');
     mfaRefused = undefined;
     store().setMfaRequired(false);
     store().toast('🔐', next.message);
@@ -1050,7 +1077,8 @@ export async function startConsoleCopilot(goal: string, opts: { serviceId?: stri
   store().setCopilot(taskId);
   store().addTask(taskId, `🖥️ ${text}`);
   opts.onStart?.(taskId);
-  backend.send({ action: 'console.start', taskId, goal: text, context: { url: f.url, title: f.title, serviceId: opts.serviceId ?? f.serviceId }, snapshot });
+  // Like the snapshot's, the URL leaves without the account id a multi-session console host carries.
+  backend.send({ action: 'console.start', taskId, goal: text, context: { url: f.url && redactConsoleUrl(f.url), title: f.title, serviceId: opts.serviceId ?? f.serviceId }, snapshot });
   return taskId;
 }
 

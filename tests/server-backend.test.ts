@@ -162,6 +162,28 @@ describe('ServerBackend connection status', () => {
     expect(statuses.at(-1)).toBe('signed-out');
   });
 
+  it('turning the authenticator on tells the server (POST /me/mfa) before every session ends, then shows signed-out', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', async (url: URL, init: RequestInit) => {
+      calls.push(`${init.method} ${url.pathname} ${(init.headers as Record<string, string>).authorization}`);
+      return new Response(null, { status: 204 });
+    });
+    const confirmTotp = vi.fn(async (_code: string, beforeSignOut?: () => Promise<void>) => {
+      calls.push('enrolled');
+      await beforeSignOut?.();
+      calls.push('signed out everywhere');
+    });
+    const backend = new ServerBackend({ wsUrl: 'wss://x/ws', apiUrl: 'https://x', auth: auth(async () => 't', { confirmTotp }) });
+    const statuses: string[] = [];
+    backend.onStatus((s) => statuses.push(s));
+    backend.connect();
+    await vi.waitFor(() => expect(FakeSocket.all).toHaveLength(1));
+    FakeSocket.all[0]!.open();
+    await backend.confirmTotp('123456');
+    expect(calls).toEqual(['enrolled', 'POST /me/mfa Bearer t', 'signed out everywhere']);
+    expect(statuses.at(-1)).toBe('signed-out');
+  });
+
   it('a 401 from GET /progress is "unknown", never "no progress"', async () => {
     vi.stubGlobal('fetch', async () => new Response('', { status: 401 }));
     const backend = new ServerBackend({ wsUrl: 'wss://x/ws', apiUrl: 'https://x', auth: auth(async () => undefined) });

@@ -4,7 +4,7 @@
 // aria-haspopup=listbox + a role=listbox of role=option), radio tiles, form-field labels, and widgets
 // rendered inside open shadow roots.
 import { byIdFrom, deepElements, deepQuery, rootOf } from './dom';
-import { redact } from './risk';
+import { redact, redactConsoleUrl } from './risk';
 import { isSensitiveInput } from './safety';
 import type { PageSnapshot, SnapshotItem } from './types';
 
@@ -177,7 +177,8 @@ export function takeSnapshot(doc: Document, opts: SnapshotOptions = {}): PageSna
     items.push(item);
   }
   const heading = clean(deepQuery(doc, 'h1, [role=heading][aria-level="1"]')?.textContent, 80) || undefined;
-  return { url: doc.location?.href ?? '', title: clean(doc.title, 120), heading, items };
+  // The URL leaves the page too: a multi-session console host carries the account id (redactConsoleUrl).
+  return { url: redactConsoleUrl(doc.location?.href ?? ''), title: clean(doc.title, 120), heading, items };
 }
 
 /** The element with this snapshot id — in the page or inside any open shadow root. */

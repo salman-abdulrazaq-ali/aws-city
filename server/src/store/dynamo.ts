@@ -11,8 +11,8 @@ import { type AccountLocks, type AccountRecord, type BillRecord, DELETED_TOMBSTO
 
 /**
  * Single-table design (infra/lib/data-stack.ts):
- *   USER#<sub>    PROGRESS | ACCOUNT | BILL | QUOTA#<day>
- *   QUOTA#GLOBAL  <day>
+ *   USER#<sub>    PROGRESS | ACCOUNT | BILL | QUOTA#<day> | SEEN (first model call) | MFA (authenticator on since)
+ *   QUOTA#GLOBAL… <day>   (QUOTA#GLOBAL, and QUOTA#GLOBAL#NEW for players first seen that day)
  *   AWSACCT#<id>  LOCK | PENDING#<kind:id>
  *   DELETED#<sub> TOMBSTONE   (DELETE /me: refuses the player's still-valid tokens for a while)
  *   PRESENCE#<region>, LB#<board>#<week>, USER#<sub> SOCIAL#…   (v2.11 live city and leaderboards: store/social-dynamo.ts)
@@ -30,6 +30,8 @@ export const dynamoStores = (deps: { client: DynamoDBClient; table: string; now?
   const TableName = deps.table;
   const now = deps.now ?? Date.now;
   const user = (sub: string) => `USER#${sub}`;
+  /** A player's daily counter lives under their key; the city's (GLOBAL…) under their own. */
+  const quotaKey = (key: string, day: string) => (key.startsWith('GLOBAL') ? { pk: `QUOTA#${key}`, sk: day } : { pk: user(key), sk: `QUOTA#${day}` });
   const social = withPresenceCache(dynamoSocial(db, TableName, now));
 
   const locks: AccountLocks = {
@@ -208,12 +210,11 @@ export const dynamoStores = (deps: { client: DynamoDBClient; table: string; now?
     },
     quota: {
       async consume(key, day, limit) {
-        const isGlobal = key === 'GLOBAL';
         try {
           await db.send(
             new UpdateCommand({
               TableName,
-              Key: isGlobal ? { pk: 'QUOTA#GLOBAL', sk: day } : { pk: user(key), sk: `QUOTA#${day}` },
+              Key: quotaKey(key, day),
               UpdateExpression: 'ADD calls :one SET #ttl = :ttl',
               ConditionExpression: 'attribute_not_exists(calls) OR calls < :limit',
               ExpressionAttributeNames: { '#ttl': 'ttl' },
@@ -227,8 +228,54 @@ export const dynamoStores = (deps: { client: DynamoDBClient; table: string; now?
         }
       },
       async used(key, day) {
-        const out = await db.send(new GetCommand({ TableName, Key: key === 'GLOBAL' ? { pk: 'QUOTA#GLOBAL', sk: day } : { pk: user(key), sk: `QUOTA#${day}` } }));
+        const out = await db.send(new GetCommand({ TableName, Key: quotaKey(key, day) }));
         return (out.Item?.calls as number | undefined) ?? 0;
+      },
+      async refund(key, day) {
+        try {
+          await db.send(
+            new UpdateCommand({
+              TableName,
+              Key: quotaKey(key, day),
+              UpdateExpression: 'ADD calls :minus',
+              ConditionExpression: 'calls > :zero',
+              ExpressionAttributeValues: { ':minus': -1, ':zero': 0 },
+            }),
+          );
+        } catch (err) {
+          if (!isConditional(err)) throw err;
+        }
+      },
+      async firstSeen(sub, day) {
+        // Kept until the player is deleted (under USER#<sub>, no ttl): it only ever says "before today" or "today".
+        const out = await db.send(
+          new UpdateCommand({
+            TableName,
+            Key: { pk: user(sub), sk: 'SEEN' },
+            UpdateExpression: 'SET firstDay = if_not_exists(firstDay, :d)',
+            ExpressionAttributeValues: { ':d': day },
+            ReturnValues: 'ALL_NEW',
+          }),
+        );
+        return (out.Attributes?.firstDay as string | undefined) ?? day;
+      },
+    },
+    mfa: {
+      async since(sub, at) {
+        // Atomic: two tasks seeing the authenticator at once keep the first time.
+        const out = await db.send(
+          new UpdateCommand({
+            TableName,
+            Key: { pk: user(sub), sk: 'MFA' },
+            UpdateExpression: 'SET since = if_not_exists(since, :t)',
+            ExpressionAttributeValues: { ':t': at },
+            ReturnValues: 'ALL_NEW',
+          }),
+        );
+        return (out.Attributes?.since as number | undefined) ?? at;
+      },
+      async forget(sub) {
+        await db.send(new DeleteCommand({ TableName, Key: { pk: user(sub), sk: 'MFA' } }));
       },
     },
     locks,

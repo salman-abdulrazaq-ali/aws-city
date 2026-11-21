@@ -75,7 +75,7 @@ const tenants = createTenants({
 });
 
 // Agents can change a linked AWS account, so linking it and approving writes to it need MFA (local token mode has no accounts to protect).
-const mfaReady = cognito && config.awsMode === 'assume-role' && config.requireMfaForLink ? createMfaCheck({ cognito, userPoolId: config.cognito!.userPoolId }) : undefined;
+const mfaReady = cognito && config.awsMode === 'assume-role' && config.requireMfaForLink ? createMfaCheck({ cognito, userPoolId: config.cognito!.userPoolId, since: stores.mfa }) : undefined;
 // Hosted: a deleted player's access token still verifies for up to an hour; the tombstone refuses it (local mode's one
 // player may start over at once).
 const deleted = config.authMode === 'cognito' ? (sub: string) => stores.deletedRecently(sub) : undefined;
@@ -94,15 +94,10 @@ http.server.listen(config.port, config.host, () => {
   });
   if (config.authMode === 'token') {
     const base = `http://${config.host}:${config.port}`;
-    console.log(`  frontend .env.local:  WXT_BACKEND=aws  WXT_AWS_WS_URL=ws://${config.host}:${config.port}/ws  WXT_AWS_API_URL=${base}`);
-    const exact = config.extensionOrigins.filter((o) => !o.endsWith('://*'));
-    console.log(
-      exact.length
-        ? `  extension allowed without token: ${exact.join(', ')}`
-        : '  no exact EXTENSION_ORIGIN: the extension needs the token (set EXTENSION_ORIGIN=chrome-extension://<id> to allow it directly)',
-    );
-    // The token is only for local curl/tests; it is never printed in hosted mode.
-    if (!process.env.AWS_CITY_TOKEN) console.log(`  token (for curl/tests): ${config.token}`);
+    // Every caller needs the token (an Origin header never authenticates on its own): the extension carries it as WXT_AWS_TOKEN.
+    console.log(`  frontend .env.local:  WXT_BACKEND=aws  WXT_AWS_WS_URL=ws://${config.host}:${config.port}/ws  WXT_AWS_API_URL=${base}  WXT_AWS_TOKEN=<token>`);
+    // Never printed in hosted mode, nor when AWS_CITY_TOKEN was given (the launcher's: it built it into the extension).
+    if (!process.env.AWS_CITY_TOKEN) console.log(`  token (WXT_AWS_TOKEN, curl): ${config.token}`);
   }
 });
 

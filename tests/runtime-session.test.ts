@@ -275,6 +275,31 @@ describe('runtime sessions', () => {
     expect(useCity.getState().account.mfaRequired).toBe(false);
   });
 
+  it('turning the authenticator on signs the hosted player out: they are told to sign in again, and nothing is resent', async () => {
+    const { rt, useCity } = await boot();
+    fake.status('connected');
+    await settle();
+    // The hosted backend ends every session once TOTP is on (src/backend/auth.ts confirmTotp).
+    Object.assign(fake, { confirmTotp: async () => fake.status('signed-out') });
+    const fire = (e: ServerEvent) => (fake as unknown as { events: Set<(e: ServerEvent) => void> }).events.forEach((cb) => cb(e));
+    const requestId = rt.linkAccount('eu-west-1')!;
+    fire({ type: 'error', requestId, code: 'mfa_required', message: 'MFA first' });
+    fake.sent = [];
+    useCity.getState().clearToasts(); // the refusal's error toast would hold the next one in the queue
+    expect(await rt.confirmMfaSetup('123456')).toBe(true);
+    expect(fake.sent).toEqual([]);
+    expect(useCity.getState().toasts.map((t) => t.text)).toContainEqual(expect.stringMatching(/sign in again with your app’s code, then press Get my setup link again/));
+    expect(rt.afterMfa({ action: 'deploy.approve' }, true).message).toMatch(/ask for the change again/);
+  });
+
+  it('"Your data" (sign out, delete my account) is for signed-in players only, never the local server', async () => {
+    const { rt } = await boot();
+    Object.assign(fake, { deleteAccount: async () => {} });
+    expect(rt.canDeleteAccount()).toBe(false); // the local server: no accounts, its sign-out does nothing
+    Object.assign(fake, { hosted: true });
+    expect(rt.canDeleteAccount()).toBe(true);
+  });
+
   it('auto-snap fires on AWS pages only, and a snap of another site sends no URL or title', async () => {
     const { rt, useCity } = await boot();
     fake.status('connected');

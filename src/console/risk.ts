@@ -88,12 +88,27 @@ export const playerOnlyPage = (url: string | undefined) => consolePage(PLAYER_ON
 /** Whether this real-console URL shows a secret (never auto-snapped). */
 export const isSecretPage = (url: string | undefined) => !!consolePage(SECRET_PAGES, url);
 
+/** 12 digits, bare (an ARN's account part) or in groups of four split by one kind of -, . or space. */
+const ACCOUNT_ID = /\b\d{4}([-. ]?)\d{4}\1\d{4}\b/g;
+
 /** Strip things that must not leave the page: account IDs, access keys, emails, ARNs' account part, long tokens. */
 export function redact(text: string): string {
   return text
     .replace(/\b(AKIA|ASIA|AROA|AIDA)[A-Z0-9]{12,}\b/g, '[key]')
     .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email]')
-    // 12 digits, bare (an ARN's account part) or in groups of four split by one kind of -, . or space
-    .replace(/\b\d{4}([-. ]?)\d{4}\1\d{4}\b/g, '[account]')
+    .replace(ACCOUNT_ID, '[account]')
     .replace(/\b[A-Za-z0-9+/_-]{32,}={0,2}/g, '[token]');
+}
+
+/**
+ * A console URL as it may leave the page. A multi-session console host names the account
+ * (`123456789012-abcd1234.us-east-1.console.aws.amazon.com`), so that prefix goes, and an account id elsewhere in it
+ * (an ARN in the hash, a bucket name) reads [account]. It stays a console URL that parses the same way (the server
+ * reads its service and page: isConsoleUrl, PLAYER_ONLY_PAGES). Anything else is returned as it was.
+ */
+export function redactConsoleUrl(raw: string): string {
+  if (!isConsoleUrl(raw)) return raw;
+  const u = new URL(raw);
+  u.hostname = u.hostname.replace(/^\d{12}-[a-z0-9]+\./, '');
+  return u.toString().replace(ACCOUNT_ID, '[account]');
 }

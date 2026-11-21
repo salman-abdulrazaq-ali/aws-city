@@ -8,6 +8,8 @@
 // live in storage.session (cleared when the browser closes); the refresh token in storage.local.
 
 const SIGN_IN_TIMEOUT_MS = 10 * 60_000;
+/** Calls made on the way out (revoking the refresh token, signing every session out) give up after this. */
+const SIGN_OUT_TIMEOUT_MS = 5_000;
 
 import { browser } from 'wxt/browser';
 
@@ -140,7 +142,25 @@ export class CognitoAuth {
     return this.exchange({ grant_type: 'authorization_code', code, code_verifier: verifier, redirect_uri: this.redirectUri });
   }
 
+  /**
+   * Revokes the refresh token at Cognito (the app client has token revocation on: infra/lib/auth-stack.ts), so a copy
+   * of it is useless too, then forgets the tokens here. Best effort and bounded: an offline sign-out still signs out.
+   */
   async signOut() {
+    const refresh = (await browser.storage.local.get(REFRESH_KEY))[REFRESH_KEY] as string | undefined;
+    if (refresh) {
+      await fetch(new URL('/oauth2/revoke', this.cfg.domain), {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token: refresh, client_id: this.cfg.clientId }),
+        signal: AbortSignal.timeout(SIGN_OUT_TIMEOUT_MS),
+      }).catch(() => undefined);
+    }
+    await this.forget();
+  }
+
+  /** Forgets this device's tokens (the side panel and the tab hear it: onChange). */
+  private async forget() {
     await browser.storage.session.remove(SESSION_KEY);
     await browser.storage.local.remove(REFRESH_KEY);
   }
@@ -187,11 +207,12 @@ export class CognitoAuth {
   }
 
   /** Calls the user pool API as the signed-in player (their access token authorises it). */
-  private async idp<T>(op: string, body: Record<string, unknown>): Promise<T> {
+  private async idp<T>(op: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     const res = await fetch(this.idpUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/x-amz-json-1.1', 'x-amz-target': `AWSCognitoIdentityProviderService.${op}` },
       body: JSON.stringify(body),
+      signal,
     });
     const json = (await res.json().catch(() => ({}))) as T & { __type?: string; message?: string };
     if (!res.ok) {
@@ -210,12 +231,34 @@ export class CognitoAuth {
     return { secret: SecretCode, uri: `otpauth://totp/AWS%20City?secret=${SecretCode}&issuer=AWS%20City` };
   }
 
-  /** Step 2: the 6-digit code from the app proves it works; then TOTP becomes the player's MFA. */
-  async confirmTotp(code: string): Promise<void> {
+  /**
+   * Step 2: the 6-digit code from the app proves it works; then TOTP becomes the player's MFA. `beforeSignOut` runs
+   * next (the server looks at once: POST /me/mfa), then every session of this player ends (GlobalSignOut: a session a
+   * leaked password opened is gone too) and this device forgets its tokens. The player signs in again with the code,
+   * and that session is the one the server's step-up check accepts (server/src/accounts/mfa.ts).
+   */
+  async confirmTotp(code: string, beforeSignOut?: () => Promise<void>): Promise<void> {
     const token = await this.token();
     if (!token) throw new Error('Sign in first.');
     const { Status } = await this.idp<{ Status: string }>('VerifySoftwareToken', { AccessToken: token, UserCode: code.trim(), FriendlyDeviceName: 'AWS City' });
     if (Status !== 'SUCCESS') throw new Error('That code didn’t match. Check your phone’s clock and try the next code.');
     await this.idp('SetUserMFAPreference', { AccessToken: token, SoftwareTokenMfaSettings: { Enabled: true, PreferredMfa: true } });
+    await beforeSignOut?.().catch(() => undefined);
+    const everywhere = await this.idp('GlobalSignOut', { AccessToken: token }, AbortSignal.timeout(SIGN_OUT_TIMEOUT_MS)).then(
+      () => true,
+      () => false,
+    );
+    // GlobalSignOut revoked every refresh token; if it couldn't be reached, at least this device's is revoked.
+    if (everywhere) await this.forget();
+    else await this.signOut();
+  }
+
+  /** Whether the player's authenticator is on; `external` = they sign in with Google, which keeps their second step. */
+  async mfaStatus(): Promise<'on' | 'off' | 'external' | undefined> {
+    const token = await this.token();
+    if (!token) return undefined;
+    const user = await this.idp<{ UserMFASettingList?: string[]; UserAttributes?: { Name: string }[] }>('GetUser', { AccessToken: token });
+    if (user.UserAttributes?.some((a) => a.Name === 'identities')) return 'external';
+    return user.UserMFASettingList?.includes('SOFTWARE_TOKEN_MFA') ? 'on' : 'off';
   }
 }

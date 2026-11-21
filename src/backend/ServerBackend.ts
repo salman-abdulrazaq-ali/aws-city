@@ -4,7 +4,8 @@ import { bearerSubprotocols, CLOSE_CODES, isServerEvent, type ClientCommand, typ
 
 /**
  * The AWS City server (server/): Claude on Bedrock + real AWS. Two deployments, same protocol:
- *  - local: on loopback with the workshop profile; the extension is allowlisted by Origin.
+ *  - local: on loopback with the workshop profile; the build carries the server's token (WXT_AWS_TOKEN), which the
+ *    launcher mints fresh each run. An allowed Origin alone never gets in.
  *  - hosted: api.<domain> on ECS; players sign in with Cognito and the access token rides in the
  *    WebSocket subprotocol (REST: Authorization: Bearer). Each player acts in their own linked account.
  * Transport: WebSocket /ws + REST (/progress, /screenshots, /me).
@@ -17,10 +18,7 @@ export interface ServerConfig {
   apiUrl: string;
   /** Hosted: Cognito sign-in. Absent for the local server. */
   auth?: CognitoAuth;
-  /**
-   * Local server only: its token (WXT_AWS_TOKEN), for browsers whose extension origin can't be pinned
-   * (Safari's is random per install). Chrome and Firefox dev builds are allowed by their exact origin instead.
-   */
+  /** Local server only: its token (WXT_AWS_TOKEN, minted per run by scripts/launcher/live-run.mjs). Every browser needs it. */
   token?: string;
 }
 
@@ -155,9 +153,25 @@ export class ServerBackend implements AgentBackend {
     return this.cfg.auth.startTotp();
   }
 
+  /**
+   * Turns the authenticator on, tells the server first (it must see it before the sign-in that follows), then every
+   * session ends: the player signs in again with the code. A session that died (not a sign-out), so this device keeps
+   * the city for the same player.
+   */
   async confirmTotp(code: string) {
     if (!this.cfg.auth) throw new Error('This server has no sign-in.');
-    await this.cfg.auth.confirmTotp(code);
+    await this.cfg.auth.confirmTotp(code, () => this.noteMfa());
+    this.endSession();
+  }
+
+  /** POST /me/mfa: the server looks at the authenticator now (an older server answers 404; then it looks later). */
+  private async noteMfa() {
+    const res = await fetch(this.url('/me/mfa'), { method: 'POST', headers: await this.headers(), signal: AbortSignal.timeout(5_000) });
+    if (!res.ok && res.status !== 404) console.warn('[server] POST /me/mfa', res.status);
+  }
+
+  async mfaStatus() {
+    return this.cfg.auth?.mfaStatus();
   }
 
   private async token(): Promise<string | undefined> {

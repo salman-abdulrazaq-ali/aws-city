@@ -9,7 +9,7 @@ import { createApprovals } from './contract/approvals.js';
 import { type ConsoleCopilot, Snapshot } from './contract/console.js';
 import type { ProgressStore } from './contract/progress.js';
 import { MAX_UPLOAD_BYTES, type MemoryUploadStore, UPLOAD_PATH } from './contract/uploads.js';
-import { MFA_REQUIRED_MESSAGE } from './accounts/mfa.js';
+import { MFA_REQUIRED_MESSAGE, SIGN_IN_AGAIN_MESSAGE, type StepUp } from './accounts/mfa.js';
 import { log, publicError, who } from './log.js';
 import { verifyStep } from './workshops/checks.js';
 import { isBoard, memorySocial, socialFor } from './social.js';
@@ -38,6 +38,14 @@ const MAX_CONNECTION_MS = 8 * 60 * 60_000;
 const EXPIRED_GRACE_MS = 10 * 60_000;
 /** How long this task remembers a deleted player without asking the store again (the tombstone itself lasts longer). */
 const DELETED_CACHE_MS = 10 * 60_000;
+/**
+ * Each open socket asks about once a minute whether its player deleted their account: DELETE /me closes the sockets
+ * on the task that handled it, and this closes the rest (other tasks, other devices).
+ */
+export const DELETED_CHECK_MS = 60_000;
+/** score.submit and leaderboard.get per socket: a burst of 5, then one every 5 s (each is a player-table read or write). */
+const SOCIAL_BURST = 5;
+const SOCIAL_PER_SECOND = 1 / 5;
 const IDLE_CHECK_MS = 15_000;
 
 /** WebSocket close codes the extension understands (CLOSE_CODES in src/backend/contract.ts; see ServerBackend). */
@@ -81,10 +89,11 @@ export interface HubDeps {
   /** The local upload store (PUT /uploads/…); hosted uploads go straight to S3. */
   uploads?: MemoryUploadStore;
   /**
-   * Step-up (hosted): true once the player has TOTP MFA on. Checked before account.link/verify and before every AWS
-   * write (deploy.approve, finding.fix), so turning MFA off after linking stops writes too. Absent = no check.
+   * Step-up (hosted): 'ok' once the player has TOTP MFA on and this session signed in after it was turned on
+   * (accounts/mfa.ts). Checked before account.link/verify and before every AWS write (deploy.approve, finding.fix), so
+   * turning MFA off after linking stops writes too. Absent = no check.
    */
-  mfaReady?: (p: Principal) => Promise<boolean>;
+  mfaReady?: (p: Principal) => Promise<StepUp>;
   /**
    * Hosted: true for a player who deleted their account recently (Stores.deletedRecently). Their access token still
    * verifies until it expires, so the routes that would recreate their data refuse them. Absent = no check.
@@ -206,16 +215,19 @@ export const createHttpServer = (deps: Deps) => {
   const deleted = 'deleted' in deps ? deps.deleted : undefined;
   /** Players known to be deleted (sub → until): one store read finds out, then it's remembered here. */
   const gone = new Map<string, number>();
+  /** Whether this player deleted their account recently (a yes is remembered here, a no is asked again). */
+  const isDeleted = async (sub: string) => {
+    if (!deleted) return false;
+    const until = gone.get(sub);
+    if (until !== undefined && until > Date.now()) return true;
+    gone.delete(sub);
+    if (!(await deleted(sub))) return false;
+    gone.set(sub, Date.now() + DELETED_CACHE_MS);
+    return true;
+  };
   /** Refuses a player who deleted their account (410), before anything is stored for them again. */
   const refuseDeleted = async (sub: string) => {
-    if (!deleted) return;
-    const until = gone.get(sub);
-    if (until !== undefined && until > Date.now()) throw new HttpError(410, 'This account was deleted');
-    gone.delete(sub);
-    if (await deleted(sub)) {
-      gone.set(sub, Date.now() + DELETED_CACHE_MS);
-      throw new HttpError(410, 'This account was deleted');
-    }
+    if (await isDeleted(sub)) throw new HttpError(410, 'This account was deleted');
   };
   const allowedHosts = new Set([`127.0.0.1:${config.port}`, `localhost:${config.port}`, `[::1]:${config.port}`, ...config.publicHosts]);
   let draining = false;
@@ -311,6 +323,12 @@ export const createHttpServer = (deps: Deps) => {
       if (deleted) gone.set(principal.sub, Date.now() + DELETED_CACHE_MS);
       // Their open tabs must not keep acting as a player who no longer exists, nor reconnect (their token still verifies).
       for (const [ws, sub] of owners) if (sub === principal.sub) ws.close(CLOSE.deleted, 'Account deleted');
+      return send(res, 204);
+    }
+    // The extension just turned an authenticator on, before it signs every session out: look now, so the sign-in
+    // that follows counts as after it (accounts/mfa.ts). The answer is the same whatever was found.
+    if (route === 'POST /me/mfa') {
+      if (mfaReady) await mfaReady(principal).catch((err) => log.warn('mfa look failed', { who: who(principal.sub), err: (err as Error).name }));
       return send(res, 204);
     }
     // Debug view of what the state layer sees (local server only).
@@ -434,6 +452,7 @@ export const createHttpServer = (deps: Deps) => {
     let lastBeat = 0;
     let alive = true;
     const withinRate = rateLimiter(FRAME_BURST, FRAMES_PER_SECOND);
+    const socialRate = rateLimiter(SOCIAL_BURST, SOCIAL_PER_SECOND);
     let lastAccountCommand = 0;
     const raw = (e: ServerEvent) => sendTo(ws, e);
     const emit = tenant.emitter(raw);
@@ -441,8 +460,13 @@ export const createHttpServer = (deps: Deps) => {
     const approvals = createApprovals({ region: tenant.region });
     /** Aborted on close: this socket's agent turns stop (other tabs' turns run on). */
     const turns = new AbortController();
-    /** MFA step-up (hosted); a failed check counts as "not ready". */
-    const stepUp = async () => !mfaReady || (await mfaReady(principal).catch(() => false));
+    /** MFA step-up (hosted); a failed check counts as "not enrolled". */
+    const stepUp = async (): Promise<StepUp> => (mfaReady ? await mfaReady(principal).catch(() => 'enrol' as const) : 'ok');
+    /** What a refused step-up tells the player: turn on an authenticator, or sign in again (this session predates it). */
+    const stepUpRefused = (verdict: StepUp, requestId?: string): ServerEvent =>
+      verdict === 'reauth'
+        ? { type: 'error', ...(requestId ? { requestId } : {}), code: 'auth', message: SIGN_IN_AGAIN_MESSAGE }
+        : { type: 'error', ...(requestId ? { requestId } : {}), code: 'mfa_required', message: MFA_REQUIRED_MESSAGE };
     const copilot = tenant.createCopilot();
     const unsubscribe = tenant.subscribe(emit);
     const heartbeat = setInterval(() => {
@@ -466,9 +490,18 @@ export const createHttpServer = (deps: Deps) => {
             };
             check();
           }, Math.max(0, untilExpiry));
+    const deletedCheck = deleted
+      ? setInterval(() => {
+          isDeleted(principal.sub).then(
+            (yes) => yes && ws.close(CLOSE.deleted, 'Account deleted'),
+            (err) => log.warn('deleted check failed', { who: who(principal.sub), err: (err as Error).name }),
+          );
+        }, DELETED_CHECK_MS)
+      : undefined;
     heartbeat.unref?.();
     maxAge.unref?.();
     expiry?.unref?.();
+    deletedCheck?.unref?.();
     ws.on('pong', () => (alive = true));
     ws.on('close', (code) => {
       log.info('socket closed', { who: who(principal.sub), connId, code, minutes: Math.round((Date.now() - opened) / 60_000) });
@@ -476,6 +509,7 @@ export const createHttpServer = (deps: Deps) => {
       owners.delete(ws);
       release(principal.sub);
       clearInterval(heartbeat);
+      clearInterval(deletedCheck);
       clearTimeout(maxAge);
       clearTimeout(expiry);
       clearTimeout(expiryCheck);
@@ -524,7 +558,7 @@ export const createHttpServer = (deps: Deps) => {
         // Every AWS write is approved here: a player who turned MFA off can't approve one. The preview stays
         // pending, so it can still be approved once MFA is back on (or rejected, which needs no step-up).
         if (cmd.action === 'deploy.reject' || !mfaReady) return answer();
-        void stepUp().then((ok) => (ok ? answer() : emit({ type: 'error', code: 'mfa_required', message: MFA_REQUIRED_MESSAGE })));
+        void stepUp().then((verdict) => (verdict === 'ok' ? answer() : emit(stepUpRefused(verdict))));
         return;
       }
       if (cmd.action === 'account.link' || cmd.action === 'account.verify') {
@@ -534,7 +568,8 @@ export const createHttpServer = (deps: Deps) => {
         }
         lastAccountCommand = Date.now();
         void (async () => {
-          if (!(await stepUp())) return emit({ type: 'error', requestId: cmd.requestId, code: 'mfa_required', message: MFA_REQUIRED_MESSAGE });
+          const verdict = await stepUp();
+          if (verdict !== 'ok') return emit(stepUpRefused(verdict, cmd.requestId));
           if (cmd.action === 'account.link') return tenant.link(cmd.requestId, cmd.region, emit);
           return tenant.verify(cmd.requestId, cmd.roleArn, emit);
         })();
@@ -551,7 +586,7 @@ export const createHttpServer = (deps: Deps) => {
         const job =
           cmd.action === 'finding.explain'
             ? care.explain(cmd.findingId, emit)
-            : stepUp().then((ok) => (ok ? care.fix(cmd.requestId, cmd.findingId, emit, approvals) : emit({ type: 'error', requestId: cmd.requestId, code: 'mfa_required', message: MFA_REQUIRED_MESSAGE })));
+            : stepUp().then((verdict) => (verdict === 'ok' ? care.fix(cmd.requestId, cmd.findingId, emit, approvals) : emit(stepUpRefused(verdict, cmd.requestId))));
         void track(Promise.resolve(job).catch(failed)).finally(() => requests--);
         return;
       }
@@ -560,6 +595,8 @@ export const createHttpServer = (deps: Deps) => {
         const now = Date.now();
         if (cmd.action === 'presence.beat' && now - lastBeat < BEAT_MIN_MS) return;
         if (cmd.action === 'presence.beat') lastBeat = now;
+        // Scores and boards are rate-limited like frames: a plain refusal, and nothing is read or written.
+        else if (!socialRate()) return emit({ type: 'error', message: 'Too many scores and leaderboard requests. Try again in a few seconds.' });
         const job =
           cmd.action === 'presence.beat'
             ? tenant.social.beat(cmd.region, cmd.rank)

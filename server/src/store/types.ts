@@ -28,10 +28,28 @@ export interface AccountStore {
   put(sub: string, record: AccountRecord): Promise<void>;
 }
 
-/** Daily counters. consume() is atomic: false once `limit` is reached for that key and day. */
+/**
+ * Daily counters. consume() is atomic: false once `limit` is reached for that key and day. Keys are a player's sub,
+ * or GLOBAL… for the whole city's counters (agents/metered.ts).
+ */
 export interface QuotaStore {
   consume(key: string, day: string, limit: number): Promise<boolean>;
   used(key: string, day: string): Promise<number>;
+  /** Gives one call back (a model call that failed before it cost anything); never below zero. */
+  refund(key: string, day: string): Promise<void>;
+  /** The day this player made their first model call: `day` is saved the first time, then always the saved one. */
+  firstSeen(sub: string, day: string): Promise<string>;
+}
+
+/**
+ * Step-up MFA (accounts/mfa.ts): when the server first saw a player with an authenticator on (epoch ms). Only a
+ * session that signed in after it may link an account or approve a write.
+ */
+export interface MfaStore {
+  /** The saved time, or `now` saved and returned the first time. */
+  since(sub: string, now: number): Promise<number>;
+  /** The authenticator is off: forget the time, so turning it on again starts a new one. */
+  forget(sub: string): Promise<void>;
 }
 
 /** A deleted player is refused this long: longer than a Cognito access token lives (60 min), so no token outlives it. */
@@ -90,6 +108,7 @@ export interface Stores {
   accounts: AccountStore;
   bills: BillStore;
   quota: QuotaStore;
+  mfa: MfaStore;
   locks: AccountLocks;
   /**
    * Removes everything stored for a player (DELETE /me), leaving a tombstone for DELETED_TOMBSTONE_MS (written first,

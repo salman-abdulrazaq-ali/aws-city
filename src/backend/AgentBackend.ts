@@ -10,6 +10,8 @@ export interface AgentBackend {
   readonly kind: 'mock' | 'server';
   /** 'templates' = curated CloudFormation into a linked account; 'guarded' = the local server's approved actions. */
   readonly deployMode?: 'templates' | 'guarded';
+  /** Signed-in players (the hosted server); absent or false for the mock and the local server. */
+  readonly hosted?: boolean;
   connect(): void;
   disconnect(): void;
   onEvent(cb: (e: ServerEvent) => void): () => void;
@@ -30,7 +32,10 @@ export interface AgentBackend {
   signOut?(): Promise<void>;
   /** Hosted: enrol an authenticator app (step-up MFA before linking an AWS account). */
   startTotp?(): Promise<{ secret: string; uri: string }>;
+  /** Turns it on, then ends every session of the player: they sign in again with the code. */
   confirmTotp?(code: string): Promise<void>;
+  /** Hosted: whether the player's authenticator is on (`external`: Google sign-in keeps its own second step). */
+  mfaStatus?(): Promise<'on' | 'off' | 'external' | undefined>;
   /** Try connecting again now (after going offline). */
   reconnect?(): void;
   /**

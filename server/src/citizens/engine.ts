@@ -70,6 +70,7 @@ export const createStrandsRunner = (deps: {
       model: new MeteredAnthropicModel(
         citizen ? { client, modelId: deps.llm.model, maxTokens: CITIZEN_TOKENS.maxTokens, effort: 'low' } : { client, modelId: deps.llm.model, maxTokens: AGENT_TOKENS.maxTokens, effort: 'high' },
         deps.llm.gate,
+        deps.llm.refund,
       ),
       tools,
       systemPrompt: citizen ? citizenSystemPrompt(citizen) : agentSystemPrompt(agentId),

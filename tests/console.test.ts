@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
 import { choose, findExact, findTarget, typeInto } from '@/console/act';
-import { isSecretPage, PLAYER_ONLY_PAGES, playerOnlyPage, redact, SECRET_PAGES } from '@/console/risk';
+import { isSecretPage, PLAYER_ONLY_PAGES, playerOnlyPage, redact, redactConsoleUrl, SECRET_PAGES } from '@/console/risk';
 import { isConsoleUrl, isRisky, mayAct } from '@/console/safety';
 import { takeSnapshot } from '@/console/snapshot';
 
@@ -104,6 +104,23 @@ describe('security hardening', () => {
     expect(json).not.toContain('admin@example.com');
     expect(json).not.toContain('AKIAIOSFODNN7EXAMPLE');
     expect(redact('token abcdefghijklmnopqrstuvwxyz0123456789ABCD')).toBe('token [token]');
+  });
+
+  it('a multi-session console host loses its account id before the URL leaves the page, and still parses the same', () => {
+    const raw = 'https://123456789012-abcd1234.us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/roles/details/x?arn=arn:aws:iam::123456789012:role/x';
+    const out = redactConsoleUrl(raw);
+    expect(out).toBe('https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/roles/details/x?arn=arn:aws:iam::[account]:role/x');
+    expect(out).not.toContain('123456789012');
+    // The server's checks read it as before: a console page, and IAM is still the player's alone.
+    expect(isConsoleUrl(out)).toBe(true);
+    expect(playerOnlyPage(out)?.id).toBe('iam');
+    expect(redactConsoleUrl('https://123456789012-abcd1234.console.aws.amazon.com/s3/buckets/aws-city-123456789012-quest')).toBe(
+      'https://console.aws.amazon.com/s3/buckets/aws-city-[account]-quest',
+    );
+    // An ordinary console URL is unchanged; anything else is left alone.
+    expect(redactConsoleUrl('https://us-west-2.console.aws.amazon.com/s3/home?region=us-west-2')).toBe('https://us-west-2.console.aws.amazon.com/s3/home?region=us-west-2');
+    expect(redactConsoleUrl('chrome-extension://abc/practice.html#/s3')).toBe('chrome-extension://abc/practice.html#/s3');
+    expect(redactConsoleUrl('not a url')).toBe('not a url');
   });
 
   it('refuses a destructive control disguised with an innocent label, and links that leave the console', () => {

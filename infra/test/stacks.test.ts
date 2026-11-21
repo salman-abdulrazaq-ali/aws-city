@@ -82,6 +82,11 @@ describe('infrastructure guarantees', () => {
     t.auth.hasResourceProperties('AWS::Cognito::UserPoolClient', { AllowedOAuthScopes: Match.arrayWith(['aws.cognito.signin.user.admin']) });
   });
 
+  it('sign-out can revoke refresh tokens, and a new email takes effect only once it is verified', () => {
+    t.auth.hasResourceProperties('AWS::Cognito::UserPoolClient', { EnableTokenRevocation: true });
+    t.auth.hasResourceProperties('AWS::Cognito::UserPool', { UserAttributeUpdateSettings: { AttributesRequireVerificationBeforeUpdate: ['email'] } });
+  });
+
   it('the player table uses our rotated KMS key, and the task role can use it', () => {
     t.data.hasResourceProperties('AWS::KMS::Key', { EnableKeyRotation: true });
     t.data.hasResourceProperties('AWS::DynamoDB::GlobalTable', { SSESpecification: Match.objectLike({ SSEEnabled: true, SSEType: 'KMS' }) });

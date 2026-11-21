@@ -2,7 +2,7 @@ import citizensJson from '../../../shared/citizens.json' with { type: 'json' };
 import { classifyAwsError, type AwsClients } from '../aws.js';
 import type { Approvals } from '../contract/approvals.js';
 import { GuardDeniedError, mintGrant, withGrant } from '../guard/gate.js';
-import { log } from '../log.js';
+import { log, publicErrors } from '../log.js';
 import { enrich, inventoryEvent, readGeo, readInventory } from '../state/inventory.js';
 import { forgetSetting } from '../state/poller.js';
 import type { WorldSnapshot } from '../state/model.js';
@@ -27,6 +27,15 @@ const SETTING_KEY: Record<string, (f: CityFinding) => string | undefined> = {
 };
 
 const say = (emit: Emit, from: string, text: string) => emit({ type: 'agent.message', from, to: 'user', text });
+
+/**
+ * How to switch fixes on, in this server's words: hosted players update their AWSCity stack (AllowFixes); the local
+ * server runs the developer's own profile, so it's a start option. Hosted = signed-in players (main.ts sets publicErrors).
+ */
+export const howToAllowFixes = () =>
+  publicErrors()
+    ? 'update your AWSCity stack in CloudFormation and set AllowFixes to true'
+    : 'restart the local server with AWS_CITY_ALLOW_FIXES=true (npm run live -- --allow-fixes)';
 
 /**
  * City care (contract v2.3): the citizens' findings, the account mirror and the approved fixes for one linked world.
@@ -140,7 +149,7 @@ export const createCityCare = (deps: {
       // The city's own gate refused it: not an IAM problem, so don't send the player to their stack.
       if (err instanceof GuardDeniedError) return emit({ type: 'deploy.status', deployId, status: 'failed', message: err.publicMessage });
       const denied = classifyAwsError(err) === 'denied';
-      emit({ type: 'deploy.status', deployId, status: 'failed', message: denied ? 'AWS said no. To let the citizens make fixes, update your AWSCity stack in CloudFormation and set AllowFixes to true.' : 'The change didn’t go through. Nothing else was touched.' });
+      emit({ type: 'deploy.status', deployId, status: 'failed', message: denied ? (publicErrors() ? `AWS said no. To let the citizens make fixes, ${howToAllowFixes()}.` : 'AWS said no: the AWS profile this server runs with isn’t allowed to make this change.') : 'The change didn’t go through. Nothing else was touched.' });
     }
   };
 
@@ -200,7 +209,7 @@ export const createCityCare = (deps: {
       const def = f.fix && FIXES[f.fix.fixId];
       if (!f.fix || !def) return say(emit, f.citizenId, `There's no automatic fix for this one. ${f.text} The docs page shows how to fix it yourself.`);
       if (!deps.fixesEnabled) {
-        return say(emit, f.citizenId, 'Fixes are switched off for this account. To let the citizens fix things, update your AWSCity stack and set AllowFixes to true. You still approve every fix.');
+        return say(emit, f.citizenId, `Fixes are switched off for this account. To let the citizens fix things, ${howToAllowFixes()}. You still approve every fix.`);
       }
       const xp = (await deps.progress())?.citizens?.[f.citizenId]?.xp ?? 0;
       const need = LEVEL_FOR_SCOPE[f.fix.scope];

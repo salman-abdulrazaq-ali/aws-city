@@ -8,6 +8,7 @@ import { citizenLevel, createCityCare } from '../src/agents/care.js';
 import { diffFindings, findingId, findingsFor } from '../src/agents/findings.js';
 import type { AgentRunner } from '../src/agents/runner.js';
 import type { AwsClients } from '../src/aws.js';
+import { setPublicErrors } from '../src/log.js';
 import { createApprovals } from '../src/contract/approvals.js';
 import { enrich, GEO_RETRY_MS, inventoryEvent, readGeo, readInventory, serviceForArn } from '../src/state/inventory.js';
 import type { Resource } from '../src/state/model.js';
@@ -334,9 +335,19 @@ describe('city care: fixes with the player in charge', () => {
     await spotter.care.fix('r1', spotter.pitr.id, spotter.emit, spotter.approvals);
     expect(preview(spotter.events)).toBeUndefined();
 
+    // How to switch them on depends on the server: the local one is a start option, a hosted player's is their stack.
     const off = setup({ fixesEnabled: false });
     await off.care.fix('r1', off.pitr.id, off.emit, off.approvals);
-    expect(off.events).toContainEqual(expect.objectContaining({ type: 'agent.message', text: expect.stringContaining('AllowFixes') }));
+    expect(off.events).toContainEqual(expect.objectContaining({ type: 'agent.message', text: expect.stringContaining('AWS_CITY_ALLOW_FIXES=true (npm run live -- --allow-fixes)') }));
+    expect(JSON.stringify(off.events)).not.toContain('AWSCity stack');
+    setPublicErrors(true);
+    try {
+      const hostedOff = setup({ fixesEnabled: false });
+      await hostedOff.care.fix('r1', hostedOff.pitr.id, hostedOff.emit, hostedOff.approvals);
+      expect(hostedOff.events).toContainEqual(expect.objectContaining({ type: 'agent.message', text: expect.stringContaining('set AllowFixes to true') }));
+    } finally {
+      setPublicErrors(false);
+    }
 
     const done = setup();
     dynamodb.on(DescribeContinuousBackupsCommand).resolves({ ContinuousBackupsDescription: { ContinuousBackupsStatus: 'ENABLED', PointInTimeRecoveryDescription: { PointInTimeRecoveryStatus: 'ENABLED' } } });
