@@ -4,7 +4,7 @@ import { useCity, type DeployView } from '@/state/store';
 import { GUARDED_BLUEPRINTS } from '@/backend/ServerBackend';
 import { TEMPLATES } from '@/world/content';
 import { TemplateView } from './TemplateView';
-import { offered, perUnit, pricesFor } from '@/world/regions';
+import { offered, perUnit, pricesFor, regionInfo } from '@/world/regions';
 import { useCopy } from './feedback';
 import { costLine, offlineReason } from './logic';
 import { usePending } from './usePending';
@@ -69,8 +69,24 @@ function PendingButton({ pending, busyLabel, children, className = 'btn', disabl
 }
 
 /** A numbered step: done (✓), current (lit) or still to come. */
-/** What the player typed in step 3: the console shows an account id as 1234-5678-9012, so dashes and spaces go. */
-export const accountInput = (raw: string) => (/^[\d\s-]+$/.test(raw.trim()) ? raw.replace(/\D/g, '') : raw.trim());
+/** The Region a setup link makes the role in (its console URL's ?region=), with its name: AWS City looks for it there. */
+export const linkRegion = (url?: string): { code: string; name: string } | undefined => {
+  try {
+    const code = url ? new URL(url).searchParams.get('region') : null;
+    return code ? { code, name: regionInfo(code)?.name ?? code } : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * What the player typed in step 3: the console shows an account id as 1234-5678-9012, and a number copied from a
+ * sentence brings its full stop, so dashes, spaces and trailing punctuation go. A role ARN is kept as typed.
+ */
+export const accountInput = (raw: string) => {
+  const t = raw.trim().replace(/[.,;:]+$/, '');
+  return /^[\d\s.-]+$/.test(t) ? t.replace(/\D/g, '') : t;
+};
 
 function Step({ n, state, title, children }: { n: number; state: 'done' | 'now' | 'todo'; title: string; children?: ReactNode }) {
   return (
@@ -174,6 +190,8 @@ export function DeployPanel() {
   const [role, setRole] = useState('');
   /** Step 2 done: the player says the AWSCity stack is created, so step 3 (the account number) opens. */
   const [stackMade, setStackMade] = useState(false);
+  const [linkCopied, copyLink] = useCopy();
+  const where = linkRegion(account.linkUrl);
   const findings = useCity((s) => s.findings);
   // Fixes are approved in their finding's card; here they're only a history, never next to Tear down.
   const stacks = deploys.filter((d) => !d.findingId);
@@ -259,8 +277,14 @@ export function DeployPanel() {
           </p>
           <ol className="how">
             <li>
-              Click <b>Open CloudFormation</b> and sign in to the AWS account you want to connect.
+              Click <b>Open CloudFormation</b> and sign in to <b>your own AWS account</b>, the one you want the city to look after. Check the
+              account at the top right before you click <b>Create stack</b>.
             </li>
+            {where && (
+              <li>
+                Keep the Region at the top right on <b>{where.name}</b> ({where.code}). The role is made there, and that’s where AWS City looks for it.
+              </li>
+            )}
             <li>
               At the bottom, tick <b>I acknowledge that AWS CloudFormation might create IAM resources with custom names</b>, then click <b>Create stack</b>.
             </li>
@@ -272,10 +296,19 @@ export function DeployPanel() {
             <button className="btn primary" onClick={() => openUrl(account.linkUrl!)}>
               Open CloudFormation ↗
             </button>
+            {/* Signed in to AWS in another browser (or a passkey that only works there): open the same link there. */}
+            <button className="btn" onClick={() => copyLink(account.linkUrl!)}>
+              {linkCopied ? 'Copied ✓' : 'Copy link'}
+            </button>
             <button className="btn" onClick={() => setStackMade(true)}>
               Done: it says CREATE_COMPLETE
             </button>
           </div>
+          <p className="muted">Signed in to AWS in another browser? Copy the link and open it there.</p>
+          <p className="muted">
+            Hosting AWS City yourself? Use a different AWS account from the one it runs in. The city refuses that one, so it can never act inside the account
+            that holds everyone’s data.
+          </p>
           <details className="why">
             <summary>Details</summary>
             <div className="muted">

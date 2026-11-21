@@ -160,13 +160,26 @@ domain you own: a free address (outlook.com, gmail.com…) sent through SES is o
 2. In Chrome, open `chrome://extensions` → **Developer mode** → **Load unpacked** → pick `.output/chrome-mv3`. (This
    works if you answered **Yes** to "Allow the local build"; otherwise only your Chrome Web Store build can sign in.)
 3. In the city: **⋯ → Sign in to save your city** → sign up with your email → turn on MFA when asked.
+4. **Link an AWS account** (the City tab's **Connect your AWS account** card, then Deploy's steps): scan the QR code
+   with an authenticator app, **Get my setup link**, create the AWSCity stack in the Region the step names, then type
+   the 12-digit account ID. Signed in to AWS in another browser? **Copy link** and open it there.
+5. Ask an agent something, and approve one change. Every change waits for your **Approve**.
 
 The **Server** and **Sign-in** addresses setup prints aren't web pages. The extension uses them. Opened in a browser,
 the server only says what it is, and the sign-in address shows `Missing Authentication Token`. Both are normal. To check
 the server, open `<Server>/health`: it shows `{"status":"ok"}`.
-4. **Link your AWS account:** follow the in-game link to create the small, read-mostly role in *the same Region*, then
-   paste your 12-digit account ID.
-5. Ask an agent something, and approve one change. Every change waits for your **Approve**.
+
+**Testing it yourself? Link a second AWS account.** AWS City refuses the account it runs in ("That's the city's own
+account"), so its server can never act inside the account that holds everyone's data. Your players link their own
+accounts; to try linking as the host, make a test account:
+1. Signed in to your account: **AWS Organizations → AWS accounts → Add an AWS account → Create an AWS account**. Name
+   it (e.g. "AWS City player test") and give it an email no AWS account uses yet (a plus-address works:
+   `you+awscity-player@example.com`). Organizations makes a role, `OrganizationAccountAccessRole`, that your admin can
+   switch into.
+2. Switch into it: account menu (top right) → **Switch role** → the new account's ID and `OrganizationAccountAccessRole`.
+   The top right now shows the new account's name.
+3. Only then open (or paste) the city's setup link and click **Create stack**. Check the top right first: a stack made
+   in your own account can't be linked.
 
 ## Change a setting later
 
