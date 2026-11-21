@@ -258,4 +258,21 @@ describe('City care when the role doesn’t allow fixes', () => {
     expect(screen.queryByRole('note')).toBeNull();
     expect(screen.getByRole('button', { name: /^Fix/ })).toBeTruthy();
   });
+
+  it('on the local server it says how to restart with fixes on, never CloudFormation or Check again', () => {
+    const f = demoFindings().find((x) => !!x.fix)!;
+    useCity.setState({
+      hosted: false,
+      account: { linked: true, accountId: '111122223333', region: 'eu-west-1', fixes: false },
+      progress: { ...player(), citizens: { [f.citizenId]: { xp: 10_000 } } } as Progress,
+      findings: { [f.id]: { ...f, seenAt: 1 } },
+      findingOpen: f.id,
+    });
+    render(<FindingCard openTab={() => {}} />);
+    const note = screen.getByRole('note');
+    expect(note.textContent).not.toMatch(/CloudFormation/);
+    expect(within(note).getByText('npm run live -- --allow-fixes')).toBeTruthy();
+    expect(within(note).queryByRole('button', { name: 'Check again' })).toBeNull();
+    expect(within(note).queryByRole('list')).toBeNull();
+  });
 });

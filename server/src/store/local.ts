@@ -87,6 +87,14 @@ export const fileMfa = (progressFile: string): MfaStore & { fileFor(sub: string)
         await writeJson(fileFor(sub), { since: now });
         return now;
       }),
+    get: async (sub) => {
+      try {
+        const saved = (JSON.parse(await readFile(fileFor(sub), 'utf8')) as { since?: unknown }).since;
+        return typeof saved === 'number' ? saved : undefined;
+      } catch {
+        return undefined;
+      }
+    },
     forget: (sub) => serial(() => rm(fileFor(sub), { force: true })),
   };
 };
@@ -113,6 +121,9 @@ export const memoryQuota = (): QuotaStore => {
     async firstSeen(sub, day) {
       if (!first.has(sub)) first.set(sub, day);
       return first.get(sub)!;
+    },
+    async firstDay(sub) {
+      return first.get(sub);
     },
   };
 };

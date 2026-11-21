@@ -14,6 +14,7 @@ const rt = vi.hoisted(() => ({
   decideDeploy: vi.fn(),
   verifyAccount: vi.fn((..._a: unknown[]) => 'r-verify'),
   recheckAccount: vi.fn(() => 'r-check'),
+  confirmRoleUpdate: vi.fn(() => 'r-updated'),
   openUrl: vi.fn(),
   deleteAccount: vi.fn(async () => {}),
   openPrivacyPolicy: vi.fn(),
@@ -197,16 +198,33 @@ describe('a linked account (v2.17)', () => {
     expect(rt.linkAccount).toHaveBeenCalledWith('eu-west-1');
     act(() => useCity.getState().patchAccount({ linkUrl: 'https://eu-west-1.console.aws.amazon.com/x#/stacks/quickcreate?param_ConnectsPlayer=Brave%20Otter' }));
     expect(within(box).getByText('Brave Otter').tagName).toBe('CODE');
-    fireEvent.click(within(box).getByRole('button', { name: 'Check again' }));
-    expect(rt.recheckAccount).toHaveBeenCalledOnce();
+    // The city can't read the stack's version: the player says the update is done (a fresh link, then a verify as updated).
+    expect(within(box).getByText(/can’t read your stack for its version/)).toBeTruthy();
+    expect(within(box).queryByRole('button', { name: 'Check again' })).toBeNull();
+    fireEvent.click(within(box).getByRole('button', { name: 'I’ve updated the stack' }));
+    expect(rt.confirmRoleUpdate).toHaveBeenCalledOnce();
+    expect(rt.recheckAccount).not.toHaveBeenCalled();
     expect(within(box).getByRole('button', { name: /Checking/ })).toBeTruthy();
   });
 
-  it('fixes off: the card says so, with how to turn them on', () => {
+  it('fixes off: the card says so, with how to turn them on (hosted: CloudFormation and Check again, a read-only recheck)', () => {
     useCity.setState({ account: { ...linked, fixes: false } });
     render(<DeployPanel />);
     expect(screen.getByText(/Small fixes:/).textContent).toMatch(/off/);
     expect(screen.getByText('Turn small fixes on')).toBeTruthy();
+    expect(screen.getByRole('list', { name: 'Turn small fixes on' }).textContent).toMatch(/AllowFixes to true/);
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    expect(rt.recheckAccount).toHaveBeenCalledOnce();
+    expect(rt.linkAccount).not.toHaveBeenCalled();
+  });
+
+  it('fixes off on the local server: the restart hint, never CloudFormation steps or Check again', () => {
+    useCity.setState({ hosted: false, account: { ...linked, fixes: false } });
+    render(<DeployPanel />);
+    expect(screen.getByText('Turn small fixes on')).toBeTruthy();
+    expect(screen.getByText('npm run live -- --allow-fixes').tagName).toBe('CODE');
+    expect(screen.queryByRole('list', { name: 'Turn small fixes on' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
   });
 
   it('a broken link: its message with Link again and Disconnect, no alert storm', () => {

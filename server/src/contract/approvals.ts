@@ -50,12 +50,16 @@ const labelOf = (a: ApprovalRequest['action']): string => ('suffix' in a ? `aws-
 /** What the player types when a write gets a second look: the resource's own name or id (never empty, never "…"). */
 const typedName = (a: ApprovalRequest['action']): string => ownName(a)?.trim() || a.type;
 
+/** What a preview cancelled because its account went away says (the world's retire reason, when it gives one). */
+export const DISCONNECTED_MESSAGE = 'That account was disconnected, so nothing changed.';
+
 /**
  * Per-socket player approvals (contract v2): a guarded write becomes deploy.preview; the player answers
- * with deploy.approve / deploy.reject. Unanswered requests expire; closing the socket rejects them all.
+ * with deploy.approve / deploy.reject. Unanswered requests expire; closing the socket rejects them all, and so does
+ * the request's `signal` (its account's world was retired: disconnected or changed), with the signal's reason.
  */
 export const createApprovals = (opts: { region: string; timeoutMs?: number }) => {
-  const pending = new Map<string, { resolve: (ok: boolean) => void; emit: Emit; timer: NodeJS.Timeout; confirmText?: string }>();
+  const pending = new Map<string, { resolve: (ok: boolean) => void; emit: Emit; timer: NodeJS.Timeout; confirmText?: string; unwatch?: () => void }>();
   const awaitingResult = new Map<string, string>(); // taskId → deployId of the approved call in flight
 
   const settle = (deployId: string, ok: boolean, reason?: string) => {
@@ -63,9 +67,21 @@ export const createApprovals = (opts: { region: string; timeoutMs?: number }) =>
     if (!p) return false;
     pending.delete(deployId);
     clearTimeout(p.timer);
+    p.unwatch?.();
     if (!ok) p.emit({ type: 'deploy.status', deployId, status: 'rejected', message: reason ?? 'Nothing was changed.' });
     p.resolve(ok);
     return true;
+  };
+  /** A retired world cancels its pending previews: at once if it already was, else when it is. */
+  const watch = (deployId: string, signal?: AbortSignal) => {
+    if (!signal) return undefined;
+    const cancel = () => settle(deployId, false, typeof signal.reason === 'string' ? signal.reason : DISCONNECTED_MESSAGE);
+    if (signal.aborted) {
+      queueMicrotask(cancel);
+      return undefined;
+    }
+    signal.addEventListener('abort', cancel, { once: true });
+    return () => signal.removeEventListener('abort', cancel);
   };
 
   return {
@@ -97,13 +113,14 @@ export const createApprovals = (opts: { region: string; timeoutMs?: number }) =>
         const timer = setTimeout(() => settle(deployId, false, 'No answer within 5 minutes, so nothing was changed.'), opts.timeoutMs ?? 300_000);
         timer.unref?.();
         pending.set(deployId, { resolve: (ok) => (ok && awaitingResult.set(taskId, deployId), resolve(ok)), emit, timer, confirmText });
+        pending.get(deployId)!.unwatch = watch(deployId, req.signal);
       });
     },
     /**
      * A citizen's fix (contract v2.3): the preview carries the finding, its rollback text and, for a resource the city
      * didn't build or an account-wide setting, the text the player must type. Resolves true only on approve + match.
      */
-    requestFix(requestId: string, f: CityFinding & { fix: NonNullable<CityFinding['fix']> }, emit: Emit, confirmText?: string, detail: string[] = []) {
+    requestFix(requestId: string, f: CityFinding & { fix: NonNullable<CityFinding['fix']> }, emit: Emit, confirmText?: string, detail: string[] = [], signal?: AbortSignal) {
       const deployId = `f-${randomUUID().slice(0, 8)}`;
       emit({
         type: 'deploy.preview',
@@ -126,6 +143,7 @@ export const createApprovals = (opts: { region: string; timeoutMs?: number }) =>
         const timer = setTimeout(() => settle(deployId, false, 'No answer within 5 minutes, so nothing was changed.'), opts.timeoutMs ?? 300_000);
         timer.unref?.();
         pending.set(deployId, { resolve, emit, timer, confirmText });
+        pending.get(deployId)!.unwatch = watch(deployId, signal);
       });
       return { deployId, approved };
     },

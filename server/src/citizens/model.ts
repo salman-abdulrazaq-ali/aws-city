@@ -2,7 +2,7 @@ import type Anthropic from '@anthropic-ai/sdk';
 import type { Message, StreamOptions } from '@strands-agents/sdk';
 import { AnthropicModel } from '@strands-agents/sdk/models/anthropic';
 import { log } from '../log.js';
-import { isAbort, modelError } from '../agents/metered.js';
+import { modelError } from '../agents/metered.js';
 
 /**
  * Strands' Anthropic model on our Bedrock client (InvokeModel, the workshop's route to the 5.x models), with every
@@ -14,8 +14,8 @@ export class MeteredAnthropicModel extends AnthropicModel {
   constructor(
     opts: { client: Anthropic; modelId: string; maxTokens: number; effort?: 'low' | 'medium' | 'high' },
     private readonly gate: () => Promise<void>,
-    /** Gives the call back when Bedrock refused it before answering (throttled, denied); never after it streamed. */
-    private readonly refund?: () => Promise<void>,
+    /** Offered the failure of a call that streamed nothing: gives it back only if it proves the model never ran (metered's provenNotRun). */
+    private readonly refund?: (err: unknown) => Promise<void>,
   ) {
     super({
       client: opts.client,
@@ -40,7 +40,7 @@ export class MeteredAnthropicModel extends AnthropicModel {
         yield event;
       }
     } catch (err) {
-      if (!answered && !isAbort(err)) await this.refund?.().catch(() => undefined);
+      if (!answered) await this.refund?.(err).catch(() => undefined);
       throw modelError(err);
     }
   }

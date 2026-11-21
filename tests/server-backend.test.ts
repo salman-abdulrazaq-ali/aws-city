@@ -505,6 +505,7 @@ describe('ServerBackend sends every socket command in the contract (v2.17)', () 
     'account.link': { cmd: { action: 'account.link', requestId: 'r5', region: 'eu-west-1', allowFixes: true }, way: 'socket' },
     'account.verify': { cmd: { action: 'account.verify', requestId: 'r6', roleArn: '111122223333' }, way: 'socket' },
     'account.unlink': { cmd: { action: 'account.unlink', requestId: 'r7' }, way: 'socket' },
+    'account.recheck': { cmd: { action: 'account.recheck', requestId: 'r7b' }, way: 'socket' },
     'resource.remove': { cmd: { action: 'resource.remove', requestId: 'r8', kind: 'table', id: 'city-quest-library' }, way: 'socket' },
     'quest.start': { cmd: { action: 'quest.start', questId: 'q', taskId: 't2' }, way: 'local' },
     // A guarded build becomes the agent's prompt (task.submit); a template with none is a local practice build (below).
@@ -539,7 +540,7 @@ describe('ServerBackend sends every socket command in the contract (v2.17)', () 
       .filter((c) => c.way === 'socket')
       .map((c) => c.cmd);
     expect(sent).toEqual(socket);
-    expect(sent.map((c) => c.action)).toEqual(expect.arrayContaining(['flow.enable', 'account.unlink', 'resource.remove']));
+    expect(sent.map((c) => c.action)).toEqual(expect.arrayContaining(['flow.enable', 'account.unlink', 'account.recheck', 'resource.remove']));
     expect(sent.find((c) => c.action === 'account.link')).toEqual({ action: 'account.link', requestId: 'r5', region: 'eu-west-1', allowFixes: true });
   });
 
@@ -623,5 +624,9 @@ describe('Download my data (v2.17)', () => {
     expect(calls).toEqual(['GET /me/export Bearer local-token']);
     status = 410;
     await expect(backend.exportMe()).rejects.toThrow(/410/);
+    await expect(backend.exportMe()).rejects.not.toHaveProperty('tooSoon');
+    // Once a minute per player (v2.17): marked, so the UI can say so.
+    status = 429;
+    await expect(backend.exportMe()).rejects.toMatchObject({ tooSoon: true });
   });
 });

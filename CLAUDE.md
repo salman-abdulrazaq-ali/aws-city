@@ -114,11 +114,15 @@ When a change touches a decision, update its entry and run its Proof.
   other options) and EBS to enable-only; for S3 Block Public Access, DynamoDB PITR and security-group revokes it can't, so the code does (and the
   template says so). Undo is the player's, in the console. Outside the city's own resources the player types the
   resource id, and the citizen must be level 3 (a teaching gate, not a security control). Local mode needs
-  `AWS_CITY_ALLOW_FIXES=true` (`npm run live -- --allow-fixes`), and its "fixes are off" message says so (`howToAllowFixes`).
+  `AWS_CITY_ALLOW_FIXES=true` (`npm run live -- --allow-fixes`), and its "fixes are off" message says so (`howToAllowFixes`);
+  so does the UI (`FixesOn` shows the CloudFormation steps and "Check again" only on hosted builds, locally `LOCAL_FIXES_COMMAND`).
   Hosted, fixes are per account (v2.17): the setup link sets `AllowFixes=true` when the player asks (`account.link {allowFixes}`),
   and verify learns whether the role allows them without changing anything (`fixesAllowed`: EC2's DryRun of the EBS fix,
-  `DryRunOperation` = yes); `createCityCare` uses the record's answer (unknown: the server's setting) and `account.status` says it (`fixes`).
-  Proof: `cd server && npx vitest run test/fixes.test.ts test/player-role.test.ts test/care.test.ts`.
+  `DryRunOperation` = yes); "Check again" re-runs that DryRun for the linked record (`account.recheck`, read-only: no MFA, no
+  new link window, the role version stays, the same world); `createCityCare` reads the latest answer at each fix (unknown:
+  the server's setting) and `account.status` says it (`fixes`).
+  Proof: `cd server && npx vitest run test/fixes.test.ts test/player-role.test.ts test/care.test.ts test/tenants.test.ts -t "Check again"`,
+  `cd server && npx vitest run test/hosted.test.ts -t "Check again"`, `npx vitest run tests/deploy-account.test.tsx tests/account-ui.test.tsx`.
 - **AWS plugins for Claude Code** (`.claude/settings.json`): `aws-core` and `aws-agents` from
   `claude-plugins-official` (Agent Toolkit for AWS). Use their skills (aws-cdk, aws-iam, aws-containers,
   aws-networking, aws-security, aws-well-architected-review…) when changing infra or the server. The
@@ -162,30 +166,49 @@ When a change touches a decision, update its entry and run its Proof.
   model is pinned (`AWS_CITY_JEV_MODEL`, default `jev-1.13.0`); each decision is logged (id, model, scores, verdict, ms,
   tokens), never the state or the key. Injected text can sway Jev, so it can never loosen anything.
   Proof: `cd server && npx vitest run test/jev.test.ts test/service.test.ts test/guard.test.ts`.
-- **Linking an AWS account, approving a write and applying a fix need MFA (step-up).** Hosted players must have TOTP
-  on for `account.link`/`account.verify`, `deploy.approve` and `finding.fix` (Google sign-ins are exempt); prod Cognito runs Plus with threat protection.
+- **Linking an AWS account, approving a write, applying a fix and taking something down need MFA (step-up).** Hosted players must have TOTP
+  on for `account.link`/`account.verify`, `deploy.approve`, `finding.fix` and `resource.remove` (Google sign-ins are exempt); prod Cognito runs Plus with threat protection.
   On isn't enough: the session must have signed in after it (`server/src/accounts/mfa.ts`). The server keeps the first time it saw TOTP on
   (`Stores.mfa` `since`, files or DynamoDB `USER#<sub> MFA`; seeing it off forgets it) and passes only an access token whose `auth_time` is at
-  or after it; an older session gets code `auth` ("sign in again"). After enrolling, the extension calls `POST /me/mfa` (the server
-  looks now), then `GlobalSignOut` ends every session and the player signs in again with the code (`src/backend/auth.ts`). Sign-out
+  or after it; an older session gets code `auth` with `SIGN_IN_AGAIN_MESSAGE`, which the UI shows as sent (`errorText` keeps an
+  `auth` error's own words). After enrolling, the extension calls `POST /me/mfa` (the server
+  looks now), then `GlobalSignOut` ends every session and the player signs in again with the code (`src/backend/auth.ts`); if that
+  call never landed, the first sight is dated from AdminGetUser's `UserLastModifiedDate` (never later than now), so one sign-in
+  is still enough. A refused `resource.remove` is tracked like a fix (`StepUp` in `src/app/runtime.ts`: "press Take it down
+  again"). `account.recheck` and `account.unlink` need no MFA (they change nothing, or take access away). Sign-out
   revokes the refresh token (`/oauth2/revoke`, bounded); an email change waits for its code (`keepOriginal`). A "TOTP is on" answer is
   cached 60 s at most. Proof: `cd server && npx vitest run test/hosted.test.ts -t "MFA"` (includes "MFA step-up for writes"),
-  `npx vitest run tests/auth.test.ts`, `cd infra && npm test`.
+  `npx vitest run tests/auth.test.ts tests/ui-logic.test.ts tests/runtime-session.test.ts`, `cd infra && npm test`.
 - **A linked account can be disconnected, notices a deleted stack, and upgrades its role** (contract v2.17). `account.unlink`
   needs no MFA (taking access away): `AccountStore.delete` (files or DynamoDB `USER#<sub> ACCOUNT`), an unlinked world, the
-  poller stopped, `account.status {linked: false}` to every tab. STS refusing the role itself (`RoleRefusedError` from
-  `assumedRole`, told apart from one service's AccessDenied) on `BROKEN_AFTER` (3) polls in a row stops polling and marks the
+  poller stopped, `account.status {linked: false}` to every tab. Replacing a world retires the old one (`World.retired`, an
+  AbortController aborted in `replaceWorld` with the reason): its pending previews (agent writes, fixes, removals) end
+  `rejected` "That account was disconnected, so nothing changed." (`Approvals` watch the signal), and ActionService and
+  CityCare ask `live()` inside the account lock right before minting a grant, which also re-reads the stored link before a
+  write. Every open city re-reads its record once a minute (`ACCOUNT_CHECK_MS`) and rebuilds when it's gone or its
+  status/account/Region/`brokenAt` changed (`linkKey`), so an unlink or broken mark on another ECS task reaches it. STS
+  refusing the role itself (`RoleRefusedError`: only AccessDenied for `sts:AssumeRole` on the player's own role,
+  `refusalsMarked`; our task credentials failing, ExpiredToken/InvalidClientTokenId, never mark a link broken, and
+  'expired' never persists `brokenAt`) on `BROKEN_AFTER` (3) polls in a row stops polling and marks the
   record `brokenAt` (`broken: true`: "Was the stack deleted? Link again, or disconnect."); a refused poll says nothing else
   (no lock lessons, no findings resolved), a restart doesn't retry it, and a new link (back to pending) or a verify clears it.
-  Verify learns fixes by DryRun and records the template version the link pointed at (`v<N>` of its URL); hosted
+  A deleted stack's last role session can last an hour, so its districts may show locked first (`docs/connect-aws-account.md`).
+  Verify learns fixes by DryRun; the role version is the template version the link points at (`v<N>` of its URL), recorded
+  only when the player installed or updated from that link (a pending record's first verify, another Region or account, or
+  `account.verify {updated}` from "I've updated the stack"): the account can't be read for it, so it's the version installed
+  from the city's link, and a template version that changes permissions must add a probe like fixes'. `account.recheck`
+  never changes it. The account commands share a 5 s cooldown per socket, except one verify within 2 minutes of that
+  socket's own successful link; a waiting `resource.remove` counts with the socket's tasks, not its request slots. Hosted
   `account.status` carries `fixes`, `roleVersion`, `latestRoleVersion`, `templateUrl`. Against a phished link
   (`infra/player-role/player-role.yaml` v5): the stack's visible `ConnectsPlayer` names who it serves (public Mayor name, else
   a masked email, else "Player " + 8 characters of the sub: `connectsPlayerLabel`), and verify is refused 24 h after the link.
   A refused link or verify (the 24 h one included) is `error {requestId}`, never an `account.status`: a status with a requestId always means success. `resource.remove` takes down one game-owned thing with no model (approved
-  like any write). `GET /me/export` downloads the player's progress, link metadata (never the ExternalId) and social rows.
+  like any write). `GET /me/export` (once a minute per player, 429 otherwise) downloads everything the privacy policy lists:
+  progress, link metadata (never the ExternalId or role ARN), social rows, the bill, AI counts, the first AI day and the
+  MFA time (`firstDay`/`mfa.get` are plain reads).
   Serverless quest templates (`hello-api`, `queue-worker`) are practice builds on the server (`ServerBackend.planPractice`),
   never an EC2 house. Proof: `cd server && npx vitest run test/tenants.test.ts test/hosted.test.ts test/poller.test.ts test/guard.test.ts test/player-role.test.ts`,
-  `npx vitest run tests/server-backend.test.ts tests/contract.test.ts`, `cfn-lint` on the template (CI).
+  `npx vitest run tests/server-backend.test.ts tests/contract.test.ts tests/runtime-session.test.ts`, `cfn-lint` on the template (CI).
 - **The player's own AWS account: easy to find, linked where they choose, easy to let go** (contract v2.17; rules pure in
   `src/state/account.ts`, `src/ui/Account.tsx`, the card in `src/ui/DeployPanel.tsx`). On the hosted server ⋯ → Account
   has the AWS account (its card in Deploy), Sign in or out, Download my data (`exportMe`, saved as a local JSON file) and
@@ -204,8 +227,11 @@ When a change touches a decision, update its entry and run its Proof.
   offers "Update your AWS City role (vN → vM)" when `roleVersion < latestRoleVersion` (steps, the template address, the
   ConnectsPlayer name to type, which comes with a fresh setup link, and the stacks page), "Use another Region or account"
   and "Disconnect" (asked first; hosted and the demo, never the local server; afterwards it says how to delete the AWSCity
-  stack in that Region). "Check again" asks for a fresh link and then verifies (`recheckAccount`: the server verifies only
-  within a day of a link, and reads fixes and the role version there). A broken link shows its message with Link again (a
+  stack in that Region). "Check again" (hosted, under "Turn small fixes on") is `account.recheck` (`recheckAccount`): the
+  role is asked again whether it allows fixes, read-only. The role update ends with "I've updated the stack"
+  (`confirmRoleUpdate`: a fresh link, then `account.verify {updated: true}`), and its card says the city goes by the version
+  installed from its link (it can't read the stack). The local server shows the restart hint instead of the CloudFormation
+  steps (`FixesOn`, `LOCAL_FIXES_COMMAND`). A broken link shows its message with Link again (a
   new link in its Region at once) and Disconnect. Only a reply to this tab's own request is toasted (a reply carries the
   requestId of the tab that asked; `src/app/runtime.ts` drops it in the others): a welcome or a broken link updates the
   card quietly, and the unlinked hint is a muted line, never an alert. City care says up front
@@ -235,9 +261,12 @@ When a change touches a decision, update its entry and run its Proof.
   schema's own words, and the socket stays open.
   Proof: `cd server && npx vitest run test/log.test.ts`, `cd server && npx vitest run test/hosted.test.ts -t "metered"`,
   `cd server && npx vitest run test/http.test.ts -t "version handshake"`.
-- **Shared AI calls can't be farmed with free sign-ups** (`server/src/agents/metered.ts`). A player first seen today (`QuotaStore.firstSeen`)
+- **Shared AI calls can't be farmed with free sign-ups** (`server/src/agents/metered.ts`). A player first seen within the last
+  `NEW_PLAYER_DAYS` (3) days (`QuotaStore.firstSeen`, the `USER#<sub> SEEN` row's first day)
   gets a fifth of `DAILY_MODEL_CALLS` (100 → 20), and those players together at most a quarter of `GLOBAL_DAILY_MODEL_CALLS`
-  (`GLOBAL#NEW`, 20,000 → 5,000); a call Bedrock refused before answering (throttled, denied) is refunded, an aborted one isn't. Scores and
+  (`GLOBAL#NEW`, 20,000 → 5,000). Only a call that proves the model never ran is refunded (`provenNotRun`: 429/Throttling,
+  403/AccessDenied, a 400 validation error, or a connection refused before the request was sent); never a timeout, a 5xx,
+  an abort or a stream that produced any event (a thinking block counts). Scores and
   leaderboard reads are rate-limited per socket (burst 5, then one per 5 s). Proof: `cd server && npx vitest run test/hosted.test.ts -t "metered"`,
   `cd server && npx vitest run test/http.test.ts -t "rate-limited"`.
 - **One seam to the backend.** Only `src/backend/` does network I/O. `contract.ts` is the source of
@@ -246,7 +275,8 @@ When a change touches a decision, update its entry and run its Proof.
   (`CONTRACT_VERSION`, `src/backend/contract.ts`; the server's strict `Progress` schema refuses unknown fields): deploy the server
   first. The v2.17 version handshake checks it: the client names its version as `?contract=` on `/ws` and every REST call (a
   query parameter, since a new request header would fail an older server's CORS preflight); every REST answer names the
-  server's in `x-aws-city-contract` (CORS-exposed; `/health` has it in its body); a client newer than the server, or older than
+  server's in `x-aws-city-contract` (CORS-exposed; `/health` has it and the server's version in its body, on purpose: ops
+  read which build answers); a client newer than the server, or older than
   `MIN_CLIENT_CONTRACT` (`versionRefusal` in `server/src/http.ts`; versions compare as major.minor numbers, `compareContract`),
   is refused with 409 on the upgrade and on `GET`/`PUT /progress`, and an unversioned client predates it and is let in. After
   two refused upgrades `ServerBackend` asks GET /progress why: status `updating` (the server is older: saves wait on the device,
@@ -255,9 +285,10 @@ When a change touches a decision, update its entry and run its Proof.
   "A newer AWS City is ready — update the extension"), never a schema error. A `PUT /progress` refused with a 4xx (not 401 or
   409) isn't re-sent on every open: `onSave` reports `refused`, and the same line says "Not saved to your account — kept on
   this device" until a save goes through (`CityState.saveRefused`); 5xx, network errors, 401 and 409 keep the copy for the
-  next open. v2.17 adds `account.unlink`, `resource.remove`,
-  `account.link.allowFixes` (the strict command schema refuses them on an older server), `account.status`'s lifecycle fields
-  and REST `GET /me/export`; `ServerBackend.send` ends in a `never` default, so a new command can't be dropped silently.
+  next open. v2.17 adds `account.unlink`, `account.recheck` and `resource.remove` (an older server refuses an unknown action
+  as a bad command), `account.link.allowFixes` and `account.verify.updated` (an older server's `account.link`/`account.verify`
+  schemas aren't strict, so it drops them silently: the link lacks AllowFixes, the version isn't moved), `account.status`'s
+  lifecycle fields and REST `GET /me/export`; `ServerBackend.send` ends in a `never` default, so a new command can't be dropped silently.
   Proof: `npx vitest run tests/contract.test.ts tests/server-backend.test.ts tests/assets.test.ts tests/ui-logic.test.ts
   tests/account-ui.test.tsx tests/runtime-session.test.ts`, `cd server && npx vitest run test/http.test.ts -t "version handshake"`,
   and `grep -rn -e "fetch(" -e "WebSocket(" src | grep -v src/backend/` prints nothing.

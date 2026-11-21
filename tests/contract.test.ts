@@ -655,9 +655,35 @@ describe('The account lifecycle (v2.17)', () => {
     expect((await mock.exportMe()).progress).toEqual(progress);
   });
 
+  it('Check again in the demo: account.recheck answers the practice account’s fixes on account.status, or unlinked', async () => {
+    const mock = new MockBackend({ speed: 200 });
+    const events: ServerEvent[] = [];
+    mock.onEvent((e) => events.push(e));
+    mock.send({ action: 'account.recheck', requestId: 'c0' });
+    await sleep(50);
+    expect(events.at(-1)).toMatchObject({ type: 'error', requestId: 'c0', code: 'unlinked' });
+    mock.send({ action: 'account.verify', requestId: 'v', roleArn: '123456789012' });
+    await sleep(50);
+    mock.send({ action: 'account.recheck', requestId: 'c1' });
+    await sleep(50);
+    expect(events.filter((e) => e.type === 'account.status').at(-1)).toMatchObject({ requestId: 'c1', linked: true, fixes: true });
+  });
+
   it('the docs mirror the new commands, fields and REST route', () => {
     const doc = readFileSync('docs/backend-contract.md', 'utf8');
-    for (const f of ['account.unlink', 'resource.remove', 'allowFixes', 'broken', 'fixes', 'roleVersion', 'latestRoleVersion', 'templateUrl', 'GET /me/export', 'ConnectsPlayer']) expect(doc).toContain(f);
+    for (const f of ['account.unlink', 'account.recheck', 'resource.remove', 'allowFixes', 'updated', 'broken', 'fixes', 'roleVersion', 'latestRoleVersion', 'templateUrl', 'GET /me/export', 'ConnectsPlayer', 'aiCalls', 'mfaOnSince'])
+      expect(doc).toContain(f);
+    // Every command MFA step-up guards is named where the error code is.
+    const mfa = doc.split('\n').find((l) => l.includes('`mfa_required`'))!;
+    for (const c of ['account.link', 'account.verify', 'deploy.approve', 'finding.fix', 'resource.remove']) expect(mfa).toContain(c);
+  });
+
+  it('the privacy policy lists every row the server keeps and the optional safety check; the guide says how long a deleted stack takes to show', () => {
+    const policy = readFileSync('docs/privacy-policy.md', 'utf8');
+    for (const f of ['TypeSafe', '500 characters', 'authenticator', 'first AI request', 'setup link', 'role version', 'stopped working', 'cached bill'])
+      expect(policy).toContain(f);
+    for (const placeholder of ['{{OPERATOR_NAME}}', '{{CONTACT_EMAIL}}', '{{REGION}}']) expect(policy).toContain(placeholder);
+    expect(readFileSync('docs/connect-aws-account.md', 'utf8')).toMatch(/up to an hour/);
   });
 });
 

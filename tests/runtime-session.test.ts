@@ -268,6 +268,9 @@ describe('runtime sessions', () => {
     expect(rt.afterMfa({ action: 'account.verify', roleArn: vf }).resend).toEqual({ action: 'account.verify', roleArn: vf });
     expect(rt.afterMfa({ action: 'deploy.approve' })).toEqual({ message: expect.stringMatching(/Approve again/) });
     expect(rt.afterMfa({ action: 'finding.fix' })).toEqual({ message: expect.stringMatching(/Fix again/) });
+    // resource.remove needs MFA too: the hint says to press Take it down again (signed in or signed out).
+    expect(rt.afterMfa({ action: 'resource.remove' })).toEqual({ message: expect.stringMatching(/Take it down again/) });
+    expect(rt.afterMfa({ action: 'resource.remove' }, true).message).toMatch(/then press Take it down again/);
     expect(rt.afterMfa(undefined).resend).toBeUndefined();
     const sent = new Map([['r1', { action: 'account.link', region: 'eu-west-1' } as const]]);
     expect(rt.refusedBy({ requestId: 'r1' }, sent)).toEqual({ action: 'account.link', region: 'eu-west-1' });
@@ -358,26 +361,59 @@ describe('runtime sessions', () => {
     expect(fake.sent.at(-1)).toEqual({ action: 'resource.remove', requestId: remove, kind: 'table', id: 'city-orders' });
   });
 
-  it('v2.17: Check again asks for a fresh setup link in the linked Region, then verifies the account once it’s in', async () => {
+  it('v2.17: Check again is one read-only account.recheck (no setup link, no verify); its answer and its refusal are this tab’s own', async () => {
     const { rt, useCity } = await boot();
     fake.status('connected');
     await settle();
     const fire = (e: ServerEvent) => (fake as unknown as { events: Set<(e: ServerEvent) => void> }).events.forEach((cb) => cb(e));
     expect(rt.recheckAccount()).toBeUndefined(); // nothing linked yet
-    fire({ type: 'account.status', linked: true, accountId: '111122223333', region: 'eu-west-1' });
+    fire({ type: 'account.status', linked: true, accountId: '111122223333', region: 'eu-west-1', fixes: false });
     fake.sent = [];
     const requestId = rt.recheckAccount()!;
+    expect(fake.sent).toEqual([{ action: 'account.recheck', requestId }]);
+    fire({ type: 'account.status', requestId, linked: true, accountId: '111122223333', region: 'eu-west-1', fixes: true });
+    expect(useCity.getState().account).toMatchObject({ linked: true, fixes: true });
+    expect(fake.sent).toHaveLength(1);
+    const refused = rt.recheckAccount()!;
+    fire({ type: 'error', requestId: refused, message: 'Give it a few seconds before trying that again.' });
+    expect(useCity.getState().account.error).toMatch(/few seconds/);
+  });
+
+  it('v2.17: “I’ve updated the stack” asks for a fresh setup link in the linked Region, then verifies it as updated, once', async () => {
+    const { rt, useCity } = await boot();
+    fake.status('connected');
+    await settle();
+    const fire = (e: ServerEvent) => (fake as unknown as { events: Set<(e: ServerEvent) => void> }).events.forEach((cb) => cb(e));
+    expect(rt.confirmRoleUpdate()).toBeUndefined(); // nothing linked yet
+    fire({ type: 'account.status', linked: true, accountId: '111122223333', region: 'eu-west-1' });
+    fake.sent = [];
+    const requestId = rt.confirmRoleUpdate()!;
     expect(fake.sent).toEqual([{ action: 'account.link', requestId, region: 'eu-west-1' }]);
     fire({ type: 'account.linkUrl', requestId, url: 'https://eu-west-1.console.aws.amazon.com/x', externalId: 'e' });
-    expect(fake.sent.at(-1)).toEqual({ action: 'account.verify', requestId: expect.any(String), roleArn: '111122223333' });
+    expect(fake.sent.at(-1)).toEqual({ action: 'account.verify', requestId: expect.any(String), roleArn: '111122223333', updated: true });
     // Once only: the same link again sends nothing more; a refused link verifies nothing.
     fire({ type: 'account.linkUrl', requestId, url: 'https://eu-west-1.console.aws.amazon.com/x', externalId: 'e' });
     expect(fake.sent.filter((c) => c.action === 'account.verify')).toHaveLength(1);
-    const refused = rt.recheckAccount()!;
+    const refused = rt.confirmRoleUpdate()!;
     fire({ type: 'error', requestId: refused, message: 'Too many requests.' });
     fire({ type: 'account.linkUrl', requestId: refused, url: 'https://eu-west-1.console.aws.amazon.com/x', externalId: 'e' });
     expect(fake.sent.filter((c) => c.action === 'account.verify')).toHaveLength(1);
     expect(useCity.getState().account.linked).toBe(true);
+  });
+
+  it('v2.17: a removal refused for MFA is known by its requestId, so turning the authenticator on says to press Take it down again', async () => {
+    const { rt, useCity } = await boot();
+    Object.assign(fake, { confirmTotp: async () => {} });
+    fake.status('connected');
+    await settle();
+    const fire = (e: ServerEvent) => (fake as unknown as { events: Set<(e: ServerEvent) => void> }).events.forEach((cb) => cb(e));
+    const requestId = rt.removeResource('table', 'city-orders')!;
+    fire({ type: 'error', requestId, code: 'mfa_required', message: 'MFA first' });
+    useCity.getState().clearToasts();
+    fake.sent = [];
+    await rt.confirmMfaSetup('123456');
+    expect(fake.sent).toEqual([]); // a removal is pressed again, never resent
+    expect(useCity.getState().toasts.map((t) => t.text)).toContainEqual(expect.stringMatching(/Take it down again/));
   });
 
   it('v2.17: an account reply is this tab’s own only if it asked; a refusal is said in the card', async () => {
@@ -439,6 +475,11 @@ describe('runtime sessions', () => {
     const text = useCity.getState().toasts.at(-1)?.text ?? '';
     expect(text).toMatch(/Couldn’t download your data/);
     expect(text).not.toMatch(/500|GET/);
+    // Once a minute per player (v2.17): a second download straight away says so, not "check your connection".
+    useCity.getState().clearToasts();
+    Object.assign(fake, { exportMe: async () => Promise.reject(Object.assign(new Error('GET /me/export → 429'), { tooSoon: true })) });
+    await rt.downloadMyData();
+    expect(useCity.getState().toasts.at(-1)?.text).toBe('You downloaded your data a moment ago. Try again in a minute.');
   });
 
   it('a failed sign-out or account deletion logs a plain sentence, with the detail only in the console', async () => {

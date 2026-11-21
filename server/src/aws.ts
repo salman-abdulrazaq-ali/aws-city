@@ -28,9 +28,9 @@ export const refreshingProfile = (profile: string): AwsCredentialIdentityProvide
 };
 
 /**
- * STS refused the player role itself (AssumeRole said no), not one call made with it: the AWSCity stack was deleted, its
- * trust changed, or the credentials asking for it are no good. It keeps the cause's name, so classifyAwsError reads it
- * as before ('denied' or 'expired'); the poller tells it apart from one service's AccessDenied by its class.
+ * STS refused the player role itself (AssumeRole on that role said AccessDenied), not one call made with it: the AWSCity
+ * stack was deleted or its trust changed. It keeps the cause's name, so classifyAwsError reads it as before ('denied');
+ * the poller tells it apart from one service's AccessDenied by its class.
  */
 export class RoleRefusedError extends Error {
   constructor(cause: unknown) {
@@ -42,8 +42,8 @@ export const isRoleRefused = (err: unknown): err is RoleRefusedError => err inst
 
 /**
  * A player's own account (hosted mode): short-lived credentials for AWSCityPlayerRole, assumed from our
- * task role with the player's ExternalId. The SDK caches them and refreshes before they expire. A refusal
- * ('denied' or 'expired') comes out as RoleRefusedError; anything else (throttling, the network) as it was.
+ * task role with the player's ExternalId. The SDK caches them and refreshes before they expire. STS refusing this role
+ * comes out as RoleRefusedError; anything else (our own task credentials failing, throttling, the network) as it was.
  */
 export const assumedRole = (opts: { roleArn: string; externalId: string; sub: string; region: string }): AwsCredentialIdentityProvider => {
   const provider = fromTemporaryCredentials({
@@ -56,17 +56,28 @@ export const assumedRole = (opts: { roleArn: string; externalId: string; sub: st
       DurationSeconds: 3600,
     },
   });
-  return refusalsMarked(provider);
+  return refusalsMarked(provider, opts.roleArn);
 };
 
-/** Wraps a credential provider so STS's refusals of it come out as RoleRefusedError (assumedRole's; a test seam too). */
+/**
+ * Whether a failed AssumeRole is the player's role refusing us: AccessDenied for sts:AssumeRole on that role (`roleArn`,
+ * when known). Never our own task credentials failing (ExpiredToken, InvalidClientTokenId: 'expired', or our role's
+ * identity policy not allowing the call): those would mark every player's link broken at once.
+ */
+const isPlayerRoleRefusal =(err: unknown, roleArn?: string): boolean => {
+  const e = err as { name?: string; message?: string } | undefined;
+  const message = e?.message ?? '';
+  return e?.name === 'AccessDenied' && message.includes('sts:AssumeRole') && (!roleArn || message.includes(roleArn)) && !/identity-based policy/i.test(message);
+};
+
+/** Wraps a credential provider so the player role refusing it comes out as RoleRefusedError (assumedRole's; a test seam too). */
 export const refusalsMarked =
-  (provider: AwsCredentialIdentityProvider): AwsCredentialIdentityProvider =>
+  (provider: AwsCredentialIdentityProvider, roleArn?: string): AwsCredentialIdentityProvider =>
   async (...args) => {
     try {
       return await provider(...args);
     } catch (err) {
-      throw classifyAwsError(err) === 'other' ? err : new RoleRefusedError(err);
+      throw isPlayerRoleRefusal(err, roleArn) ? new RoleRefusedError(err) : err;
     }
   };
 

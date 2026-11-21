@@ -78,7 +78,10 @@ describe('connection pill', () => {
 describe('error codes → friendly text', () => {
   it('maps known codes and falls back to the message', () => {
     expect(errorText({ message: 'x', code: 'quota' } as { message: string })).toBe('You’ve used today’s AI helpers — back tomorrow!');
-    expect(errorText({ message: 'x', code: 'auth' } as { message: string })).toBe('Please sign in again');
+    expect(errorText({ message: '', code: 'auth' } as { message: string })).toBe('Please sign in again');
+    // A session from before the authenticator keeps the server's sentence (it says what to do), never the generic line.
+    const preMfa = 'Your authenticator app is on, but this sign-in started before it was. Sign out, then sign in again with your app’s code.';
+    expect(errorText({ message: preMfa, code: 'auth' } as { message: string })).toBe(preMfa);
     expect(errorText({ message: 'x', code: 'unlinked' } as { message: string })).toBe('Connect your AWS account in the Deploy tab');
     expect(errorText({ message: 'raw', code: 'nope' } as { message: string })).toBe('raw');
     expect(errorText({ message: 'raw' })).toBe('raw');

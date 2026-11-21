@@ -250,7 +250,7 @@ export const dynamoStores = (deps: { client: DynamoDBClient; table: string; now?
         }
       },
       async firstSeen(sub, day) {
-        // Kept until the player is deleted (under USER#<sub>, no ttl): it only ever says "before today" or "today".
+        // Kept until the player is deleted (under USER#<sub>, no ttl): the new-player limit counts days from it.
         const out = await db.send(
           new UpdateCommand({
             TableName,
@@ -261,6 +261,10 @@ export const dynamoStores = (deps: { client: DynamoDBClient; table: string; now?
           }),
         );
         return (out.Attributes?.firstDay as string | undefined) ?? day;
+      },
+      async firstDay(sub) {
+        const out = await db.send(new GetCommand({ TableName, Key: { pk: user(sub), sk: 'SEEN' } }));
+        return out.Item?.firstDay as string | undefined;
       },
     },
     mfa: {
@@ -276,6 +280,10 @@ export const dynamoStores = (deps: { client: DynamoDBClient; table: string; now?
           }),
         );
         return (out.Attributes?.since as number | undefined) ?? at;
+      },
+      async get(sub) {
+        const out = await db.send(new GetCommand({ TableName, Key: { pk: user(sub), sk: 'MFA' } }));
+        return out.Item?.since as number | undefined;
       },
       async forget(sub) {
         await db.send(new DeleteCommand({ TableName, Key: { pk: user(sub), sk: 'MFA' } }));

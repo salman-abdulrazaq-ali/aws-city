@@ -163,9 +163,13 @@ const ERROR_TEXT: Record<string, string> = {
   paused: 'The city’s AI helpers are taking a break — try again later.',
 };
 
-/** What to show the player for a backend `error` event. */
+/**
+ * What to show the player for a backend `error` event. A sign-in refusal (`auth`) keeps the server's own words when it
+ * sent some: "this sign-in started before your authenticator was on" says what to do, "Please sign in again" doesn't.
+ */
 export const errorText = (e: { message: string }) => {
   const code = (e as { code?: string }).code;
+  if (code === 'auth' && e.message) return e.message;
   return (code && ERROR_TEXT[code]) || e.message;
 };
 

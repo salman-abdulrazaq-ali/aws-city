@@ -24,6 +24,8 @@ export type SubmitOutcome =
 export const NEEDS_APPROVAL_REASON =
   "Changing AWS needs the player's approval, and there's no Approve button on this connection. Ask the player to do it in the AWS Console instead.";
 export const REJECTED_REASON = 'The player said no, so nothing was changed.';
+/** The account this world acts in was disconnected or changed (unlink, a new link, another task's change): nothing runs. */
+export const RETIRED_REASON = 'Your AWS account was disconnected or changed meanwhile, so nothing was changed.';
 
 export interface ApprovalRequest {
   action: Action;
@@ -34,6 +36,8 @@ export interface ApprovalRequest {
    * (the preview's v2.3 confirmText), and `reason` says why. Absent: the ordinary preview.
    */
   check?: { reason: string };
+  /** Aborted when the world this write belongs to is retired: the preview is cancelled (Approvals). */
+  signal?: AbortSignal;
 }
 /** Asks the player (contract v2 deploy.preview); resolves true only on an explicit deploy.approve. */
 export type Approve = (req: ApprovalRequest) => Promise<boolean>;
@@ -53,6 +57,13 @@ export const createActionService = (deps: {
   accountKey?: () => string;
   /** A second opinion on writes that may only tighten (Jev, with TYPESAFE_API_KEY). Undefined = off. */
   judge?: Judge;
+  /**
+   * Whether this world may still act on its account, asked inside the account lock right before anything runs (a write:
+   * right before its grant is minted). `write`: also re-read the stored link. False refuses with RETIRED_REASON.
+   */
+  live?: (write: boolean) => Promise<boolean>;
+  /** Aborted when this world is retired: pending previews are cancelled (the signal's reason says why). */
+  retired?: AbortSignal;
 }) => {
   const locks = deps.locks ?? memoryLocks();
   const accountKey = deps.accountKey ?? (() => deps.poller.current()?.accountId ?? 'local');
@@ -78,6 +89,8 @@ export const createActionService = (deps: {
       const decision = checkAction(action, snapshot, { confirmed });
       if (decision.verdict === 'deny') return { status: 'denied', reason: decision.reason };
       if (decision.verdict === 'confirm') return { status: 'denied', reason: NEEDS_APPROVAL_REASON };
+      // The account may have been disconnected or changed while the player decided (or another task changed the link).
+      if (deps.live && !(await deps.live(confirmed))) return { status: 'denied', reason: RETIRED_REASON };
 
       // Past policy and the player's approval: the gate lets through exactly this action's writes, once each.
       const grant = confirmed ? actionGrant(action, snapshot.accountId) : undefined;
@@ -117,8 +130,8 @@ export const createActionService = (deps: {
         : undefined;
       if (second?.verdict === 'block') return { status: 'denied', reason: second.reason ?? BLOCKED_REASON };
       const check = second && second.verdict !== 'allow' ? { check: { reason: second.reason ?? UNCHECKED_REASON } } : {};
-      const ok = await opts.approve({ action, summary, destructive, ...check });
-      if (!ok) return { status: 'denied', reason: REJECTED_REASON };
+      const ok = await opts.approve({ action, summary, destructive, ...check, ...(deps.retired ? { signal: deps.retired } : {}) });
+      if (!ok) return { status: 'denied', reason: deps.retired?.aborted ? RETIRED_REASON : REJECTED_REASON };
       return run(action, true);
     },
     describe: (name: unknown, input: unknown) => {

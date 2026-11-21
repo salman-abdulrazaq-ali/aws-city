@@ -171,6 +171,23 @@ export interface AccountVerify {
   requestId: string;
   /** The stack's RoleArn output, or just the 12-digit account id (the role name is fixed per region). */
   roleArn: string;
+  /**
+   * v2.17: the player says they just updated the AWSCity stack with the latest setup link's template ("I've updated the
+   * stack"), so the role version becomes that link's. Without it a verify of the account already linked in that Region
+   * keeps the version it had (a first verify, another Region or another account takes the link's). The account can't be
+   * read for its version: it's the one the player installed from the city's link.
+   */
+  updated?: boolean;
+}
+
+/**
+ * v2.17 "Check again": asks the linked role again, without changing anything, whether it allows fixes (the same EC2
+ * DryRun as verify), and answers account.status {requestId, …, fixes} on every tab. Read-only: no new setup link, no MFA
+ * step-up, and the role version stays as it was. A refusal (nothing linked, the role can't be used) is error {requestId}.
+ */
+export interface AccountRecheck {
+  action: 'account.recheck';
+  requestId: string;
 }
 
 export interface QuestStart {
@@ -321,6 +338,7 @@ export type ClientCommand =
   | ProgressPut
   | AccountLink
   | AccountVerify
+  | AccountRecheck
   | AccountUnlink
   | ResourceRemove
   | QuestStart
@@ -768,7 +786,8 @@ export interface ErrorEvent {
    * v2.2, optional: why, so the UI can explain it kindly. quota = the player's daily AI calls are used up;
    * paused = the city's AI is switched off (kill switch or global cap); auth = sign in again;
    * unlinked = connect an AWS account first; mfa_required = turn on an authenticator app before linking an
-   * AWS account, approving a write (deploy.approve) or applying a fix (finding.fix) (hosted).
+   * AWS account (account.link, account.verify), approving a write (deploy.approve), applying a fix (finding.fix) or
+   * taking down something the city built (resource.remove) (hosted).
    */
   code?: 'quota' | 'paused' | 'auth' | 'unlinked' | 'mfa_required';
 }
@@ -1058,9 +1077,33 @@ export interface PlayerDataExport {
   exportedAt: string;
   contract: string;
   progress: Progress | null;
-  /** Absent when no AWS account was ever linked (and always on the local server, which uses the workshop profile). */
-  account?: { status: 'pending' | 'linked'; region: string; accountId?: string; linkedAt?: string; roleVersion?: number; fixes?: boolean; broken?: boolean };
+  /**
+   * Absent when no AWS account was ever linked (and always on the local server, which uses the workshop profile).
+   * `linkIssuedAt`: when the last setup link was made; `linkRoleVersion`: the template version it points at;
+   * `pendingRegion`: a Region asked for but not verified yet; `brokenAt`: when the role stopped working.
+   */
+  account?: {
+    status: 'pending' | 'linked';
+    region: string;
+    pendingRegion?: string;
+    accountId?: string;
+    linkedAt?: string;
+    linkIssuedAt?: string;
+    roleVersion?: number;
+    linkRoleVersion?: number;
+    fixes?: boolean;
+    broken?: boolean;
+    brokenAt?: string;
+  };
   social: SocialRow[];
+  /** The bill switch and the cached month-to-date bill (absent if the bill was never turned on). `readAt`: when it was read. */
+  bill?: { on: boolean; readAt?: string; bill?: CityBillEvent };
+  /** Today's and yesterday's count of AI requests (UTC days; each count expires after 2 days). */
+  aiCalls?: { day: string; calls: number }[];
+  /** The day of the first AI request (the new-player limit counts days from it). */
+  firstSeenDay?: string;
+  /** When the server first saw an authenticator app on (step-up MFA), ISO; absent when it's off or never seen. */
+  mfaOnSince?: string;
   /** The demo: made on this device from its own progress; no server keeps anything. */
   practice?: true;
 }

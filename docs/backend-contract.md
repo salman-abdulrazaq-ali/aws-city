@@ -52,7 +52,8 @@ A client needs a server of its version or newer, so deploy the server first; the
 | `deploy.plan` | `requestId, templateId` | On `aws`, `ServerBackend` sends it to the matching agent as a prompt (`GUARDED_BLUEPRINTS`). v2.17: a template with no guarded build (`hello-api`, `queue-worker`: serverless) is a practice build made by `ServerBackend` itself, like the demo's (a `deploy.preview` whose `deployId` starts `practice-`, then `deploy.status complete` under its own `templateId`, so a quest's deploy step counts). Nothing is sent and nothing is created; it never becomes an EC2 house. |
 | `deploy.teardown` | `deployId` | On `aws`, it asks the agent to demolish what was built (that also needs approval). |
 | `account.link` | `requestId, region, allowFixes?` | Hosted: returns `account.linkUrl` (CloudFormation quick-create for `infra/player-role/player-role.yaml`, with the player's ExternalId and `ConnectsPlayer`). v2.17 `allowFixes`: the link sets `AllowFixes=true`. |
-| `account.verify` | `requestId, roleArn` | `roleArn` may be just the 12-digit account id. The server assumes the role and checks the caller identity before linking. v2.17: refused a day after the link was made; learns whether fixes are allowed (a DryRun) and records the template version. Success is `account.status {requestId, linked: true}`; any refusal is `error {requestId, message}` and never an `account.status`. |
+| `account.verify` | `requestId, roleArn, updated?` | `roleArn` may be just the 12-digit account id. The server assumes the role and checks the caller identity before linking. v2.17: refused a day after the link was made; learns whether fixes are allowed (a DryRun) and records the template version when the player installed or (`updated`) updated the stack from the link. Success is `account.status {requestId, linked: true}`; any refusal is `error {requestId, message}` and never an `account.status`. |
+| `account.recheck` | `requestId` | v2.17 "Check again": the same fixes DryRun for the linked role, read-only (no MFA, no new link window, the role version stays). Answered with `account.status {requestId, …, fixes}` on every tab, or `error {requestId}`. |
 | `account.unlink` | `requestId` | v2.17: disconnect the account (no MFA). Answered with `account.status {linked: false}` on every tab. |
 | `resource.remove` | `requestId, kind: instance\|table\|bucket, id` | v2.17: take down one thing the city built, with no model; approved like any write (see below). |
 | `bill.enable` | `on` | v2.5: the month-to-date bill on or off (off by default; each Cost Explorer read costs $0.01, so at most one a day). |
@@ -84,7 +85,7 @@ Client-internal, not on the wire: `storage.local` keeps `progress.parked` (a sig
 | `page.classified`, `chat.answer` (streamed), `screenshot.url`, `progress.state`, `error` | The same as in v1. |
 
 **v2.2 additions (all optional):**
-- `error.code`: `quota` (the player's daily AI calls are used up), `paused` (the city's AI is switched off), `auth` (sign in again), `unlinked` (connect an AWS account first) or `mfa_required` (hosted: `account.link`/`account.verify`, `deploy.approve` and `finding.fix` need an authenticator app on first; the Deploy tab enrols one). The UI shows friendly text for each.
+- `error.code`: `quota` (the player's daily AI calls are used up), `paused` (the city's AI is switched off), `auth` (sign in again), `unlinked` (connect an AWS account first) or `mfa_required` (hosted: `account.link`/`account.verify`, `deploy.approve`, `finding.fix` and `resource.remove` need an authenticator app on first; the Deploy tab enrols one). The UI shows friendly text for each.
 - `sources: [{title, url}]` on `task.done` and on the final `chat.answer`: the AWS documentation pages (docs.aws.amazon.com / aws.amazon.com only) the answer was grounded in, from the AWS Knowledge MCP server.
 - WebSocket close codes (`CLOSE_CODES` in `contract.ts`): `4401` = reconnect with a fresh token, `4403` = the account was deleted
   (`DELETE /me`, from this tab or another): sign out and don't reconnect, `1012` = server restarting (reconnect with jitter),
@@ -357,8 +358,15 @@ v2.15 copy merges with a v2.16 one as described.
 
 **v2.17 additions, the account lifecycle (all optional):**
 
-A v2.17 client needs a v2.17 server: the server's command schema is strict, so an older server refuses `account.unlink`,
-`resource.remove` and `account.link`'s `allowFixes`. Deploy the server first, then the client.
+A v2.17 client needs a v2.17 server: an older server refuses the actions it doesn't know (`account.unlink`,
+`account.recheck`, `resource.remove`) as a bad command, and its `account.link` and `account.verify` schemas aren't strict, so
+it drops `allowFixes` (the link comes without AllowFixes) and `updated` (the role version isn't moved) without a word.
+Deploy the server first, then the client.
+
+The account commands (`account.link`, `account.verify`, `account.recheck`, `account.unlink`) share a 5 s cooldown per
+socket ("Give it a few seconds before trying that again.", `error {requestId}`), except one `account.verify` within 2
+minutes of that socket's own successful `account.link` (link, then verify as soon as `account.linkUrl` is in). A
+`resource.remove` waiting for its approval counts with the socket's tasks (two at once), never with its request slots.
 
 - `account.link {requestId, region, allowFixes?}`: the quick-create link names who it connects, as the stack's visible
   `ConnectsPlayer` parameter (`infra/player-role/player-role.yaml` v5): the player's public Mayor name ("Mayor Kind
@@ -368,22 +376,33 @@ A v2.17 client needs a v2.17 server: the server's command schema is strict, so a
   never the raw email. `allowFixes: true` adds `param_AllowFixes=true`. A link is good for a day: `account.verify` more
   than 24 hours after the last `account.link` is refused with a sentence asking for a new link (the ExternalId stays the
   same, so a stack made from the old link keeps working).
-- `account.verify`: on success the server also asks, without changing anything, whether the role allows fixes (EC2
-  `EnableEbsEncryptionByDefault` with `DryRun: true`: `DryRunOperation` = yes, `UnauthorizedOperation` = no, anything
-  else = unknown), and records the template version the link pointed at (`v<N>` of the template URL). Every refusal of
+- `account.verify {requestId, roleArn, updated?}`: on success the server also asks, without changing anything, whether
+  the role allows fixes (EC2 `EnableEbsEncryptionByDefault` with `DryRun: true`: `DryRunOperation` = yes,
+  `UnauthorizedOperation` = no, anything else = unknown). The role version is the template version the link points at
+  (`v<N>` of the template URL), recorded only when the player installed or updated the stack from that link: a pending
+  record's first verify, another Region or account, or `updated: true` (the player pressed "I've updated the stack").
+  Any other verify keeps the version it had: the account can't be read for it, so it's the one installed from the
+  city's link (a template version that changes what the role allows must add a probe like fixes). Every refusal of
   `account.link` or `account.verify` (the role can't be used, the link is more than a day old, not the AWSCity role, our
   own account…) is `error {requestId, message}` and never an `account.status`, so an `account.status` carrying a
   `requestId` always means the request worked. Nothing changes on a refusal: an account already linked stays linked.
+- `account.recheck {requestId}` ("Check again", after turning AllowFixes on): the server asks the linked role again,
+  without changing anything, whether it allows fixes (the same DryRun) and answers `account.status {requestId, …,
+  fixes}` on every tab. Read-only: no new setup link or link window, no MFA step-up, the role version stays, and pending
+  previews stand. Nothing linked, a broken link or a role that can't be used is `error {requestId, message}`.
 - `account.unlink {requestId}`: the server forgets the link (role ARN, account id, ExternalId), stops reading the account
   and answers every tab of the player with `account.status {linked: false}` (the asking tab's carries the `requestId`).
   No MFA step-up: taking access away is always allowed. The AWSCity stack stays until the player deletes it. The local
-  server has nothing to disconnect and says so (`linked: true`).
+  server has nothing to disconnect and says so (`linked: true`). Every pending preview for the old account (an agent's
+  write, a fix, a removal) ends with `deploy.status rejected` "That account was disconnected, so nothing changed.", and
+  a write already approved is refused inside the account lock; another server task notices within about a minute (it
+  re-reads the link once a minute while a tab is open, and before every write).
 - `account.status` v2.17 fields: `broken: true` (with `linked: false`, `accountId`, `region`): STS refused the player
   role on 3 polls in a row (the stack was deleted or changed), so the server stopped reading the account; a new
   `account.link` (back to pending) or a successful `account.verify` clears it. `fixes`: whether the role allows fixes
   (absent = unknown; the local server sends its own setting). Hosted only: `roleVersion` (the template version the
-  player installed; absent if linked before v2.17), `latestRoleVersion` and `templateUrl` (the newest template, for
-  "Update your AWS City role").
+  player installed from the city's link; absent if linked before v2.17), `latestRoleVersion` and `templateUrl` (the
+  newest template, for "Update your AWS City role").
 - `resource.remove {requestId, kind, id}`: `kind` is `instance`, `table` or `bucket`; `id` the instance id, table name or
   bucket name (the last part of the inventory item's ARN). It must be `managedByGame` in the server's latest read of the
   account. Answered with `deploy.preview {requestId, deployId, templateId: terminate_instance|delete_table|delete_bucket,
@@ -392,8 +411,12 @@ A v2.17 client needs a v2.17 server: the server's command schema is strict, so a
   `error {requestId, message}` (`code: 'unlinked'` without an account). Hosted, it starts only with MFA on, like
   `finding.fix`.
 - `GET /me/export` (REST, authenticated like `/progress`; `410` for a deleted player): a JSON download
-  (`Content-Disposition: attachment`) of `PlayerDataExport {exportedAt, contract, progress, account?, social[]}`:
-  the player's progress; their account link as metadata only, `{status, region, accountId?, linkedAt?, roleVersion?,
-  fixes?, broken?}` (never the ExternalId or the role ARN); and their live-city and leaderboard rows (`SocialRow`:
-  `{kind: 'presence', region, until, name?, rank?}` or `{kind: 'leaderboard', board, week, name, score}`). Nobody else's
-  rows. The demo's `exportMe()` gives this device's progress with `practice: true`.
+  (`Content-Disposition: attachment`) of `PlayerDataExport {exportedAt, contract, progress, account?, social[], bill?,
+  aiCalls?, firstSeenDay?, mfaOnSince?}`: the player's progress; their account link as metadata only, `{status, region,
+  pendingRegion?, accountId?, linkedAt?, linkIssuedAt?, roleVersion?, linkRoleVersion?, fixes?, broken?, brokenAt?}`
+  (never the ExternalId or the role ARN); their live-city and leaderboard rows (`SocialRow`: `{kind: 'presence', region,
+  until, name?, rank?}` or `{kind: 'leaderboard', board, week, name, score}`); the bill switch and cached bill
+  (`{on, readAt?, bill?}`); today's and yesterday's AI request counts (`[{day, calls}]`); the day of the first AI request;
+  and when the server first saw an authenticator on (ISO). Each read is a plain read (it saves nothing). Nobody else's
+  rows. Once a minute per player (`429` "You downloaded your data a moment ago. Try again in a minute."). The demo's
+  `exportMe()` gives this device's progress with `practice: true`.

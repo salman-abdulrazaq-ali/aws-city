@@ -214,6 +214,7 @@ export function FindingCard({ openTab }: { openTab: Go }) {
   // v2.17: the linked role doesn't allow fixes (AllowFixes off): said up front, never after an approve and MFA.
   const fixesOff = useCity((s) => s.account.linked && s.account.fixes === false);
   const accountRegion = useCity((s) => s.account.region);
+  const hosted = useCity((s) => s.hosted);
   const closeBtn = useRef<HTMLButtonElement>(null);
   const box = useRef<HTMLElement>(null);
   useDialog(!!f, box, () => close(undefined), closeBtn);
@@ -327,7 +328,13 @@ export function FindingCard({ openTab }: { openTab: Go }) {
                 <div className="fixes-off" role="note">
                   <b>🔒 Fixes are off for your AWS City role</b>
                   <p className="muted">
-                    <Plain text="So this can’t be fixed from here yet: an approval would only be refused. Turn small fixes on in CloudFormation (you still approve each fix), then press Check again." />
+                    <Plain
+                      text={
+                        hosted
+                          ? 'So this can’t be fixed from here yet: an approval would only be refused. Turn small fixes on in CloudFormation (you still approve each fix), then press Check again.'
+                          : 'So this can’t be fixed from here yet: an approval would only be refused.'
+                      }
+                    />
                   </p>
                   {accountRegion && <FixesOn region={accountRegion} />}
                 </div>

@@ -101,7 +101,7 @@ export const roleUpdateSteps = (templateUrl?: string, label?: string) => [
   templateUrl ? `Pick Amazon S3 URL and paste: ${templateUrl}` : 'Pick Amazon S3 URL and paste the new template’s address.',
   `Press Next. Set ConnectsPlayer to ${label ?? 'the name shown here'}, and keep the ExternalId as it is.`,
   'Press Next, then tick “I acknowledge that AWS CloudFormation might create IAM resources with custom names.”',
-  'Press Update (or Submit). When it says UPDATE_COMPLETE, press Check again here.',
+  'Press Update (or Submit). When it says UPDATE_COMPLETE, press “I’ve updated the stack” here.',
 ];
 
 /** Turning small fixes on for a stack made without them (AllowFixes=true); each fix is still approved one by one. */
@@ -112,6 +112,9 @@ export const FIXES_ON_STEPS = [
   'Press Next, then tick “I acknowledge that AWS CloudFormation might create IAM resources with custom names.”',
   'Press Update (or Submit). When it says UPDATE_COMPLETE, press Check again.',
 ];
+
+/** The local server reads the developer's own profile: fixes are a start option there, never a CloudFormation update. */
+export const LOCAL_FIXES_COMMAND = 'npm run live -- --allow-fixes';
 
 /** Steps as one block of text, numbered, for the Copy button. */
 export const stepsText = (steps: readonly string[]) => steps.map((s, i) => `${i + 1}. ${s}`).join('\n');

@@ -3,8 +3,8 @@
 // (update the role, turn fixes on) and "Check again". The rules are pure in src/state/account.ts.
 
 import { useEffect, useRef, type RefObject } from 'react';
-import { deleteAccount, linkAccount, openUrl, recheckAccount } from '@/app/runtime';
-import { connectOffer, connectsPlayer, FIXES_ON_STEPS, roleUpdateSteps, stacksUrl, stepsText, stillBuilt } from '@/state/account';
+import { confirmRoleUpdate, deleteAccount, linkAccount, openUrl, recheckAccount } from '@/app/runtime';
+import { connectOffer, connectsPlayer, FIXES_ON_STEPS, LOCAL_FIXES_COMMAND, roleUpdateSteps, stacksUrl, stepsText, stillBuilt } from '@/state/account';
 import { connectTask } from '@/state/simple';
 import { bus } from '@/state/bus';
 import { useCity } from '@/state/store';
@@ -82,9 +82,9 @@ export function StackLink({ region, children = 'Open the AWSCity stack ↗' }: {
 }
 
 /**
- * "Check again": checks the linked account once more (a fresh setup link, then verify: src/app/runtime.ts
- * recheckAccount), so the server reads the role's version and whether fixes are allowed after an update in
- * CloudFormation. It waits for the account's answer, an error, or 15 s.
+ * "Check again": asks the linked role once more whether it allows fixes (v2.17 account.recheck, read-only:
+ * src/app/runtime.ts recheckAccount), after AllowFixes was turned on in CloudFormation. Hosted only (FixesOn). It waits
+ * for the account's answer, an error, or 15 s.
  */
 export function CheckAgain() {
   const accountId = useCity((s) => s.account.accountId);
@@ -116,8 +116,20 @@ export function CheckAgain() {
   );
 }
 
-/** Fixes are off for the AWSCity role (AllowFixes false): how to turn them on, said before any approve or MFA. */
+/**
+ * Fixes are off (AllowFixes false): how to turn them on, said before any approve or MFA. Hosted: the CloudFormation
+ * steps and Check again. The local server runs the developer's own profile, so there it's a restart with fixes allowed.
+ */
 export function FixesOn({ region }: { region: string }) {
+  const hosted = useCity((s) => s.hosted);
+  if (!hosted)
+    return (
+      <div className="account-howto">
+        <p className="muted">
+          Fixes are off on this local server. Restart it with them on: <code>{LOCAL_FIXES_COMMAND}</code> (you still approve each fix).
+        </p>
+      </div>
+    );
   return (
     <div className="account-howto">
       <StepList steps={FIXES_ON_STEPS} label="Turn small fixes on" />
@@ -130,9 +142,43 @@ export function FixesOn({ region }: { region: string }) {
 }
 
 /**
+ * "I've updated the stack": the city can't read the stack's version, so the player says the update is done (a fresh
+ * setup link, then a verify marked `updated`: src/app/runtime.ts confirmRoleUpdate). It waits for the account's answer,
+ * an error, or 15 s.
+ */
+function UpdatedStack() {
+  const seq = useCity((s) => s.account.seq);
+  const offline = useCity((s) => !isOnline(s.backendKind, s.backendStatus));
+  const pending = usePending();
+  const { clear } = pending;
+  useEffect(() => clear('updated'), [seq, clear]);
+  const busy = pending.is('updated');
+  return (
+    <button
+      className="btn tiny"
+      disabled={busy || offline}
+      aria-busy={busy}
+      onClick={() => {
+        const requestId = confirmRoleUpdate();
+        if (requestId) pending.start('updated', requestId);
+      }}
+    >
+      {busy ? (
+        <>
+          <span className="spinner" aria-hidden="true" /> Checking…
+        </>
+      ) : (
+        'I’ve updated the stack'
+      )}
+    </button>
+  );
+}
+
+/**
  * "Update your AWS City role (v3 → v4)": the steps in CloudFormation, the template's address to paste and the
  * ConnectsPlayer name the newest role asks for (it comes with a setup link: "Get the name to type" asks for a fresh one,
- * same ExternalId), then Check again (a fresh link and verify, so the server reads the new version).
+ * same ExternalId), then "I've updated the stack" (the version is the one installed from the city's link: the account
+ * can't be read for it).
  */
 export function RoleUpdate({ region, from, to, templateUrl }: { region: string; from: number; to: number; templateUrl?: string }) {
   const [copied, copy] = useCopy();
@@ -150,6 +196,9 @@ export function RoleUpdate({ region, from, to, templateUrl }: { region: string; 
       </b>
       <p className="muted">
         <Plain text="A newer role is out: it lets the city do what this version of the game asks. Your link and ExternalId stay the same." />
+      </p>
+      <p className="muted">
+        <Plain text="The city can’t read your stack for its version: it goes by the one you installed from its link. So press “I’ve updated the stack” once CloudFormation says UPDATE_COMPLETE." />
       </p>
       <StepList steps={roleUpdateSteps(undefined, label ? 'the name below' : undefined)} copy={stepsText(roleUpdateSteps(templateUrl, label))} label="Update your AWS City role" />
       {templateUrl && (
@@ -186,7 +235,7 @@ export function RoleUpdate({ region, from, to, templateUrl }: { region: string; 
       </div>
       <div className="row">
         <StackLink region={region} />
-        <CheckAgain />
+        <UpdatedStack />
       </div>
     </section>
   );

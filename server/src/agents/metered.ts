@@ -18,15 +18,42 @@ export class ModelLimitError extends Error {
 }
 export const QUOTA_MESSAGE = 'You’ve used today’s AI helpers — they’ll be back tomorrow!';
 
-/** A player first seen today gets this share of the daily calls (100 → 20): a throwaway sign-up is worth little. */
+/** A player is "new" for this many days from their first model call (that day and the next two). */
+export const NEW_PLAYER_DAYS = 3;
+/** A new player gets this share of the daily calls (100 → 20): a throwaway sign-up is worth little. */
 export const NEW_PLAYER_SHARE = 1 / 5;
-/** Players first seen today share at most this part of the city's daily cap (20,000 → 5,000), however many sign up. */
+/** New players share at most this part of the city's daily cap (20,000 → 5,000), however many sign up. */
 export const NEW_PLAYERS_GLOBAL_SHARE = 1 / 4;
-/** The city's counter for players first seen today (beside GLOBAL). */
+/** The city's counter for new players (beside GLOBAL). */
 export const NEW_PLAYERS_KEY = 'GLOBAL#NEW';
 
 /** The player stopped it (closed their tab): the call may have cost something, so it's never given back. */
 export const isAbort = (err: unknown) => err instanceof APIUserAbortError || ['AbortError', 'CancelledError'].includes((err as { name?: string })?.name ?? '');
+
+/** Socket errors that only happen before a request is sent (no route, no name, nobody listening). */
+const NOT_SENT = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH']);
+
+/**
+ * Whether a failed model call proves the model never ran, so the call can be given back: Bedrock throttled it (429,
+ * ThrottlingException), refused it (403, AccessDenied: the budget's deny policy) or rejected the request (400, a
+ * validation error), or the connection failed before the request was sent. Never a timeout, a 5xx (Bedrock may have
+ * run it) or an abort: those may have cost something.
+ */
+export const provenNotRun = (err: unknown): boolean => {
+  if (isAbort(err)) return false;
+  // The cause chain too: Strands wraps a 429 as ModelThrottledError, and a refused connection's code sits under fetch's TypeError.
+  for (let c: unknown = err, depth = 0; c && depth < 5; c = (c as { cause?: unknown }).cause, depth++) {
+    const e = c as { status?: number; name?: string; code?: string; $metadata?: { httpStatusCode?: number } };
+    const status = e.status ?? e.$metadata?.httpStatusCode;
+    if (status === 429 || status === 403 || status === 400) return true;
+    if (['ThrottlingException', 'ModelThrottledError', 'AccessDeniedException', 'ValidationException'].includes(e.name ?? '')) return true;
+    if (NOT_SENT.has(e.code ?? '')) return true;
+  }
+  return false;
+};
+
+/** Whole days from one YYYY-MM-DD day to another. */
+const daysBetween = (from: string, to: string) => Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000);
 
 /**
  * A failed model call as a hosted player should hear it: Bedrock's AccessDenied (the budget's deny policy) is "resting"
@@ -57,12 +84,12 @@ export const killSwitch = (deps: { ssm?: SSMClient; name?: string; cacheMs?: num
 
 /**
  * Every Bedrock call for a player goes through here: kill switch → the player's daily quota (read) → the new
- * players' share (players first seen today) → the global daily cap → the player's quota (counted). Counters are
- * atomic (DynamoDB conditional ADD when hosted), so parallel sockets or tasks can't overshoot. Open sign-up makes
- * accounts free, so a player first seen today gets `newDaily` calls (NEW_PLAYER_SHARE of `daily`) and all of them
- * together at most `newGlobalDaily` (NEW_PLAYERS_GLOBAL_SHARE of the global cap): ~200 throwaway accounts take 4,000
- * calls, never the whole city's day. A call that fails before Bedrock answers (throttled, refused, denied) is given
- * back; one the player aborted isn't.
+ * players' share → the global daily cap → the player's quota (counted). Counters are atomic (DynamoDB conditional ADD
+ * when hosted), so parallel sockets or tasks can't overshoot. Open sign-up makes accounts free, so a player first seen
+ * within NEW_PLAYER_DAYS gets `newDaily` calls (NEW_PLAYER_SHARE of `daily`) and all of them together at most
+ * `newGlobalDaily` (NEW_PLAYERS_GLOBAL_SHARE of the global cap): ~200 throwaway accounts take 4,000 calls, never the
+ * whole city's day. Only a call that proves the model never ran is given back (provenNotRun: throttled, denied, a bad
+ * request, no connection); a timeout, a 5xx, an abort or a stream that sent anything isn't.
  */
 export const metered = (
   llm: Llm,
@@ -70,14 +97,15 @@ export const metered = (
 ): Llm => {
   const newDaily = deps.newDaily ?? Math.max(1, Math.ceil(deps.daily * NEW_PLAYER_SHARE));
   const newGlobalDaily = deps.newGlobalDaily ?? Math.floor(deps.globalDaily * NEW_PLAYERS_GLOBAL_SHARE);
-  /** Whether this player was first seen today; once they weren't, they never are again. The local server's one player never is. */
-  let seen: { day: string; fresh: boolean } | undefined;
-  const firstSeenToday = async (day: string) => {
+  /** The day of this player's first model call (the SEEN row: saved once, never changed). The local server's one player is never new. */
+  let firstDay: string | undefined;
+  const isNew = async (day: string) => {
     if (deps.sub === 'local') return false;
-    if (seen && (!seen.fresh || seen.day === day)) return seen.fresh;
-    seen = { day, fresh: (await deps.quota.firstSeen(deps.sub, day)) >= day };
-    return seen.fresh;
+    firstDay ??= await deps.quota.firstSeen(deps.sub, day);
+    return daysBetween(firstDay, day) < NEW_PLAYER_DAYS;
   };
+  /** Whether a call on `day` counted as a new player's (known without a read once a call was taken). */
+  const wasNew = (day: string) => deps.sub !== 'local' && firstDay !== undefined && daysBetween(firstDay, day) < NEW_PLAYER_DAYS;
   /** What one call took, so a failed call gives exactly that back. */
   type Ticket = { day: string; fresh: boolean };
   const giveBack = async (t: Ticket, player = true) => {
@@ -87,7 +115,7 @@ export const metered = (
   const take = async (): Promise<Ticket> => {
     if (!(await deps.enabled())) throw new ModelLimitError('paused', PAUSED_MESSAGE);
     const day = today(deps.now?.());
-    const fresh = await firstSeenToday(day);
+    const fresh = await isNew(day);
     const limit = fresh ? Math.min(deps.daily, newDaily) : deps.daily;
     const overQuota = () => {
       log.metric('QuotaRejected', 1);
@@ -113,14 +141,14 @@ export const metered = (
     log.metric('ModelCalls', 1);
     return { day, fresh };
   };
-  /** Bedrock still throttling after the SDK's own retries: counted for the ModelThrottled alarm. A failure gives the call back. */
+  /** Bedrock still throttling after the SDK's own retries: counted for the ModelThrottled alarm. A failure that proves the model never ran gives the call back. */
   const call = async <T>(ticket: Ticket, run: () => Promise<T>): Promise<T> => {
     try {
       return await run();
     } catch (err) {
       const e = err as { status?: number; name?: string };
       if (e?.status === 429 || e?.name === 'ThrottlingException') log.metric('ModelThrottled', 1);
-      if (!isAbort(err)) await giveBack(ticket);
+      if (provenNotRun(err)) await giveBack(ticket);
       throw modelError(err);
     }
   };
@@ -138,10 +166,11 @@ export const metered = (
     client: llm.client,
     /** The same checks for model calls made outside create/stream (the Strands citizens' model). */
     gate: async () => void (await take()),
-    /** Gives back one call taken by `gate` that failed before Bedrock answered (the Strands citizens' model). */
-    refund: async () => {
+    /** Gives back one call taken by `gate` whose failure proves the model never ran (the Strands citizens' model, before any event). */
+    refund: async (err?: unknown) => {
+      if (!provenNotRun(err)) return;
       const day = today(deps.now?.());
-      await giveBack({ day, fresh: seen?.day === day && seen.fresh });
+      await giveBack({ day, fresh: wasNew(day) });
     },
     canFallBack: llm.canFallBack,
     async create(params, opts = {}) {
@@ -153,18 +182,17 @@ export const metered = (
       return record(await call(await take(), () => llm.create(params, { ...opts, fallback: true })));
     },
     async stream(params, onText) {
-      // A stream that already sent text cost something: only a failure before the first word gives the call back.
+      // A stream that sent anything (a thinking block counts) ran the model: only a failure before its first event can give the call back.
       const ticket = await take();
-      let spoke = false;
+      let started = false;
       try {
         return record(
-          await llm.stream(params, (d) => {
-            spoke = true;
-            onText(d);
+          await llm.stream(params, onText, () => {
+            started = true;
           }),
         );
       } catch (err) {
-        if (spoke) throw modelError(err);
+        if (started) throw modelError(err);
         return call(ticket, () => Promise.reject(err));
       }
     },

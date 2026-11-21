@@ -1,13 +1,14 @@
 # AWS City — Privacy Policy
 
-*Last updated: 20 November 2026*
+*Last updated: 21 November 2026*
 
 > **For whoever runs this service.** AWS City is open-source software; each deployment is run by the person or
 > organisation that deployed it. This file is a template: `npm run setup` asks for your name and contact email and
 > writes a filled copy to `.output/privacy-policy-<env>.md`. Host that copy at a public URL and give the URL to each
 > store listing (see `docs/store-listing.md`). If you fill it in by hand, replace every `{{PLACEHOLDER}}`. Before you
 > publish, check it against what your deployment really does (a changed retention or log setting changes this page).
-> Delete this note from the published copy.
+> If you don't set `TYPESAFE_API_KEY` (the Jev safety check, `docs/jev.md`), you may delete its paragraph under "What we
+> process but don't keep". Delete this note from the published copy.
 
 ## Who runs this service
 
@@ -38,12 +39,14 @@ delete it.
 |---|---|---|
 | Your account id from sign-in (a random Cognito id) and email address | So you can sign in and keep your city on any computer | Amazon Cognito, until you delete your account |
 | Your city progress (buildings and their levels, ⭐ stars, 🪙 City Coins, cards, quests, settings) | To save your game | Amazon DynamoDB, until you delete your account |
-| Your AWS account link: account id, role name, region, a random setup code (ExternalId), when it was linked and whether the role allows fixes | So agents can build in *your* AWS account after you approve | DynamoDB, until you disconnect or delete your account |
+| Your AWS account link: account id, role name, region (and a new one you asked for but haven't verified yet), a random setup code (ExternalId), when it was linked, when your last setup link was made and which role version it points at, the role version you installed from it, whether the role allows fixes, and when the role stopped working (if it did) | So agents can build in *your* AWS account after you approve | DynamoDB, until you disconnect or delete your account |
 | Your linked AWS account's month-to-date cost totals, by service and Region (only if you turn the city's bill on; off by default) | So the city can show what your account costs this month | DynamoDB, replaced by the next read (at most once a day) and deleted when you delete your account |
 | Request counts per minute from your linked AWS account's CloudWatch (load balancer, Lambda, API Gateway, DynamoDB writes), only if you turn live traffic on (off by default) | So the city's traffic can follow your real requests | In the server's memory only, replaced by the next read (at most every 5 minutes) and gone when you close the city |
 | A public Mayor name (two words picked by the game, like "Kind Otter"; you never type it), only if you turn on **Show me on leaderboards** (off by default) | So other players can see you in the live city and on the weekly leaderboards | DynamoDB: your presence row expires 90 seconds after you close the city; leaderboard rows after 9 weeks. Turning the switch off removes both at once |
 | Your best weekly mini-game scores and your city's rank points, only while that switch is on | The weekly leaderboards | DynamoDB, 9 weeks |
 | A daily count of AI requests | To keep the free tier fair (a daily limit) | DynamoDB, expires after 2 days |
+| The day of your first AI request | New players get a smaller daily limit for their first 3 days, so free sign-ups can't use up the service | DynamoDB, until you delete your account |
+| When the service first saw your authenticator app turned on (only if you sign in with an email address and turn one on) | Only a sign-in after that time may link an AWS account or approve a change | DynamoDB, until you turn the authenticator off or delete your account |
 | Screenshots you choose to send to the Lookout | So it can tell you what the page is about | Amazon S3, deleted automatically after 1 day |
 
 **We never see or store your AWS password or access keys.** Agents act in your AWS account only
@@ -63,6 +66,11 @@ Neither one deletes what the game built in your AWS account: take those down fir
 
 - **Your questions and requests** are sent to Claude (an AI model) on Amazon Bedrock to produce the
   agents' answers. Amazon Bedrock doesn't store them or use them to train models.
+- **A safety check on changes (only if this service has it turned on):** before you're asked to approve a change an
+  agent wants to make in your AWS account, your own words for that task (at most 500 characters, with AWS account ids
+  and ARNs removed), the kind of change and its one-line summary are sent to TypeSafe's Jev service, which says how
+  risky the change looks. Nothing read from your AWS account is sent, and the check can only make the city stricter
+  (you still approve every change).
 - **Names of the resources in your linked AWS account** (e.g. bucket and table names) are read so
   the city can draw them, and so are your account's Availability Zone names and IDs and which AWS Regions it has turned
   on. They're kept in the server's memory while you're playing, not saved.
@@ -106,13 +114,17 @@ Other players never see your account id or email: the live city and leaderboards
 code, with only the Mayor name the game picked for you.
 
 **Download.** In the game: **⋯ → Account → Download my data** (the Deploy tab's "Your data" card has it too). It saves one
-JSON file on your device (`GET /me/export`) with everything we store about you: your progress, your account link
-as metadata only (status, Region, account id, when it was linked, role version, whether fixes are on, whether it broke:
-never the ExternalId or the role ARN) and your live-city and leaderboard rows. Nobody else's rows are in it.
+JSON file on your device (`GET /me/export`) with everything in "What we store" that the service keeps (your email
+address and sign-in id are in Amazon Cognito: write to us for those): your progress; your account link as metadata only
+(status, Region and any Region you asked for, account id, when it was linked, when your last setup link was made and its
+role version, the role version you installed, whether fixes are on, and when it stopped working: never the ExternalId or
+the role ARN); your live-city and leaderboard rows; the bill switch and your cached bill; today's and yesterday's AI
+request counts; the day of your first AI request; and when the service first saw your authenticator on. Nobody else's
+rows are in it. You can download it once a minute.
 
 **Delete.** In the game: **⋯ → Account → Delete my account…** (also Deploy → Your data), or write to {{CONTACT_EMAIL}}.
-This deletes your progress, account link, cached bill, live-city presence, leaderboard scores and sign-in
-(`DELETE /me`) from the live database immediately; screenshots expire within a day anyway. If you want your AWS
+This deletes your progress, account link, cached bill, live-city presence, leaderboard scores, first AI day,
+authenticator time and sign-in (`DELETE /me`) from the live database immediately; screenshots expire within a day anyway. If you want your AWS
 account to be left clean too, take down what the game built there first, then delete the `AWSCity` stack in your AWS
 account's CloudFormation console to remove the role.
 

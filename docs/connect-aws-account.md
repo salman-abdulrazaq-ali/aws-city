@@ -104,13 +104,14 @@ working, because the ExternalId stays the same.
 
 The card shows "Small fixes: off" with **Turn small fixes on**. In CloudFormation open the `AWSCity` stack → **Update** →
 **Use existing template** → **Next** → set `AllowFixes` to `true` (keep the ExternalId) → tick the IAM acknowledgement →
-**Update**. When it says `UPDATE_COMPLETE` press **Check again** in the game. City care also says up front when fixes are
-off, so you aren't asked to approve something that can't run.
+**Update**. When it says `UPDATE_COMPLETE` press **Check again** in the game: it asks the role again whether it allows
+fixes, and changes nothing. City care also says up front when fixes are off, so you aren't asked to approve something
+that can't run.
 
 ### Update your role (v3 → v5 and so on)
 
-When a newer role exists the card shows **Update your AWS City role (vN → v5)** (N is the version your link was made
-from). Your link and ExternalId stay the same.
+When a newer role exists the card shows **Update your AWS City role (vN → v5)** (N is the version you installed from the
+game's link: the game can't read your stack for its version). Your link and ExternalId stay the same.
 
 1. In the game, press **Get the ConnectsPlayer name to type.** It makes a fresh setup link with the same ExternalId and
    shows the name, with a **Copy the name** button.
@@ -120,8 +121,8 @@ from). Your link and ExternalId stay the same.
 4. **Next.** Set `ConnectsPlayer` to the name you copied and keep the ExternalId as it is. (Version 5 added this
    parameter, so older stacks don't have a value yet.)
 5. **Next**, tick the IAM acknowledgement, press **Update** (or Submit).
-6. When it says `UPDATE_COMPLETE`, press **Check again** in the game. It gets a fresh link and verifies, so the game
-   reads the new version.
+6. When it says `UPDATE_COMPLETE`, press **I've updated the stack** in the game. It gets a fresh link and verifies, so
+   the game records the new version. Press it only after the update: the game takes your word for the version.
 
 Players who linked before the game recorded versions (contract v2.17) don't see the update offer, because the game
 doesn't know which version they have.
@@ -149,7 +150,9 @@ your current link keeps working until the new one is verified.
 Nothing tells AWS City. Its next reads of your account are refused by AWS. After **three failed reads in a row** (about
 30 seconds at the default 10-second poll, and only while your city is open) the city stops reading your account and the
 card says "Was the stack deleted? Link again, or disconnect." Nothing else changes: no lessons, no findings are marked
-resolved, and a server restart doesn't retry it. The link record stays until you act:
+resolved, and a server restart doesn't retry it. For up to an hour after you delete the stack, the role's last session
+(it lasts up to an hour) may still be in use: AWS then refuses the city service by service, so some districts may show
+as locked before the card says the link is broken. The link record stays until you act:
 
 - **Link again** makes a new setup link in the same Region with the same ExternalId. Make the stack again and Verify.
 - **Disconnect** forgets the link.
@@ -158,8 +161,10 @@ resolved, and a server restart doesn't retry it. The link record stays until you
 
 - **Download my data:** **⋯ → Account → Download my data** (also Deploy → Your data). It saves
   `aws-city-my-data-<date>.json` on your device: your progress, your account link as metadata (status, Region, account
-  id, when it was linked, role version, whether fixes are on, whether it broke), and your live-city and leaderboard rows.
-  It never contains the ExternalId or the role ARN. Nothing else is fetched or uploaded.
+  id, when it was linked, when your last setup link was made, role version, whether fixes are on, when it broke), your
+  live-city and leaderboard rows, your bill switch and cached bill, your recent AI request counts, the day of your first
+  AI request and when the service first saw your authenticator on. It never contains the ExternalId or the role ARN.
+  Nothing else is fetched or uploaded. You can download it once a minute.
 - **Delete my account:** **⋯ → Account → Delete my account…** (also Deploy → Your data), after a confirmation. It deletes
   everything we store about you, including the link record and your sign-in, and it can't be undone. It does **not**
   touch your AWS account: take down what the city built first (the confirmation warns you if anything is left), and delete

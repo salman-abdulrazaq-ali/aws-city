@@ -54,6 +54,8 @@ export interface QuotaStore {
   refund(key: string, day: string): Promise<void>;
   /** The day this player made their first model call: `day` is saved the first time, then always the saved one. */
   firstSeen(sub: string, day: string): Promise<string>;
+  /** The saved first day, or undefined; a read only, never saves one (GET /me/export). */
+  firstDay(sub: string): Promise<string | undefined>;
 }
 
 /**
@@ -63,6 +65,8 @@ export interface QuotaStore {
 export interface MfaStore {
   /** The saved time, or `now` saved and returned the first time. */
   since(sub: string, now: number): Promise<number>;
+  /** The saved time, or undefined; a read only, never saves one (GET /me/export). */
+  get(sub: string): Promise<number | undefined>;
   /** The authenticator is off: forget the time, so turning it on again starts a new one. */
   forget(sub: string): Promise<void>;
 }

@@ -76,9 +76,9 @@ export function startRuntime(l: Layout) {
     // A setup link arrived: the Region and AllowFixes it was asked with are now what the link says (step 2's checkbox).
     const asked = e.type === 'account.linkUrl' ? stepUps.get(e.requestId) : undefined;
     if (asked?.action === 'account.link') store().patchAccount({ linkRegion: asked.region, allowFixes: !!asked.allowFixes });
-    // "Check again": the fresh link is in, so the verify that reads the role can go.
-    if (e.type === 'account.linkUrl' && rechecks.has(e.requestId)) verifyAccount(rechecks.get(e.requestId)!);
-    if ((e.type === 'account.linkUrl' || e.type === 'error') && e.requestId) rechecks.delete(e.requestId);
+    // "I've updated the stack": the fresh link is in, so the verify that records the update can go.
+    if (e.type === 'account.linkUrl' && updates.has(e.requestId)) verifyAccount(updates.get(e.requestId)!, { updated: true });
+    if ((e.type === 'account.linkUrl' || e.type === 'error') && e.requestId) updates.delete(e.requestId);
     bus.emit('server', e);
     if (e.type === 'console.step') void relayConsoleStep(e);
   });
@@ -274,7 +274,7 @@ async function endSession() {
   pulled = false;
   storedOwner = '';
   stepUps.clear();
-  rechecks.clear();
+  updates.clear();
   accountAsks.clear();
   mfaRefused = undefined;
   // Anything held for this player must not reach the next one.
@@ -698,7 +698,8 @@ export async function downloadMyData() {
   } catch (e) {
     // Players get a sentence, never the raw request error ("Players see no internal errors"); the console keeps the detail.
     console.warn('download my data failed', e);
-    store().toast('⚠️', 'Couldn’t download your data just now. Check your connection and try again.', 'error');
+    const tooSoon = (e as { tooSoon?: boolean }).tooSoon;
+    store().toast('⚠️', tooSoon ? 'You downloaded your data a moment ago. Try again in a minute.' : 'Couldn’t download your data just now. Check your connection and try again.', 'error');
   }
 }
 
@@ -758,7 +759,12 @@ export async function startMfaSetup() {
 }
 
 /** A command the server can refuse with mfa_required (step-up), as sent. */
-export type StepUp = { action: 'account.link'; region: string; allowFixes?: boolean } | { action: 'account.verify'; roleArn: string } | { action: 'finding.fix' } | { action: 'deploy.approve' };
+export type StepUp =
+  | { action: 'account.link'; region: string; allowFixes?: boolean }
+  | { action: 'account.verify'; roleArn: string; updated?: boolean }
+  | { action: 'finding.fix' }
+  | { action: 'resource.remove' }
+  | { action: 'deploy.approve' };
 /** requestId → the step-up command sent with it (its mfa_required error carries that id; deploy.approve's carries none). */
 const stepUps = new Map<string, StepUp>();
 const noteStepUp = (requestId: string, cmd: StepUp) => {
@@ -779,6 +785,7 @@ const AGAIN: Record<StepUp['action'], string> = {
   'account.verify': ', then press Verify again',
   'deploy.approve': ', then ask for the change again',
   'finding.fix': ', then press Fix again',
+  'resource.remove': ', then press Take it down again',
 };
 
 /**
@@ -799,6 +806,8 @@ export function afterMfa(refused: StepUp | undefined, signedOut = false): { rese
       return { message: 'Authenticator on. Press Approve again: your change is still waiting.' };
     case 'finding.fix':
       return { message: 'Authenticator on. Press Fix again to preview the change.' };
+    case 'resource.remove':
+      return { message: 'Authenticator on. Press Take it down again to preview the change.' };
     default:
       return { message: 'Authenticator on. Your AWS account is protected.' };
   }
@@ -815,7 +824,7 @@ export async function confirmMfaSetup(code: string) {
     store().setMfaRequired(false);
     store().toast('🔐', next.message);
     if (next.resend?.action === 'account.link') linkAccount(next.resend.region, { allowFixes: next.resend.allowFixes });
-    else if (next.resend?.action === 'account.verify') verifyAccount(next.resend.roleArn);
+    else if (next.resend?.action === 'account.verify') verifyAccount(next.resend.roleArn, { updated: next.resend.updated });
     return true;
   } catch (e) {
     store().toast('⚠️', (e as Error).message, 'error');
@@ -851,7 +860,7 @@ export function unlinkAccount() {
   return requestId;
 }
 
-/** This tab's account.link / account.verify / account.unlink requests still unanswered (their replies are its own). */
+/** This tab's account.link / verify / recheck / unlink requests still unanswered (their replies are its own). */
 const accountAsks = new Set<string>();
 /** Notes an account request this tab sent, and clears the card's last refusal (a new try). */
 function askAccount(requestId: string) {
@@ -860,20 +869,34 @@ function askAccount(requestId: string) {
   store().patchAccount({ error: undefined });
 }
 
-/** "Check again"'s link requests (requestId → the linked account id to verify once the link is in). */
-const rechecks = new Map<string, string>();
-
 /**
- * "Check again" (after updating the AWSCity stack in CloudFormation): the server reads the role at verify (whether fixes
- * are allowed; the role version the setup link named) and verifies only within a day of a setup link, so this asks for a
- * fresh link in the linked Region (same ExternalId: the stack keeps working, the link stays as it is) and verifies as soon
- * as it's in. Returns the link's requestId (an error for it carries it).
+ * "Check again" (after turning AllowFixes on in CloudFormation): v2.17 account.recheck asks the linked role again,
+ * without changing anything, whether it allows fixes. No setup link, no MFA; the role version stays as it was. Returns
+ * the requestId (the answer, account.status, or an error carries it).
  */
 export function recheckAccount() {
   const { accountId, region, linked } = store().account;
+  if (!backend || !linked || !accountId || !region) return undefined;
+  const requestId = uid();
+  askAccount(requestId);
+  backend.send({ action: 'account.recheck', requestId });
+  return requestId;
+}
+
+/** "I've updated the stack"'s link requests (requestId → the linked account id to verify, as updated, once the link is in). */
+const updates = new Map<string, string>();
+
+/**
+ * "I've updated the stack" (after updating the AWSCity stack to the newest role): the city can't read the stack's version,
+ * so the player says so. The server verifies only within a day of a setup link, so this asks for a fresh link in the
+ * linked Region (same ExternalId: the stack keeps working) and, as soon as it's in, verifies with `updated` (the role
+ * version becomes that link's). Returns the link's requestId (an error for it carries it).
+ */
+export function confirmRoleUpdate() {
+  const { accountId, region, linked } = store().account;
   if (!linked || !accountId || !region) return undefined;
   const requestId = linkAccount(region);
-  if (requestId) rechecks.set(requestId, accountId);
+  if (requestId) updates.set(requestId, accountId);
   return requestId;
 }
 
@@ -881,24 +904,28 @@ export function recheckAccount() {
 export function removeResource(kind: ResourceRemove['kind'], id: string) {
   if (!backend) return undefined;
   const requestId = uid();
+  // Hosted, it starts only with an authenticator on: a refusal says to press Take it down again once it is.
+  noteStepUp(requestId, { action: 'resource.remove' });
   backend.send({ action: 'resource.remove', requestId, kind, id });
   return requestId;
 }
 
 /**
  * Accepts a 12-digit account id or a role ARN; the value goes to the server unchanged (it accepts either).
- * Returns the requestId, or undefined if the value was refused (or there's no backend).
+ * `updated`: "I've updated the stack" (the role version becomes the latest link's). Returns the requestId, or undefined
+ * if the value was refused (or there's no backend).
  */
-export function verifyAccount(roleArn: string) {
+export function verifyAccount(roleArn: string, opts: { updated?: boolean } = {}) {
   if (!isAccountIdOrRoleArn(roleArn)) {
     store().toast('⚠️', 'That doesn’t look right — paste the 12-digit account ID (or the role ARN arn:aws:iam::123456789012:role/…).', 'error');
     return undefined;
   }
   if (!backend) return undefined;
   const requestId = uid();
-  noteStepUp(requestId, { action: 'account.verify', roleArn: roleArn.trim() });
+  const updated = opts.updated ? { updated: true } : {};
+  noteStepUp(requestId, { action: 'account.verify', roleArn: roleArn.trim(), ...updated });
   askAccount(requestId);
-  backend.send({ action: 'account.verify', requestId, roleArn: roleArn.trim() });
+  backend.send({ action: 'account.verify', requestId, roleArn: roleArn.trim(), ...updated });
   return requestId;
 }
 

@@ -6,8 +6,9 @@ import { createApprovals } from '../src/contract/approvals.js';
 import { createUploadStore } from '../src/contract/uploads.js';
 import { BROKEN_AFTER, emptyWorld } from '../src/tenants.js';
 import { localStores } from '../src/store/local.js';
+import { today } from '../src/store/types.js';
 import type { ServerEvent } from '../src/world.js';
-import { fakeLlm } from './fakes.js';
+import { fakeLlm, message, text, toolUse } from './fakes.js';
 import { table } from './fixtures.js';
 
 // Every poller the tenant builds is recorded, so a test can see which ones are still running and feed it polls.
@@ -353,7 +354,9 @@ describe('resource.remove (v2.17): no model, the ActionService, the gate and the
     approvals.answer((events.find((e) => e.type === 'deploy.preview') as { deployId: string }).deployId, true);
     await job;
     expect(writes()).toEqual([]);
-    expect(events.filter((e) => e.type === 'deploy.status').at(-1)).toMatchObject({ status: 'failed', message: expect.stringMatching(/disconnected or changed meanwhile/) });
+    // The card was cancelled the moment the account went away: its own deploy.status says why, and nothing else follows.
+    expect(events.filter((e) => e.type === 'deploy.status').at(-1)).toMatchObject({ status: 'rejected', message: 'That account was disconnected, so nothing changed.' });
+    expect(events.some((e) => e.type === 'error')).toBe(false);
     tenants.closeAll();
   });
 
@@ -367,6 +370,168 @@ describe('resource.remove (v2.17): no model, the ActionService, the gate and the
     ]);
     expect(approvals.size).toBe(0);
     expect(writes()).toEqual([]);
+    tenants.closeAll();
+  });
+});
+
+describe('a disconnected or changed account changes nothing (v2.17)', () => {
+  const ACCOUNT = '123456789012';
+  const record = { status: 'linked' as const, externalId: 'x'.repeat(32), region: 'us-west-2', roleArn: 'arn', accountId: ACCOUNT, roleVersion: 4, fixes: true };
+  /** One server task's tenant hub: hosted-like (a linker for unlink and recheck), acting only for a linked record. */
+  const hubOn = (stores: ReturnType<typeof localStores>, clients: AwsClients, opts: { llm?: ReturnType<typeof fakeLlm>['llm']; accountCheckMs?: number; recheck?: AccountLinker['recheck'] } = {}) =>
+    createTenants({
+      config: loadConfig({ AWS_CITY_AGENT_ENGINE: 'classic' }),
+      stores,
+      uploads: createUploadStore('http://127.0.0.1:1'),
+      llm: opts.llm ?? fakeLlm([]).llm,
+      enabled: async () => true,
+      awsFor: (_sub, r) => (r?.status === 'linked' && r.accountId ? { clients, accountId: r.accountId, region: r.region } : undefined),
+      linker: { templateUrl: 'https://templates.example/player-role/v5.yaml', latestRoleVersion: 5, recheck: opts.recheck } as unknown as AccountLinker,
+      walkMs: 0,
+      accountCheckMs: opts.accountCheckMs,
+    });
+  /** A linked player, real gated clients whose requests land in `sent` (never the network), and a table City care can fix. */
+  const setupWorld = async () => {
+    pollers.length = 0;
+    const sent: string[] = [];
+    const requestHandler = {
+      async handle(r: { headers: Record<string, string>; body?: unknown }) {
+        const body = typeof r.body === 'string' ? r.body : '';
+        sent.push(r.headers['x-amz-target']?.split('.')[1] ?? /(?:^|&)Action=(\w+)/.exec(body)?.[1] ?? 'other');
+        return { response: { statusCode: 200, headers: {}, body: new TextEncoder().encode('') } };
+      },
+    };
+    const clients = clientsFor({ region: 'us-west-2', credentials: async () => ({ accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 'not-a-secret' }), accountId: () => ACCOUNT, requestHandler: requestHandler as never });
+    /** Every request that would change AWS (the inventory's and the fix's reads go to the same recorder). */
+    const writes = () => sent.filter((op) => /^(Delete|Terminate|Create|Run|Put|Update|Enable|Modify|Revoke)/.test(op));
+    // A table the city built, without point-in-time recovery (a fix City care offers), and room for one more.
+    reading.snap = { ...emptyWorld('us-west-2'), accountId: ACCOUNT, resources: [{ ...table('city-quest'), meta: { pitr: false } }] };
+    const stores = localStores(`${process.env.TEMP ?? '/tmp'}/aws-city-retire-${Date.now()}-${Math.random()}/progress.json`);
+    await stores.accounts.put('u1', record);
+    await stores.progress.put('u1', { version: 2, landmarks: {}, updatedAt: '2026-11-21T10:00:00.000Z', citizens: { 'citizen:reliability': { xp: 25 } } });
+    return { stores, clients, writes };
+  };
+  const previews = (events: ServerEvent[]) => events.filter((e): e is Extract<ServerEvent, { type: 'deploy.preview' }> => e.type === 'deploy.preview');
+  const statusOf = (events: ServerEvent[], deployId: string) => events.filter((e) => e.type === 'deploy.status' && e.deployId === deployId).at(-1);
+
+  it('an agent write and a finding.fix waiting for approval: unlink cancels both cards, and approving them sends nothing', async () => {
+    const plan = message([toolUse('p1', 'plan_task', { agentId: 'dynamodb', steps: ['Make a table'], reply: 'A job for the library!' })], 'tool_use');
+    const llm = fakeLlm([plan, message([toolUse('t1', 'create_table', { name: 'city-orders' })], 'tool_use'), message([text('Done')], 'end_turn')]).llm;
+    const { stores, clients, writes } = await setupWorld();
+    const tenants = hubOn(stores, clients, { llm });
+    const tenant = await tenants.acquire({ sub: 'u1' });
+    pollers[0]!.poll(reading.snap!);
+    const events: ServerEvent[] = [];
+    const emit = (e: ServerEvent) => events.push(e);
+    const approvals = createApprovals({ region: 'us-west-2' });
+    const finding = tenant.care()!.open().find((f) => f.ruleId === 'dynamodb-no-pitr')!;
+    const fixing = tenant.care()!.fix('f1', finding.id, emit, approvals);
+    await vi.waitFor(() => expect(previews(events)).toHaveLength(1));
+    const task = tenant.orchestrator().submitTask({ taskId: 't1', prompt: 'make me a table', context: {} }, emit, approvals);
+    await vi.waitFor(() => expect(previews(events)).toHaveLength(2));
+    expect(writes()).toEqual([]);
+
+    await tenant.unlink('r-unlink', () => {});
+    for (const p of previews(events)) {
+      expect(statusOf(events, p.deployId)).toMatchObject({ status: 'rejected', message: 'That account was disconnected, so nothing changed.' });
+      expect(approvals.answer(p.deployId, true)).toBe(false); // nothing left to approve
+    }
+    await Promise.all([fixing, task]);
+    expect(writes()).toEqual([]);
+    expect(approvals.size).toBe(0);
+    tenants.closeAll();
+  });
+
+  it('another server task unlinked: an approval here re-reads the link inside the lock and changes nothing', async () => {
+    const { stores, clients, writes } = await setupWorld();
+    const here = hubOn(stores, clients);
+    const there = hubOn(stores, clients);
+    const tenant = await here.acquire({ sub: 'u1' });
+    const elsewhere = await there.acquire({ sub: 'u1' });
+    const tab: ServerEvent[] = [];
+    tenant.subscribe((e) => tab.push(e));
+    const events: ServerEvent[] = [];
+    const approvals = createApprovals({ region: 'us-west-2' });
+    const job = tenant.remove({ requestId: 'rm1', kind: 'table', id: 'city-quest' }, (e) => events.push(e), approvals);
+    await vi.waitFor(() => expect(previews(events)).toHaveLength(1));
+    await elsewhere.unlink('r-unlink', () => {}); // the other task: this one's world doesn't know yet
+    approvals.answer(previews(events)[0]!.deployId, true);
+    await job;
+    expect(writes()).toEqual([]);
+    expect(statusOf(events, previews(events)[0]!.deployId)).toMatchObject({ status: 'failed', message: expect.stringMatching(/disconnected or changed meanwhile/) });
+    // The stale world is rebuilt from the store: every tab here hears the account went.
+    await vi.waitFor(() => expect(tab).toContainEqual(expect.objectContaining({ type: 'account.status', linked: false })));
+    expect(await tenant.snapshot()).toBeUndefined();
+    here.closeAll();
+    there.closeAll();
+  });
+
+  it('an open city re-reads its account record about once a minute: an unlink on another task stops its poller', async () => {
+    const { stores, clients } = await setupWorld();
+    const here = hubOn(stores, clients, { accountCheckMs: 20 });
+    const there = hubOn(stores, clients);
+    const tenant = await here.acquire({ sub: 'u1' });
+    const elsewhere = await there.acquire({ sub: 'u1' });
+    const tab: ServerEvent[] = [];
+    tenant.subscribe((e) => tab.push(e));
+    expect(running()).toBe(2);
+    await elsewhere.unlink('r-unlink', () => {});
+    await vi.waitFor(() => expect(tab).toContainEqual(expect.objectContaining({ type: 'account.status', linked: false })));
+    expect(running()).toBe(0);
+    // A link and then a broken mark written by another task reach this one too.
+    await stores.accounts.put('u1', record);
+    await vi.waitFor(() => expect(tab.filter((e) => e.type === 'account.status').at(-1)).toMatchObject({ linked: true }));
+    await stores.accounts.put('u1', { ...record, brokenAt: '2026-11-21T10:00:00.000Z' });
+    await vi.waitFor(() => expect(tab.filter((e) => e.type === 'account.status').at(-1)).toMatchObject({ linked: false, broken: true }));
+    here.closeAll();
+    there.closeAll();
+  });
+
+  it('Check again (account.recheck) refreshes fixes on every tab, keeps the role version and the same world (pending cards stand)', async () => {
+    const { stores, clients } = await setupWorld();
+    await stores.accounts.put('u1', { ...record, fixes: false });
+    const recheck = vi.fn(async (sub: string) => {
+      const r = { ...(await stores.accounts.get(sub))!, status: 'linked' as const, fixes: true };
+      await stores.accounts.put(sub, r);
+      return r;
+    });
+    const tenants = hubOn(stores, clients, { recheck });
+    const tenant = await tenants.acquire({ sub: 'u1' });
+    const tab: ServerEvent[] = [];
+    tenant.subscribe((e) => tab.push(e));
+    const events: ServerEvent[] = [];
+    const approvals = createApprovals({ region: 'us-west-2' });
+    void tenant.remove({ requestId: 'rm1', kind: 'table', id: 'city-quest' }, (e) => events.push(e), approvals);
+    await vi.waitFor(() => expect(previews(events)).toHaveLength(1));
+    await tenant.recheck('r-check', () => {});
+    expect(tab.filter((e) => e.type === 'account.status')).toEqual([expect.objectContaining({ requestId: 'r-check', linked: true, fixes: true, roleVersion: 4 })]);
+    expect(pollers).toHaveLength(1); // not rebuilt
+    expect(approvals.size).toBe(1); // the removal's card still waits
+    expect(statusOf(events, previews(events)[0]!.deployId)).toBeUndefined();
+    tenants.closeAll();
+  });
+
+  it('GET /me/export has every stored row the privacy policy lists: the bill, the AI counts, the first AI day, the MFA time, the link times', async () => {
+    const { stores } = await setupWorld();
+    await stores.accounts.put('u1', { ...record, linkIssuedAt: '2026-11-20T09:00:00.000Z', linkRoleVersion: 5, brokenAt: '2026-11-21T09:00:00.000Z' });
+    await stores.bills.setOn('u1', true);
+    await stores.quota.consume('u1', today(), 10);
+    await stores.quota.firstSeen('u1', '2026-11-19');
+    await stores.mfa.since('u1', Date.parse('2026-11-18T08:00:00.000Z'));
+    const tenants = hubOn(stores, {} as AwsClients);
+    const out = await tenants.data({ sub: 'u1' }).exportMe();
+    expect(out).toMatchObject({
+      account: { linkIssuedAt: '2026-11-20T09:00:00.000Z', linkRoleVersion: 5, roleVersion: 4, broken: true, brokenAt: '2026-11-21T09:00:00.000Z' },
+      bill: { on: true },
+      aiCalls: [{ day: today(), calls: 1 }],
+      firstSeenDay: '2026-11-19',
+      mfaOnSince: '2026-11-18T08:00:00.000Z',
+    });
+    // Reading it saved nothing new: a player with no rows gets none.
+    const none = await tenants.data({ sub: 'u2' }).exportMe();
+    for (const k of ['bill', 'aiCalls', 'firstSeenDay', 'mfaOnSince', 'account']) expect(none).not.toHaveProperty(k);
+    expect(await stores.quota.firstDay('u2')).toBeUndefined();
+    expect(await stores.mfa.get('u2')).toBeUndefined();
     tenants.closeAll();
   });
 });

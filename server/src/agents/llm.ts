@@ -31,8 +31,8 @@ export const createLlm = (config: Config) => {
     client: client as unknown as Anthropic,
     /** No limits here; `metered` replaces this with the kill switch and quotas. */
     gate: async (): Promise<void> => undefined,
-    /** Gives back a call `gate` took that failed before Bedrock answered (nothing to give back here; see `metered`). */
-    refund: async (): Promise<void> => undefined,
+    /** Gives back a call `gate` took whose failure (`err`) proves the model never ran (nothing to give back here; see `metered`). */
+    refund: async (_err?: unknown): Promise<void> => undefined,
 
     /**
      * `light` = the cheaper model (page classification); planning, agents and the Copilot use the main one.
@@ -45,10 +45,11 @@ export const createLlm = (config: Config) => {
     /** Whether a refusal on this route can be retried on a different model. */
     canFallBack: (opts: LlmOptions = {}) => !opts.fallback && config.fallbackModel !== modelFor(opts),
 
-    /** Streams text deltas (chat answers, on the light model); resolves with the final message. */
-    async stream(params: Params, onText: (delta: string) => void): Promise<Anthropic.Message> {
+    /** Streams text deltas (chat answers, on the light model); resolves with the final message. `onEvent`: any stream event arrived. */
+    async stream(params: Params, onText: (delta: string) => void, onEvent?: () => void): Promise<Anthropic.Message> {
       const stream = client.messages.stream({ ...params, model: config.lightModel });
       stream.on('text', onText);
+      if (onEvent) stream.on('streamEvent', onEvent);
       return stream.finalMessage();
     },
   };

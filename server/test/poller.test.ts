@@ -81,12 +81,23 @@ describe('a refused role (v2.17)', () => {
   };
 
   it('refusalsMarked: STS refusing the role becomes RoleRefusedError (same name, same kind); anything else passes as it was', async () => {
-    const failing = (name: string) => refusalsMarked(async () => Promise.reject(Object.assign(new Error(name), { name })));
-    const denied: unknown = await failing('AccessDenied')().catch((e: unknown) => e);
+    const ROLE = 'arn:aws:iam::111122223333:role/AWSCityPlayerRole-us-west-2';
+    const failing = (name: string, message = name) => refusalsMarked(async () => Promise.reject(Object.assign(new Error(message), { name })), ROLE);
+    const caught = (name: string, message?: string) => failing(name, message)().catch((e: unknown) => e);
+    const denied: unknown = await caught('AccessDenied', `User: arn:aws:sts::999999999999:assumed-role/Task/x is not authorized to perform: sts:AssumeRole on resource: ${ROLE}`);
     expect(isRoleRefused(denied)).toBe(true);
     expect(classifyAwsError(denied)).toBe('denied');
-    expect(isRoleRefused(await failing('ExpiredToken')().catch((e: unknown) => e))).toBe(true);
-    const other = (await failing('Throttling')().catch((e: unknown) => e)) as Error;
+    // Our own task credentials failing is never the player's role refusing: it would break every player's link at once.
+    for (const name of ['ExpiredToken', 'InvalidClientTokenId', 'RequestExpired']) {
+      const err = (await caught(name)) as Error;
+      expect(isRoleRefused(err)).toBe(false);
+      expect(classifyAwsError(err)).toBe('expired');
+    }
+    // An AccessDenied that isn't AssumeRole on this player's role, or that our own role's identity policy caused.
+    expect(isRoleRefused(await caught('AccessDenied', 'not authorized to perform: sts:AssumeRole on resource: arn:aws:iam::444455556666:role/Other'))).toBe(false);
+    expect(isRoleRefused(await caught('AccessDenied', `not authorized to perform: sts:AssumeRole on resource: ${ROLE} because no identity-based policy allows the sts:AssumeRole action`))).toBe(false);
+    expect(isRoleRefused(await caught('AccessDenied', 'Access denied'))).toBe(false);
+    const other = (await caught('Throttling')) as Error;
     expect(isRoleRefused(other)).toBe(false);
     expect(other.name).toBe('Throttling');
   });

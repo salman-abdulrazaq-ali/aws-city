@@ -397,8 +397,9 @@ export class ServerBackend implements AgentBackend {
       case 'bill.enable':
       // v2.8: live traffic (the server reads CloudWatch at most every 5 minutes while it's on).
       case 'flow.enable':
-      // v2.17: disconnect the account; take down one thing the city built (approved like any write).
+      // v2.17: disconnect the account; ask the role again whether fixes are allowed (read-only); take down one thing the city built (approved like any write).
       case 'account.unlink':
+      case 'account.recheck':
       case 'resource.remove':
       // v2.10: a workshop step checked with a read-only look at the account.
       case 'workshop.verify':
@@ -419,7 +420,7 @@ export class ServerBackend implements AgentBackend {
         if (!what) return this.events.emit({ type: 'deploy.status', deployId: cmd.deployId, status: 'failed', message: 'I don’t know what that was any more.' });
         return this.task(`Please demolish what you built for me: ${what}. (Stop/terminate or delete it.)`);
       }
-      // v2.17: account.link may carry allowFixes (the setup link asks for AllowFixes=true).
+      // v2.17: account.link may carry allowFixes (the setup link asks for AllowFixes=true), account.verify `updated`.
       case 'account.link':
       case 'account.verify':
         return this.raw(cmd);
@@ -535,7 +536,8 @@ export class ServerBackend implements AgentBackend {
   /** v2.17: GET /me/export, everything the server keeps about the player (the account link as metadata only). */
   async exportMe(): Promise<PlayerDataExport> {
     const res = await fetch(this.url('/me/export'), { headers: await this.headers(), signal: AbortSignal.timeout(15_000) });
-    if (!res.ok) throw new Error(`GET /me/export → ${res.status}`);
+    // v2.17: once a minute per player; `tooSoon` lets the UI say so instead of blaming the connection.
+    if (!res.ok) throw Object.assign(new Error(`GET /me/export → ${res.status}`), res.status === 429 ? { tooSoon: true } : {});
     return (await res.json()) as PlayerDataExport;
   }
 

@@ -27,8 +27,15 @@ const HEARTBEAT_MS = 25_000;
 /** Frames per socket: a burst of 30, refilled at 10 a second. */
 const FRAME_BURST = 30;
 const FRAMES_PER_SECOND = 10;
-/** account.link / account.verify / account.unlink each rebuild the player's city (link and verify assume a role): one per this window. */
+/**
+ * account.link / verify / recheck / unlink each rebuild or re-read the player's link (link, verify and recheck assume a
+ * role): one per this window, except a verify that follows this socket's own successful link within LINK_THEN_VERIFY_MS
+ * ("I've updated the stack" sends a link, then a verify as soon as it's in).
+ */
 const ACCOUNT_COOLDOWN_MS = 5_000;
+const LINK_THEN_VERIFY_MS = 2 * 60_000;
+/** GET /me/export reads every row the player has: once a minute per player. */
+const EXPORT_EVERY_MS = 60_000;
 /** Tokens are checked at connect; long-lived sockets are closed so the client reconnects with a fresh one. */
 const MAX_CONNECTION_MS = 8 * 60 * 60_000;
 /**
@@ -104,8 +111,8 @@ export interface HubDeps {
   uploads?: MemoryUploadStore;
   /**
    * Step-up (hosted): 'ok' once the player has TOTP MFA on and this session signed in after it was turned on
-   * (accounts/mfa.ts). Checked before account.link/verify and before every AWS write (deploy.approve, finding.fix), so
-   * turning MFA off after linking stops writes too. Absent = no check.
+   * (accounts/mfa.ts). Checked before account.link/verify and before every AWS write (deploy.approve, finding.fix,
+   * resource.remove), so turning MFA off after linking stops writes too. Absent = no check.
    */
   mfaReady?: (p: Principal) => Promise<StepUp>;
   /**
@@ -139,6 +146,7 @@ export const singleTenant = (d: SingleTenantDeps & { config: Config }): TenantHu
     uploads: { create: (contentType) => d.uploads.create(contentType, 'local') },
     link: async (requestId, _region, emit) => emit({ type: 'account.status', requestId, linked: true, message: 'The local server uses the workshop AWS profile.' }),
     verify: async (requestId, _arn, emit) => emit({ type: 'account.status', requestId, linked: true, message: 'The local server uses the workshop AWS profile.' }),
+    recheck: async (requestId, emit) => emit({ type: 'account.status', requestId, linked: true, message: 'The local server uses the workshop AWS profile.' }),
     unlink: async (requestId, emit) => emit({ type: 'account.status', requestId, linked: true, message: 'The local server uses the workshop AWS profile, so there’s no account to disconnect.' }),
     remove: async ({ requestId }, emit) => emit({ type: 'error', requestId, message: 'This server can’t take things down directly. Ask the building’s agent instead.' }),
     deleteMe: async () => undefined,
@@ -165,8 +173,10 @@ const Command = z.discriminatedUnion('action', [
   z.object({ action: z.literal('console.stop'), taskId: Id }),
   // Connecting the player's own AWS account (hosted); v2.17: allowFixes, and disconnecting it
   z.object({ action: z.literal('account.link'), requestId: Id, region: z.string().min(1).max(32), allowFixes: z.boolean().optional() }),
-  z.object({ action: z.literal('account.verify'), requestId: Id, roleArn: z.string().min(1).max(200) }),
+  z.object({ action: z.literal('account.verify'), requestId: Id, roleArn: z.string().min(1).max(200), updated: z.boolean().optional() }),
   z.object({ action: z.literal('account.unlink'), requestId: Id }).strict(),
+  // contract v2.17 "Check again": the linked role's fixes answer, read again (read-only, no MFA)
+  z.object({ action: z.literal('account.recheck'), requestId: Id }).strict(),
   // contract v2.17: take down one thing the city built (no model; the ActionService and the player's approval)
   z.object({ action: z.literal('resource.remove'), requestId: Id, kind: z.enum(['instance', 'table', 'bucket']), id: z.string().regex(/^[A-Za-z0-9._-]{1,255}$/) }).strict(),
   // contract v2.3: city care (the citizens' findings)
@@ -235,6 +245,8 @@ export const createHttpServer = (deps: Deps) => {
   const deleted = 'deleted' in deps ? deps.deleted : undefined;
   /** Players known to be deleted (sub → until): one store read finds out, then it's remembered here. */
   const gone = new Map<string, number>();
+  /** When each player last downloaded their data (GET /me/export, EXPORT_EVERY_MS apart). */
+  const exported = new Map<string, number>();
   /** Whether this player deleted their account recently (a yes is remembered here, a no is asked again). */
   const isDeleted = async (sub: string) => {
     if (!deleted) return false;
@@ -346,6 +358,10 @@ export const createHttpServer = (deps: Deps) => {
     }
     // v2.17: everything we store about the player, as a download (the account link as metadata: never the ExternalId).
     if (route === 'GET /me/export') {
+      const now = Date.now();
+      if (now - (exported.get(principal.sub) ?? -Infinity) < EXPORT_EVERY_MS) throw new HttpError(429, 'You downloaded your data a moment ago. Try again in a minute.');
+      if (exported.size > 1000) for (const [sub, at] of exported) if (now - at >= EXPORT_EVERY_MS) exported.delete(sub);
+      exported.set(principal.sub, now);
       const body = JSON.stringify(await hub.data(principal).exportMe(), null, 2);
       res.writeHead(200, { 'content-type': 'application/json', 'content-disposition': 'attachment; filename="aws-city-my-data.json"', 'cache-control': 'no-store' });
       return res.end(body);
@@ -489,6 +505,8 @@ export const createHttpServer = (deps: Deps) => {
     const withinRate = rateLimiter(FRAME_BURST, FRAMES_PER_SECOND);
     const socialRate = rateLimiter(SOCIAL_BURST, SOCIAL_PER_SECOND);
     let lastAccountCommand = 0;
+    /** When this socket's last account.link succeeded (its account.linkUrl went out): a verify may follow it at once. */
+    let linkedAt = 0;
     const raw = (e: ServerEvent) => sendTo(ws, e);
     const emit = tenant.emitter(raw);
     // Events for a task still running when its socket closes are dropped (accepted limitation).
@@ -600,31 +618,41 @@ export const createHttpServer = (deps: Deps) => {
         void stepUp().then((verdict) => (verdict === 'ok' ? answer() : emit(stepUpRefused(verdict))));
         return;
       }
-      if (cmd.action === 'account.link' || cmd.action === 'account.verify' || cmd.action === 'account.unlink') {
-        if (Date.now() - lastAccountCommand < ACCOUNT_COOLDOWN_MS) {
+      if (cmd.action === 'account.link' || cmd.action === 'account.verify' || cmd.action === 'account.recheck' || cmd.action === 'account.unlink') {
+        const now = Date.now();
+        // A verify right after this socket's own link went through ("I've updated the stack": link, then verify) isn't spam.
+        const followsLink = cmd.action === 'account.verify' && now - linkedAt < LINK_THEN_VERIFY_MS;
+        if (now - lastAccountCommand < ACCOUNT_COOLDOWN_MS && !followsLink) {
           emit({ type: 'error', message: 'Give it a few seconds before trying that again.', requestId: cmd.requestId });
           return;
         }
-        lastAccountCommand = Date.now();
+        lastAccountCommand = now;
+        if (followsLink) linkedAt = 0; // one verify per link
         const failed = (err: unknown) => emit({ type: 'error', requestId: cmd.requestId, message: publicError('account change failed', err) });
-        // Taking access away needs no step-up: a player who can't pass MFA can still disconnect.
+        // Taking access away needs no step-up: a player who can't pass MFA can still disconnect. Neither does "Check
+        // again": it only asks the linked role a read-only question and changes nothing.
         if (cmd.action === 'account.unlink') return void tenant.unlink(cmd.requestId, emit).catch(failed);
+        if (cmd.action === 'account.recheck') return void tenant.recheck(cmd.requestId, emit).catch(failed);
         void (async () => {
           const verdict = await stepUp();
           if (verdict !== 'ok') return emit(stepUpRefused(verdict, cmd.requestId));
-          if (cmd.action === 'account.link') return tenant.link(cmd.requestId, cmd.region, emit, cmd.allowFixes);
-          return tenant.verify(cmd.requestId, cmd.roleArn, emit);
+          if (cmd.action === 'account.link') {
+            const requestId = cmd.requestId;
+            return tenant.link(requestId, cmd.region, (e) => (e.type === 'account.linkUrl' && e.requestId === requestId && (linkedAt = Date.now()), emit(e)), cmd.allowFixes);
+          }
+          return tenant.verify(cmd.requestId, cmd.roleArn, emit, cmd.updated);
         })().catch(failed);
         return;
       }
       if (cmd.action === 'resource.remove') {
-        // Like a fix: a request on this socket that may wait minutes for approval; started only with MFA on (hosted),
-        // and deploy.approve checks it again.
-        if (requests >= MAX_REQUESTS_PER_SOCKET) return emit({ type: 'error', message: 'Still working on your last request. Try again in a moment.', requestId: cmd.requestId });
-        requests++;
+        // A change the player approves, like an agent's: it counts with this socket's tasks (it may wait minutes for the
+        // approval), never with its request slots, which chats and checks need meanwhile. Started only with MFA on
+        // (hosted), and deploy.approve checks it again.
+        if (tasks >= MAX_TASKS_PER_SOCKET) return emit({ type: 'error', message: 'Two tasks or changes are already waiting. Finish or reject one first.', requestId: cmd.requestId });
+        tasks++;
         const { action: _a, ...remove } = cmd;
         const job = stepUp().then((verdict) => (verdict === 'ok' ? tenant.remove(remove, emit, approvals) : emit(stepUpRefused(verdict, cmd.requestId))));
-        void track(job.catch((err) => emit({ type: 'error', requestId: cmd.requestId, message: publicError('remove failed', err) }))).finally(() => requests--);
+        void track(job.catch((err) => emit({ type: 'error', requestId: cmd.requestId, message: publicError('remove failed', err) }))).finally(() => tasks--);
         return;
       }
       if (cmd.action === 'finding.explain' || cmd.action === 'finding.fix' || cmd.action === 'finding.undo') {

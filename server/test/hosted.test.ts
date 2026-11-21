@@ -7,7 +7,7 @@ import { mockClient } from 'aws-sdk-client-mock';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { connectsPlayerLabel, createAccountLinker, playerRoleName, templateVersion } from '../src/accounts/link.js';
-import { APIUserAbortError, PermissionDeniedError, RateLimitError } from '@anthropic-ai/sdk';
+import { APIConnectionError, APIConnectionTimeoutError, APIUserAbortError, BadRequestError, InternalServerError, PermissionDeniedError, RateLimitError } from '@anthropic-ai/sdk';
 import { createMfaCheck, memoryMfa, SIGN_IN_AGAIN_MESSAGE, type StepUp } from '../src/accounts/mfa.js';
 import { metered, ModelLimitError, NEW_PLAYERS_KEY, PAUSED_MESSAGE, QUOTA_MESSAGE, withErrorCodes } from '../src/agents/metered.js';
 import { cognitoAuth, type JwtVerifier, type Principal } from '../src/auth.js';
@@ -131,11 +131,71 @@ describe('metered model calls', () => {
     (llm.stream as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new RateLimitError(429, undefined, 'busy', new Headers()));
     await expect(m.stream({ max_tokens: 10, messages: [] }, () => undefined)).rejects.toBeInstanceOf(RateLimitError);
     expect(await quota.used('u1', today())).toBe(1);
-    // The citizens' model: gate takes a call, refund gives it back.
+    // The citizens' model: gate takes a call, refund gives it back when its failure proves the model never ran.
     await m.gate();
     expect(await quota.used('u1', today())).toBe(2);
-    await m.refund();
+    await m.refund(new RateLimitError(429, undefined, 'busy', new Headers()));
     expect(await quota.used('u1', today())).toBe(1);
+    await m.gate();
+    await m.refund(new APIConnectionTimeoutError());
+    expect(await quota.used('u1', today())).toBe(2);
+  });
+
+  it('only a failure that proves the model never ran is given back: throttled, denied, a bad request, no connection', async () => {
+    const quota = memoryQuota();
+    await quota.firstSeen('u1', '2026-01-01');
+    const { llm } = fakeLlm([]);
+    const m = metered(llm, { sub: 'u1', quota, daily: 50, globalDaily: 100, enabled: async () => true });
+    const create = llm.create as unknown as ReturnType<typeof vi.fn>;
+    const used = () => quota.used('u1', today());
+    const refused = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+    const given = [
+      new RateLimitError(429, undefined, 'slow down', new Headers()),
+      Object.assign(new Error('Rate exceeded'), { name: 'ThrottlingException', $metadata: { httpStatusCode: 429 } }),
+      new PermissionDeniedError(403, undefined, 'denied', new Headers()),
+      new BadRequestError(400, undefined, 'messages: field required', new Headers()),
+      Object.assign(new Error('Strands'), { name: 'ModelThrottledError', cause: new RateLimitError(429, undefined, 'x', new Headers()) }),
+      new APIConnectionError({ cause: Object.assign(new TypeError('fetch failed'), { cause: refused }) }),
+    ];
+    for (const err of given) {
+      create.mockRejectedValueOnce(err);
+      await expect(m.create({ max_tokens: 10, messages: [] })).rejects.toBeDefined();
+      expect(await used()).toBe(0);
+    }
+    // A timeout, a 5xx after Bedrock accepted the call, or a connection that dropped mid-answer may have cost something.
+    const kept = [
+      new APIConnectionTimeoutError(),
+      new InternalServerError(500, undefined, 'oops', new Headers()),
+      new InternalServerError(503, undefined, 'unavailable', new Headers()),
+      new APIConnectionError({ cause: Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }) }),
+    ];
+    for (const [i, err] of kept.entries()) {
+      create.mockRejectedValueOnce(err);
+      await expect(m.create({ max_tokens: 10, messages: [] })).rejects.toBeDefined();
+      expect(await used()).toBe(i + 1);
+    }
+    // A stream that produced any event (a thinking block, before any text) ran the model, whatever failed after.
+    (llm.stream as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(async (_p: unknown, _onText: unknown, onEvent?: () => void) => {
+      onEvent?.();
+      throw new RateLimitError(429, undefined, 'busy', new Headers());
+    });
+    await expect(m.stream({ max_tokens: 10, messages: [] }, () => undefined)).rejects.toBeInstanceOf(RateLimitError);
+    expect(await used()).toBe(kept.length + 1);
+  });
+
+  it('a player stays "new" (a fifth of the calls) for 3 days from their first call, then gets all of them', async () => {
+    const replies = () => Array.from({ length: 20 }, () => message([text('a')], 'end_turn'));
+    const quota = memoryQuota();
+    const at = (day: string) => Date.parse(`${day}T12:00:00Z`);
+    await quota.firstSeen('p2', '2026-11-19'); // two days ago: still new
+    const twoDays = metered(fakeLlm(replies()).llm, { sub: 'p2', quota, daily: 10, globalDaily: 1000, enabled: async () => true, now: () => at('2026-11-21') });
+    for (let i = 0; i < 2; i++) await twoDays.create({ max_tokens: 10, messages: [] });
+    await expect(twoDays.create({ max_tokens: 10, messages: [] })).rejects.toMatchObject({ code: 'quota' });
+    expect(await quota.used(NEW_PLAYERS_KEY, '2026-11-21')).toBe(2);
+    await quota.firstSeen('p3', '2026-11-18'); // three days ago: a regular
+    const threeDays = metered(fakeLlm(replies()).llm, { sub: 'p3', quota, daily: 10, globalDaily: 1000, enabled: async () => true, now: () => at('2026-11-21') });
+    for (let i = 0; i < 10; i++) await threeDays.create({ max_tokens: 10, messages: [] });
+    expect(await quota.used(NEW_PLAYERS_KEY, '2026-11-21')).toBe(2);
   });
 
   it('Bedrock AccessDenied (the budget’s deny policy) reads as the city’s AI resting, code paused, for hosted players', async () => {
@@ -324,6 +384,66 @@ describe('account linking', () => {
     expect(await stores.accounts.get('u1')).toMatchObject({ status: 'linked', region: 'us-west-2', accountId: '111122223333', roleArn: expect.stringContaining('us-west-2') });
   });
 
+  it('v2.17: the role version is the link’s only when the player installed or updated from it; another verify keeps it', async () => {
+    const { linker, stores, link } = setup(ok);
+    await link('u1', 'us-west-2');
+    expect(await linker.verify('u1', '111122223333')).toMatchObject({ roleVersion: 5 }); // a first verify: installed from the link
+    // The city publishes v6. A new link names it, but the stack in the account is still v5 until the player updates it.
+    const v6 = createAccountLinker({
+      accounts: stores.accounts,
+      templateUrl: 'https://templates.example/player-role/v6.yaml',
+      selfAccountId: SELF,
+      credentialsFor: () => async () => ({ accessKeyId: 'x', secretAccessKey: 'y' }),
+      whoAmI: async () => ok(`arn:aws:iam::111122223333:role/${playerRoleName('us-west-2')}`),
+      canFix: async () => undefined,
+    });
+    await v6.link('u1', 'us-west-2', { label: 'Player u1' });
+    expect(await stores.accounts.get('u1')).toMatchObject({ linkRoleVersion: 6, roleVersion: 5 });
+    expect(await v6.verify('u1', '111122223333')).toMatchObject({ roleVersion: 5 });
+    // "I've updated the stack": the player says the stack now runs the link's template.
+    expect(await v6.verify('u1', '111122223333', { updated: true })).toMatchObject({ roleVersion: 6 });
+    // A stack made in another Region from the link is installed from it too.
+    const fresh = setup(ok);
+    await fresh.link('u2', 'us-west-2');
+    await fresh.linker.verify('u2', '111122223333');
+    await fresh.stores.accounts.put('u2', { ...(await fresh.stores.accounts.get('u2'))!, roleVersion: 3 });
+    await fresh.link('u2', 'eu-west-1');
+    expect(await fresh.linker.verify('u2', '111122223333')).toMatchObject({ region: 'eu-west-1', roleVersion: 5 });
+  });
+
+  it('v2.17 Check again (recheck): asks the linked role about fixes again, read-only: no new link window, the role version stays', async () => {
+    let answer: boolean | undefined = false;
+    const { linker, stores, link, canFix } = setup(ok, { canFix: async () => answer });
+    await expect(linker.recheck('u1')).rejects.toThrow(/Connect your AWS account first/);
+    await link('u1', 'us-west-2');
+    await expect(linker.recheck('u1')).rejects.toThrow(/Connect your AWS account first/); // pending: nothing linked yet
+    const linked = await linker.verify('u1', '111122223333');
+    expect(linked).toMatchObject({ fixes: false, roleVersion: 5 });
+    answer = true; // the player set AllowFixes=true in CloudFormation
+    const rechecked = await linker.recheck('u1');
+    expect(rechecked).toEqual({ ...linked, fixes: true });
+    expect(await stores.accounts.get('u1')).toEqual({ ...linked, fixes: true });
+    expect(canFix).toHaveBeenLastCalledWith('us-west-2', expect.any(Function), '111122223333');
+    // Can't tell: unknown, not the last answer.
+    answer = undefined;
+    expect(await linker.recheck('u1')).not.toHaveProperty('fixes');
+    await stores.accounts.put('u1', { ...linked, brokenAt: '2026-11-21T10:00:00.000Z' });
+    await expect(linker.recheck('u1')).rejects.toThrow(/stopped working/);
+  });
+
+  it('v2.17 Check again with a role that no longer works is a plain refusal, and nothing is written', async () => {
+    let fail = false;
+    const { linker, stores, link } = setup((arn) => {
+      if (fail) throw new Error('AccessDenied');
+      return ok(arn);
+    });
+    await link('u1', 'us-west-2');
+    const linked = await linker.verify('u1', '111122223333');
+    fail = true;
+    await expect(linker.recheck('u1')).rejects.toThrow(/couldn’t use the AWSCity role in 111122223333 \(us-west-2\) just now/);
+    expect(await stores.accounts.get('u1')).toEqual(linked);
+  });
+
   it('verify refuses a role that turns out to be something else', async () => {
     const { linker, link } = setup(() => ({ Account: '444455556666', Arn: 'arn:aws:sts::444455556666:assumed-role/Other/x' }));
     await link('u1', 'us-west-2');
@@ -465,6 +585,20 @@ describe('DynamoDB store', () => {
     });
     await s.mfa.forget('u1');
     expect(ddb.commandCalls(DeleteCommand)[0]!.args[0].input).toMatchObject({ Key: { pk: 'USER#u1', sk: 'MFA' } });
+  });
+
+  it('v2.17 GET /me/export reads the first AI day and the MFA time with GetItem only (an export never saves a row)', async () => {
+    ddb.on(GetCommand).resolvesOnce({ Item: { firstDay: '2026-11-19' } }).resolvesOnce({ Item: { since: 1234 } }).resolvesOnce({});
+    const s = stores();
+    expect(await s.quota.firstDay('u1')).toBe('2026-11-19');
+    expect(await s.mfa.get('u1')).toBe(1234);
+    expect(await s.quota.firstDay('u2')).toBeUndefined();
+    expect(ddb.commandCalls(GetCommand).map((c) => c.args[0].input.Key)).toEqual([
+      { pk: 'USER#u1', sk: 'SEEN' },
+      { pk: 'USER#u1', sk: 'MFA' },
+      { pk: 'USER#u2', sk: 'SEEN' },
+    ]);
+    expect(ddb.commandCalls(UpdateCommand)).toHaveLength(0);
   });
 
   it('account lock: a lease per AWS account, released by its owner', async () => {
@@ -719,6 +853,10 @@ describe('hosted server: Cognito players and tenants', () => {
     expect(carol.progress).toBeNull();
     expect((await fetch(`http://127.0.0.1:${port}/me/export`, { headers: { origin: EXT } })).status).toBe(401);
     expect((await fetch(`http://127.0.0.1:${port}/me/export`, { headers: auth('jwt-alice') })).status).toBe(410); // deleted above
+    // Once a minute per player: a download reads every row the player has.
+    const again = await fetch(`http://127.0.0.1:${port}/me/export`, { headers: auth('jwt-bob') });
+    expect(again.status).toBe(429);
+    expect(await again.json()).toEqual({ error: 'You downloaded your data a moment ago. Try again in a minute.' });
   });
 
   it('v2.17 version handshake: a newer extension is refused (409, naming the server’s version) on the upgrade and on progress', async () => {
@@ -741,8 +879,8 @@ describe('hosted server: Cognito players and tenants', () => {
       expect(refused.headers.get('access-control-expose-headers')).toBe(CONTRACT_HEADER);
     }
     expect((await progress(CONTRACT_VERSION)).status).toBe(200);
-    // Taking data out (and deleting it) never waits for a version.
-    expect((await fetch(`http://127.0.0.1:${port}/me/export?contract=${newer}`, { headers: { authorization: 'Bearer jwt-bob', origin: EXT } })).status).toBe(200);
+    // Taking data out (and deleting it) never waits for a version (a player who hasn't downloaded this minute).
+    expect((await fetch(`http://127.0.0.1:${port}/me/export?contract=${newer}`, { headers: { authorization: 'Bearer jwt-gus', origin: EXT } })).status).toBe(200);
   });
 
   it('an unlinked player can learn but agents refuse to build', async () => {
@@ -831,6 +969,24 @@ describe('MFA step-up check', () => {
     expect(await check({ sub: 's1', authTime: 1_000_000 })).toBe('ok');
     expect(await since.since('s1', 0)).toBe(1_000_000);
     expect(SIGN_IN_AGAIN_MESSAGE).toMatch(/sign in again/);
+  });
+
+  it('a first sight with nothing recorded (POST /me/mfa never landed) dates from the user’s last change, so one sign-in after enrolling is enough', async () => {
+    const since = memoryMfa();
+    // TOTP turned on at 8 s (Cognito's UserLastModifiedDate), the player signed in again at 9 s; the server first looks at 10 s.
+    const user = { ...totp, UserLastModifiedDate: new Date(8_000) };
+    const check = createMfaCheck({ cognito: cognito(user as never) as never, userPoolId: 'p', since, now: () => 10_000 });
+    expect(await check({ sub: 's1', authTime: 9_000 })).toBe('ok');
+    expect(await since.since('s1', 0)).toBe(8_000);
+    // A password-only session from before it still has to sign in again.
+    expect(await check({ sub: 's1', authTime: 7_000 })).toBe('reauth');
+    // Never later than now (a clock ahead of ours), and a recorded first sight always wins.
+    const ahead = memoryMfa();
+    await createMfaCheck({ cognito: cognito({ ...totp, UserLastModifiedDate: new Date(50_000) } as never) as never, userPoolId: 'p', since: ahead, now: () => 10_000 })({ sub: 's2', authTime: 10_000 });
+    expect(await ahead.since('s2', 0)).toBe(10_000);
+    const recorded = memoryMfa();
+    await recorded.since('s3', 10_000);
+    expect(await createMfaCheck({ cognito: cognito(user as never) as never, userPoolId: 'p', since: recorded, now: () => 10_000 })({ sub: 's3', authTime: 9_000 })).toBe('reauth');
   });
 
   it('the first sight is kept in the store, so another task (or a restart) agrees', async () => {
@@ -953,6 +1109,105 @@ describe('MFA step-up for writes', () => {
     } finally {
       ws.close();
       server.close();
+    }
+  });
+
+  /** A hosted server around one stub tenant (the socket's own rules under test), and a socket to it. */
+  const stubServer = async (tenant: Tenant, mfaReady: () => Promise<StepUp>) => {
+    const tenants = { acquire: async () => tenant, data: () => tenant, release: () => undefined, closeAll: () => undefined };
+    const base = { ...loadConfig({}), authMode: 'cognito' as const, extensionOrigins: [EXT] };
+    const deps = { tenants, authenticate: async () => ({ sub: 'erin' }), mfaReady };
+    const probe = createHttpServer({ config: { ...base, port: 0 }, ...deps });
+    await new Promise<void>((r) => probe.server.listen(0, '127.0.0.1', r));
+    const port = (probe.server.address() as AddressInfo).port;
+    probe.server.close();
+    const { server } = createHttpServer({ config: { ...base, port }, ...deps });
+    await new Promise<void>((r) => server.listen(port, '127.0.0.1', r));
+    const events: ServerEvent[] = [];
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, bearerSubprotocols('x'), { origin: EXT });
+    ws.on('message', (raw) => events.push(JSON.parse(raw.toString())));
+    await new Promise((r) => ws.on('open', r));
+    const until = async (ok: () => boolean) => {
+      for (const end = Date.now() + 3000; !ok() && Date.now() < end; ) await new Promise((r) => setTimeout(r, 10));
+    };
+    const reply = (id: string) => events.find((e) => 'requestId' in e && e.requestId === id);
+    const send = (cmd: object) => ws.send(JSON.stringify(cmd));
+    return { events, until, reply, send, close: () => (ws.close(), server.close()) };
+  };
+
+  it('v2.17: a verify right after this socket’s own link passes the cooldown (once); Check again needs no MFA but waits its turn', async () => {
+    let mfa: StepUp = 'ok';
+    const link = vi.fn(async (requestId: string, _region: string, emit: (e: ServerEvent) => void) => emit({ type: 'account.linkUrl', requestId, url: 'u', externalId: 'e' }));
+    const verify = vi.fn(async (requestId: string, _arn: string, emit: (e: ServerEvent) => void) => emit({ type: 'account.status', requestId, linked: true }));
+    const recheck = vi.fn(async (requestId: string, emit: (e: ServerEvent) => void) => emit({ type: 'account.status', requestId, linked: true, fixes: true }));
+    const tenant = { sub: 'erin', region: 'us-west-2', link, verify, recheck, createCopilot: () => undefined, welcome: async () => [], subscribe: () => () => undefined, emitter: (emit: unknown) => emit } as unknown as Tenant;
+    const t = await stubServer(tenant, async () => mfa);
+    try {
+      // "I've updated the stack": a link, then a verify as soon as it's in (well inside the 5 s cooldown).
+      t.send({ action: 'account.link', requestId: 'l1', region: 'us-west-2' });
+      await t.until(() => !!t.reply('l1'));
+      t.send({ action: 'account.verify', requestId: 'v1', roleArn: '111122223333', updated: true });
+      await t.until(() => !!t.reply('v1'));
+      expect(t.reply('v1')).toMatchObject({ type: 'account.status', linked: true });
+      expect(verify).toHaveBeenCalledWith('v1', '111122223333', expect.any(Function), true);
+      // Once per link: another verify straight away is spam again, and so is Check again.
+      t.send({ action: 'account.verify', requestId: 'v2', roleArn: '111122223333' });
+      t.send({ action: 'account.recheck', requestId: 'c0' });
+      await t.until(() => !!t.reply('v2') && !!t.reply('c0'));
+      expect(t.reply('v2')).toMatchObject({ type: 'error', message: expect.stringMatching(/few seconds/) });
+      expect(t.reply('c0')).toMatchObject({ type: 'error', message: expect.stringMatching(/few seconds/) });
+      expect(verify).toHaveBeenCalledTimes(1);
+      expect(recheck).not.toHaveBeenCalled();
+    } finally {
+      t.close();
+    }
+    // A fresh socket: Check again changes nothing, so it needs no authenticator; it's strict about its fields.
+    mfa = 'enrol';
+    const u = await stubServer(tenant, async () => mfa);
+    try {
+      u.send({ action: 'account.recheck', requestId: 'c1' });
+      await u.until(() => !!u.reply('c1'));
+      expect(u.reply('c1')).toMatchObject({ type: 'account.status', requestId: 'c1', fixes: true });
+      expect(recheck).toHaveBeenCalledWith('c1', expect.any(Function));
+      u.send({ action: 'account.recheck', requestId: 'c2', roleArn: 'x' });
+      await u.until(() => u.events.some((e) => e.type === 'error' && /Bad command/.test(e.message)));
+      expect(recheck).toHaveBeenCalledTimes(1);
+    } finally {
+      u.close();
+    }
+  });
+
+  it('v2.17: a removal waiting for its approval counts with the tasks, never with the request slots chats need', async () => {
+    const asks: string[] = [];
+    const remove = vi.fn(async (cmd: { requestId: string }, emit: (e: ServerEvent) => void, approvals: Approvals) => {
+      await approvals.request(cmd.requestId, { action: { type: 'delete_table', name: 'city-quest' } as never, summary: 'Delete table', destructive: true }, emit, cmd.requestId);
+    });
+    const tenant = {
+      sub: 'erin',
+      region: 'us-west-2',
+      remove,
+      // Each question takes a request slot and holds it (an answer still being written).
+      orchestrator: () => ({ ask: (cmd: { requestId: string }) => (asks.push(cmd.requestId), new Promise(() => undefined)) }),
+      createCopilot: () => undefined,
+      welcome: async () => [],
+      subscribe: () => () => undefined,
+      emitter: (emit: unknown) => emit,
+    } as unknown as Tenant;
+    const t = await stubServer(tenant, async () => 'ok');
+    try {
+      t.send({ action: 'resource.remove', requestId: 'rm1', kind: 'table', id: 'city-quest' });
+      await t.until(() => t.events.some((e) => e.type === 'deploy.preview'));
+      for (const id of ['q1', 'q2', 'q3']) t.send({ action: 'chat.ask', requestId: id, districtId: 'storage', question: 'What is S3?', context: {} });
+      await t.until(() => asks.length === 3);
+      expect(asks).toEqual(['q1', 'q2', 'q3']);
+      expect(t.events.some((e) => e.type === 'error')).toBe(false);
+      // Two changes may wait at once; a third is refused plainly.
+      t.send({ action: 'resource.remove', requestId: 'rm2', kind: 'table', id: 'city-quest' });
+      t.send({ action: 'resource.remove', requestId: 'rm3', kind: 'table', id: 'city-quest' });
+      await t.until(() => !!t.reply('rm3') && t.events.filter((e) => e.type === 'deploy.preview').length === 2);
+      expect(t.events.find((e) => e.type === 'error')).toMatchObject({ requestId: 'rm3', message: expect.stringMatching(/already waiting/) });
+    } finally {
+      t.close();
     }
   });
 

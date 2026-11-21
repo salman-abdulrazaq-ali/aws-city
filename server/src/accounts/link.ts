@@ -55,7 +55,11 @@ export const connectsPlayerLabel = (p: { sub: string; email?: string }, profile?
  *     player role (trusting only our task role, with that ExternalId), naming the player it connects
  *     (ConnectsPlayer) and, if they asked, AllowFixes=true. The link is good for LINK_TTL_MS.
  *  2. verify: we assume the role and check who we are before saving anything, then ask (a DryRun that
- *     changes nothing) whether the role allows fixes, and record the template version the link pointed at.
+ *     changes nothing) whether the role allows fixes. The role version is the template version the link pointed at,
+ *     recorded only when the player installed or updated the stack from that link (a first verify, another Region or
+ *     account, or `updated`): the account can't be read for it. A template version that changes what the role allows
+ *     must add a probe like fixes' DryRun, or the city would trust a version the stack doesn't have.
+ *  3. recheck ("Check again"): the same DryRun for the linked role, read-only; the role version stays as it was.
  * We never see or store the player's keys; only the role ARN and the ExternalId.
  */
 export const createAccountLinker = (deps: {
@@ -120,8 +124,11 @@ export const createAccountLinker = (deps: {
       return { url: quickCreateUrl(region, record.externalId, opts), externalId: record.externalId };
     },
 
-    /** Accepts the stack's RoleArn output or just the 12-digit account id. */
-    async verify(sub: string, input: string): Promise<AccountRecord & { status: 'linked' }> {
+    /**
+     * Accepts the stack's RoleArn output or just the 12-digit account id. `updated`: the player says they updated the
+     * stack with the latest link's template ("I've updated the stack"), so its version becomes the role version.
+     */
+    async verify(sub: string, input: string, opts: { updated?: boolean } = {}): Promise<AccountRecord & { status: 'linked' }> {
       const stored = await deps.accounts.get(sub);
       if (!stored) throw new LinkError('Start with “Get my setup link” first.');
       const issuedAt = stored.linkIssuedAt ? Date.parse(stored.linkIssuedAt) : Number.NaN;
@@ -146,17 +153,47 @@ export const createAccountLinker = (deps: {
       if (id.Account !== m[1] || !id.Arn?.includes(`:assumed-role/${m[2]}/`)) throw new LinkError('That role isn’t the AWSCity player role.');
       // Changes nothing: a DryRun (undefined when AWS's answer can't tell).
       const fixes = await canFix(record.region, credentials, m[1]).catch(() => undefined);
+      // Installed from this link: a first verify (pending), a new Region or account, or the player updated the stack.
+      const installed = stored.status !== 'linked' || pendingRegion !== undefined || stored.accountId !== m[1] || opts.updated === true;
+      const roleVersion = installed ? record.linkRoleVersion : stored.roleVersion;
       const linked = {
         ...record,
         status: 'linked' as const,
         roleArn,
         accountId: m[1],
         linkedAt: new Date(now()).toISOString(),
-        ...(record.linkRoleVersion !== undefined ? { roleVersion: record.linkRoleVersion } : {}),
+        ...(roleVersion !== undefined ? { roleVersion } : {}),
         ...(fixes !== undefined ? { fixes } : {}),
       };
       await deps.accounts.put(sub, linked);
       return linked;
+    },
+
+    /**
+     * "Check again": asks the linked role, without changing anything, whether it allows fixes (the DryRun verify makes).
+     * No new link window and the role version stays; only `fixes` is written. Refused (LinkError) with nothing linked or
+     * a role that can't be used.
+     */
+    async recheck(sub: string): Promise<AccountRecord & { status: 'linked' }> {
+      const stored = await deps.accounts.get(sub);
+      if (stored?.status !== 'linked' || !stored.roleArn || !stored.accountId) throw new LinkError('Connect your AWS account first.');
+      if (stored.brokenAt) throw new LinkError('The AWSCity role stopped working. Link again, or disconnect.');
+      const { region, accountId } = stored;
+      const credentials = credentialsFor({ roleArn: stored.roleArn, externalId: stored.externalId, sub, region });
+      try {
+        const id = await whoAmI(region, credentials);
+        if (id.Account !== accountId) throw new Error('another account');
+      } catch {
+        throw new LinkError(`I couldn’t use the AWSCity role in ${accountId} (${region}) just now. Is the stack still there? Try again in a minute.`);
+      }
+      const fixes = await canFix(region, credentials, accountId).catch(() => undefined);
+      // Only `fixes` changes, on the record as it is now (a link or verify since may have changed the rest).
+      const latest = (await deps.accounts.get(sub)) ?? stored;
+      if (latest.status !== 'linked' || latest.accountId !== accountId || latest.region !== region) throw new LinkError('Your AWS account link changed meanwhile. Try again.');
+      const { fixes: _f, ...rest } = latest;
+      const next = { ...rest, status: 'linked' as const, ...(fixes !== undefined ? { fixes } : {}) };
+      await deps.accounts.put(sub, next);
+      return next;
     },
   };
 };

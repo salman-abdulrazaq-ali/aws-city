@@ -11,6 +11,7 @@ import type { CityFinding, CityInventoryEvent, Progress, ServerEvent } from '../
 import { diffFindings, findingsFor } from './findings.js';
 import { FIXES, PartialFix, type FixContext } from './fixes.js';
 import { escapeTags, type AgentRunner } from './runner.js';
+import { RETIRED_REASON } from './service.js';
 
 type Emit = (e: ServerEvent) => void;
 
@@ -52,9 +53,14 @@ export const createCityCare = (deps: {
   progress: () => Promise<Progress | null>;
   /** The poller's latest snapshot (for AZs and data links on the inventory). */
   snapshot?: () => WorldSnapshot | null;
-  /** The player role was installed with AllowFixes=true (hosted), or fixes are allowed locally. */
-  fixesEnabled: boolean;
+  /** The player role was installed with AllowFixes=true (hosted), or fixes are allowed locally (read at each fix: "Check again" can change it). */
+  fixesEnabled: boolean | (() => boolean);
+  /** Whether this world may still change its account (not retired, the stored link unchanged): asked inside the lock before the grant. */
+  live?: () => Promise<boolean>;
+  /** Aborted when this world is retired: a pending fix preview is cancelled. */
+  retired?: AbortSignal;
 }) => {
+  const fixesEnabled = () => (typeof deps.fixesEnabled === 'function' ? deps.fixesEnabled() : deps.fixesEnabled);
   let open = new Map<string, CityFinding>();
   let inventory: CityInventoryEvent | undefined;
   const ctx: FixContext = { accountId: deps.accountId };
@@ -107,11 +113,13 @@ export const createCityCare = (deps: {
       return say(emit, f.citizenId, `${f.resource.name} is already fixed. Nothing to change.`);
     }
 
-    const { deployId, approved } = approvals.requestFix(requestId, { ...f, fix }, emit, confirmFor(f), detail);
+    const { deployId, approved } = approvals.requestFix(requestId, { ...f, fix }, emit, confirmFor(f), detail, deps.retired);
     if (!(await approved)) return;
     try {
       // The approval may have waited minutes: check again inside the account lock, right before the change.
       const message = await deps.withLock(async (lease) => {
+        // The account was disconnected or changed meanwhile: this world changes nothing in it.
+        if (deps.live && !(await deps.live())) return false;
         if (!open.has(f.id)) return undefined;
         if ((await def.stillOpen(deps.clients, f, ctx)) === false) return null;
         // The lock may have been lost while that was read (another task could be changing the account now).
@@ -125,6 +133,7 @@ export const createCityCare = (deps: {
           emit({ type: 'agent.state', agentId: f.citizenId, state: 'idle' });
         }
       });
+      if (message === false) return emit({ type: 'deploy.status', deployId, status: 'failed', message: RETIRED_REASON });
       if (message === undefined) return emit({ type: 'deploy.status', deployId, status: 'complete', message: 'Already sorted, so nothing was changed.' });
       if (message === null) {
         emit({ type: 'deploy.status', deployId, status: 'complete', message: `${f.resource.name} was already fixed, so nothing was changed.` });
@@ -211,7 +220,7 @@ export const createCityCare = (deps: {
       if (!f) return say(emit, 'concierge', 'That one is already sorted.');
       const def = f.fix && FIXES[f.fix.fixId];
       if (!f.fix || !def) return say(emit, f.citizenId, `There's no automatic fix for this one. ${f.text} The docs page shows how to fix it yourself.`);
-      if (!deps.fixesEnabled) {
+      if (!fixesEnabled()) {
         return say(emit, f.citizenId, `Fixes are switched off for this account. To let the citizens fix things, ${howToAllowFixes()}. You still approve every fix.`);
       }
       const xp = (await deps.progress())?.citizens?.[f.citizenId]?.xp ?? 0;

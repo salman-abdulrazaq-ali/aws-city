@@ -165,7 +165,9 @@ Screenshots in S3 expire after a day and aren't backed up; that's by design.
   ExternalId, is deleted and polling stops). It leaves the `AWSCity` stack and anything the city built in their account:
   the game tells them to take builds down first (Deploy → My builds) and then delete the stack in CloudFormation.
 - **"Download my data":** ⋯ → Account → *Download my data* is `GET /me/export` (JSON: progress, the account link as
-  metadata without the ExternalId or role ARN, their presence and leaderboard rows); `410` for a deleted player.
+  metadata without the ExternalId or role ARN, their presence and leaderboard rows, the bill switch and cached bill, today's
+  and yesterday's AI counts, the first AI day and the MFA "on since" time); once a minute per player (`429`), `410` for a
+  deleted player.
 - **Delete a player:** they can do it themselves (⋯ → Account → Delete my account…, or Deploy → Your data; it is
   `DELETE /me`): every table item (the account link record included), their screenshots and their Cognito user are
   removed, and their open tabs are disconnected. It doesn't touch their own AWS account: the `AWSCity` stack and anything
