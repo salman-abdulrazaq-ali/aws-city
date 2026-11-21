@@ -16,7 +16,10 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
 - **The player role allows exactly what the server calls, and trusts only our account.** The trust is
   fixed at publish time, not a parameter. Proof: `cd server && npx vitest run test/player-role.test.ts`.
 - **Infra is CDK with cdk-nag AwsSolutions clean.** Every acknowledgement carries a reason. Deploys need no
-  Docker: the server image is built in CodeBuild (`@cdklabs/deploy-time-build`).
+  Docker: the server image is built in CodeBuild (`@cdklabs/deploy-time-build`). `npm run setup` prints a ⏳ line a
+  minute from the busy stack's events while cdk deploys (`infra/lib/deploy-progress.ts`; cdk runs with `--progress
+  events`), and the 5xx deploy-rollback alarm uses 1-minute periods (3 × 1 min, 5 a minute): ECS keeps a finished deploy
+  open for a window it computes from that alarm, and 3 × 5 min held it ~16 minutes after the new servers were live.
   Proof: `cd infra && npm test && npx cdk synth -q`.
 - **Agents are grounded, never unrestricted:** docs come from the read-only AWS Knowledge MCP server
   (allow-listed tools, `<aws_docs>` treated as data, official AWS hosts only). There's no AWS CLI tool

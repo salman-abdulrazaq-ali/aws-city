@@ -327,7 +327,10 @@ export class ServiceStack extends Stack {
     // A fixed name: the service lists this alarm for deploy rollback, and a generated name would make the service
     // depend on an alarm that depends on the service's own load balancer (a deploy-time cycle; the ECS module warns).
     const deploy5xxName = `aws-city-${env.name}-http5xx`;
-    alarm('Http5xx', service.loadBalancer.metrics.httpCodeTarget(elbv2.HttpCodeTarget.TARGET_5XX_COUNT, { period: Duration.minutes(5) }), 20, 3, deploy5xxName);
+    // One-minute periods: ECS works out how long to keep watching a finished deploy from this alarm's settings ("based on
+    // the alarm configuration", ECS deployment alarms docs), and 3 × 5 minutes held every deploy open ~16 minutes after
+    // the new servers were already live. 3 × 1 minute at 5 errors a minute is the same rate as 20 in 5 minutes.
+    alarm('Http5xx', service.loadBalancer.metrics.httpCodeTarget(elbv2.HttpCodeTarget.TARGET_5XX_COUNT, { period: Duration.minutes(1) }), 5, 3, deploy5xxName);
     alarm('Unhealthy', service.targetGroup.metrics.unhealthyHostCount({ period: Duration.minutes(1) }), 1, 5);
     const app = (name: string) => new cloudwatch.Metric({ namespace: 'AWSCity', metricName: name, statistic: 'Sum', period: Duration.minutes(5) });
     alarm('QuotaRejections', app('QuotaRejected'), 200);
