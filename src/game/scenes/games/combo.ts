@@ -1,6 +1,6 @@
 // The mini-games' combo: right answers in a row multiply the points (×2 from 3, ×3 from 6); a mistake ends the streak.
 // Pure, so it's tested without Phaser (tests/game-clock.test.ts). Stars still come from the score, capped as before.
-export const COMBO_STEPS = [
+const COMBO_STEPS = [
   { from: 6, mult: 3 },
   { from: 3, mult: 2 },
 ] as const;

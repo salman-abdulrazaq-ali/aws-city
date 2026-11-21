@@ -49,7 +49,7 @@ export function Icon({ name, size = 20 }: { name: IconName; size?: 10 | 20 | 30 
 // City Coins: a pixel coin in its own colours, never the 🪙 emoji (it renders as a grey ball where there's no colour emoji
 // font). `.` is empty, `r` the rim, `f` the face, `s` the shine, `m` the mark stamped on it.
 const COIN = ['...rrrr...', '.rrffffrr.', '.rsfffffr.', 'rsfffmfffr', 'rffffmfffr', 'rffffmfffr', 'rffffmfffr', '.rffffffr.', '.rrffffrr.', '...rrrr...'];
-export const COIN_EMOJI = '🪙';
+const COIN_EMOJI = '🪙';
 const COIN_FILL: Record<string, string> = { r: '#a16207', f: '#facc15', s: '#fef9c3', m: '#a16207' };
 const COIN_PATHS = Object.entries(COIN_FILL).map(([k, fill]) => {
   let d = '';

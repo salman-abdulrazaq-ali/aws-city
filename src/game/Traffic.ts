@@ -17,7 +17,7 @@ import { rand } from './rng';
 /** Centre-to-centre gap kept to the vehicle ahead, tiles. */
 export const GAP = 1.05;
 /** Headlights lit at once at night, at most. */
-export const MAX_HEADLIGHTS = 8;
+const MAX_HEADLIGHTS = 8;
 const BRIDGE_DECK_PX = 3;
 const HEADLIGHT_DEPTH = 70_001;
 /** A vehicle stuck at a junction this long picks another way; this long again and it leaves. */

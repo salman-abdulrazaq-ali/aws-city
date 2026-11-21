@@ -44,7 +44,7 @@ import { isGlobalService } from './regions';
 import { DISTRICTS, SERVICES, type DistrictId } from './taxonomy';
 
 /** Lots every district has at least, and how many lots past its services it keeps free. */
-export const DISTRICT_LOTS = 10;
+const DISTRICT_LOTS = 10;
 export const DISTRICT_SPARE = 2;
 /**
  * Lots each district grows to, round robin, before any district's own needs count (when the map has the room): past
@@ -52,7 +52,7 @@ export const DISTRICT_SPARE = 2;
  */
 export const DISTRICT_RESERVE = 15;
 /** Every map must hold this many lots more than the city has services (room for the services to come). */
-export const SPARE_CAPACITY = 20;
+const SPARE_CAPACITY = 20;
 /** Streets zoning may drop to make room, at most. */
 const MAX_DROPS = 12;
 /** Parks zoning may build on to make room, at most (the smallest first). */
@@ -221,16 +221,6 @@ export function withAlleys(m: DecodedCityMap, streets: MapStreet[], n: number): 
     out.push(best);
   }
   return out;
-}
-
-/** Why a map doesn't zone, for tests and the dev console (undefined when it does). */
-export function zoneProblem(m: DecodedCityMap, opts: ZoneOptions = {}, effort: Effort = {}): string | undefined {
-  try {
-    build(m, effort.alleys ? withAlleys(m, m.streets, effort.alleys) : m.streets, opts, effort);
-    return undefined;
-  } catch (e) {
-    return (e as Error).message;
-  }
 }
 
 function tryZone(m: DecodedCityMap, streets: MapStreet[], opts: ZoneOptions, effort: Effort): CityPlan | undefined {
@@ -700,7 +690,7 @@ function build(m: DecodedCityMap, streets: MapStreet[], opts: ZoneOptions, effor
  * n island slots on the north and west edge lines (half each, the north taking the odd one), spread evenly along the
  * edge and at least ISLAND_GAP apart; a side short of lines hands its islands to the other.
  */
-export function islandSlots(n: number, edgeLines: Record<EdgeSide, readonly number[]>, size: number): string[] {
+function islandSlots(n: number, edgeLines: Record<EdgeSide, readonly number[]>, size: number): string[] {
   const pick = (side: 'N' | 'W', k: number): number[] => {
     const lines = edgeLines[side];
     const out: number[] = [];

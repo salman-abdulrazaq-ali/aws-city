@@ -35,7 +35,7 @@ const res = (r: Resource) => ({ id: r.id, name: r.name, gameOwned: r.managedByGa
  * Deterministic checks over what the poller read. A setting that couldn't be read (null/undefined) never raises a
  * finding: the citizens only report what they actually checked.
  */
-export const checkWorld = (s: WorldSnapshot): Hit[] => {
+const checkWorld = (s: WorldSnapshot): Hit[] => {
   const hits: Hit[] = [];
   const resources = s.resources.filter(live);
   const of = (kind: Resource['kind']) => resources.filter((r) => r.kind === kind);
@@ -80,18 +80,18 @@ const family = (type: string) => type.split('.')[0] ?? '';
  * Previous-generation instance families (EC2 instance-types.html#previous-gen-instances, checked 2026-10-10; X1/X1e are current).
  * Kept as data here; the accuracy loop re-checks it against the docs.
  */
-export const PREVIOUS_GENERATION = new Set(['a1', 'c1', 'c3', 'c4', 'g2', 'g3', 'g3s', 'i2', 'm1', 'm2', 'm3', 'm4', 'p2', 'p3', 'p3dn', 'r3', 'r4', 't1']);
-export const previousGeneration = (type: string) => PREVIOUS_GENERATION.has(family(type));
+const PREVIOUS_GENERATION = new Set(['a1', 'c1', 'c3', 'c4', 'g2', 'g3', 'g3s', 'i2', 'm1', 'm2', 'm3', 'm4', 'p2', 'p3', 'p3dn', 'r3', 'r4', 't1']);
+const previousGeneration = (type: string) => PREVIOUS_GENERATION.has(family(type));
 /** x86 families with a direct Graviton (Arm) counterpart: t → t4g; m/c/r → m/c/r 6g–8g. */
 const GRAVITON_PAIRED = /^(t3a?|[mcr](5|5a|5d|5n|5ad|6i|6a|6id|7i|7a))$/;
-export const gravitonCandidate = (type: string) => GRAVITON_PAIRED.test(family(type));
+const gravitonCandidate = (type: string) => GRAVITON_PAIRED.test(family(type));
 
 /** Same rule on the same resource → same id, so a finding keeps its id across polls. */
 export const findingId = (ruleId: string, resourceId: string) => `f-${createHash('sha256').update(`${ruleId}\0${resourceId}`).digest('hex').slice(0, 16)}`;
 
 const fill = (text: string, name: string) => text.replaceAll('{name}', name);
 
-export const toFinding = (hit: Hit, status: CityFinding['status'] = 'open'): CityFinding | undefined => {
+const toFinding = (hit: Hit, status: CityFinding['status'] = 'open'): CityFinding | undefined => {
   const rule = ruleById(hit.ruleId);
   const service = rule && serviceById(rule.serviceId);
   if (!rule || !service) return undefined;

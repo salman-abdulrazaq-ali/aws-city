@@ -79,12 +79,12 @@ export function shows(feature: Feature, prefs: { simple?: boolean } | undefined,
 /** The most tasks the list shows at once. */
 export const TODO_MAX = 5;
 /** Below this many, the order board's other jobs fill the list. */
-export const TODO_MIN = 3;
+const TODO_MIN = 3;
 /** While a quest step is open, the day reads done only once this many of today's goals are ticked. */
 export const DAY_MIN_DONE = 2;
 
 /** What a task's "Do it" button runs: a plan (src/state/next.ts runs it), or one of today's goals (the UI opens it). */
-export type TodoRun = { kind: 'plan'; plan: NextPlan } | { kind: 'goal'; goal: TodayGoal['id'] };
+type TodoRun = { kind: 'plan'; plan: NextPlan } | { kind: 'goal'; goal: TodayGoal['id'] };
 
 export interface TodoTask {
   /** One key per thing to do: the list never holds two of the same. */

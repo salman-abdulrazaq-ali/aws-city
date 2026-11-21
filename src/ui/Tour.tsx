@@ -47,7 +47,7 @@ const SIMPLE_STEPS: Step[] = EVERYTHING_STEPS.map((s, i) =>
       }
     : s,
 );
-export const tourSteps = (simple: boolean) => (simple ? SIMPLE_STEPS : EVERYTHING_STEPS);
+const tourSteps = (simple: boolean) => (simple ? SIMPLE_STEPS : EVERYTHING_STEPS);
 
 /** Where the first job starts: the first quest's current step, when it points at a landmark. */
 function firstJobTarget(): string | undefined {

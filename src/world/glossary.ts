@@ -58,7 +58,7 @@ export function termsWithout(serviceId: string): GlossaryEntry[] {
 export type TermToken = string | { text: string; entry: GlossaryEntry };
 
 /** Acronym-like names (two capitals in a row: AZ, IMDSv2, SSE-S3, KMS key) match case-sensitively; the rest ignore case. */
-export const isCaseSensitive = (name: string) => /[A-Z]{2}/.test(name);
+const isCaseSensitive = (name: string) => /[A-Z]{2}/.test(name);
 
 interface Name {
   text: string;

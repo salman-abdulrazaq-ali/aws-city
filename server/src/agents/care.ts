@@ -16,7 +16,7 @@ type Emit = (e: ServerEvent) => void;
 /** XP a citizen needs for each level (shared/citizens.json): 2 fixes the city's own resources, 3 anything. */
 const LEVEL_XP = citizensJson.levels.map((l) => l.xp);
 export const citizenLevel = (xp: number) => LEVEL_XP.filter((need) => xp >= need).length;
-export const LEVEL_FOR_SCOPE = { game: 2, account: 3 } as const;
+const LEVEL_FOR_SCOPE = { game: 2, account: 3 } as const;
 
 /** Which cached setting a fix changes, so the next poll reads it fresh. */
 const SETTING_KEY: Record<string, (f: CityFinding) => string | undefined> = {

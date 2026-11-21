@@ -76,7 +76,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** A screenshot's MIME type as the Converse image format (the Lookout uploads PNG or JPEG). */
 const IMAGE_FORMATS = { 'image/png': 'png', 'image/jpeg': 'jpeg', 'image/webp': 'webp', 'image/gif': 'gif' } as const;
-export const imageFormat = (contentType: string | undefined) =>
+const imageFormat = (contentType: string | undefined) =>
   contentType && contentType in IMAGE_FORMATS ? IMAGE_FORMATS[contentType as keyof typeof IMAGE_FORMATS] : undefined;
 
 /**

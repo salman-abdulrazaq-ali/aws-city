@@ -60,7 +60,7 @@ function usableSheet(scene: Phaser.Scene, id: string): string {
  * Speech bubbles are UI: above every building, sign, cloud, storm and the night overlay (DayNight 70_000, its lights
  * 70_001–2), so a line is never hidden by a tower or darkened at night.
  */
-export const BUBBLE_DEPTH = 75_000;
+const BUBBLE_DEPTH = 75_000;
 
 /** Every live agent, per scene: how many bubbles are up decides whether an ambient line may speak. */
 const live = new WeakMap<Phaser.Scene, Set<Agent>>();

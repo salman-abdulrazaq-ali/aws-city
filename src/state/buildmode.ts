@@ -20,11 +20,11 @@ export const MAX_PER_CITY = 120;
 export const MAX_TOTAL = 240;
 export const MAX_CITIES = 20;
 /** Removing a decoration gives back half its price (rounded down). Moving is free. */
-export const REFUND = 0.5;
+const REFUND = 0.5;
 /** Undo steps kept (this session only). */
 export const UNDO_DEPTH = 30;
 /** v2.16: removed props remembered per city (so a merge never brings one back), the most recent. */
-export const GONE_MAX = 200;
+const GONE_MAX = 200;
 /**
  * v2.16 sinks that renew: the first FREE_COPIES of an item in a city cost its price, each copy after that COPY_STEP of
  * the price more than the last (a city full of one thing costs more than a varied one).
@@ -166,7 +166,7 @@ export function lockedBecause(p: Progress, region: string, it: BuildItem): strin
 }
 
 /** What a crate item costs to buy (0: not for sale, a monument or not a crate item). */
-export const marketPrice = (cosmeticId: string) => {
+const marketPrice = (cosmeticId: string) => {
   const c = DROP_POOL.find((x) => x.id === cosmeticId && x.kind === 'decor');
   return c ? MARKET_PRICE[c.rarity] : 0;
 };
@@ -175,7 +175,7 @@ export const marketPrice = (cosmeticId: string) => {
 export const forSale = (p: Progress, it: BuildItem) => (it.unlock?.cosmetic && !ownsCosmetic(p, it.unlock.cosmetic) && marketPrice(it.unlock.cosmetic) ? it.unlock.cosmetic : undefined);
 
 /** At most this many of `it` in a city: its own cap, plus the spare copies crates gave (src/state/drops.ts). */
-export const maxFor = (p: Progress, it: BuildItem) => (it.max === undefined ? undefined : it.max + (it.unlock?.cosmetic ? (dropsOf(p).spares?.[it.unlock.cosmetic] ?? 0) : 0));
+const maxFor = (p: Progress, it: BuildItem) => (it.max === undefined ? undefined : it.max + (it.unlock?.cosmetic ? (dropsOf(p).spares?.[it.unlock.cosmetic] ?? 0) : 0));
 
 /**
  * What one more `it` costs in this city now: its price, raised COPY_STEP a copy past FREE_COPIES and CROWD_STEP a
@@ -195,7 +195,7 @@ export function priceFor(p: Progress, region: string, it: BuildItem): { place: n
 
 /** Why a tile can't hold a decoration. */
 export type Why = 'outside' | 'road' | 'water' | 'sidewalk' | 'building' | 'doorstep' | 'locked' | 'entrance' | 'taken' | 'prop';
-export const WHY_TEXT: Record<Why, string> = {
+const WHY_TEXT: Record<Why, string> = {
   outside: 'Only on your own city: open districts, parks, neighbourhoods and the Town Square’s lawn',
   road: 'Not on a road',
   water: 'Not on the water',
@@ -307,7 +307,7 @@ const tidyGone = (ids: Iterable<string>) => [...new Set(ids)].sort().slice(-GONE
 
 let seq = 0;
 /** A fresh prop id (lowercase letters, digits and dashes, as the server checks). */
-export const newPropId = () => `d${Date.now().toString(36)}-${(seq++ % 1296).toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;
+const newPropId = () => `d${Date.now().toString(36)}-${(seq++ % 1296).toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;
 
 /** Why the player can't buy one more `kind` in this city now (caps, coins, unlocks), or undefined. */
 export function cantBuy(p: Progress, region: string, kind: string): string | undefined {

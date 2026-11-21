@@ -6,7 +6,7 @@ import brandJson from '../../shared/brand.json' with { type: 'json' };
 const BRAND = brandJson as { amazon: boolean };
 
 /** Amazon's own names and liveries (Amazon Air) are on. */
-export const BRAND_AMAZON = BRAND.amazon === true;
+const BRAND_AMAZON = BRAND.amazon === true;
 
 /** A name with a brand: the branded one when the brand is on, else the generic one. */
 export const branded = (x: { name: string; nameUnbranded?: string; brand?: string }, on = BRAND_AMAZON) => (x.brand && !on ? (x.nameUnbranded ?? x.name) : x.name);

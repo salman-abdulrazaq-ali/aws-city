@@ -104,14 +104,14 @@ const absorb = (other: Progress) => {
  * Unsynced progress from a session that ended without the player signing out (the sign-in expired or was revoked),
  * tagged with whose it was. It's absorbed only when that same player signs back in on this device.
  */
-export const PARKED_PROGRESS_KEY = 'progress.parked';
+const PARKED_PROGRESS_KEY = 'progress.parked';
 type ParkedProgress = { player: string; progress: Progress };
 /**
  * Whose saved `progress` that is, on a backend with sign-in: the player id, or '' if it was earned while no one's copy
  * had been read (it merges into whoever signs in, as signed-out play always has). A copy with no owner saved beside it
  * predates the tag, so it's treated as unconfirmed.
  */
-export const PROGRESS_OWNER_KEY = 'progress.owner';
+const PROGRESS_OWNER_KEY = 'progress.owner';
 /** A backend with sign-in has players (the mock and the local server don't). */
 const hasPlayers = () => typeof backend?.playerId === 'function';
 /**
@@ -314,7 +314,7 @@ function watchBadges() {
 // ── v2.11: the live city and leaderboards ──
 
 /** How often an open, visible tab says the player is still in the city. */
-export const BEAT_MS = 30_000;
+const BEAT_MS = 30_000;
 let beatTimer: ReturnType<typeof setInterval> | undefined;
 /** What each board was last sent this week (a best only goes up, so only a better one is sent). */
 const sentScores = new Map<string, number>();
@@ -470,7 +470,7 @@ export function pageContext(f: PageFocus | undefined = store().focus) {
 }
 
 /** AWS console and docs pages: the only ones whose URL and title the agents see, and the only ones auto-snapped. */
-export const isAwsPage = (f: Pick<PageFocus, 'kind'>) => f.kind === 'console' || f.kind === 'console-home' || f.kind === 'docs';
+const isAwsPage = (f: Pick<PageFocus, 'kind'>) => f.kind === 'console' || f.kind === 'console-home' || f.kind === 'docs';
 
 export function submitPrompt(prompt: string) {
   const text = prompt.trim();
@@ -859,7 +859,7 @@ export function openOsmCopyright(url = OSM_COPYRIGHT_URL) {
 }
 
 /** v2.6: AWS's own status page (a fixed address, never one from a feed). */
-export const AWS_STATUS_URL = 'https://health.aws.amazon.com/health/status';
+const AWS_STATUS_URL = 'https://health.aws.amazon.com/health/status';
 export function openAwsStatus() {
   void browser.tabs.create({ url: AWS_STATUS_URL });
 }
@@ -874,7 +874,7 @@ export function openWorkshopSource(url: string) {
 }
 
 /** AWS CloudShell, where a workshop's commands run for real (signed in already, in the console's Region). */
-export const CLOUDSHELL_URL = 'https://console.aws.amazon.com/cloudshell/home';
+const CLOUDSHELL_URL = 'https://console.aws.amazon.com/cloudshell/home';
 export function openCloudShell() {
   void browser.tabs.create({ url: CLOUDSHELL_URL });
 }

@@ -15,14 +15,14 @@ import { actionTools, docsTool, type TurnContext } from './tools.js';
 
 /** Model turns per invocation (a model call plus the tools it asked for): the tool budget, the call that's told the
  *  budget is used up, and one to summarise. */
-export const MAX_TURNS = MAX_TOOL_CALLS_PER_TURN + 2;
-export const OUT_OF_STEPS = "I ran out of steps for this one. Ask me again and I'll carry on.";
+const MAX_TURNS = MAX_TOOL_CALLS_PER_TURN + 2;
+const OUT_OF_STEPS = "I ran out of steps for this one. Ask me again and I'll carry on.";
 /**
  * Token budgets per invocation (input + output, summed over its model calls). Citizens explain one finding at a time
  * with no memory, so theirs is small; landmark agents keep a conversation.
  */
-export const CITIZEN_TOKENS = { maxTokens: 2000, total: 40_000 };
-export const AGENT_TOKENS = { maxTokens: 16000, total: 200_000 };
+const CITIZEN_TOKENS = { maxTokens: 2000, total: 40_000 };
+const AGENT_TOKENS = { maxTokens: 16000, total: 200_000 };
 export const TOOL_BUDGET_MESSAGE = 'Tool budget for this turn is used up. Summarise for the player instead.';
 
 /**

@@ -48,7 +48,7 @@ export interface ConsoleTarget {
   name: string;
 }
 
-export type AgentId = string; // service id (e.g. 's3', 'lambda') or 'concierge' | 'lookout'
+type AgentId = string; // service id (e.g. 's3', 'lambda') or 'concierge' | 'lookout'
 export type DistrictId = string;
 
 export interface PageContext {
@@ -85,38 +85,38 @@ export interface PageClassify {
   context: PageContext; // must include screenshotKey or url+title
 }
 
-export interface ScreenshotPresign {
+interface ScreenshotPresign {
   action: 'screenshot.presign';
   requestId: string;
   contentType: 'image/jpeg';
 }
 
-export interface ProgressGet {
+interface ProgressGet {
   action: 'progress.get';
   requestId: string;
 }
 
-export interface ProgressPut {
+interface ProgressPut {
   action: 'progress.put';
   progress: Progress;
 }
 
 /** Ask for the CloudFormation quick-create link that connects the player's AWS account. */
-export interface AccountLink {
+interface AccountLink {
   action: 'account.link';
   requestId: string;
   region: string;
 }
 
 /** Player finished the quick-create stack; backend verifies it can assume the role. */
-export interface AccountVerify {
+interface AccountVerify {
   action: 'account.verify';
   requestId: string;
   /** The stack's RoleArn output, or just the 12-digit account id (the role name is fixed per region). */
   roleArn: string;
 }
 
-export interface QuestStart {
+interface QuestStart {
   action: 'quest.start';
   questId: string;
   taskId: string;
@@ -139,7 +139,7 @@ export interface DeployDecision {
   confirm?: string;
 }
 
-export interface DeployTeardown {
+interface DeployTeardown {
   action: 'deploy.teardown';
   deployId: string;
 }
@@ -166,7 +166,7 @@ export interface ConsoleObserve {
   snapshot: PageSnapshot;
 }
 
-export interface ConsoleStop {
+interface ConsoleStop {
   action: 'console.stop';
   taskId: string;
 }
@@ -200,7 +200,7 @@ export interface FindingUndo {
  * Turn the bill on or off. Cost Explorer charges $0.01 per request, so the server reads it only while it's on, at most
  * once a day per player (and once when it's turned on); it answers with city.bill. Also kept as Progress.bill.
  */
-export interface BillEnable {
+interface BillEnable {
   action: 'bill.enable';
   on: boolean;
 }
@@ -211,7 +211,7 @@ export interface BillEnable {
  * learner's account), at most every 5 minutes while the switch is on and the city is open; it answers with city.flow.
  * Also kept as Progress.flow.
  */
-export interface FlowEnable {
+interface FlowEnable {
   action: 'flow.enable';
   on: boolean;
 }
@@ -221,7 +221,7 @@ export interface FlowEnable {
  * the step's one read-only check (server/src/workshops/checks.ts, a fixed registry: no writes, no CLI) with the values
  * the player typed for the step's placeholders (a table or function name), and answers with workshop.verified.
  */
-export interface WorkshopVerify {
+interface WorkshopVerify {
   action: 'workshop.verify';
   workshopId: string;
   stepId: string;
@@ -234,7 +234,7 @@ export interface WorkshopVerify {
  * open and visible). The server answers with presence.state. A public profile is shown by its Mayor name; a private
  * one is only counted.
  */
-export interface PresenceBeat {
+interface PresenceBeat {
   action: 'presence.beat';
   region: string;
   /** The city's rank name (src/state/rank.ts), shown beside a public Mayor's name. v2.12: adds 'Global City'. */
@@ -244,13 +244,13 @@ export interface PresenceBeat {
  * v2.11: a score for a leaderboard: a mini-game id, or `mayors:<region>` (the city's rank points). Kept only for a
  * public profile, clamped to what a real round can score, best of the ISO week. Answered with leaderboard.state.
  */
-export interface ScoreSubmit {
+interface ScoreSubmit {
   action: 'score.submit';
   board: string;
   score: number;
 }
 /** v2.11: this week's top of a board. */
-export interface LeaderboardGet {
+interface LeaderboardGet {
   action: 'leaderboard.get';
   board: string;
 }
@@ -296,7 +296,7 @@ export interface TaskPlanEvent {
 }
 
 /** Progress on one step. Drives the speech bubble + activity feed. `skipped` = agent remembered you know this. */
-export interface TaskStepEvent {
+interface TaskStepEvent {
   type: 'task.step';
   taskId: string;
   index: number;
@@ -305,7 +305,7 @@ export interface TaskStepEvent {
 }
 
 /** A real AWS call is (or stopped) running for this agent. Drives idle vs working animation. */
-export interface AgentStateEvent {
+interface AgentStateEvent {
   type: 'agent.state';
   agentId: AgentId;
   state: 'idle' | 'working';
@@ -316,14 +316,14 @@ export interface AgentStateEvent {
 }
 
 /** Agents talking to each other (or to the user when `to` is 'user'). */
-export interface AgentMessageEvent {
+interface AgentMessageEvent {
   type: 'agent.message';
   from: AgentId;
   to: AgentId | 'user';
   text: string;
 }
 
-export interface TaskDoneEvent {
+interface TaskDoneEvent {
   type: 'task.done';
   taskId: string;
   ok: boolean;
@@ -340,7 +340,7 @@ export interface DocSource {
   url: string;
 }
 
-export interface PageClassifiedEvent {
+interface PageClassifiedEvent {
   type: 'page.classified';
   requestId: string;
   url?: string;
@@ -349,7 +349,7 @@ export interface PageClassifiedEvent {
 }
 
 /** Streamed answer from a district HQ. Send chunks with done=false, finish with done=true. */
-export interface ChatAnswerEvent {
+interface ChatAnswerEvent {
   type: 'chat.answer';
   requestId: string;
   districtId: DistrictId;
@@ -360,7 +360,7 @@ export interface ChatAnswerEvent {
   sources?: DocSource[];
 }
 
-export interface ScreenshotUrlEvent {
+interface ScreenshotUrlEvent {
   type: 'screenshot.url';
   requestId: string;
   /** Presigned S3 PUT URL, valid ~60 s. Client PUTs the JPEG bytes directly. */
@@ -368,14 +368,14 @@ export interface ScreenshotUrlEvent {
   screenshotKey: string;
 }
 
-export interface ProgressStateEvent {
+interface ProgressStateEvent {
   type: 'progress.state';
   requestId?: string;
   /** null = new player, nothing stored yet. */
   progress: Progress | null;
 }
 
-export interface AccountLinkUrlEvent {
+interface AccountLinkUrlEvent {
   type: 'account.linkUrl';
   requestId: string;
   /** CloudFormation quick-create URL for infra/player-role/player-role.yaml with a per-player ExternalId. */
@@ -383,7 +383,7 @@ export interface AccountLinkUrlEvent {
   externalId: string;
 }
 
-export interface AccountStatusEvent {
+interface AccountStatusEvent {
   type: 'account.status';
   requestId?: string;
   linked: boolean;
@@ -400,7 +400,7 @@ export interface DeployChange {
 }
 
 /** A change set is ready. The client shows it and sends deploy.approve / deploy.reject. */
-export interface DeployPreviewEvent {
+interface DeployPreviewEvent {
   type: 'deploy.preview';
   requestId?: string;
   deployId: string;
@@ -428,7 +428,7 @@ export interface DeployStatusEvent {
 }
 
 /** An agent got better at its job (from repeated work / memory). */
-export interface AgentLevelEvent {
+interface AgentLevelEvent {
   type: 'agent.level';
   agentId: AgentId;
   level: number;
@@ -471,7 +471,7 @@ export interface InventoryItem {
 }
 
 /** One end of a data link: a Region, optionally narrowed to an AZ. */
-export interface LinkEnd {
+interface LinkEnd {
   region: string;
   az?: string;
 }
@@ -548,7 +548,7 @@ export interface CityBillReadyEvent {
 }
 
 /** v2.5: the bill couldn't be read; `unavailable` is one plain sentence for the player. */
-export interface CityBillUnavailableEvent {
+interface CityBillUnavailableEvent {
   type: 'city.bill';
   unavailable: string;
   takenAt: string;
@@ -581,7 +581,7 @@ export interface CityFlowReadyEvent {
   takenAt: string;
   unavailable?: never;
 }
-export interface CityFlowUnavailableEvent {
+interface CityFlowUnavailableEvent {
   type: 'city.flow';
   unavailable: string;
   takenAt: string;
@@ -679,7 +679,7 @@ export interface CityFinding {
 }
 
 /** v2.3: a finding opened, changed or resolved. Sent one per change, and all open ones on connect. */
-export interface CityFindingEvent {
+interface CityFindingEvent {
   type: 'city.finding';
   finding: CityFinding;
 }
@@ -699,7 +699,7 @@ export interface ErrorEvent {
 }
 
 /** v2.10: the answer to workshop.verify. `detail` is one plain sentence (what was found, or what to try). */
-export interface WorkshopVerifiedEvent {
+interface WorkshopVerifiedEvent {
   type: 'workshop.verified';
   workshopId: string;
   stepId: string;
@@ -949,7 +949,7 @@ export interface CityDecor {
 }
 
 /** v2.11: what other players may see: a generated Mayor name, only while `public` is on. */
-export interface PlayerProfile {
+interface PlayerProfile {
   public: boolean;
   /** Two words from src/state/names.ts lists, e.g. "Kind Otter" (shown as "Mayor Kind Otter"). */
   name: string;
@@ -968,7 +968,7 @@ export interface WorkshopProgress {
   done?: string;
 }
 
-export const SERVER_EVENT_TYPES: ServerEvent['type'][] = [
+const SERVER_EVENT_TYPES: ServerEvent['type'][] = [
   'task.plan',
   'task.step',
   'agent.state',

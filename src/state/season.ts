@@ -53,7 +53,6 @@ export interface RoadStep {
 
 /** The road: 8 steps to 100 points (about ten finished shifts, so a month has room to miss days). */
 export const ROAD_AT = [10, 20, 30, 40, 55, 70, 85, 100] as const;
-export const SEASON_ROAD = ROAD_AT.length;
 
 export function roadOf(s: Season): RoadStep[] {
   const r: RoadReward[] = [
@@ -84,7 +83,6 @@ export const claimable = (p: Progress, id: string) => {
 
 /** The points that finish a road (its last step). */
 export const ROAD_END = ROAD_AT[ROAD_AT.length - 1]!;
-export const roadDone = (p: Progress, id: string) => seasonOf(p, id).points >= ROAD_END;
 
 /**
  * Seasons the player may fill: every one, any time (v2.16: no road waits for City Hall), this month's first, then the

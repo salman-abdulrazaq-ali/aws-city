@@ -18,7 +18,7 @@ import { ForLearners, Plain } from './Term';
 import { useDialog } from './useDialog';
 
 /** Severity in the player's words: how soon to look, not a risk score. */
-export const SEVERITY_TEXT: Record<FindingView['severity'], string> = { high: 'Urgent', medium: 'Soon', low: 'Later' };
+const SEVERITY_TEXT: Record<FindingView['severity'], string> = { high: 'Urgent', medium: 'Soon', low: 'Later' };
 
 function Severity({ s }: { s: FindingView['severity'] }) {
   return (

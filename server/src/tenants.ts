@@ -62,7 +62,7 @@ export interface Tenant {
 }
 
 /** What REST needs: a player's saved data, without assuming their role or polling their AWS account. */
-export type PlayerData = Pick<Tenant, 'progress' | 'uploads' | 'deleteMe'>;
+type PlayerData = Pick<Tenant, 'progress' | 'uploads' | 'deleteMe'>;
 
 export interface TenantHub {
   acquire(p: Principal): Promise<Tenant>;

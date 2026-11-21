@@ -33,7 +33,7 @@ export const actionTools = (names: ActionName[], deps: { actions: ActionService;
     }),
   );
 
-export const SEARCH_DOCS = 'search_aws_docs';
+const SEARCH_DOCS = 'search_aws_docs';
 
 /** Read-only AWS documentation search through the allow-listed Knowledge MCP client (results wrapped as data). */
 export const docsTool = (knowledge: Knowledge, sources: () => { title: string; url: string }[] | undefined) =>

@@ -55,8 +55,8 @@ export interface Puzzle {
   diagram?: Diagram;
 }
 
-export type ActorKind = 'users' | 'client' | 'mobile' | 'internet' | 'admin' | 'sources';
-export type GroupKind = 'cloud' | 'region' | 'vpc' | 'az' | 'public' | 'private' | 'edge' | 'generic';
+type ActorKind = 'users' | 'client' | 'mobile' | 'internet' | 'admin' | 'sources';
+type GroupKind = 'cloud' | 'region' | 'vpc' | 'az' | 'public' | 'private' | 'edge' | 'generic';
 /** A diagram box: a slot (`service`), a fixed actor, a self-filling copy (`mirrorOf`) or a corner badge (`attachTo`). */
 export interface DiagramNode {
   id: string;
@@ -165,10 +165,8 @@ export const QUESTS: Quest[] = (questsJson as unknown as { quests: Quest[] }).qu
 export const TEMPLATES: DeployTemplate[] = templatesJson.templates;
 
 export const cardsFor = (serviceId: string) => CARDS[serviceId] ?? [];
-export const allCards = () => Object.entries(CARDS).flatMap(([serviceId, cs]) => cs.map((c) => ({ ...c, serviceId })));
 export const puzzleById = (id: string) => PUZZLES.find((p) => p.id === id);
 export const questById = (id: string) => QUESTS.find((q) => q.id === id);
-export const templateById = (id: string) => TEMPLATES.find((t) => t.id === id);
 export const serviceOfCard = (cardId: string) => cardId.replace(/-\d+$/, '');
 
 /** A quest's choose step by its id (ids are unique across quests). */

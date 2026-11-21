@@ -51,7 +51,7 @@ async function pkce() {
  * Safari's stand-in for launchWebAuthFlow: opens the sign-in page in a tab and resolves with the URL it
  * redirects to (the relay page), then closes that tab. Rejects if the player closes the tab or gives up.
  */
-export function signInTab(authorizeUrl: string, redirectPrefix: string): Promise<string> {
+function signInTab(authorizeUrl: string, redirectPrefix: string): Promise<string> {
   return new Promise((resolve, reject) => {
     let tabId: number | undefined;
     const done = (fn: () => void) => {

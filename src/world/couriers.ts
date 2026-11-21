@@ -57,7 +57,7 @@ export const LEARN_EVERY_MS = 9_000;
 export const LEARN_RUSH_EVERY_MS = 3_500;
 
 /** The city's rush hours, local time: 8–9 in the morning and 17–18 in the evening. */
-export const RUSH_HOURS: readonly [number, number][] = [
+const RUSH_HOURS: readonly [number, number][] = [
   [8, 9],
   [17, 18],
 ];

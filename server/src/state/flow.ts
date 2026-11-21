@@ -13,10 +13,10 @@ type Emit = (e: ServerEvent) => void;
  */
 export const FLOW_TTL_MS = 5 * 60_000;
 /** A failure that may pass is tried again later; "denied" (an older AWS City role) waits a day. */
-export const FLOW_RETRY_MS = 60 * 60_000;
-export const FLOW_DENIED_RETRY_MS = 24 * 60 * 60_000;
+const FLOW_RETRY_MS = 60 * 60_000;
+const FLOW_DENIED_RETRY_MS = 24 * 60 * 60_000;
 export const MAX_READS_PER_DAY = 96;
-export const WINDOW_MIN = 15;
+const WINDOW_MIN = 15;
 
 /** The only queries the server ever sends: fixed text, never built from anything a player or a metric says. */
 export const FLOW_QUERIES: { id: string; serviceId: string; kind: FlowRate['kind']; label: string; byAz?: true; expression: string }[] = [
@@ -39,7 +39,7 @@ const perMin = (total: number) => (Number.isFinite(total) && total > 0 ? Math.ro
 const AZ_NAME = /^[a-z]{2}(-[a-z]+)+-\d[a-z]$/;
 
 /** One plain sentence for traffic that can't be read (players never see internal errors). */
-export const flowUnavailable = (err: unknown): { text: string; retryMs: number } =>
+const flowUnavailable = (err: unknown): { text: string; retryMs: number } =>
   classifyAwsError(err) === 'denied'
     ? { text: 'Live traffic needs the updated AWS City role in your account (it adds cloudwatch:GetMetricData).', retryMs: FLOW_DENIED_RETRY_MS }
     : { text: "Live traffic isn't available right now. The city will try again later.", retryMs: FLOW_RETRY_MS };

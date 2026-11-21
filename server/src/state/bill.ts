@@ -13,7 +13,7 @@ type Emit = (e: ServerEvent) => void;
  */
 export const BILL_TTL_MS = 24 * 60 * 60_000;
 /** A failure that may pass (throttled, a network blip) is tried again sooner than a day. */
-export const BILL_RETRY_MS = 60 * 60_000;
+const BILL_RETRY_MS = 60 * 60_000;
 /** Pages per read (each one is a $0.01 request); a learner's account fits in one. */
 const MAX_PAGES = 3;
 
@@ -39,7 +39,7 @@ export const billPeriod = (now: Date) => {
 };
 
 /** One plain sentence for a bill that can't be read (players never see internal errors). */
-export const billUnavailable = (err: unknown): { text: string; retryMs: number } => {
+const billUnavailable = (err: unknown): { text: string; retryMs: number } => {
   const name = (err as { name?: string })?.name ?? '';
   if (name === 'DataUnavailableException') return { text: 'Cost Explorer is turning on for this account; bills show up within 24 hours.', retryMs: BILL_TTL_MS };
   if (classifyAwsError(err) === 'denied' || name === 'OptInRequired' || name === 'SubscriptionRequiredException')

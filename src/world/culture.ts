@@ -29,7 +29,7 @@ export interface Principle extends Sourced {
   explain: string;
   awsExample: string;
 }
-export interface Mechanism extends Sourced {
+interface Mechanism extends Sourced {
   id: string;
   name: string;
   explain: string;
@@ -43,17 +43,17 @@ export interface Launch extends Sourced {
   event: string;
   note: string;
 }
-export interface ExpoQuestion {
+interface ExpoQuestion {
   q: string;
   options: string[];
   answer: number;
   launchIndex?: number;
 }
-export interface Fact extends Sourced {
+interface Fact extends Sourced {
   label: string;
   value: string;
 }
-export interface AmazonianRole extends Sourced {
+interface AmazonianRole extends Sourced {
   id: string;
   sheet: string;
   title: string;

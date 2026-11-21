@@ -29,7 +29,7 @@ export function markFromWorld() {
  * towards the Region, so the city starts offset back that way and keeps moving the same way. A unit vector in screen
  * axes, or undefined for a Region not on the map.
  */
-export function diveFrom(code: string): { x: number; y: number } | undefined {
+function diveFrom(code: string): { x: number; y: number } | undefined {
   const r = regionInfo(code);
   if (!r) return undefined;
   const dx = ((r.lon - (M.lonMin + M.lonMax) / 2) / (M.lonMax - M.lonMin)) * M.cols;

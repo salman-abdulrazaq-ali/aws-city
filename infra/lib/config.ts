@@ -4,7 +4,7 @@ import type { App } from 'aws-cdk-lib';
 import { type ModelChoice, modelsForChoice } from './models.js';
 
 /** Written by `npm run setup` (infra/setup/setup.mjs) at the repo root; gitignored, no secrets in it. */
-export const SETUP_FILE = new URL('../../aws-city.config.json', import.meta.url);
+const SETUP_FILE = new URL('../../aws-city.config.json', import.meta.url);
 export const readSetupFile = (): Record<string, unknown> => (existsSync(SETUP_FILE) ? JSON.parse(readFileSync(SETUP_FILE, 'utf8')) : {});
 
 /** Per-environment settings from cdk.json context ("staging" / "prod"). Empty strings = not set up yet. */

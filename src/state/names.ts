@@ -8,4 +8,3 @@ export function mayorName(rand: () => number = Math.random) {
   return `${ADJECTIVES[Math.floor(rand() * ADJECTIVES.length)]} ${ANIMALS[Math.floor(rand() * ANIMALS.length)]}`;
 }
 
-export const NAME_SHAPE = /^[A-Z][a-z]{1,15} [A-Z][a-z]{1,15}$/;

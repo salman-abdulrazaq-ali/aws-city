@@ -80,7 +80,7 @@ export const outcomeMessage = (o: SubmitOutcome) =>
   o.status === 'done' || o.status === 'failed' ? o.result.message : o.status === 'denied' ? o.reason : o.error;
 
 /** Answers any tool_use in a trailing assistant message that never got results (e.g. cut off at max_tokens). */
-export const closeDangling = (messages: Anthropic.MessageParam[]) => {
+const closeDangling = (messages: Anthropic.MessageParam[]) => {
   const last = messages.at(-1);
   if (last?.role !== 'assistant' || typeof last.content === 'string') return;
   const orphans = last.content.filter((b): b is Anthropic.ToolUseBlockParam => b.type === 'tool_use');

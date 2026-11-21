@@ -26,7 +26,7 @@ export function openedAreas(): ReadonlySet<string> {
 }
 
 /** Records that the player opened an area (a tab, Architecture, Day 1…), so it stays open from now on. */
-export function addOpened(area: Area) {
+function addOpened(area: Area) {
   const now = openedAreas();
   if (now.has(area)) return;
   writePref(OPENED_KEY, JSON.stringify([...now, area]));
@@ -50,7 +50,7 @@ function subscribe(fn: () => void) {
   };
 }
 
-export const useOpened = () => useSyncExternalStore(subscribe, openedAreas, openedAreas);
+const useOpened = () => useSyncExternalStore(subscribe, openedAreas, openedAreas);
 
 /**
  * A hosted player (signed in with Cognito, so the build can set up MFA) whose AWS account isn't linked yet. Linking is

@@ -14,7 +14,7 @@ export interface Pt {
   y: number;
 }
 
-export type NodeKind = 'junction' | 'gate' | 'highwayEnd' | 'deadEnd';
+type NodeKind = 'junction' | 'gate' | 'highwayEnd' | 'deadEnd';
 
 export interface RoadNode {
   id: number;

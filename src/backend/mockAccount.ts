@@ -32,7 +32,7 @@ interface DemoAccount {
 export const DEMO = demoJson as unknown as DemoAccount;
 
 /** Items with service ids checked against shared/world.json (an unknown id is an unmapped type). */
-export const demoItems = (): InventoryItem[] =>
+const demoItems = (): InventoryItem[] =>
   DEMO.items.map((it) => {
     const known = it.serviceId && serviceById(it.serviceId);
     return { ...it, serviceId: known ? it.serviceId : null, districtId: known ? serviceById(it.serviceId!)!.districtId : it.districtId };

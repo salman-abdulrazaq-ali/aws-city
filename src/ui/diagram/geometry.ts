@@ -2,8 +2,8 @@
 // right-angle arrows between box centres, and points along them for the data packets.
 import type { Diagram, DiagramEdge, DiagramGroup, DiagramNode } from '@/world/content';
 
-export const CELL_W = 72;
-export const CELL_H = 100;
+const CELL_W = 72;
+const CELL_H = 100;
 /** Slot box size; badges (attached to a corner) are smaller. */
 export const BOX = 44;
 export const BADGE = 24;
@@ -42,7 +42,7 @@ export function nodeCenter(d: Diagram, n: DiagramNode): Pt {
 const inside = (a: DiagramGroup, b: DiagramGroup) => a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h;
 
 /** How many groups enclose this one (equal boxes: the earlier one is outside). */
-export function groupDepth(d: Diagram, g: DiagramGroup): number {
+function groupDepth(d: Diagram, g: DiagramGroup): number {
   const i = d.groups.indexOf(g);
   return d.groups.filter((o, j) => o !== g && inside(g, o) && (!inside(o, g) || j < i)).length;
 }

@@ -25,7 +25,7 @@ const BOX = 40;
  * A passing design pays City Coins (not stars: the drawing board is free play, and stars are knowledge): this many for
  * each service on it, once a day per service across every design, at most 8 services a design.
  */
-export const DESIGN_COINS = COIN_PAY.drawing;
+const DESIGN_COINS = COIN_PAY.drawing;
 /** The first-time guide was closed (this device). */
 const GUIDE_KEY = 'awscity.drawingGuide';
 const GROUPS: { kind: string; label: string; color: string; dashed?: boolean }[] = [

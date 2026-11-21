@@ -7,7 +7,7 @@ import { type Resource, resourceKey } from '../state/model.js';
 import { type AccountLocks, type AccountRecord, type BillRecord, type BillStore, DELETED_TOMBSTONE_MS, type ProgressStore, type QuotaStore, type Stores } from './types.js';
 
 /** Progress as JSON files: progress.json for the local player, progress-<hash>.json for anyone else. */
-export const fileProgress = (file: string): ProgressStore & { fileFor(sub: string): string; forget(sub: string): void } => {
+const fileProgress = (file: string): ProgressStore & { fileFor(sub: string): string; forget(sub: string): void } => {
   const stores = new Map<string, ReturnType<typeof createProgressStore>>();
   const fileFor = (sub: string) => (sub === 'local' ? file : join(dirname(file), `progress-${createHash('sha256').update(sub).digest('hex').slice(0, 24)}.json`));
   const forSub = (sub: string) => {

@@ -14,7 +14,7 @@ export class ModelLimitError extends Error {
   }
 }
 export const QUOTA_MESSAGE = 'You’ve used today’s AI helpers — they’ll be back tomorrow!';
-export const PAUSED_MESSAGE = 'The city’s AI is resting right now. Learning, cards and games still work.';
+const PAUSED_MESSAGE = 'The city’s AI is resting right now. Learning, cards and games still work.';
 
 /**
  * Kill switch: an SSM parameter set to "false" turns every model call off within ~30 s.

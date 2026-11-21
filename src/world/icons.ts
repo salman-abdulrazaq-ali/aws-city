@@ -6,8 +6,7 @@ type Entry = Record<string, { file: string; path: string }>;
 const MANIFEST = iconsJson as unknown as { source: string; zip: string; asOf: string; icons: Entry; groups?: Entry; resources?: Entry; products?: Record<string, { file: string; path: string; name: string }> };
 
 /** Build-time switch: WXT_OFFICIAL_ICONS=false hides the official icons everywhere (UI and building signs). */
-export const OFFICIAL_ICONS = (import.meta.env as unknown as Record<string, string | undefined> | undefined)?.WXT_OFFICIAL_ICONS !== 'false';
-export const ICON_SOURCE = { source: MANIFEST.source, asOf: MANIFEST.asOf };
+const OFFICIAL_ICONS = (import.meta.env as unknown as Record<string, string | undefined> | undefined)?.WXT_OFFICIAL_ICONS !== 'false';
 export const iconPath = (serviceId: string): string | undefined => (OFFICIAL_ICONS ? MANIFEST.icons[serviceId]?.path : undefined);
 export const iconIds = () => (OFFICIAL_ICONS ? Object.keys(MANIFEST.icons) : []);
 /** Diagram group box icon (cloud, region, vpc, public, private), or undefined for a pixel fallback. */

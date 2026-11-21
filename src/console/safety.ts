@@ -64,7 +64,7 @@ export function riskSignals(el: Element): string {
 
 /** The control a click really lands on: a click on an icon or span inside a "Delete" button is a Delete click. */
 const CONTROL = 'button, a[href], [role=button], [role=menuitem], [role=menuitemradio], [role=option], [role=tab], [role=link], label, summary';
-export function controlsAround(el: Element): Element[] {
+function controlsAround(el: Element): Element[] {
   const out: Element[] = [];
   for (let p: Element | null = el.parentElement, depth = 0; p && depth < 6; p = p.parentElement, depth++) {
     if (p.matches(CONTROL)) out.push(p);
@@ -73,7 +73,7 @@ export function controlsAround(el: Element): Element[] {
 }
 
 /** Links that leave the AWS console are never followed by the agent. */
-export function leavesConsole(el: Element): boolean {
+function leavesConsole(el: Element): boolean {
   const a = el.closest('a[href]') as HTMLAnchorElement | null;
   if (!a) return false;
   try {
