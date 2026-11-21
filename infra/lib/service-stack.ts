@@ -309,12 +309,21 @@ export class ServiceStack extends Stack {
         ephemeralStorageGiB: 30,
         runtimePlatform: { cpuArchitecture: ecs.CpuArchitecture.ARM64, operatingSystemFamily: ecs.OperatingSystemFamily.LINUX },
       });
-      aiTask.addContainer('ai', {
+      // Locked down: not root, a read-only root filesystem (only /tmp writable), every Linux capability dropped. Ollama's
+      // pull/create/delete endpoints then can't change the model even if something inside the VPC reached them.
+      aiTask.addVolume({ name: 'tmp' });
+      const aiLinux = new ecs.LinuxParameters(this, 'AiLinux', { initProcessEnabled: true });
+      aiLinux.dropCapabilities(ecs.Capability.ALL);
+      const aiContainer = aiTask.addContainer('ai', {
         image: aiImage.toEcsDockerImageCode(),
         logging: ecs.LogDrivers.awsLogs({ logGroup: aiLogs, streamPrefix: 'ai' }),
         portMappings: [{ containerPort: 11434 }],
+        user: '65534:65534',
+        readonlyRootFilesystem: true,
+        linuxParameters: aiLinux,
         healthCheck: { command: ['CMD', '/bin/ollama', 'list'], interval: Duration.seconds(30), timeout: Duration.seconds(10), retries: 3, startPeriod: Duration.seconds(60) },
       });
+      aiContainer.addMountPoints({ containerPath: '/tmp', sourceVolume: 'tmp', readOnly: false });
       const ai = new ecs.FargateService(this, 'AiService', {
         cluster,
         taskDefinition: aiTask,

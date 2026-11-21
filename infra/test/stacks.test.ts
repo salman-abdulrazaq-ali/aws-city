@@ -334,6 +334,15 @@ describe('the AI on AWS without Bedrock: an open model on a private Fargate serv
     expect(toAi).toHaveLength(1);
     expect(toAi[0].Properties).toMatchObject({ IpProtocol: 'tcp', ToPort: 11434, SourceSecurityGroupId: { 'Fn::GetAtt': [expect.stringMatching(/^ServiceSecurityGroup/), 'GroupId'] } });
     expect(JSON.stringify(toAi)).not.toContain('0.0.0.0/0');
+    // Locked down: not root, read-only root filesystem (only /tmp writable), every capability dropped.
+    const aiDef = Object.values(t.svc.findResources('AWS::ECS::TaskDefinition')).find((d) => JSON.stringify(d).includes('"Name":"ai"')) as { Properties: { ContainerDefinitions: Record<string, unknown>[]; Volumes: unknown[] } };
+    expect(aiDef.Properties.ContainerDefinitions[0]).toMatchObject({
+      User: '65534:65534',
+      ReadonlyRootFilesystem: true,
+      LinuxParameters: { Capabilities: { Drop: ['ALL'] }, InitProcessEnabled: true },
+      MountPoints: [{ ContainerPath: '/tmp', SourceVolume: 'tmp', ReadOnly: false }],
+    });
+    expect(aiDef.Properties.Volumes).toEqual([{ Name: 'tmp' }]);
     // Its task role carries no policy at all.
     const policies = JSON.stringify(t.svc.findResources('AWS::IAM::Policy'));
     expect(policies).not.toMatch(/AiTaskTaskRole/);
@@ -360,6 +369,8 @@ describe('the AI on AWS without Bedrock: an open model on a private Fargate serv
     expect(dockerfile).toContain(`ARG MODEL_DIGESTS="${CPU_MODEL.digests.join(' ')}"`);
     expect(CPU_MODEL.digests).toHaveLength(5);
     expect(dockerfile).toContain('if [ "$got" != "$want" ]; then');
+    expect(dockerfile).toMatch(/^USER 65534:65534$/m);
+    expect(dockerfile).toContain('OLLAMA_NOPRUNE=1');
     // About $8.72 a day on demand in eu-west-2 (8 vCPU + 16 GB of Graviton Fargate).
     expect(cpuAiHourly() * 24).toBeCloseTo(8.72, 1);
   });

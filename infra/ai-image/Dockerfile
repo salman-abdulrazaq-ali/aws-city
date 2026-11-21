@@ -17,13 +17,19 @@ RUN ollama serve & pid=$!; \
     got="$(grep -o '"digest":"sha256:[0-9a-f]\{64\}"' "$manifest" | cut -d'"' -f4 | sort -u | tr '\n' ' ')" && \
     want="$(printf '%s\n' $MODEL_DIGESTS | sort -u | tr '\n' ' ')" && \
     if [ "$got" != "$want" ]; then echo "model manifest changed upstream: $got" >&2; exit 1; fi && \
-    for d in $MODEL_DIGESTS; do test -f "/root/.ollama/models/blobs/$(echo "$d" | tr ':' '-')" || exit 1; done
+    for d in $MODEL_DIGESTS; do test -f "/root/.ollama/models/blobs/$(echo "$d" | tr ':' '-')" || exit 1; done && \
+    chmod 0755 /root && chmod -R a+rX /root/.ollama
 
 # Listen inside the VPC (the security group only lets the city's server in), keep the model loaded, room for the agents'
 # long prompts (16k tokens) and two conversations at once.
 ENV OLLAMA_HOST=0.0.0.0:11434 \
     OLLAMA_KEEP_ALIVE=-1 \
     OLLAMA_CONTEXT_LENGTH=16384 \
-    OLLAMA_NUM_PARALLEL=2
+    OLLAMA_NUM_PARALLEL=2 \
+    OLLAMA_NOPRUNE=1 \
+    HOME=/root
+# Not root. The task also runs it on a read-only root filesystem with every Linux capability dropped
+# (lib/service-stack.ts), so Ollama's pull/create/delete endpoints can't change the model even if reached.
+USER 65534:65534
 EXPOSE 11434
 # The base image's ENTRYPOINT/CMD: ollama serve.
