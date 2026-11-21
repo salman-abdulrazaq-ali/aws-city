@@ -155,6 +155,44 @@ Metrics in the `AWSCity` namespace also include `InputTokens`, `OutputTokens`, `
   `admin-user-global-sign-out`. Their sockets close within the token's lifetime (≤ 1 hour, sooner when idle).
   They should also delete the `AWSCity` stack in their own AWS account, which removes our access.
 
+## Security Hub (AWS Foundational Security Best Practices, eu-west-2)
+
+The first full scan (21 Nov 2026) failed 72 checks. Each one is fixed, by design (suppressed with this reason), or
+deferred. Check what's still open:
+`aws securityhub get-findings --region eu-west-2 --filters '{"ComplianceStatus":[{"Value":"FAILED","Comparison":"EQUALS"}],"RecordState":[{"Value":"ACTIVE","Comparison":"EQUALS"}],"WorkflowStatus":[{"Value":"NEW","Comparison":"EQUALS"}]}' --query 'Findings[].Compliance.SecurityControlId'`
+
+- **Fixed in code (`infra/`):**
+  - ECS.20: the server's task definition runs it as its nonroot user (65532).
+  - Cognito.4: prod threat protection is on for custom auth flows too.
+  - EC2.2: the city VPC's default security group allows nothing (`restrictDefaultSecurityGroup`).
+- **Fixed in the account (one-time, the owner runs them):**
+  - SSM.7: public sharing of SSM documents blocked.
+  - EC2.182: EBS snapshot public access blocked (all three Regions).
+  - SSM.6: SSM Automation logs to CloudWatch.
+  - The empty default VPC in eu-west-2 deleted (EC2.2, EC2.6); `aws ec2 create-default-vpc` brings it back.
+  - GuardDuty S3, Lambda and EC2 malware protection, and Inspector EC2 and Lambda scanning (a few dollars a month).
+  - Account.1: a security contact.
+  - IAM.2: the admin user's policy comes through an `Admins` group.
+- **By design (suppressed with this reason):**
+  - S3.1, S3.2, S3.8: the templates bucket serves `templates/player-role/*` and `auth/*` publicly. CloudFormation
+    quick-create needs a public template URL, and Safari's sign-in relay is a static page. Everything else in it is
+    private, and the account blocks public ACLs.
+  - ECS.2, EC2.15, EC2.172: tasks sit in public subnets with no NAT gateway (cost). Their security groups let in only
+    the load balancer, the server or CloudFront.
+  - ELB.1, ELB.18, ELB.21, ELB.22: the load balancer is internal. It's reached only through CloudFront's VPC origin
+    inside the VPC; viewers get HTTPS from CloudFront.
+  - Cognito.5: MFA is optional to play, and required (step-up) to link an account, approve a change or apply a fix.
+  - SecretsManager.1: the Google OAuth client secret can't rotate automatically (Google issues it).
+  - ECR.2: image tags are content hashes, so a tag never points at different code.
+- **Deferred (after the workshop):**
+  - CloudTrail.2 (SSE-KMS) and CloudTrail.5 (CloudWatch Logs)
+  - Macie
+  - VPC endpoints or NAT (EC2.10, EC2.55–60, ECS.2)
+  - Stack termination protection and ALB deletion protection, which need `setup --destroy` to turn them off first
+  - GuardDuty Runtime Monitoring
+  - A scoped CDK bootstrap (KMS.2, CloudFormation.4)
+  - S3.9 access logs on the log buckets themselves
+
 ## Deploys and restarts
 
 Rolling deploys are safe: a stopping task fails `/health`, tells players "the city is updating", waits up

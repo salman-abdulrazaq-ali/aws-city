@@ -67,7 +67,7 @@ describe('infrastructure guarantees', () => {
 
   it('prod blocks risky sign-ins (Plus plan, threat protection enforced); staging stays on Essentials', () => {
     const prod = Template.fromStack(new AuthStack(new App(), 'P', { ...env, name: 'prod' }, { env: { account: '111122223333', region: 'us-west-2' } }));
-    prod.hasResourceProperties('AWS::Cognito::UserPool', { UserPoolTier: 'PLUS', UserPoolAddOns: { AdvancedSecurityMode: 'ENFORCED' } });
+    prod.hasResourceProperties('AWS::Cognito::UserPool', { UserPoolTier: 'PLUS', UserPoolAddOns: { AdvancedSecurityMode: 'ENFORCED', AdvancedSecurityAdditionalFlows: { CustomAuthMode: 'ENFORCED' } } });
     prod.hasResourceProperties('AWS::Cognito::UserPoolRiskConfigurationAttachment', {
       AccountTakeoverRiskConfiguration: { Actions: Match.objectLike({ HighAction: { EventAction: 'BLOCK', Notify: false } }) },
     });
@@ -174,6 +174,13 @@ describe('infrastructure guarantees', () => {
 
 describe('no custom domain: CloudFront in front of a private load balancer', () => {
   const t = build({ domainName: '', hostedZoneId: '', zoneName: '' });
+
+  it('Security Hub basics: the server runs as its nonroot user, the VPC default security group allows nothing', () => {
+    const server = Object.values(t.svc.findResources('AWS::ECS::TaskDefinition')).find((d) => JSON.stringify(d).includes('"Name":"server"')) as { Properties: { ContainerDefinitions: Record<string, unknown>[] } };
+    expect(server.Properties.ContainerDefinitions[0]).toMatchObject({ User: '65532:65532', ReadonlyRootFilesystem: true });
+    // restrictDefaultSecurityGroup: CDK's custom resource strips the default group's rules.
+    expect(JSON.stringify(t.svc.findResources('Custom::VpcRestrictDefaultSG'))).toContain('DefaultSecurityGroupId');
+  });
 
   it('CloudFront (HTTPS only, no caching) reaches an internal ALB through a VPC origin', () => {
     t.svc.resourceCountIs('AWS::CloudFront::VpcOrigin', 1);
@@ -367,6 +374,10 @@ describe('the AI on AWS without Bedrock: an open model on a private Fargate serv
     const claude = JSON.stringify(build({ aiCpu: { spot: true } }).svc.findResources('AWS::ECS::TaskDefinition'));
     expect(claude).toContain('"Name":"AWS_CITY_MODEL_PROVIDER","Value":"local"');
     expect(claude).not.toContain('AWS_CITY_LOCAL_FALLBACK');
+    // Bedrock held (setup's `primary`): the model alone, even behind Nova, so each answer is one call and one quota count.
+    const held = JSON.stringify(build({ aiCpu: { spot: true, primary: true }, modelChoice: 'nova', models: modelsForChoice(env.region, 'nova') }).svc.findResources('AWS::ECS::TaskDefinition'));
+    expect(held).toContain('"Name":"AWS_CITY_MODEL_PROVIDER","Value":"local"');
+    expect(held).not.toContain('AWS_CITY_LOCAL_FALLBACK');
     // Without aiCpu, none of it.
     expect(JSON.stringify(build().svc.findResources('AWS::ECS::TaskDefinition'))).not.toContain('AWS_CITY_LOCAL');
   });

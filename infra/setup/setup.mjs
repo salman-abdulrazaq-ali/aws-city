@@ -279,7 +279,9 @@ const askAiCpu = async (held) => {
     },
     prev.aiCpu?.spot === false ? 'demand' : 'spot',
   );
-  return { spot: mode === 'spot' };
+  // Held: the server asks only the Fargate model (no Bedrock attempt first, so each answer is one call and one quota
+  // count). Re-running setup once Bedrock answers puts Bedrock first again, with this as its backup.
+  return { spot: mode === 'spot', ...(held ? { primary: true } : {}) };
 };
 /** Amazon Nova answers (one token) in this Region? */
 const novaAnswers = (r, modelId) =>

@@ -45,6 +45,8 @@ export class AuthStack extends Stack {
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
       featurePlan: prod ? cognito.FeaturePlan.PLUS : cognito.FeaturePlan.ESSENTIALS,
       standardThreatProtectionMode: prod ? cognito.StandardThreatProtectionMode.FULL_FUNCTION : undefined,
+      // Custom auth flows too (none are used; a future one is covered from the start; Security Hub Cognito.4).
+      customThreatProtectionMode: prod ? cognito.CustomThreatProtectionMode.FULL_FUNCTION : undefined,
       email: env.sesFromEmail ? cognito.UserPoolEmail.withSES({ fromEmail: env.sesFromEmail, fromName: 'AWS City', sesRegion: env.region }) : undefined,
       deletionProtection: env.name === 'prod',
       removalPolicy: env.name === 'prod' ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,

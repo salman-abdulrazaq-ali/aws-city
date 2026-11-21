@@ -57,6 +57,8 @@ export class ServiceStack extends Stack {
     // Players pick any region for their own account, so tasks need internet egress: public subnets with
     // a public IP (no NAT cost) and a security group that only accepts the load balancer.
     const vpc = new ec2.Vpc(this, 'Vpc', {
+      // The default security group allows nothing (nothing uses it; Security Hub EC2.2).
+      restrictDefaultSecurityGroup: true,
       // Explicit AZs: no account lookup needed at synth time (CI synthesises without credentials).
       availabilityZones: [`${env.region}a`, `${env.region}b`],
       natGateways: 0,
@@ -244,6 +246,8 @@ export class ServiceStack extends Stack {
       logging: ecs.LogDrivers.awsLogs({ logGroup, streamPrefix: 'server' }),
       stopTimeout: Duration.seconds(120), // SIGTERM → drain (http.drain) → SIGKILL
       readonlyRootFilesystem: true,
+      // The distroless image's nonroot user (server/Dockerfile), stated here too so ECS never runs it as root (ECS.20).
+      user: '65532:65532',
       environment: {
         AWS_CITY_MODE: 'hosted',
         AWS_CITY_REGION: this.region,
@@ -353,7 +357,10 @@ export class ServiceStack extends Stack {
       container.addEnvironment('AWS_CITY_PRIVATE_DOMAIN', namespace);
       container.addEnvironment('AWS_CITY_LOCAL_URL', `http://ai.${namespace}:11434/v1`);
       container.addEnvironment('AWS_CITY_LOCAL_MODEL', CPU_MODEL.id);
-      container.addEnvironment(claude ? 'AWS_CITY_MODEL_PROVIDER' : 'AWS_CITY_LOCAL_FALLBACK', claude ? 'local' : 'true');
+      // Bedrock held (setup's `primary`) or Claude: this model alone. Otherwise behind Nova, as Strands ModelRouter's backup.
+      // (Behind a held Bedrock every answer cost two calls: the failed Bedrock try, then this, each counted on the quota.)
+      if (claude || env.aiCpu.primary) container.addEnvironment('AWS_CITY_MODEL_PROVIDER', 'local');
+      else container.addEnvironment('AWS_CITY_LOCAL_FALLBACK', 'true');
       ack(aiTask, [{ id: 'AwsSolutions-IAM5[Resource::*]', reason: 'ecr:GetAuthorizationToken (pulling the AI image) does not support resource-level permissions.' }]);
       new CfnOutput(this, 'AiCluster', { value: cluster.clusterName, description: 'npm run ai -- on|off|status' });
       new CfnOutput(this, 'AiServiceName', { value: ai.serviceName, description: 'npm run ai -- on|off|status' });
