@@ -123,11 +123,22 @@ When a change touches a decision, update its entry and run its Proof.
   `server/test/service.test.ts` ("refuses every write without an approval channel").
 - **A deterministic gate sits between the server and AWS** (`server/src/guard/`). One SDK middleware on every client with a
   player's credentials (`clientsFor`, lazy ones too; link.ts's STS) refuses, before signing: a command not in `RULES`
-  (`guard/rules.ts`: as the SDK names it, `read`/`write`/`fix`, its IAM actions; the role agrees both ways); a request outside
-  the home Region (AZ/Region lists anywhere, Cost Explorer us-east-1); a write or fix not shaped exactly as the server sends it,
-  grant or not; and one without a grant (`withGrant`) naming its command and exact target, once. Only ActionService (after
-  policy and approval) and fixes.ts (after approval and its re-read) mint grants. Refusals are `GuardDeniedError` ("The city's
-  safety gate stopped this: …"), logged without account ids. Proof: `cd server && npx vitest run test/guard.test.ts test/player-role.test.ts test/service.test.ts test/fixes.test.ts`.
+  (`guard/rules.ts`: as the SDK names it, `read`/`write`/`fix`, its IAM actions; the parsed role, `yaml` with CFN short tags as
+  plain values, grants exactly the read/write/fix sets in aws-city-read/-build/-fix, no wildcard or NotAction anywhere); a request
+  outside the home Region (AZ/Region lists anywhere, Cost Explorer us-east-1); a write or fix not shaped exactly as the server
+  sends it, grant or not (strict zod: RunInstances one encrypted disk and `CpuCredits: standard`; PutBucketTagging/DeleteBucket
+  `ExpectedBucketOwner` = the account, CreateBucket has none so its name prefix stands in); and one without a grant naming its
+  command and exact target, once. What goes on to be serialised is zod's checked copy, never the caller's object (a later
+  change, getter or Proxy can't alter it). A grant is minted for one account (refused from clients in another or an unknown
+  one), its entries are frozen copies, and all are spent when `withGrant` ends (a timer started inside gets nothing). Only
+  ActionService (after policy and approval) and care.ts (after approval, the re-read and the account lock; `FixDef.entry`
+  names the write, `apply()` alone is refused) mint grants. Refusals are `GuardDeniedError` ("The city's safety gate stopped
+  this: …"); audit lines carry the player as `who(sub)` and the target as a 12-hex sha256, never account ids or names. Honest
+  scope: it stops mistakes in server code paths, not hostile in-process code (a client's `config.credentials` still holds the
+  keys, a command's own middleware could relabel it); a source test keeps `.config.credentials`, `.middlewareStack`,
+  presigners, `SignatureV4` and the player's credential providers inside `aws.ts`/`guard/` (allowlist with reasons: uploads'
+  presigned POST on our own S3 client, main.ts/link.ts handing `assumedRole` to gated clients). The player role and IAM are the
+  outer wall. Proof: `cd server && npx vitest run test/guard.test.ts test/player-role.test.ts test/service.test.ts test/fixes.test.ts test/care.test.ts`.
 - **Jev, a second opinion that only tightens** (`server/src/agents/jev.ts`, `docs/jev.md`). Off unless `TYPESAFE_API_KEY` is
   set (local or hosted). ActionService asks TypeSafe's Jev about a write after policy passes and before the player is asked
   (the `judge` dependency); never about a read, a denied write or one with no approval channel. The state is only the

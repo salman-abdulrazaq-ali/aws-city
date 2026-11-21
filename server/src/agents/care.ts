@@ -1,7 +1,7 @@
 import citizensJson from '../../../shared/citizens.json' with { type: 'json' };
 import { classifyAwsError, type AwsClients } from '../aws.js';
 import type { Approvals } from '../contract/approvals.js';
-import { GuardDeniedError } from '../guard/gate.js';
+import { GuardDeniedError, mintGrant, withGrant } from '../guard/gate.js';
 import { log } from '../log.js';
 import { enrich, inventoryEvent, readGeo, readInventory } from '../state/inventory.js';
 import { forgetSetting } from '../state/poller.js';
@@ -109,7 +109,9 @@ export const createCityCare = (deps: {
         lease?.throwIfAborted();
         emit({ type: 'agent.state', agentId: f.citizenId, state: 'working', service: f.serviceId, detail: def.iamAction });
         try {
-          return await def.apply(deps.clients, f, { ...ctx, lease }, approvedIds);
+          // Approved, re-read and locked: only now is the grant minted, for exactly this fix's one write in this account.
+          const grant = mintGrant(`fix:${fix.fixId}`, [def.entry(f, approvedIds)], { accountId: deps.accountId });
+          return await withGrant(grant, () => def.apply(deps.clients, f, { ...ctx, lease }, approvedIds));
         } finally {
           emit({ type: 'agent.state', agentId: f.citizenId, state: 'idle' });
         }

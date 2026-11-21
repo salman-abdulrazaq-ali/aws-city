@@ -142,13 +142,14 @@ export const executeAction = async (action: Action, clients: AwsClients, snapsho
           }),
         );
         held();
-        await clients.s3.send(new PutBucketTaggingCommand({ Bucket: name, Tagging: { TagSet: [{ Key: GAME_TAG.key, Value: GAME_TAG.value }] } }));
+        // Bucket names are global: S3 refuses the call unless the bucket is this account's (the gate checks it is ours).
+        await clients.s3.send(new PutBucketTaggingCommand({ Bucket: name, ExpectedBucketOwner: snapshot.accountId, Tagging: { TagSet: [{ Key: GAME_TAG.key, Value: GAME_TAG.value }] } }));
         return { ok: true, message: `Created bucket "${name}".`, resourceId: name };
       }
 
       case 'delete_bucket':
         held();
-        await clients.s3.send(new DeleteBucketCommand({ Bucket: action.name }));
+        await clients.s3.send(new DeleteBucketCommand({ Bucket: action.name, ExpectedBucketOwner: snapshot.accountId }));
         return { ok: true, message: `Deleted bucket "${action.name}".`, resourceId: action.name };
     }
   } catch (err) {

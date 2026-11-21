@@ -58,29 +58,34 @@ export const SDK_DEFAULTS = {
   requestHandler: { connectionTimeout: 3_000, requestTimeout: 10_000, throwOnRequestTimeout: true },
 } as const;
 
-/** The workshop profile (local mode); `accountId` is the account it acts in, once the server has asked STS. */
+/** The workshop profile (local mode, one player); `accountId` is the account it acts in, once the server has asked STS. */
 export const createAwsClients = (config: Config, accountId?: () => string | undefined) =>
-  clientsFor({ region: config.region, credentials: refreshingProfile(config.awsProfile), accountId });
+  clientsFor({ region: config.region, credentials: refreshingProfile(config.awsProfile), accountId, player: 'local' });
 
 /** Cost Explorer has one endpoint, in us-east-1, whatever the account's home Region. */
 export const COST_EXPLORER_REGION = 'us-east-1';
 
 /**
  * The player's AWS clients. Every one, the lazily made ones included, goes through the gate (server/src/guard): a
- * command it doesn't list, another Region or a write without its grant is refused before the request is signed. The
- * credentials themselves aren't handed out, so nothing can build an ungated client from these.
+ * command it doesn't list, another Region or a write without its grant is refused before the request is signed.
+ * The gate catches mistakes in the server's own code paths; it isn't a sandbox. Each client's `config.credentials`
+ * still holds the player's credentials, and code in this process could build an ungated client or presign with them:
+ * test/guard.test.ts fails if any file outside aws.ts and guard/ touches credentials, middleware stacks or signers
+ * (a short allowlist, each with its reason). The player role and IAM are the outer wall.
  */
 export const clientsFor = (opts: {
   region: string;
   credentials: AwsCredentialIdentityProvider;
-  /** The account the credentials act in, once known (bucket names and fixes are checked against it). */
+  /** The account the credentials act in, once known (bucket names, fixes and grants are checked against it). */
   accountId?: () => string | undefined;
+  /** Who they act for, as `who(sub)` (log.ts), for the gate's audit lines. */
+  player?: string;
   /** Test seam: where requests go (a stub that records them, never the network). */
   requestHandler?: EC2ClientConfig['requestHandler'];
 }) => {
-  const { accountId, ...sdk } = opts;
+  const { accountId, player, ...sdk } = opts;
   const base = { ...SDK_DEFAULTS, ...sdk };
-  const gate: GateContext = { home: opts.region, accountId };
+  const gate: GateContext = { home: opts.region, accountId, player };
   const ec2 = guard(new EC2Client(base), gate);
   /** Read-only EC2 clients for other Regions (their AZ maps), same credentials, made on first use. */
   const ec2ByRegion = new Map<string, EC2Client>([[opts.region, ec2]]);

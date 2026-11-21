@@ -66,6 +66,8 @@ const gameTags = z.array(tag).refine((tags) => tags.some((t) => t.Key === GAME_T
 const oneInstance = z.object({ InstanceIds: z.tuple([instanceId]) }).strict();
 /** A bucket of this account's: aws-city-<account>-… (none until the account is known). */
 const gameBucket = (ctx: WireContext) => (ctx.accountId ? z.string().startsWith(bucketPrefix(ctx.accountId)) : z.never());
+/** S3's ExpectedBucketOwner, which must be the account the credentials act in (bucket names are global). */
+const bucketOwner = (ctx: WireContext) => (ctx.accountId ? z.literal(ctx.accountId) : z.never());
 
 const RUN_INSTANCES = z
   .object({
@@ -74,10 +76,10 @@ const RUN_INSTANCES = z
     MinCount: z.literal(1),
     MaxCount: z.literal(1),
     MetadataOptions: z.object({ HttpTokens: z.literal('required') }).strict(),
-    BlockDeviceMappings: z
-      .array(z.object({ DeviceName: z.string(), Ebs: z.object({ Encrypted: z.literal(true) }).strict() }).strict())
-      .min(1),
-    CreditSpecification: z.object({ CpuCredits: z.literal('standard') }).strict().optional(),
+    // Exactly one mapping, the encrypted root volume.
+    BlockDeviceMappings: z.tuple([z.object({ DeviceName: z.string().min(1), Ebs: z.object({ Encrypted: z.literal(true) }).strict() }).strict()]),
+    // T4g defaults to unlimited credits, which can bill surplus CPU: standard, always.
+    CreditSpecification: z.object({ CpuCredits: z.literal('standard') }).strict(),
     TagSpecifications: z
       .array(z.object({ ResourceType: z.enum(['instance', 'volume']), Tags: gameTags }).strict())
       .refine((specs) => specs.some((s) => s.ResourceType === 'instance'), 'no instance tags'),
@@ -114,7 +116,7 @@ export const RULES = {
       // Tags on launch need ec2:CreateTags (the role allows it only with ec2:CreateAction RunInstances).
       iam: ['ec2:RunInstances', 'ec2:CreateTags'],
       wire: () => RUN_INSTANCES,
-      refusal: "a new house must be one t4g.nano or t4g.micro with IMDSv2 required, an encrypted disk and the city's tag, and nothing else.",
+      refusal: "a new house must be one t4g.nano or t4g.micro with IMDSv2 required, one encrypted disk, standard CPU credits and the city's tag, and nothing else.",
       target: (i) => {
         const name = nameTag(i);
         return name === undefined ? undefined : launchTarget(i.InstanceType, name);
@@ -172,6 +174,7 @@ export const RULES = {
   S3Client: {
     ListBucketsCommand: read('s3:ListAllMyBuckets'),
     GetPublicAccessBlockCommand: read('s3:GetBucketPublicAccessBlock'),
+    // CreateBucket takes no ExpectedBucketOwner (S3's CreateBucketRequest has none): the name's account prefix stands in.
     CreateBucketCommand: write({
       iam: ['s3:CreateBucket'],
       wire: (ctx) =>
@@ -187,14 +190,14 @@ export const RULES = {
     }),
     PutBucketTaggingCommand: write({
       iam: ['s3:PutBucketTagging'],
-      wire: (ctx) => z.object({ Bucket: gameBucket(ctx), Tagging: z.object({ TagSet: gameTags }).strict() }).strict(),
-      refusal: "only the city's own warehouses are tagged, and they keep the city's tag.",
+      wire: (ctx) => z.object({ Bucket: gameBucket(ctx), ExpectedBucketOwner: bucketOwner(ctx), Tagging: z.object({ TagSet: gameTags }).strict() }).strict(),
+      refusal: "only the city's own warehouses in your account are tagged, and they keep the city's tag.",
       target: (i) => i.Bucket,
     }),
     DeleteBucketCommand: write({
       iam: ['s3:DeleteBucket'],
-      wire: (ctx) => z.object({ Bucket: gameBucket(ctx) }).strict(),
-      refusal: 'the city only deletes its own aws-city-… warehouses.',
+      wire: (ctx) => z.object({ Bucket: gameBucket(ctx), ExpectedBucketOwner: bucketOwner(ctx) }).strict(),
+      refusal: 'the city only deletes its own aws-city-… warehouses, in your account.',
       target: (i) => i.Bucket,
     }),
     PutPublicAccessBlockCommand: fix({
@@ -203,7 +206,7 @@ export const RULES = {
         z
           .object({
             Bucket: z.string().min(1),
-            ExpectedBucketOwner: ctx.accountId ? z.literal(ctx.accountId) : z.never(),
+            ExpectedBucketOwner: bucketOwner(ctx),
             PublicAccessBlockConfiguration: z
               .object({ BlockPublicAcls: z.literal(true), IgnorePublicAcls: z.literal(true), BlockPublicPolicy: z.literal(true), RestrictPublicBuckets: z.literal(true) })
               .strict(),

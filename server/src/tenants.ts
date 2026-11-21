@@ -401,5 +401,5 @@ export const playerAws = (
   if (record?.status !== 'linked' || !record.roleArn || !record.accountId) return undefined;
   const credentials = credentialsFor({ roleArn: record.roleArn, externalId: record.externalId, sub, region: record.region });
   const accountId = record.accountId;
-  return { clients: clientsFor({ region: record.region, credentials, accountId: () => accountId }), accountId, region: record.region };
+  return { clients: clientsFor({ region: record.region, credentials, accountId: () => accountId, player: who(sub) }), accountId, region: record.region };
 };
