@@ -9,7 +9,7 @@ import { BudgetStack } from '../lib/budget-stack.js';
 import { type EnvConfig, firefoxRedirectUrl, loadEnv, taskRoleName } from '../lib/config.js';
 import { DataStack, PLAYER_ROLE_KEY, playerRoleTemplateVersion } from '../lib/data-stack.js';
 import { EdgeStack } from '../lib/edge-stack.js';
-import { bedrockWildcards, foundationModel, geoFor, isProfileId, modelsFor, modelsForChoice, NOVA_MODELS } from '../lib/models.js';
+import { bedrockWildcards, CPU_MODEL, cpuAiHourly, foundationModel, geoFor, isProfileId, modelsFor, modelsForChoice, NOVA_MODELS } from '../lib/models.js';
 import { ServiceStack } from '../lib/service-stack.js';
 
 const env: EnvConfig = {
@@ -311,6 +311,58 @@ describe('the AI in another Region (a new account whose Bedrock answers elsewher
   });
 });
 
+describe('the AI on AWS without Bedrock: an open model on a private Fargate service', () => {
+  it('runs only when asked: Graviton, 8 vCPU / 16 GB, Spot or on-demand, a private DNS name, no desired count', () => {
+    expect(build().svc.findResources('AWS::ServiceDiscovery::PrivateDnsNamespace')).toEqual({});
+    const spot = build({ aiCpu: { spot: true }, modelChoice: 'nova', models: modelsForChoice(env.region, 'nova') });
+    spot.svc.hasResourceProperties('AWS::ECS::TaskDefinition', { Cpu: String(CPU_MODEL.cpu), Memory: String(CPU_MODEL.memoryMiB), RuntimePlatform: { CpuArchitecture: 'ARM64', OperatingSystemFamily: 'LINUX' } });
+    spot.svc.hasResourceProperties('AWS::ServiceDiscovery::PrivateDnsNamespace', { Name: `awscity-${env.name}.internal` });
+    spot.svc.hasResourceProperties('AWS::ServiceDiscovery::Service', { Name: 'ai' });
+    const services = Object.values(spot.svc.findResources('AWS::ECS::Service')) as { Properties: Record<string, unknown> }[];
+    const ai = services.find((s) => s.Properties.CapacityProviderStrategy);
+    expect(ai?.Properties.CapacityProviderStrategy).toEqual([{ CapacityProvider: 'FARGATE_SPOT', Weight: 1 }]);
+    // No desired count: `npm run ai -- off` sticks across deploys.
+    expect(ai?.Properties.DesiredCount).toBeUndefined();
+    const onDemand = build({ aiCpu: { spot: false }, modelChoice: 'nova', models: modelsForChoice(env.region, 'nova') });
+    expect(JSON.stringify(onDemand.svc.findResources('AWS::ECS::Service'))).toContain('"CapacityProvider":"FARGATE","Weight":1');
+  });
+
+  it('only the city server may reach it, on its one port; the model server has no AWS permissions', () => {
+    const t = build({ aiCpu: { spot: true }, modelChoice: 'nova', models: modelsForChoice(env.region, 'nova') });
+    const ingress = Object.values(t.svc.findResources('AWS::EC2::SecurityGroupIngress')) as { Properties: Record<string, unknown> }[];
+    const toAi = ingress.filter((r) => r.Properties.FromPort === 11434);
+    expect(toAi).toHaveLength(1);
+    expect(toAi[0].Properties).toMatchObject({ IpProtocol: 'tcp', ToPort: 11434, SourceSecurityGroupId: { 'Fn::GetAtt': [expect.stringMatching(/^ServiceSecurityGroup/), 'GroupId'] } });
+    expect(JSON.stringify(toAi)).not.toContain('0.0.0.0/0');
+    // Its task role carries no policy at all.
+    const policies = JSON.stringify(t.svc.findResources('AWS::IAM::Policy'));
+    expect(policies).not.toMatch(/AiTaskTaskRole/);
+  });
+
+  it('the server is told the private name and the model: Bedrock first behind Nova, the model alone behind Claude', () => {
+    const nova = JSON.stringify(build({ aiCpu: { spot: true }, modelChoice: 'nova', models: modelsForChoice(env.region, 'nova') }).svc.findResources('AWS::ECS::TaskDefinition'));
+    expect(nova).toContain(`"Name":"AWS_CITY_PRIVATE_DOMAIN","Value":"awscity-${env.name}.internal"`);
+    expect(nova).toContain(`"Name":"AWS_CITY_LOCAL_URL","Value":"http://ai.awscity-${env.name}.internal:11434/v1"`);
+    expect(nova).toContain(`"Name":"AWS_CITY_LOCAL_MODEL","Value":"${CPU_MODEL.id}"`);
+    expect(nova).toContain('"Name":"AWS_CITY_LOCAL_FALLBACK","Value":"true"');
+    const claude = JSON.stringify(build({ aiCpu: { spot: true } }).svc.findResources('AWS::ECS::TaskDefinition'));
+    expect(claude).toContain('"Name":"AWS_CITY_MODEL_PROVIDER","Value":"local"');
+    expect(claude).not.toContain('AWS_CITY_LOCAL_FALLBACK');
+    // Without aiCpu, none of it.
+    expect(JSON.stringify(build().svc.findResources('AWS::ECS::TaskDefinition'))).not.toContain('AWS_CITY_LOCAL');
+  });
+
+  it('the image pins the Ollama release and the exact model weights', () => {
+    const dockerfile = readFileSync(new URL('../ai-image/Dockerfile', import.meta.url), 'utf8');
+    expect(dockerfile).toMatch(/^FROM ollama\/ollama:[\d.]+@sha256:[0-9a-f]{64}$/m);
+    expect(dockerfile).toContain(`ARG MODEL=${CPU_MODEL.id}`);
+    expect(dockerfile).toContain(`ARG MODEL_BLOB=${CPU_MODEL.blob}`);
+    expect(dockerfile).toContain('test -f "/root/.ollama/models/blobs/$MODEL_BLOB"');
+    // About $8.72 a day on demand in eu-west-2 (8 vCPU + 16 GB of Graviton Fargate).
+    expect(cpuAiHourly() * 24).toBeCloseTo(8.72, 1);
+  });
+});
+
 describe('SSM parameter names AWS accepts', () => {
   it('no parameter starts with a reserved prefix ("aws" or "ssm", any case), in either environment or model family', () => {
     for (const over of [{}, { name: 'prod' as const }, { region: 'eu-west-2', modelChoice: 'nova' as const, models: modelsForChoice('eu-west-2', 'nova') }]) {
@@ -370,6 +422,7 @@ describe('cdk-nag AwsSolutions (acknowledgements sit on the constructs they are 
     ['staging, custom domain + public ALB (eu-west-1)', { region: 'eu-west-1' }],
     ['prod, custom domain + public ALB', { name: 'prod' as const }],
     ['staging on Amazon Nova, CloudFront (eu-west-2)', { region: 'eu-west-2', domainName: '', hostedZoneId: '', zoneName: '', modelChoice: 'nova' as const, models: modelsForChoice('eu-west-2', 'nova') }],
+    ['prod with the AI on Fargate (Spot), CloudFront (eu-west-2)', { name: 'prod' as const, region: 'eu-west-2', domainName: '', hostedZoneId: '', zoneName: '', aiCpu: { spot: true } }],
   ])('%s synthesises clean', (_name, over) => {
     expect(nagSynth(over)).not.toThrow();
   });

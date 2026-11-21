@@ -52,6 +52,15 @@ describe('the review screen', () => {
     expect(Object.fromEntries(reviewRows({ ...answers, aiRegion: 'eu-west-2' }))['AI runs in']).toBeUndefined();
   });
 
+  it('the AI on Fargate: its model, Spot or on-demand, the cost a day and how to switch it off; the image build is listed', () => {
+    const cpu = { ...answers, aiEnabled: true, aiCpu: { spot: true, model: 'Qwen3 4B', daily: 8.72 } };
+    expect(Object.fromEntries(reviewRows(cpu))['AI on Fargate']).toBe('Qwen3 4B on Graviton, Spot, private to your VPC (about $8.72 a day on demand, Spot less; off: npm run ai -- off)');
+    expect(Object.fromEntries(reviewRows({ ...cpu, aiCpu: { ...cpu.aiCpu, spot: false } }))['AI on Fargate']).toMatch(/on-demand, private to your VPC \(about \$8\.72 a day on demand; off/);
+    const actions = plannedActions(cpu, { account: '111122223333', storeGoogleSecret: false, verifySes: false, deleteSes: [], bootstrap: [] });
+    expect(actions.at(-2)).toBe('Build the AI image (Qwen3 4B, about 4 GB) in AWS CodeBuild and run it on a private Fargate service');
+    expect(Object.fromEntries(reviewRows(answers))['AI on Fargate']).toBeUndefined();
+  });
+
   it('explains us-east-1 in one sentence', () => {
     expect(cloudFrontNote('eu-west-2')).toMatch(/AWS WAF.*us-east-1.*stay in eu-west-2/);
   });

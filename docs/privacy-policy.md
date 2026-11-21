@@ -29,7 +29,9 @@ the game. You can remove that access at any time by deleting the `AWSCity` stack
 - **Your questions and requests** are sent to an AI model on Amazon Bedrock (Amazon Nova or Claude, whichever the
   city's host chose) to produce the agents' answers. Amazon Bedrock doesn't store them or use them to train models.
   They're processed in the AWS Region the host runs the AI in, usually the Region that stores your data; when a new
-  account's Bedrock is still on hold there, it can be another one (the host's setup says which).
+  account's Bedrock is still on hold there, it can be another one (the host's setup says which). While Bedrock is
+  unavailable, a host can instead answer them with an open model (Qwen3) running on its own AWS servers in the
+  Region that stores your data; they don't leave the host's AWS account, and nothing is kept after the answer.
 - **Names of the resources in your linked AWS account** (e.g. bucket and table names) are read so
   the city can draw them, and so are your account's Availability Zone names and IDs and which AWS Regions it has turned
   on. They're kept in the server's memory while you're playing, not saved.

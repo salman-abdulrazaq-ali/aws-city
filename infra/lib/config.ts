@@ -48,6 +48,12 @@ export interface EnvConfig {
   aiRegion?: string;
   /** Amazon Nova with Lite in every slot: the AI Region has a Lite quota but none for Pro yet. */
   novaLiteOnly?: boolean;
+  /**
+   * The city's AI on AWS without Bedrock: an open model (CPU_MODEL, lib/models.ts) served by Ollama on a private Fargate
+   * service (Graviton, 8 vCPU, 16 GB), behind Bedrock in the server's Strands ModelRouter. `spot`: Fargate Spot (cheaper;
+   * AWS can stop the task with two minutes' notice and ECS starts another). Absent = no AI service. The setup wizard asks.
+   */
+  aiCpu?: { spot: boolean };
   models: { main: string; light: string };
 }
 

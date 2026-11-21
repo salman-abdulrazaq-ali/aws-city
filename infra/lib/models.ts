@@ -51,6 +51,24 @@ export const modelsFor = (region: string): { main: string; light: string } => {
  */
 export const NOVA_MODELS = { main: 'amazon.nova-pro-v1:0', light: 'amazon.nova-lite-v1:0' } as const;
 
+/**
+ * The open model the city runs on Fargate when Bedrock can't (EnvConfig.aiCpu): Qwen3 4B Instruct 2507 (Apache-2.0,
+ * tool calling, no thinking step, which a CPU can't afford), 4-bit, from the Ollama registry. `blob` pins the exact
+ * weights: infra/ai-image/Dockerfile fails the build if the registry ever serves another file for this tag.
+ */
+export const CPU_MODEL = {
+  id: 'qwen3:4b-instruct-2507-q4_K_M',
+  name: 'Qwen3 4B',
+  blob: 'sha256-85e4a5b7b8ef0e48af0e8658f5aaab9c2324c76c1641493f4d1e25fce54b18b9',
+  /** Task size: the model (2.5 GB) and two 16k-token conversations' KV cache fit in 16 GB. */
+  cpu: 8192,
+  memoryMiB: 16384,
+} as const;
+/** Fargate on Graviton (ARM) in eu-west-2, on demand (AWS Price List API, Nov 2026): per vCPU-hour and per GB-hour. */
+export const FARGATE_ARM_PRICE = { region: 'eu-west-2', vcpuHour: 0.03725, gbHour: 0.00409 } as const;
+/** What the AI service costs an hour on demand at FARGATE_ARM_PRICE (Spot is usually well under half of it). */
+export const cpuAiHourly = () => (CPU_MODEL.cpu / 1024) * FARGATE_ARM_PRICE.vcpuHour + (CPU_MODEL.memoryMiB / 1024) * FARGATE_ARM_PRICE.gbHour;
+
 export type ModelChoice = 'claude' | 'nova';
 
 /**

@@ -19,6 +19,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as servicediscovery from 'aws-cdk-lib/aws-servicediscovery';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as subs from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
@@ -27,7 +28,7 @@ import { ack, nagAccount } from './nag.js';
 import { logWaf, visibility, wafRules } from './waf.js';
 import type { Construct } from 'constructs';
 import { type EnvConfig, extensionOrigins, playerRolePrefix, taskRoleName } from './config.js';
-import { bedrockResources, bedrockWildcards } from './models.js';
+import { bedrockResources, bedrockWildcards, CPU_MODEL } from './models.js';
 
 export interface ServiceDeps {
   /** CloudFront-scope WAF from EdgeStack (us-east-1), used when there's no custom domain. */
@@ -285,6 +286,60 @@ export class ServiceStack extends Stack {
     service.targetGroup.configureHealthCheck({ path: '/health', healthyHttpCodes: '200', interval: Duration.seconds(15), healthyThresholdCount: 2 });
     service.targetGroup.setAttribute('deregistration_delay.timeout_seconds', '110');
     service.loadBalancer.setAttribute('routing.http.drop_invalid_header_fields.enabled', 'true');
+
+    // ── The city's AI on AWS without Bedrock (EnvConfig.aiCpu) ───────────────────────────────────────────────────────
+    // An open model served by Ollama on its own private Fargate service (Graviton, CPU): reachable only from the server's
+    // security group, by a private DNS name, never through the load balancer. The server's Strands ModelRouter tries
+    // Bedrock first and this model next (Claude, whose routes don't all run on Strands, uses it alone).
+    if (env.aiCpu) {
+      const namespace = `awscity-${env.name}.internal`;
+      cluster.addDefaultCloudMapNamespace({ name: namespace, type: servicediscovery.NamespaceType.DNS_PRIVATE, vpc, useForServiceConnect: false });
+      cluster.enableFargateCapacityProviders();
+      const aiImage = new ContainerImageBuild(this, 'AiImage', {
+        directory: fileURLToPath(new URL('../ai-image', import.meta.url)),
+        platform: ecrAssets.Platform.LINUX_ARM64,
+      });
+      (aiImage.repository as ecr.Repository).addLifecycleRule({ description: 'Keep the last 3 AI images (about 4 GB each)', maxImageCount: 3 });
+      const aiLogs = new logs.LogGroup(this, 'AiLogs', { retention: logs.RetentionDays.ONE_MONTH, removalPolicy: RemovalPolicy.DESTROY });
+      // No task role: the model server calls no AWS API (the execution role only pulls the image and writes logs).
+      const aiTask = new ecs.FargateTaskDefinition(this, 'AiTask', {
+        cpu: CPU_MODEL.cpu,
+        memoryLimitMiB: CPU_MODEL.memoryMiB,
+        // Room for the unpacked image (Ollama + the 2.5 GB model); Fargate's default is 20 GiB.
+        ephemeralStorageGiB: 30,
+        runtimePlatform: { cpuArchitecture: ecs.CpuArchitecture.ARM64, operatingSystemFamily: ecs.OperatingSystemFamily.LINUX },
+      });
+      aiTask.addContainer('ai', {
+        image: aiImage.toEcsDockerImageCode(),
+        logging: ecs.LogDrivers.awsLogs({ logGroup: aiLogs, streamPrefix: 'ai' }),
+        portMappings: [{ containerPort: 11434 }],
+        healthCheck: { command: ['CMD', '/bin/ollama', 'list'], interval: Duration.seconds(30), timeout: Duration.seconds(10), retries: 3, startPeriod: Duration.seconds(60) },
+      });
+      const ai = new ecs.FargateService(this, 'AiService', {
+        cluster,
+        taskDefinition: aiTask,
+        // No desiredCount: CloudFormation starts it at 1 and later deploys leave the count alone, so `npm run ai -- off`
+        // (desired count 0, no deploy) sticks until `npm run ai -- on`.
+        capacityProviderStrategies: [{ capacityProvider: env.aiCpu.spot ? 'FARGATE_SPOT' : 'FARGATE', weight: 1 }],
+        // A public address only to pull its image (this VPC has no NAT); its security group lets only the server in.
+        assignPublicIp: true,
+        vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+        cloudMapOptions: { name: 'ai', dnsRecordType: servicediscovery.DnsRecordType.A, dnsTtl: Duration.seconds(10) },
+        circuitBreaker: { rollback: true },
+        minHealthyPercent: 100,
+        maxHealthyPercent: 200,
+      });
+      ai.connections.allowFrom(service.service, ec2.Port.tcp(11434), 'The city server asks the AI');
+      const claude = /(^|\.)anthropic\./.test(env.models.main);
+      // server/src/config.ts: a hosted server may reach a model of its own only at a name in this private namespace.
+      container.addEnvironment('AWS_CITY_PRIVATE_DOMAIN', namespace);
+      container.addEnvironment('AWS_CITY_LOCAL_URL', `http://ai.${namespace}:11434/v1`);
+      container.addEnvironment('AWS_CITY_LOCAL_MODEL', CPU_MODEL.id);
+      container.addEnvironment(claude ? 'AWS_CITY_MODEL_PROVIDER' : 'AWS_CITY_LOCAL_FALLBACK', claude ? 'local' : 'true');
+      ack(aiTask, [{ id: 'AwsSolutions-IAM5[Resource::*]', reason: 'ecr:GetAuthorizationToken (pulling the AI image) does not support resource-level permissions.' }]);
+      new CfnOutput(this, 'AiCluster', { value: cluster.clusterName, description: 'npm run ai -- on|off|status' });
+      new CfnOutput(this, 'AiServiceName', { value: ai.serviceName, description: 'npm run ai -- on|off|status' });
+    }
     const albLogs = new s3.Bucket(this, 'AlbLogs', {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED, // ALB log delivery requires SSE-S3
