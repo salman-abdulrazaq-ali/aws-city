@@ -4,7 +4,7 @@
 // "Take it down" can remove (resource.remove).
 
 import type { ConnectionStatus } from '@/backend/AgentBackend';
-import type { InventoryItem } from '@/backend/contract';
+import type { InventoryItem, ResourceRemove } from '@/backend/contract';
 import { isPracticeDeploy } from '@/backend/ServerBackend';
 import { FACTS, regionInfo } from '@/world/regions';
 
@@ -30,19 +30,19 @@ export interface LinkRegion {
   optIn: boolean;
 }
 
+/** "US West (Oregon)"; the code itself for a Region the facts don't name. */
+export const regionName = (code: string) => regionInfo(code)?.name ?? code;
+
 /**
  * The Regions a link can use, by name: the commercial partition only. The AWSCity role trusts the city's own account
  * (arn:aws), so a GovCloud or sovereign-cloud account can't link (server/src/accounts/link.ts refuses them too).
  */
 export const LINK_REGIONS: readonly LinkRegion[] = Object.entries(FACTS.regions)
   .filter(([, f]) => f.partition === 'aws')
-  .map(([code, f]) => ({ code, name: regionInfo(code)?.name ?? code, optIn: f.optIn }))
+  .map(([code, f]) => ({ code, name: regionName(code), optIn: f.optIn }))
   .sort((a, b) => a.name.localeCompare(b.name));
 
 export const isLinkRegion = (code: string | undefined): code is string => !!code && LINK_REGIONS.some((r) => r.code === code);
-
-/** "US West (Oregon)"; the code itself for a Region the facts don't name. */
-export const regionName = (code: string) => regionInfo(code)?.name ?? code;
 
 /** The Region a link starts on: the one asked for last, the linked one, else the city's (each only where a link can go). */
 export const defaultLinkRegion = (a: Pick<AccountLike, 'linkRegion' | 'region'>, cityRegion: string) =>
@@ -79,11 +79,7 @@ export const stacksUrl = (region: string) => `https://${region}.console.aws.amaz
 export function connectsPlayer(linkUrl: string | undefined): string | undefined {
   const query = linkUrl?.split('#')[1]?.split('?').slice(1).join('?');
   if (!query) return undefined;
-  try {
-    return new URLSearchParams(query).get('param_ConnectsPlayer')?.trim() || undefined;
-  } catch {
-    return undefined;
-  }
+  return new URLSearchParams(query).get('param_ConnectsPlayer')?.trim() || undefined;
 }
 
 /** What the CloudFormation console asks while the key is made (step 2 of linking). */
@@ -122,7 +118,7 @@ export const stepsText = (steps: readonly string[]) => steps.map((s, i) => `${i 
 
 // ── The city's own builds (managedByGame) and taking them down ──────────────────
 
-export type RemoveKind = 'instance' | 'table' | 'bucket';
+export type RemoveKind = ResourceRemove['kind'];
 
 /**
  * What resource.remove needs for a resource (from its ARN): an EC2 instance's id, a DynamoDB table's name or an S3

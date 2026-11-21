@@ -9,6 +9,7 @@ import { connectTask } from '@/state/simple';
 import { bus } from '@/state/bus';
 import { useCity } from '@/state/store';
 import { useCopy } from './feedback';
+import { isOnline } from './logic';
 import type { OpenTab } from './QuestLog';
 import { Plain } from './Term';
 import { useDialog } from './useDialog';
@@ -88,7 +89,7 @@ export function StackLink({ region, children = 'Open the AWSCity stack ↗' }: {
 export function CheckAgain() {
   const accountId = useCity((s) => s.account.accountId);
   const seq = useCity((s) => s.account.seq);
-  const offline = useCity((s) => s.backendKind !== 'mock' && s.backendStatus !== 'connected');
+  const offline = useCity((s) => !isOnline(s.backendKind, s.backendStatus));
   const pending = usePending();
   const { clear } = pending;
   useEffect(() => clear('check'), [seq, clear]);
@@ -136,9 +137,9 @@ export function FixesOn({ region }: { region: string }) {
 export function RoleUpdate({ region, from, to, templateUrl }: { region: string; from: number; to: number; templateUrl?: string }) {
   const [copied, copy] = useCopy();
   const [copiedName, copyName] = useCopy();
-  const label = useCity((s) => connectsPlayer(s.account.linkUrl));
   const linkUrl = useCity((s) => s.account.linkUrl);
-  const offline = useCity((s) => s.backendKind !== 'mock' && s.backendStatus !== 'connected');
+  const label = connectsPlayer(linkUrl);
+  const offline = useCity((s) => !isOnline(s.backendKind, s.backendStatus));
   const pending = usePending();
   const { clear } = pending;
   useEffect(() => clear('name'), [linkUrl, clear]);

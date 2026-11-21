@@ -3,7 +3,7 @@
 
 import { browser } from 'wxt/browser';
 import { createBackend, type AgentBackend } from '@/backend';
-import type { ConsoleStepEvent, PageSnapshot } from '@/backend/contract';
+import type { ConsoleStepEvent, PageSnapshot, ResourceRemove } from '@/backend/contract';
 import { agentName, emptyProgress, errorText } from '@/state/store';
 import { uid } from '@/backend/AgentBackend';
 import type { Progress } from '@/backend/contract';
@@ -695,7 +695,9 @@ export async function downloadMyData() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     store().toast('🧾', `Your data is saved as ${a.download}.`);
   } catch (e) {
-    store().toast('⚠️', `Couldn’t download your data: ${e instanceof Error ? e.message : String(e)}`, 'error');
+    // Players get a sentence, never the raw request error ("Players see no internal errors"); the console keeps the detail.
+    console.warn('download my data failed', e);
+    store().toast('⚠️', 'Couldn’t download your data just now. Check your connection and try again.', 'error');
   }
 }
 
@@ -868,7 +870,7 @@ export function recheckAccount() {
 }
 
 /** v2.17: Take down one thing the city built; the server asks for approval like any write (deploy.preview → deploy.approve). */
-export function removeResource(kind: 'instance' | 'table' | 'bucket', id: string) {
+export function removeResource(kind: ResourceRemove['kind'], id: string) {
   if (!backend) return undefined;
   const requestId = uid();
   backend.send({ action: 'resource.remove', requestId, kind, id });

@@ -59,7 +59,7 @@ describe('"Got it": a finding with no automatic fix never holds a place forever'
   const plain = demoFindings().find((f) => !f.fix && !ADVANCED_RULES.has(f.ruleId))!;
   const fixable = demoFindings().find((f) => !!f.fix)!;
 
-  it('resolves it, lets the next one in at once, and it never comes back open (not even next session)', () => {
+  it('resolves it, lets the next one in at once, and it stays read for this player (not for the next one)', () => {
     expect(plain).toBeTruthy();
     const fs = [0, 1, 2, 3].map((i): CityFinding => ({ ...plain, id: `n${i}`, severity: 'low' }));
     fs.forEach(send);
@@ -83,12 +83,14 @@ describe('"Got it": a finding with no automatic fix never holds a place forever'
     // The server (or the demo) sends it again: it stays read.
     send({ ...fs.find((f) => f.id === read)! });
     expect(s().findings[read].status).toBe('resolved');
-    // Next session: still read, never shown.
+    // The device remembers it (a reload reads it back): still read when it arrives again.
+    expect(JSON.parse(localStorage.getItem('awscity.findingsGotIt') ?? '[]')).toContain(read);
+    // The session ends (sign-out): this player's "Got it"s leave with them, so the next player sees their own city's.
     s().resetSession();
+    expect(localStorage.getItem('awscity.findingsGotIt')).toBeNull();
     send({ ...fs.find((f) => f.id === read)! });
     s().releaseCare();
-    expect(shown()).toEqual([]);
-    expect(heldFindingIds()).toEqual([]);
+    expect(s().findings[read].status).toBe('open');
   });
 
   it('a finding with an automatic fix is fixed, not dismissed', () => {

@@ -425,16 +425,17 @@ export class FishingScene extends Phaser.Scene {
           .on('pointerdown', run),
       );
     const leave = () => (setExpert(false), useCity.getState().setView({ name: 'city' }));
+    const again = () => (setExpert(false), this.scene.restart());
     this.leave = leave;
-    this.again = () => (setExpert(false), this.scene.restart());
+    this.again = again;
     // S3 Lake at level 3: an Expert round with the harder catches and a shorter bite.
     const dx = Math.min(130, (cw - 40) / 3);
     if (expertOpen('s3')) {
-      button(-dx, '🎣 Play again (Space)', '#4a2e07', '#ffb84d', () => (setExpert(false), this.scene.restart()));
+      button(-dx, '🎣 Play again (Space)', '#4a2e07', '#ffb84d', again);
       button(0, '⚡ Expert', '#1b1200', '#f472b6', () => (setExpert(true), this.scene.restart()));
       button(dx, '← City', '#ffffff', '#2d2144', leave);
     } else {
-      button(-Math.min(80, dx), '🎣 Play again (Space)', '#4a2e07', '#ffb84d', () => (setExpert(false), this.scene.restart()));
+      button(-Math.min(80, dx), '🎣 Play again (Space)', '#4a2e07', '#ffb84d', again);
       button(Math.min(80, dx), '← City', '#ffffff', '#2d2144', leave);
     }
     const shade = this.add.rectangle(0, 0, w, h, 0x140d1f, 0.5).setOrigin(0).setDepth(28);

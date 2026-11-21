@@ -61,12 +61,13 @@ export function designPay(kinds: readonly string[], day = dayKey(), store: Ledge
   return paid;
 }
 
+export { HALF_ROUNDS_A_DAY };
+
 /**
  * A mini-game round's coins: full (COIN_PAY.round) for the first FULL_ROUNDS_A_DAY rounds of a game a day or a new best,
  * half for the next HALF_ROUNDS_A_DAY, then none (the round still counts; its stars stop at the same point,
  * src/learning/gameStars.ts roundStars): playing on is for fun, not a coin farm. `roundsToday` counts this round.
  */
-export { HALF_ROUNDS_A_DAY };
 export function roundCoins(roundsToday: number, newBest: boolean, full = FULL_ROUNDS_A_DAY): number {
   if (newBest || roundsToday <= full) return COIN_PAY.round;
   return roundsToday <= full + HALF_ROUNDS_A_DAY ? Math.ceil(COIN_PAY.round / 2) : 0;

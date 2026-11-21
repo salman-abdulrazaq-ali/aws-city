@@ -85,7 +85,16 @@ export function Home({ openTab, places }: { openTab: OpenTab; places?: ReactNode
 
 /** Where a task's button goes when it's another tab (its label says what happens; this says where). */
 const TASK_WHERE: Partial<Record<TodayGoal['id'], string>> = { cards: 'Learn', puzzles: 'Learn', designs: 'Learn', jobs: 'Jobs' };
-const taskWhere = (t: TodoTask) => (t.run.kind === 'plan' ? whereOf(t.run.plan) : t.run.kind === 'goal' ? TASK_WHERE[t.run.goal] : 'Deploy');
+function taskWhere(t: TodoTask): string | undefined {
+  switch (t.run.kind) {
+    case 'plan':
+      return whereOf(t.run.plan);
+    case 'goal':
+      return TASK_WHERE[t.run.goal];
+    case 'connect':
+      return 'Deploy';
+  }
+}
 
 /**
  * The City tab in Simple mode: what the player asked an agent (while it works), one plain To-do list (a box, one line

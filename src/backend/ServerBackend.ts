@@ -50,8 +50,8 @@ export const GUARDED_BLUEPRINTS = [
 
 /** Commands kept while offline; older ones are dropped first. */
 const MAX_QUEUED = 50;
-/** A server behind this extension is being updated: ask it again after this long (plus up to 30 s of jitter). */
-const HELD_RETRY_MS = 60_000;
+/** A server behind this extension is being updated: ask it again in a minute, plus up to 30 s of jitter. */
+const heldRetryMs = () => 60_000 + Math.random() * 30_000;
 
 export class ServerBackend implements AgentBackend {
   readonly kind = 'server' as const;
@@ -304,7 +304,7 @@ export class ServerBackend implements AgentBackend {
       if (ev.code === CLOSE_RESTARTING) return this.schedule(1000 + Math.random() * 4000);
       // Refused for its version (diagnose found out): a server behind is asked again in a minute or so; an extension too
       // old waits for its own update (the browser installs it and reloads the extension).
-      if (this.held === 'updating') return this.schedule(HELD_RETRY_MS + Math.random() * 30_000);
+      if (this.held === 'updating') return this.schedule(heldRetryMs());
       if (this.held === 'outdated') return;
       // A refused handshake reaches the browser only as 1006: after two in a row, ask the REST API why.
       if (!opened && ++this.failedOpens >= 2 && !this.diagnosed) return void this.diagnose();
@@ -333,7 +333,7 @@ export class ServerBackend implements AgentBackend {
       // this version. One calm status either way, never the server's own words.
       this.held = (compareContract(CONTRACT_VERSION, res.headers.get(CONTRACT_HEADER)) ?? 1) > 0 ? 'updating' : 'outdated';
       this.statuses.emit(this.held);
-      if (this.held === 'updating') this.schedule(HELD_RETRY_MS + Math.random() * 30_000);
+      if (this.held === 'updating') this.schedule(heldRetryMs());
       return;
     }
     if (status === 410) return this.deleted();

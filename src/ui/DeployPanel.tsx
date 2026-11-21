@@ -226,6 +226,8 @@ export function DeployPanel() {
   const region = picked ?? defaultLinkRegion(account, cityRegion);
   /** The Region the setup link out now was made for (step 2's checklist names it). */
   const linkRegion = account.linkRegion ?? region;
+  /** Who the setup link out now serves (step 2 says it, so a link meant for someone else is caught). */
+  const linkFor = connectsPlayer(account.linkUrl);
   // Disconnect and "another Region" are for an account the player linked (the local server reads the developer's own).
   const canUnlink = hosted || kind === 'mock';
   const mode = useCity((s) => s.deployMode);
@@ -348,9 +350,9 @@ export function DeployPanel() {
             />
             <span>Allow small fixes (you still approve each one)</span>
           </label>
-          {connectsPlayer(account.linkUrl) && (
+          {linkFor && (
             <p className="connects-player">
-              The stack page will say <b>ConnectsPlayer: {connectsPlayer(account.linkUrl)}</b>. Don’t create the stack if that isn’t you.
+              The stack page will say <b>ConnectsPlayer: {linkFor}</b>. Don’t create the stack if that isn’t you.
             </p>
           )}
           <b className="checklist-title">What the console will ask</b>

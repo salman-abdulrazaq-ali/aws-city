@@ -747,7 +747,6 @@ const rememberGotIt = (id: string) => {
   }
 };
 
-
 export const useCity = create<CityState>()((set, get) => ({
   backendKind: 'mock',
   deployMode: 'templates',
@@ -1241,7 +1240,7 @@ export const useCity = create<CityState>()((set, get) => ({
         const deploy = !!s.deploys[e.taskId];
         const main = e.xp[0];
         const pays = deploy || (!!main && usedToday(TASK_DAY_KEY) < TASK_PAID_A_DAY_TOTAL && takeDaily(`task:${main.serviceId}`, TASK_PAID_A_DAY));
-        if (pays && !deploy && main) countDaily(TASK_DAY_KEY);
+        if (pays && !deploy) countDaily(TASK_DAY_KEY);
         if (pays)
           e.xp.forEach((x, i) => {
             const stars = deploy ? x.amount : Math.min(x.amount, i === 0 ? TASK_STARS : TASK_HELPER_STARS);
@@ -1502,6 +1501,8 @@ export const useCity = create<CityState>()((set, get) => ({
       globalThis.localStorage?.removeItem(TODAY_KEY);
       globalThis.localStorage?.removeItem(SHIFT_KEY);
       globalThis.localStorage?.removeItem(CULTURE_KEY);
+      // The findings this player said "Got it" to are theirs: the next player sees their own city's.
+      globalThis.localStorage?.removeItem(GOT_IT_KEY);
     } catch {
       /* storage unavailable */
     }

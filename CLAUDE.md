@@ -375,7 +375,7 @@ When a change touches a decision, update its entry and run its Proof.
   never opens it for good; only ⋯ → Show everything does (`opened`; it also turns Simple mode off). Findings are held until city care unlocks (a linked account sees them at once),
   then drip in least severe first, at most `MAX_OPEN_FINDINGS` open; hardware-choice advice (`ADVANCED_RULES`: Graviton,
   previous generation, gp2) waits until a quest is finished and comes last. A finding with no automatic fix has "Got it"
-  (`ackFinding`: resolved, remembered on the device), so it never holds a place for good; the demo never sends a finding in
+  (`ackFinding`: resolved, remembered on the device until the session ends, like held findings), so it never holds a place for good; the demo never sends a finding in
   `Progress.fixes` open again (`MockBackend.putProgress`). AWS news (the ticker and incident toasts) is a rung too:
   it opens after the first quest, and the demo's practice drill waits for it (`MockBackend.putProgress`); storms still show.
   There's no "Open anyway" list: the shift's "Coming up next" names the next unlock and how to earn it. Deploy also shows

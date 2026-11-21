@@ -17,8 +17,11 @@ export const RELAXED_MIN_CALLS = 6;
 export const tooFewCalls = (untimed: boolean, hasFloor: boolean, calls: number) => untimed && hasFloor && calls < RELAXED_MIN_CALLS;
 
 /** `roundsToday`: rounds of this game played before this one today (countRound). */
-export const roundStars = (base: number, roundsToday: number, newBest: boolean) =>
-  newBest || roundsToday < FULL_ROUNDS_A_DAY ? base : roundsToday < FULL_ROUNDS_A_DAY + HALF_ROUNDS_A_DAY ? Math.ceil(base / 2) : 0;
+export function roundStars(base: number, roundsToday: number, newBest: boolean): number {
+  if (newBest || roundsToday < FULL_ROUNDS_A_DAY) return base;
+  if (roundsToday < FULL_ROUNDS_A_DAY + HALF_ROUNDS_A_DAY) return Math.ceil(base / 2);
+  return 0;
+}
 
 /** S3 fishing: 3 stars a right bucket and 5 for a perfect round, paid once at the end under the same daily rule. */
 export const fishingStars = (correct: number, perfect: boolean, roundsToday: number, newBest: boolean) =>
