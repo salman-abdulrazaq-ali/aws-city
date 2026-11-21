@@ -4,7 +4,7 @@ import { useCity, type DeployView } from '@/state/store';
 import { GUARDED_BLUEPRINTS } from '@/backend/ServerBackend';
 import { TEMPLATES } from '@/world/content';
 import { TemplateView } from './TemplateView';
-import { offered, perUnit, pricesFor } from '@/world/regions';
+import { offered, perUnit, pricesFor, regionInfo } from '@/world/regions';
 import { useCopy } from './feedback';
 import { costLine, offlineReason } from './logic';
 import { usePending } from './usePending';
@@ -69,6 +69,16 @@ function PendingButton({ pending, busyLabel, children, className = 'btn', disabl
 }
 
 /** A numbered step: done (✓), current (lit) or still to come. */
+/** The Region a setup link makes the role in (its console URL's ?region=), with its name: AWS City looks for it there. */
+export const linkRegion = (url?: string): { code: string; name: string } | undefined => {
+  try {
+    const code = url ? new URL(url).searchParams.get('region') : null;
+    return code ? { code, name: regionInfo(code)?.name ?? code } : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 /** What the player typed in step 3: the console shows an account id as 1234-5678-9012, so dashes and spaces go. */
 export const accountInput = (raw: string) => (/^[\d\s-]+$/.test(raw.trim()) ? raw.replace(/\D/g, '') : raw.trim());
 
@@ -175,6 +185,7 @@ export function DeployPanel() {
   /** Step 2 done: the player says the AWSCity stack is created, so step 3 (the account number) opens. */
   const [stackMade, setStackMade] = useState(false);
   const [linkCopied, copyLink] = useCopy();
+  const where = linkRegion(account.linkUrl);
   const findings = useCity((s) => s.findings);
   // Fixes are approved in their finding's card; here they're only a history, never next to Tear down.
   const stacks = deploys.filter((d) => !d.findingId);
@@ -262,6 +273,11 @@ export function DeployPanel() {
             <li>
               Click <b>Open CloudFormation</b> and sign in to the AWS account you want to connect.
             </li>
+            {where && (
+              <li>
+                Keep the Region at the top right on <b>{where.name}</b> ({where.code}). The role is made there, and that’s where AWS City looks for it.
+              </li>
+            )}
             <li>
               At the bottom, tick <b>I acknowledge that AWS CloudFormation might create IAM resources with custom names</b>, then click <b>Create stack</b>.
             </li>

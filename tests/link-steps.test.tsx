@@ -16,7 +16,7 @@ vi.mock('@/app/runtime', async (importOriginal) => ({
 }));
 
 const { useCity } = await import('@/state/store');
-const { DeployPanel, accountInput } = await import('@/ui/DeployPanel');
+const { DeployPanel, accountInput, linkRegion } = await import('@/ui/DeployPanel');
 const { QrCode, QR_BORDER } = await import('@/ui/QrCode');
 
 beforeEach(() => {
@@ -41,12 +41,14 @@ describe('linking an AWS account, step by step', () => {
   });
 
   it('then one step at a time: the account number opens once the stack is made, and a console-style id is accepted', () => {
-    useCity.setState({ account: { linked: false, linkUrl: 'https://eu-west-2.console.aws.amazon.com/cloudformation/home', externalId: 'x' } });
+    useCity.setState({ account: { linked: false, linkUrl: 'https://us-west-2.console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/quickcreate?stackName=AWSCity', externalId: 'x' } });
     render(<DeployPanel />);
     expect(screen.getByText(/I acknowledge that AWS CloudFormation might create IAM resources with custom names/)).toBeTruthy();
     expect(screen.queryByLabelText('AWS account ID or role ARN')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Open CloudFormation ↗' }));
-    expect(calls.open).toEqual(['https://eu-west-2.console.aws.amazon.com/cloudformation/home']);
+    expect(calls.open).toEqual(['https://us-west-2.console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/quickcreate?stackName=AWSCity']);
+    // The Region the role must be made in, by name: it's the one AWS City will look in.
+    expect(screen.getByText('US West (Oregon)')).toBeTruthy();
     // Signed in to AWS in another browser: the same link can be copied and opened there.
     expect(screen.getByRole('button', { name: 'Copy link' })).toBeTruthy();
     expect(screen.getByText('Signed in to AWS in another browser? Copy the link and open it there.')).toBeTruthy();
@@ -59,6 +61,13 @@ describe('linking an AWS account, step by step', () => {
     // Enter in the field submits the form: one more check.
     fireEvent.submit(id.closest('form')!);
     expect(calls.verify).toEqual(['047463438585', '047463438585']);
+  });
+
+  it('the setup link’s Region, by name (none when the link has no ?region=)', () => {
+    expect(linkRegion('https://us-west-2.console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/quickcreate?x=1')).toEqual({ code: 'us-west-2', name: 'US West (Oregon)' });
+    expect(linkRegion('https://console.aws.amazon.com/cloudformation/home')).toBeUndefined();
+    expect(linkRegion('not a url')).toBeUndefined();
+    expect(linkRegion(undefined)).toBeUndefined();
   });
 
   it('account numbers lose the console’s dashes and spaces; a role ARN is kept as typed', () => {
