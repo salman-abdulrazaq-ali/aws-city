@@ -25,6 +25,7 @@
     "check": "tsc --noEmit && vitest run",
     "lint": "eslint .",
     "open": "node scripts/open.mjs --build",
+    "open:hosted": "node scripts/open.mjs --hosted",
     "art": "python3 art/pack/import_agentic.py && python3 art/characters/aws_city.py && python3 art/characters/crowd_small.py && python3 art/tiles/generate_tiles.py",
     "smoke:copilot": "wxt build && node scripts/smoke-copilot.mjs",
     "live": "node scripts/live.mjs",

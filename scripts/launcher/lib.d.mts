@@ -34,5 +34,7 @@ export declare const parseArgs: (argv: string[], env?: Record<string, string | u
 export declare const helpText: () => string;
 export declare const lockPid: (target: unknown) => number | undefined;
 export declare const ALREADY_OPEN: string;
+export declare const HOSTED_PROFILE: string;
+export declare const hostedBuildProblem: (files?: { envProduction?: string; manifest?: string }) => string | undefined;
 export declare const alreadyOpenPid: (output?: string) => number | undefined;
 export declare const meaningfulLines: (output?: string, max?: number) => string[];

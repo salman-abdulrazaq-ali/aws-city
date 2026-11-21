@@ -634,7 +634,10 @@ if (safari) run('npx', ['wxt', 'build', '-b', 'safari', '--mode', 'production'])
 p.note(
   [
     allowDev
-      ? 'Try it now: chrome://extensions → Developer mode → Load unpacked → .output/chrome-mv3, then ⋯ → Sign in.'
+      ? [
+          'Try it now:  npm run open:hosted  opens it in its own browser window (Chrome for Testing); then ⋯ → Sign in.',
+          'Your own Chrome: chrome://extensions → Developer mode → Load unpacked → .output/chrome-mv3 (only you can, once).',
+        ].join('\n')
       : storeId
         ? 'Players sign in with the Chrome Web Store build (the local build is not allowed to).'
         : 'No extension can sign in yet: run setup again and allow the local build, or publish (below).',
@@ -658,4 +661,25 @@ p.note(
     .join('\n'),
   'AWS City is live',
 );
+// The live city in its own browser window, right now. Chrome for Testing, because branded Chrome ignores
+// --load-extension: "Load unpacked" there stays the player's one click. Never with --yes (CI) or without a terminal.
+if (allowDev && !YES && process.stdin.isTTY) {
+  const open = await p.confirm({ message: 'Open AWS City now in its own browser window (Chrome for Testing)?', initialValue: true });
+  if (!p.isCancel(open) && open) {
+    const { hasChromeForTesting, installChromeForTesting } = await import(new URL('../../scripts/launcher/open-browser.mjs', import.meta.url));
+    let ready = await hasChromeForTesting();
+    if (!ready) {
+      const dl = p.spinner();
+      dl.start('Downloading the AWS City browser (Chrome for Testing, one time)…');
+      const r = await installChromeForTesting(({ fraction, total }) => dl.message(`Downloading the AWS City browser… ${Math.round(fraction * 100)}% of ${total}`));
+      dl.stop(r.ok ? 'Downloaded the AWS City browser.' : 'The download failed: run  npx playwright install chromium  to see why, then  npm run open:hosted');
+      ready = r.ok;
+    }
+    if (ready) {
+      // Detached: setup finishes and the window stays open. Built just above, so no second build.
+      spawn('node', ['scripts/open.mjs', '--hosted', '--no-build'], { cwd: ROOT, detached: true, stdio: 'ignore' }).unref();
+      p.log.success('Opened in its own window: ⋯ → Sign in. Open it again any time:  npm run open:hosted');
+    }
+  }
+}
 p.outro('Done. Have fun in the city!');

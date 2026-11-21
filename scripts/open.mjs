@@ -1,5 +1,7 @@
 // Opens a real (headed) Chromium window with AWS City loaded — branded Chrome ignores --load-extension.
 // Usage: npm run open [-- --console]   (keeps progress in .cache/chrome-profile between runs)
+//        npm run open:hosted [-- --console]   the live city your setup deployed: built for it (--mode production,
+//        from .env.production; --no-build when setup just built it), in its own profile (.cache/chrome-profile-hosted)
 // `npm run open` passes --build: the extension is built first, quietly (one line; WXT's own output only if it fails).
 // Opens the city and the practice console (practice.html inside the extension: it looks like the AWS console, and
 // nothing there touches AWS). The real AWS console sign-in opens only with --console, or the stdin command `console`
@@ -7,9 +9,19 @@
 import './launcher/require-node.mjs';
 import { chromium } from 'playwright';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readlinkSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, readlinkSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import { ALREADY_OPEN, lockPid } from './launcher/lib.mjs';
+import { ALREADY_OPEN, HOSTED_PROFILE, hostedBuildProblem, lockPid } from './launcher/lib.mjs';
+
+const hosted = process.argv.includes('--hosted');
+const read = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : undefined);
+if (hosted) {
+  const problem = hostedBuildProblem({ envProduction: read('.env.production') });
+  if (problem) {
+    console.error(`\n✗ ${problem}\n`);
+    process.exit(1);
+  }
+}
 
 // `npm install` doesn't download Playwright's browser: fetch it the first time instead of failing with a stack trace.
 if (!existsSync(chromium.executablePath())) {
@@ -22,21 +34,29 @@ if (!existsSync(chromium.executablePath())) {
 }
 
 // The build prints a few hundred lines a newcomer doesn't need: a one-line summary, and everything only on failure.
-if (process.argv.includes('--build')) {
-  console.log('▶ Building AWS City (under a minute)…');
+// The live city is always built for it (seconds), so a demo build left in .output/chrome-mv3 is never opened by mistake.
+if (process.argv.includes('--build') || (hosted && !process.argv.includes('--no-build'))) {
+  console.log(hosted ? '▶ Building your live AWS City (a few seconds)…' : '▶ Building AWS City (under a minute)…');
   const started = Date.now();
-  const r = spawnSync('npx', ['wxt', 'build', '-b', 'chrome'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, shell: process.platform === 'win32' });
+  const r = spawnSync('npx', hosted ? ['wxt', 'build', '--mode', 'production'] : ['wxt', 'build', '-b', 'chrome'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, shell: process.platform === 'win32' });
   if (r.status !== 0) {
     process.stdout.write(r.stdout ?? '');
     process.stderr.write(r.stderr ?? '');
-    console.error(`\n✗ The build failed${r.error ? ` (${r.error.message})` : ''}: its output is above. Fix it, then run  npm run open  again.\n`);
+    console.error(`\n✗ The build failed${r.error ? ` (${r.error.message})` : ''}: its output is above. Fix it, then run  npm run ${hosted ? 'open:hosted' : 'open'}  again.\n`);
     process.exit(1);
   }
   console.log(`✓ Built in ${Math.round((Date.now() - started) / 1000)} s.`);
 }
 
 const ext = path.resolve('.output/chrome-mv3');
-const profile = path.resolve('.cache/chrome-profile');
+const profile = path.resolve(hosted ? HOSTED_PROFILE : '.cache/chrome-profile');
+if (hosted) {
+  const problem = hostedBuildProblem({ envProduction: read('.env.production'), manifest: read(path.join(ext, 'manifest.json')) });
+  if (problem) {
+    console.error(`\n✗ ${problem}\n`);
+    process.exit(1);
+  }
+}
 
 // One Chrome per profile folder: if another AWS City window already holds this one, a second launch would just hand
 // over to it and exit. Say so plainly (npm start reads the marker line and offers to close it).
@@ -93,23 +113,33 @@ const cityUrl = `chrome-extension://${id}/city.html`;
 const isCity = (p) => p.url().startsWith(cityUrl);
 const cityTab = ctx.pages().find(isCity) ?? (await ctx.waitForEvent('page', { predicate: isCity, timeout: 1500 }).catch(() => undefined));
 const blank = ctx.pages().find((p) => p !== cityTab && (p.url() === 'about:blank' || p.url() === ''));
-const demo = blank ?? (await ctx.newPage());
-await demo.goto(DEMO).catch(() => {});
+// The live city has no practice console: its agents work in your real AWS account, after your approval.
+if (!hosted) await (blank ?? (await ctx.newPage())).goto(DEMO).catch(() => {});
 if (process.argv.includes('--console')) await (await ctx.newPage()).goto(CONSOLE).catch(() => {});
-const city = cityTab ?? (await ctx.newPage());
+const city = cityTab ?? (hosted ? blank : undefined) ?? (await ctx.newPage());
 if (!city.url().startsWith(cityUrl)) await city.goto(cityUrl);
 await city.bringToFront();
 city.on('pageerror', (e) => console.log('page error:', e.message));
 // Say plainly what just opened: a new window with two tabs, and which one is which.
 console.log(
-  [
-    '',
-    '✓ AWS City is open in a new browser window (Chrome for Testing).',
-    '  • The tab in front is your city. It starts in Demo mode: a practice account, nothing real is created or charged.',
-    '  • The other tab is the practice console: it looks like the AWS console, and nothing there touches AWS.',
-    '  Close the window to stop.',
-    '',
-  ].join('\n'),
+  (hosted
+    ? [
+        '',
+        '✓ Your live AWS City is open in a new browser window (Chrome for Testing).',
+        '  • Sign in: ⋯ → Sign in (your password and authenticator code, or Google). Progress is saved to your account.',
+        '  • This window keeps its own profile, so the demo’s practice progress never mixes in.',
+        '  Close the window to stop; open it again with  npm run open:hosted',
+        '',
+      ]
+    : [
+        '',
+        '✓ AWS City is open in a new browser window (Chrome for Testing).',
+        '  • The tab in front is your city. It starts in Demo mode: a practice account, nothing real is created or charged.',
+        '  • The other tab is the practice console: it looks like the AWS console, and nothing there touches AWS.',
+        '  Close the window to stop.',
+        '',
+      ]
+  ).join('\n'),
 );
 // `npm start` waits for this line, then drives the window with one-word commands on stdin.
 console.log(`READY ${id}`);

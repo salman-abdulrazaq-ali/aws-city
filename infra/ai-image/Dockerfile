@@ -3,6 +3,12 @@
 # Ollama 0.40.14 (released 2026-11-03), the arm64 image pinned by digest.
 FROM ollama/ollama:0.40.14@sha256:a2be4eed855ab2df84585f25e608fa68088988d2470c14dc736166b4770946c5
 
+# The base image's Ubuntu packages get their security updates at build time (Inspector, 21 Nov 2026: glibc, pcre2, perl,
+# apt and ca-certificates had fixes the 0.40.14 image predates). apt checks every package against Ubuntu's keys. The
+# Go findings inside the ollama binary (golang.org/x/net 0.61) wait for an Ollama release built with 0.62; 0.40.16 isn't.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y upgrade --no-install-recommends && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
 # The model (lib/models.ts CPU_MODEL) is pulled at build time, so a task starts without downloading 2.5 GB.
 # Pinned whole (registry.ollama.ai, 21 Nov 2026): MODEL_MANIFEST is the sha256 of the registry's manifest document
 # (model-manifest.json is that document), and MODEL_DIGESTS the five files it lists (config, weights, chat template,

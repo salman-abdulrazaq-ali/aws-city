@@ -58,7 +58,9 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   account's GPU quotas start at 0 too): an open model (`CPU_MODEL` in `infra/lib/models.ts`, Qwen3 4B Instruct 2507,
   Apache-2.0, 4-bit) served by Ollama (`infra/ai-image/Dockerfile`: the release pinned by digest; the model pulled at build time in CodeBuild
   and checked by `infra/ai-image/verify-model.sh`: the registry manifest by its own digest, `CPU_MODEL.manifest`, and its
-  five files by theirs, on Ollama's content-addressed blobs; `OLLAMA_NO_CLOUD=1`, so it calls nobody) on its own Fargate
+  five files by theirs, on Ollama's content-addressed blobs; `OLLAMA_NO_CLOUD=1`, so it calls nobody; the base image's
+  Ubuntu packages patched at build time, `apt-get -y upgrade`, while the Go findings in the ollama binary wait for an
+  Ollama built with `golang.org/x/net` 0.62) on its own Fargate
   service: Graviton, 8 vCPU / 16 GB, `FARGATE_SPOT` or
   `FARGATE`, a Cloud Map private name `ai.awscity-<env>.internal`, its own security group (in: 11434 from the server's
   group only; out: HTTPS only, for its image and logs), a task role with no policy, and no desired count in the template, so `npm run ai -- on|off|status`
@@ -728,6 +730,7 @@ npm run lint      # ESLint: rules of hooks + jsx-a11y (CI allows at most 10 warn
 npm run smoke     # build + Playwright Chromium demo run; screenshots in .output/smoke; must print "no page errors"
 npm run dev       # WXT dev with Chrome
 npm run live      # local server with real AWS (workshop profile) + the extension wired to it
+npm run open:hosted   # the live city setup deployed, built for it, in Chrome for Testing with its own profile (.cache/chrome-profile-hosted)
 npm run dev:firefox / npm run live -- --browser firefox|safari   # other browsers
 npm run lint:firefox && npm run build:safari   # Firefox (Mozilla linter, 0 errors) and Safari builds
 npm run safari:xcode   # Xcode project for Safari (.cache/safari)

@@ -192,8 +192,11 @@ domain you own: a free address (outlook.com, gmail.com…) sent through SES is o
 ## 9. After the deploy
 
 1. Open the email from **AWS Notifications** and click **Confirm subscription**, so alarms and budget alerts reach you.
-2. In Chrome, open `chrome://extensions` → **Developer mode** → **Load unpacked** → pick `.output/chrome-mv3`. (This
-   works if you answered **Yes** to "Allow the local build"; otherwise only your Chrome Web Store build can sign in.)
+2. Open the city. Setup's last question, **Open AWS City now in its own browser window?**, opens it in Chrome for
+   Testing, in its own profile; `npm run open:hosted` opens it again any time. To use your everyday Chrome instead,
+   open `chrome://extensions` → **Developer mode** → **Load unpacked** → pick `.output/chrome-mv3`. Chrome lets only
+   you do this step (it ignores the command-line flag since Chrome 137), once; after a rebuild, press the reload button.
+   Both work if you answered **Yes** to "Allow the local build"; otherwise only your Chrome Web Store build can sign in.
 3. In the city: **⋯ → Sign in to save your city** → sign up with your email → turn on MFA when asked.
 4. **Link an AWS account** (the City tab's **Connect your AWS account** card, then Deploy's steps): scan the QR code
    with an authenticator app, **Get my setup link**, create the AWSCity stack in the Region the step names, then type
