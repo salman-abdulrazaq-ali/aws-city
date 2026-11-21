@@ -56,7 +56,7 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   Proof: `cd server && npx vitest run test/local-model.test.ts` (a real HTTP "Ollama" on 127.0.0.1), `npx vitest run tests/launcher.test.ts`.
 - **Hosted, the AI can run on AWS without Bedrock** (`EnvConfig.aiCpu`, offered by setup when Bedrock is held; a new
   account's GPU quotas start at 0 too): an open model (`CPU_MODEL` in `infra/lib/models.ts`, Qwen3 4B Instruct 2507,
-  Apache-2.0, 4-bit) served by Ollama (`infra/ai-image/Dockerfile`: the release pinned by digest, the weights by blob,
+  Apache-2.0, 4-bit) served by Ollama (`infra/ai-image/Dockerfile`: the release pinned by digest, the model's whole manifest by its five digests,
   pulled at build time in CodeBuild) on its own Fargate service: Graviton, 8 vCPU / 16 GB, `FARGATE_SPOT` or
   `FARGATE`, a Cloud Map private name `ai.awscity-<env>.internal`, a security group open on 11434 to the server's
   group only, a task role with no policy, and no desired count in the template, so `npm run ai -- on|off|status`

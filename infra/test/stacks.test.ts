@@ -356,8 +356,10 @@ describe('the AI on AWS without Bedrock: an open model on a private Fargate serv
     const dockerfile = readFileSync(new URL('../ai-image/Dockerfile', import.meta.url), 'utf8');
     expect(dockerfile).toMatch(/^FROM ollama\/ollama:[\d.]+@sha256:[0-9a-f]{64}$/m);
     expect(dockerfile).toContain(`ARG MODEL=${CPU_MODEL.id}`);
-    expect(dockerfile).toContain(`ARG MODEL_BLOB=${CPU_MODEL.blob}`);
-    expect(dockerfile).toContain('test -f "/root/.ollama/models/blobs/$MODEL_BLOB"');
+    // The whole manifest is pinned: exactly these digests (config, weights, template, licence, params), no others.
+    expect(dockerfile).toContain(`ARG MODEL_DIGESTS="${CPU_MODEL.digests.join(' ')}"`);
+    expect(CPU_MODEL.digests).toHaveLength(5);
+    expect(dockerfile).toContain('if [ "$got" != "$want" ]; then');
     // About $8.72 a day on demand in eu-west-2 (8 vCPU + 16 GB of Graviton Fargate).
     expect(cpuAiHourly() * 24).toBeCloseTo(8.72, 1);
   });

@@ -53,13 +53,20 @@ export const NOVA_MODELS = { main: 'amazon.nova-pro-v1:0', light: 'amazon.nova-l
 
 /**
  * The open model the city runs on Fargate when Bedrock can't (EnvConfig.aiCpu): Qwen3 4B Instruct 2507 (Apache-2.0,
- * tool calling, no thinking step, which a CPU can't afford), 4-bit, from the Ollama registry. `blob` pins the exact
- * weights: infra/ai-image/Dockerfile fails the build if the registry ever serves another file for this tag.
+ * tool calling, no thinking step, which a CPU can't afford), 4-bit, from the Ollama registry. `digests` pins the whole
+ * model (config, weights, chat template, licence, params): infra/ai-image/Dockerfile fails the build if the manifest it
+ * pulled lists anything else.
  */
 export const CPU_MODEL = {
   id: 'qwen3:4b-instruct-2507-q4_K_M',
   name: 'Qwen3 4B',
-  blob: 'sha256-85e4a5b7b8ef0e48af0e8658f5aaab9c2324c76c1641493f4d1e25fce54b18b9',
+  digests: [
+    'sha256:b72accf9724e93698c57cbd3b1af2d3341b3d05ec2089d86d273d97964853cd2',
+    'sha256:85e4a5b7b8ef0e48af0e8658f5aaab9c2324c76c1641493f4d1e25fce54b18b9',
+    'sha256:eade0a07cac7712787bbce23d12f9306adb4781d873d1df6e16f7840fa37afec',
+    'sha256:d18a5cc71b84bc4af394a31116bd3932b42241de70c77d2b76d69a314ec8aa12',
+    'sha256:0914c7781e001948488d937994217538375b4fd8c1466c5e7a625221abd3ea7a',
+  ],
   /** Task size: the model (2.5 GB) and two 16k-token conversations' KV cache fit in 16 GB. */
   cpu: 8192,
   memoryMiB: 16384,
