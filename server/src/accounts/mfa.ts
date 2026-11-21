@@ -2,7 +2,7 @@ import { AdminGetUserCommand, type CognitoIdentityProviderClient } from '@aws-sd
 import type { Principal } from '../auth.js';
 import type { MfaStore } from '../store/types.js';
 
-export const MFA_REQUIRED_MESSAGE = 'Turn on an authenticator app first (Deploy tab → Protect your account). It keeps your AWS account safe if your password leaks.';
+export const MFA_REQUIRED_MESSAGE = 'Turn on an authenticator app first (⋯ → Account → Connect your AWS account → Protect your account first). It keeps your AWS account safe if your password leaks.';
 export const SIGN_IN_AGAIN_MESSAGE = 'Your authenticator app is on, but this sign-in started before it was. Sign out, then sign in again with your app’s code.';
 
 /** ok = go ahead; enrol = no authenticator yet (mfa_required); reauth = this session signed in before it was turned on. */

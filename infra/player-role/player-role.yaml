@@ -241,5 +241,5 @@ Resources:
 
 Outputs:
   RoleArn:
-    Description: Paste this (or just your account id) into AWS City → Deploy → Connect your AWS.
+    Description: Paste this (or just your account id) into AWS City (⋯ → Account → Connect your AWS account), then verify.
     Value: !GetAtt PlayerRole.Arn
