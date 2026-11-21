@@ -23,11 +23,33 @@ import {
 } from '../world.js';
 import type { UploadStore } from './uploads.js';
 import { publicError } from '../log.js';
+import { isCommit } from '../../../src/console/risk.js';
 
 export type Emit = (event: ServerEvent) => void;
 
 const SERVICE_IDS = SERVICES.map((s) => s.id) as [string, ...string[]];
 const XP = { task: 15, perWrite: 5, attempted: 3, classify: 3 } as const;
+
+/**
+ * The landmark agent's words to act on: the player's request (first, unchanged), then the concierge's plan, so the agent
+ * does what the city just showed the player it would. A small model left with only "Store my holiday photos cheaply"
+ * answered with advice and made no change (21 Nov 2026). Plan steps are model text: neutralised like other page data.
+ */
+export const withPlan = (prompt: string, steps: readonly string[]) =>
+  steps.length
+    ? `${prompt}\n\nThe concierge's plan for you:\n${steps.map((s, i) => `${i + 1}. ${neutralise(s)}`).join('\n')}\nDo the steps that change AWS with your tools now (each change waits for the player's Approve), then explain briefly.`
+    : prompt;
+
+/**
+ * A plan step that changes AWS (the concierge puts those first, one action each: "Create a bucket named X", "Launch a
+ * t4g.nano"): its leading verb commits a change (risk.ts isCommit) or removes something. Explanations ("Explain…",
+ * "Show…") don't.
+ */
+const REMOVES = /^(delete|terminate|demolish|remove|make|build|put|turn)$/;
+export const isActionStep = (step: string) => {
+  const verb = (step.trim().split(/\s+/)[0] ?? '').toLowerCase().replace(/[^a-z]/g, '');
+  return isCommit(verb) || REMOVES.test(verb);
+};
 
 const PLAN_TOOL = {
   name: 'plan_task',
@@ -158,7 +180,7 @@ export const createOrchestrator = (deps: {
 
       let index = 1;
       const last = steps.length - 1;
-      const result = await deps.runner.turn(agentId, cmd.prompt, {
+      const result = await deps.runner.turn(agentId, withPlan(cmd.prompt, p.steps), {
         onModelCall: (phase) =>
           emit(phase === 'start' ? { type: 'agent.state', agentId, state: 'working', service: 'bedrock', detail: 'InvokeModel — thinking' } : { type: 'agent.state', agentId, state: 'idle' }),
         onToolStart: ({ api, summary }) => {
@@ -179,13 +201,18 @@ export const createOrchestrator = (deps: {
       });
       if (signal?.aborted) return;
 
-      const ok = !result.refused && result.toolCalls.every((c) => c.outcome === 'done');
+      let ok = !result.refused && result.toolCalls.every((c) => c.outcome === 'done');
       if (ok) {
-        // Explanation-only plans (no tool calls) still walk through their remaining steps.
+        // The steps the agent's tool calls didn't cover: explanations walk through as done, but a step that changes AWS
+        // was not done (no tool call made it), and says so, never a ✓ (seen live 21 Nov: "Create a bucket" ticked, nothing
+        // created). A task with such a step didn't do what it planned.
         for (; index <= last; index++) {
           emit({ type: 'task.step', taskId, index, text: steps[index]!, status: 'running' });
           await sleep(paceMs);
-          emit({ type: 'task.step', taskId, index, text: steps[index]!, status: 'done' });
+          if (isActionStep(steps[index]!)) {
+            emit({ type: 'task.step', taskId, index, text: `${steps[index]} — not done: no change was made`, status: 'failed' });
+            ok = false;
+          } else emit({ type: 'task.step', taskId, index, text: steps[index]!, status: 'done' });
         }
       }
       if (result.refused) emit({ type: 'agent.message', from: agentId, to: 'user', text: result.reply });

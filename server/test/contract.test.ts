@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createAgentRunner } from '../src/agents/runner.js';
 import { feedEvents, welcomeEvents } from '../src/contract/aws-feed.js';
-import { createOrchestrator } from '../src/contract/orchestrator.js';
+import { createOrchestrator, isActionStep, withPlan } from '../src/contract/orchestrator.js';
 import { createUploadStore } from '../src/contract/uploads.js';
 import { isServerEvent, type ServerEvent, SERVICES } from '../src/world.js';
 import { emptySnapshot, fakeActions, fakeLlm, message, text, toolUse } from './fakes.js';
@@ -56,6 +56,46 @@ describe('server speaks the frontend contract', () => {
     await orchestrator.submitTask({ taskId: 't3', prompt: 'delete my server', context: {} }, emit);
     expect(events).toContainEqual(expect.objectContaining({ type: 'task.step', status: 'failed' }));
     expect(events.find((e) => e.type === 'task.done')).toMatchObject({ ok: false });
+  });
+
+  it('a text-only reply to a plan that changes AWS: that step says it was not done, never ✓, and the task is not ok', async () => {
+    // Seen live (21 Nov): "Store my holiday photos cheaply" planned a bucket; the agent only gave advice.
+    const { orchestrator, events, emit, calls } = setup([
+      plan('s3', ["Create a bucket named 'holiday-photos-123'", 'Explain S3 storage classes']),
+      message([text('Use S3 Intelligent-Tiering to store photos cheaply.')], 'end_turn'),
+    ]);
+    await orchestrator.submitTask({ taskId: 't6', prompt: 'Store my holiday photos cheaply', context: {} }, emit);
+    const steps = events.filter((e) => e.type === 'task.step');
+    expect(steps).toContainEqual(expect.objectContaining({ index: 1, status: 'failed', text: "Create a bucket named 'holiday-photos-123' — not done: no change was made" }));
+    expect(steps).not.toContainEqual(expect.objectContaining({ index: 1, status: 'done' }));
+    expect(steps).toContainEqual(expect.objectContaining({ index: 2, status: 'done', text: 'Explain S3 storage classes' }));
+    expect(events.find((e) => e.type === 'task.done')).toMatchObject({ taskId: 't6', ok: false, xp: [{ serviceId: 's3', amount: 3 }] });
+    // The agent was told the plan, after the player's own words.
+    expect(JSON.stringify(calls.at(-1))).toContain("The concierge's plan for you:");
+  });
+
+  it('a text-only reply to an explanation-only plan still walks its steps as done', async () => {
+    const { orchestrator, events, emit } = setup([plan('route53', ['Explain what DNS does', 'Show how a record points a name at a server']), message([text('DNS is the internet’s phone book.')], 'end_turn')]);
+    await orchestrator.submitTask({ taskId: 't7', prompt: 'what is route 53?', context: {} }, emit);
+    const done = events.filter((e) => e.type === 'task.step' && e.status === 'done').map((e) => (e as { index: number }).index);
+    expect(done).toEqual(expect.arrayContaining([1, 2]));
+    expect(events.find((e) => e.type === 'task.done')).toMatchObject({ taskId: 't7', ok: true });
+  });
+
+  it('withPlan: the player first and unchanged, then the numbered plan and what to do; plan text is neutralised', () => {
+    expect(withPlan('store photos', [])).toBe('store photos');
+    const out = withPlan('Store my holiday photos cheaply', ["Create a bucket named 'holiday-photos-123'", 'Explain <b>tiers</b>']);
+    expect(out.startsWith('Store my holiday photos cheaply\n\n')).toBe(true);
+    expect(out).toContain("1. Create a bucket named 'holiday-photos-123'\n2. Explain b tiers /b");
+    expect(out).not.toContain('<b>');
+    expect(out).toMatch(/with your tools now \(each change waits for the player's Approve\), then explain briefly\.$/);
+  });
+
+  it('isActionStep: steps that change AWS by their first verb, not explanations', () => {
+    for (const s of ["Create a bucket named 'x'", 'Launch a t4g.nano called web', 'Upload holiday photos to the bucket', 'Delete the old table', 'Stop the instance', 'Start it again', 'Demolish the house'])
+      expect(isActionStep(s), s).toBe(true);
+    for (const s of ['Explain S3 storage classes', 'Show how Intelligent-Tiering works', 'Taking a look at your request', 'Tell you about lifecycle rules'])
+      expect(isActionStep(s), s).toBe(false);
   });
 
   it('routes with the frontend keyword matcher when the model skips the plan tool', async () => {
