@@ -44,7 +44,7 @@ Client-internal, not on the wire: `storage.local` keeps `progress.parked` (a sig
 | Event | What the city does |
 |---|---|
 | `task.plan {taskId, agentId, targetServiceId, steps[]}` | The Concierge dispatches the agent, which walks to its landmark. |
-| `task.step {taskId, index, text, status}` | A bubble shows "Step i/n" and the feed updates. `skipped` means the agent remembers you know this step. |
+| `task.step {taskId, index, text, status}` | A bubble shows "Step i/n" and the feed updates. `skipped` means the agent remembers you know this step. A plan step that changes AWS but that no tool call made is `failed`, with "— not done: no change was made"; it never shows as done. |
 | `agent.state {agentId, state, service?, detail?}` | **`working` means a real AWS call is running.** The agent plays its work animation. |
 | `agent.message {from, to, text}` | A speech bubble appears and a data packet travels the roads between the two agents. |
 | `task.done {taskId, ok, result, xp[]}` | XP goes to landmarks: tiers go up, the city grows, and quests advance. |

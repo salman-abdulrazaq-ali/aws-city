@@ -571,6 +571,12 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   if needed; Home passes `openTab` so it opens Deploy). Home's agent offer is the same `AgentOffer`, and each featured
   request's words route to the agent offering it (`FEATURED_REQUESTS`, `matchText`). A building card separates 💬 Ask a question (the HQ chat) from 🛠️ Watch it done (an agent task, whose TaskCard then shows on that same card, scrolled into view). Its sign's marks are said in words there (`signLegend`: ×N resources, ! N things to check). Proof:
   `npx vitest run tests/watch.test.ts tests/watch-ui.test.tsx tests/taxonomy.test.ts`; `npm run smoke` (`03`–`06-task-*.png`).
+  The agent is told the concierge's plan after the player's words, fenced as `<concierge_plan>` data it acts on only as
+  far as the player asked; a step that destroys something reaches it only when the player's own words ask for one (`withPlan`,
+  `planForAgent`, `server/src/contract/orchestrator.ts`: the concierge reads page context, which anyone can word), and
+  a plan step that changes AWS (`isActionStep`: its first verb) but that no tool call made shows `failed`, "not done: no
+  change was made", and the task isn't ok; only explanation steps walk through as done. Proof: `cd server && npx vitest
+  run test/contract.test.ts`.
 - **City Clients: side jobs for real kinds of business** (`shared/clients.json`, `src/world/clients.ts`, `src/ui/clients/`).
   18 businesses: wave 1 (Amazon Air hub, bank, stadium, hospital, shop, school) and wave 2 (streaming studio, game studio,
   news site, port, energy utility, factory, farm co-op, car maker, phone network, town council, hotel, charity), three
