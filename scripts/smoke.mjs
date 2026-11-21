@@ -223,12 +223,15 @@ const seededTabs = await page.locator('.tabs button').evaluateAll((bs) => bs.map
 if (seededTabs.join() !== 'City,Learn,Jobs,Deploy') errors.push(`seeded progress: expected every tab, got ${seededTabs.join()}`);
 // Learning modes
 // The demo's city care pops a finding card (or a citizen's question) up on a timer, so one can land mid-run on top of
-// the tabs, depending on how fast the machine is: close whatever popped up (Escape) before switching tabs.
-const clickTab = async (label) => {
+// whatever the run clicks next, depending on how fast the machine is: close whatever popped up (Escape) first.
+const closePopups = async () => {
   for (let i = 0; i < 3 && (await page.locator('.finding-scrim').count()); i++) {
     await page.keyboard.press('Escape');
     await wait(200);
   }
+};
+const clickTab = async (label) => {
+  await closePopups();
   await page.locator(`.tabs button[title="${label}"]`).click();
 };
 await clickTab('Learn');
@@ -1077,6 +1080,7 @@ await panel.screenshot({ path: `${out}/12-lookout.png` });
   const openJob = async (t) => {
     await city((id) => window.awsCity.useCity.getState().openClients(id), 'bank');
     await wait(250);
+    await closePopups(); // seen in CI 21 Nov: a finding card landed on the bank's job list
     await page.getByRole('button', { name: `Go to the ${t.station} for “${t.title}”` }).click();
     const at = Date.now();
     while (Date.now() - at < 25_000 && (await city(() => window.awsCity.useCity.getState().clientTaskOpen)) !== t.id) await wait(250);
