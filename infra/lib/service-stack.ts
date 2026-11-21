@@ -345,6 +345,8 @@ export class ServiceStack extends Stack {
     alarm('LoggedErrors', loggedErrors, 20, 3);
     // A promise nobody handled (server/src/main.ts logs it and keeps serving): always a bug.
     alarm('UnhandledRejections', app('UnhandledRejections'), 1, 1);
+    // Several players' roles refused at once (server/src/aws.ts createRefusalBreaker): most likely our task role, not theirs.
+    alarm('RoleRefusalBreaker', app('RoleRefusalBreaker'), 1, 1);
     alarm('TableThrottled', deps.table.metricThrottledRequestsForOperations({
         // The operations the server uses (server/src/store/dynamo.ts); an alarm takes at most 10 metrics.
         operations: [dynamodb.Operation.GET_ITEM, dynamodb.Operation.PUT_ITEM, dynamodb.Operation.UPDATE_ITEM, dynamodb.Operation.DELETE_ITEM, dynamodb.Operation.QUERY, dynamodb.Operation.BATCH_WRITE_ITEM],

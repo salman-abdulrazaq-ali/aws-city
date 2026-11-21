@@ -109,6 +109,8 @@ export const createRefusalBreaker = (opts: { players?: number; windowMs?: number
       if (!logged) {
         logged = true;
         log.error('player role refused for several players at once: taken for our side, no link is marked broken', { players: refused.size, windowMs });
+        // One line wouldn't trip LoggedErrors (20 per 5 min); this metric has its own alarm (infra service-stack).
+        log.metric('RoleRefusalBreaker', 1);
       }
       return true;
     },

@@ -116,7 +116,7 @@ describe('infrastructure guarantees', () => {
   });
 
   it('alarms cover throttling, missing tasks, logged errors and unhandled rejections, and a bad deploy rolls back on the 5xx alarm', () => {
-    for (const metric of ['ModelThrottled', 'RunningTaskCount', 'LoggedErrors', 'UnhandledRejections']) t.svc.hasResourceProperties('AWS::CloudWatch::Alarm', { MetricName: metric });
+    for (const metric of ['ModelThrottled', 'RunningTaskCount', 'LoggedErrors', 'UnhandledRejections', 'RoleRefusalBreaker']) t.svc.hasResourceProperties('AWS::CloudWatch::Alarm', { MetricName: metric });
     // server/src/log.ts writes {"level":"error",…} lines; the filter turns them into AWSCity/LoggedErrors.
     t.svc.hasResourceProperties('AWS::Logs::MetricFilter', {
       FilterPattern: '{ $.level = "error" }',

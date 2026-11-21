@@ -208,8 +208,8 @@ When a change touches a decision, update its entry and run its Proof.
   record). The "identity-based policy" wording test has a breaker (`createRefusalBreaker`, `server/src/aws.ts`): the role
   refusing `REFUSAL_PLAYERS` (3) different players within `REFUSAL_WINDOW_MS` (5 min) on one server task, with no AssumeRole
   working in between, is our side (`ourSide`, the poll's `refusedOurSide`): not counted toward `BROKEN_AFTER`, and one
-  `log.error` until an AssumeRole works again (a single line is under the `LoggedErrors` alarm's 20 per 5 minutes; a task
-  with fewer than 3 players can't tell). A refused poll says nothing else
+  `log.error` plus the `RoleRefusalBreaker` metric, which has its own alarm at 1 (a single line is under the `LoggedErrors`
+  alarm's 20 per 5 minutes), until an AssumeRole works again (a task with fewer than 3 players can't tell). A refused poll says nothing else
   (no lock lessons, no findings resolved), a restart doesn't retry it, and a new link (back to pending) or a verify clears it.
   A deleted stack's last role session can last an hour, so its districts may show locked first (`docs/connect-aws-account.md`).
   Verify learns fixes by DryRun; the role version is the template version the link points at (`v<N>` of its URL), recorded
