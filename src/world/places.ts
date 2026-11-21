@@ -17,7 +17,7 @@ export type ActivityKind =
   | 'check' // checking badges with clipboard
   | 'lock'; // turning a big key
 
-export type LandmarkKind = 'building' | 'lake' | 'wall' | 'tower' | 'garden' | 'stall' | 'dome' | 'dock' | 'factory' | 'warehouse' | 'station';
+type LandmarkKind = 'building' | 'lake' | 'wall' | 'tower' | 'garden' | 'stall' | 'dome' | 'dock' | 'factory' | 'warehouse' | 'station';
 
 export interface Place {
   serviceId: string;
@@ -70,8 +70,6 @@ export const SPECIAL_AGENTS: Record<'concierge' | 'lookout' | 'builder', Special
 export const TIER_NAMES = world.tiers.names;
 /** XP needed to reach tier index i (tier 0 = discovered). */
 export const TIER_XP = world.tiers.xp;
-/** Certification each tier maps to. */
-export const TIER_CERTS = world.tiers.certifications;
 
 export function tierForXp(xp: number): number {
   let t = 0;

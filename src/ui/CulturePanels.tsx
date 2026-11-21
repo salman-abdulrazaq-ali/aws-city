@@ -49,7 +49,7 @@ export function CultureCard({ id }: { id: string }) {
 
 // ── Letters to Shareholders ──────────────────────────────────────────────────────────────────────────────
 
-export function LettersReader() {
+function LettersReader() {
   const [author, setAuthor] = useState<'all' | string>('all');
   const [open, setOpen] = useState<number | undefined>(LETTERS[LETTERS.length - 1]?.year);
   const authors = [...new Set(LETTERS.map((l) => l.author))];
@@ -119,7 +119,7 @@ function LetterCard({ letter: l, open, onToggle }: { letter: (typeof LETTERS)[nu
 
 // ── Leadership Principles Walk ───────────────────────────────────────────────────────────────────────────
 
-export function LeadershipWalk({ focus }: { focus?: string }) {
+function LeadershipWalk({ focus }: { focus?: string }) {
   const lp = CULTURE.leadershipPrinciples;
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -163,7 +163,7 @@ export function LeadershipWalk({ focus }: { focus?: string }) {
 
 // ── Golden Jacket Hall ───────────────────────────────────────────────────────────────────────────────────
 
-export function GoldenJacketHall() {
+function GoldenJacketHall() {
   const progress = useCity((s) => s.progress);
   const earned = certsEarned(progress);
   const total = CERTS.certifications.length;
@@ -245,7 +245,7 @@ export function GoldenJacketHall() {
 
 // ── re:Invent Expo Hall ──────────────────────────────────────────────────────────────────────────────────
 
-export function ExpoHall() {
+function ExpoHall() {
   const best = useCity((s) => s.culture.expoBest);
   const [qi, setQi] = useState<number | undefined>();
   const [score, setScore] = useState(0);
@@ -372,7 +372,7 @@ export function ExpoHall() {
 
 // ── Correction of Error board ────────────────────────────────────────────────────────────────────────────
 
-export function CoeBoard() {
+function CoeBoard() {
   const coe = useCity((s) => s.culture.coe);
   const mech = MECHANISMS.find((m) => m.id === 'correction-of-error');
   return (
@@ -423,7 +423,7 @@ export function CoeBoard() {
 
 // ── About Amazon ─────────────────────────────────────────────────────────────────────────────────────────
 
-export function AboutAmazon() {
+function AboutAmazon() {
   return (
     <div className="card culture about">
       <h3>ℹ️ About Amazon</h3>

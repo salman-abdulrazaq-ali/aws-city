@@ -24,18 +24,16 @@ export const ringOf = (size: number) => ({ min: -EXT, max: size - 1 + EXT, size:
 /** The legacy 40×40 core's ring (a plan's own: ringOf(plan.size)). */
 export const RING_MIN = -EXT;
 export const RING_MAX = GRID - 1 + EXT;
-/** Width of the whole map (core + ring), tiles. */
-export const RING_SIZE = GRID + 2 * EXT;
 /** The river runs RIVER.from..RIVER.to tiles out from the core (inclusive), all the way round. */
 export { GATE, RIVER };
 /** The legacy core's road lines (x or y): where they meet the river there's a bridge (a plan's own: plan.edgeLines). */
 export const ROAD_LINES = [0, 13, 26, 39] as const;
 
 export type TerrainKind = 'core' | 'river' | 'promenade' | 'beach' | 'land' | 'field' | 'forest' | 'sea' | 'highway' | 'bridge' | 'island';
-export type Biome = 'temperate' | 'boreal' | 'arid' | 'tropical';
+type Biome = 'temperate' | 'boreal' | 'arid' | 'tropical';
 export type Side = 'N' | 'E' | 'S' | 'W';
 
-export interface TerrainProp {
+interface TerrainProp {
   sprite: string;
   /** Footprint (the sprite's N corner sits on the N corner of tile x, y). */
   x: number;
@@ -134,7 +132,7 @@ const COAST_OVERRIDES: Record<string, number> = {
   'me-south-1': 0.2, // Bahrain: same, a small island in the Gulf
 };
 
-export const biomeFor = (code: string): Biome => {
+const biomeFor = (code: string): Biome => {
   if (BIOME_OVERRIDES[code]) return BIOME_OVERRIDES[code];
   const lat = Math.abs(regionInfo(code)?.lat ?? 40);
   return lat >= 55 ? 'boreal' : lat < 24 ? 'tropical' : 'temperate';
@@ -149,7 +147,7 @@ export const outsideOf =
 export const outside = outsideOf(GRID);
 
 /** FNV-1a: a stable 32-bit hash of the Region code, the landscape's seed. */
-export const hashCode = (s: string) => {
+const hashCode = (s: string) => {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
   return h >>> 0;
@@ -173,7 +171,7 @@ function valueNoise(rng: () => number, cell: number, size: number) {
 }
 
 /** Land (1) or sea (0) at a latitude/longitude, bilinear between the world map's cell centres. */
-export function landAt(lat: number, lon: number) {
+function landAt(lat: number, lon: number) {
   const m = WORLD_MAP;
   const cx = ((((lon - m.lonMin) % 360) + 360) % 360) / ((m.lonMax - m.lonMin) / m.cols) - 0.5;
   const cy = (m.latMax - lat) / ((m.latMax - m.latMin) / m.rows) - 0.5;
@@ -208,7 +206,7 @@ const BIOME_COVER: Record<Biome, { forest: number; field: number }> = {
 /** Every prop the ring may hold (the scene's image budget). */
 export const MAX_PROPS = 240;
 /** Homes in the suburbs, at most. */
-export const SUBURB_HOMES = 36;
+const SUBURB_HOMES = 36;
 
 /**
  * The landscape for a Region. `zones` decides which island slots stay clear; `linked` adds signs for account links;

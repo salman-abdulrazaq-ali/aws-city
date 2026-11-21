@@ -180,7 +180,7 @@ function BusinessList() {
 }
 
 /** "How do I put up S3 Lake?": one line on how, since the button only flies there. */
-export function putUpHow(serviceId: string) {
+function putUpHow(serviceId: string) {
   const p = placeFor(serviceId);
   const place = p?.place ?? serviceById(serviceId)?.name ?? serviceId;
   return `How? Tap Show me to visit ${place}, then learn one of ${p?.agentName ? `${p.agentName}'s` : 'its'} cards: that puts it up.`;

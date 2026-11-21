@@ -6,7 +6,7 @@ import { characterIndex, citizenIds } from '@/game/assets';
 import { KAI_SHEET } from '@/world/culture';
 
 /** The sheet that draws a citizen (the same one the city uses; see Patrols). */
-export const citizenSheetFor = (id: string) => {
+const citizenSheetFor = (id: string) => {
   const c = citizenById(id);
   return c ? citizenSheet(c, (sheet) => !!characterIndex()[sheet], citizenIds()) : undefined;
 };

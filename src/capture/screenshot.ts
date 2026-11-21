@@ -1,6 +1,6 @@
 import { browser } from 'wxt/browser';
 
-export const ALL_URLS = { origins: ['<all_urls>'] };
+const ALL_URLS = { origins: ['<all_urls>'] };
 
 export type CaptureResult = { ok: true; dataUrl: string } | { ok: false; reason: 'needs-permission' | 'restricted' | 'error'; message: string };
 

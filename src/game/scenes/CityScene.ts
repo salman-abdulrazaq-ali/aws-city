@@ -117,7 +117,7 @@ const UNKNOWN_SIGN_DEPTH = 40_050;
 const PLOT_SIGN_DEPTH = 40_040;
 
 /** The first sentence of a message, capped, for a speech bubble. */
-export const firstLine = (text: string, max = 90) => {
+const firstLine = (text: string, max = 90) => {
   const first = text.split(/(?<=[.!?])\s|\s\(/)[0] ?? text;
   return first.length > max ? `${first.slice(0, max - 1).trimEnd()}…` : first;
 };

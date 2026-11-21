@@ -5,7 +5,7 @@ import { GRID } from '@/world/layout';
 import { legacyPlan, type CityPlan } from '@/world/plan';
 import { CITY_ISO, cornerScreen, toScreen } from './iso';
 
-export const MIN_ZOOM = 1;
+const MIN_ZOOM = 1;
 export const MAX_ZOOM = 4;
 /** Side margin round the core diamond, world px. */
 const MARGIN_X = 8;

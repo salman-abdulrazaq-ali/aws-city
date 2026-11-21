@@ -9,7 +9,7 @@ import { isSensitiveInput } from './safety';
 import type { PageSnapshot, SnapshotItem } from './types';
 
 const ID_ATTR = 'data-awscity-id';
-export const INTERACTIVE = [
+const INTERACTIVE = [
   'button', 'a[href]', 'input:not([type=hidden])', 'select', 'textarea',
   '[role=button]', '[role=link]', '[role=checkbox]', '[role=radio]', '[role=tab]', '[role=menuitem]',
   '[role=option]', '[role=switch]', '[role=combobox]', '[role=listbox]', '[role=menuitemradio]',
@@ -61,7 +61,7 @@ function formFieldLabel(el: Element): string {
 }
 
 /** The combobox / select trigger that owns a listbox (aria-controls/aria-owns, else the nearest trigger around it). */
-export function comboboxFor(listbox: Element): Element | undefined {
+function comboboxFor(listbox: Element): Element | undefined {
   const root = rootOf(listbox);
   if (listbox.id) {
     const esc = CSS.escape(listbox.id);

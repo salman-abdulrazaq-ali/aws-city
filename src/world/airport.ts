@@ -13,7 +13,7 @@ import type { Rect, Tile } from './layout';
 export const AIRPORT_W = 10;
 export const AIRPORT_H = 4;
 /** A building counts once it reaches Practitioner (as a park ride does). */
-export const AIRPORT_TIER = 2;
+const AIRPORT_TIER = 2;
 
 export interface AirportStage {
   id: 'terminal' | 'hangar';
@@ -96,7 +96,7 @@ export function airportLayout(site: Rect, p: Progress, region?: string): Airport
   return out;
 }
 
-export type FlightPhase = 'approach' | 'roll' | 'taxi' | 'unload' | 'takeoff';
+type FlightPhase = 'approach' | 'roll' | 'taxi' | 'unload' | 'takeoff';
 export interface FlightLeg {
   phase: FlightPhase;
   /** Tile centres (integer = a tile's centre, as toScreen reads them), in order. */

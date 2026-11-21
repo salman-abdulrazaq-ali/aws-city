@@ -84,7 +84,7 @@ export interface Config {
 const list = (v?: string) => (v ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
 /** The only wildcards allowed: a whole scheme, for browsers whose extension origins are random per install. */
-export const ORIGIN_WILDCARDS = ['moz-extension://*', 'safari-web-extension://*'] as const;
+const ORIGIN_WILDCARDS = ['moz-extension://*', 'safari-web-extension://*'] as const;
 const EXTENSION_SCHEMES = ['chrome-extension://', 'moz-extension://', 'safari-web-extension://'];
 
 /** Does `origin` match one allowed entry (exact, or a scheme wildcard)? Empty `allowed` = any extension origin. */

@@ -16,7 +16,7 @@ export function isoWeek(d = new Date()) {
 }
 
 /** Who's primary on-call in a district this week (a rotation over its agents). */
-export function onCallFor(districtId: string, week = isoWeek()) {
+function onCallFor(districtId: string, week = isoWeek()) {
   const team = servicesIn(districtId as never);
   return team.length ? team[week % team.length].id : undefined;
 }

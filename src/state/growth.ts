@@ -32,7 +32,7 @@ export const growthLine = (g: Growth) => (g.next === undefined ? `${g.place} · 
  * Growing between levels (src/game/TierProps.ts draws it): a third of the way to the next level, scaffolding goes up
  * on the building's front corner; two-thirds of the way, a tower crane rises behind it. The level-up clears both.
  */
-export const STAGE_SCAFFOLD = 1 / 3;
-export const STAGE_CRANE = 2 / 3;
+const STAGE_SCAFFOLD = 1 / 3;
+const STAGE_CRANE = 2 / 3;
 /** 0 = nothing yet, 1 = scaffolding, 2 = scaffolding and a crane. A fully grown building builds no more. */
 export const constructionStage = (pct: number, top: boolean) => (top ? 0 : pct >= STAGE_CRANE ? 2 : pct >= STAGE_SCAFFOLD ? 1 : 0);

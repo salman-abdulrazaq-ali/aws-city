@@ -127,5 +127,5 @@ export function miniView(grid: Pick<MiniGrid, 'min' | 'size'>, w: number, h: num
 export const css = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
 
 /** What the minimap frames: the core and a few tiles of landscape round it (the river and the bridges). */
-export const MINI_MARGIN = 7;
+const MINI_MARGIN = 7;
 export const miniFocus = (coreSize: number) => ({ min: -MINI_MARGIN, size: coreSize + 2 * MINI_MARGIN });

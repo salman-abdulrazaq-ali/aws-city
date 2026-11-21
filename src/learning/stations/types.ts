@@ -2,7 +2,7 @@
 // holds it under a task's `panel`. Each kind has a pure reducer and a pass rule in src/learning/stations/<kind>.ts and
 // a small React panel in src/ui/clients/stations/. `timed` is seconds or null; Games without a clock drops the timer.
 
-export interface StationBase {
+interface StationBase {
   /** The one line of rules shown on top of the panel. */
   rules: string;
   /** Seconds on the clock, or null for no clock. */

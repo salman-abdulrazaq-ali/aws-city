@@ -2,7 +2,7 @@
 // SPA route changes (URL / main heading) have landed, and Cloudscape spinners are gone.
 import { deepQuery, deepQueryAll } from './dom';
 
-export const BUSY_SELECTOR = '[class*="awsui_spinner"], [aria-busy="true"]';
+const BUSY_SELECTOR = '[class*="awsui_spinner"], [aria-busy="true"]';
 
 export interface SettleOptions {
   /** No DOM / route change for this long counts as settled. */

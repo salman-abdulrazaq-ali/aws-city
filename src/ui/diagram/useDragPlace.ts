@@ -18,7 +18,7 @@ const SNAP_PX = 40;
 const noScroll = (e: TouchEvent) => e.preventDefault();
 
 /** The slot under or nearest (within SNAP_PX) a screen point. */
-export function nearestSlot(slots: Map<string, HTMLElement>, x: number, y: number): string | undefined {
+function nearestSlot(slots: Map<string, HTMLElement>, x: number, y: number): string | undefined {
   let best: string | undefined;
   let bestD = SNAP_PX;
   for (const [id, el] of slots) {

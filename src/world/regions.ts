@@ -48,7 +48,7 @@ export const FACTS = factsJson as unknown as { asOf: string; source: string; doc
 export const PRICES = pricesJson as unknown as { asOf: string; currency: string; note: string; skipped: { region: string; reason: string }[]; regions: Record<string, Price[]> };
 
 /** Every Region has at least three AZs (docs); that's what the city draws where AWS doesn't list AZ IDs. */
-export const MIN_AZS = 3;
+const MIN_AZS = 3;
 
 export const regionFacts = (code: string): RegionFacts | undefined => FACTS.regions[code];
 export const regionInfo = (code: string): Region | undefined => REGIONS.regions.find((r) => r.code === code);
@@ -119,7 +119,7 @@ export const zoneIndex = (zones: Zone[], az: string): number | undefined => {
 };
 
 // ── Prices ───────────────────────────────────────────────────────────────────────────────────────────────
-export const HOURS_PER_MONTH = 730;
+const HOURS_PER_MONTH = 730;
 export const pricesFor = (serviceId: string, region: string): Price[] => (PRICES.regions[region] ?? []).filter((p) => p.serviceId === serviceId);
 export const price = (key: string, region: string): Price | undefined => PRICES.regions[region]?.find((p) => p.key === key);
 export const monthly = (usdPerHour: number) => usdPerHour * HOURS_PER_MONTH;

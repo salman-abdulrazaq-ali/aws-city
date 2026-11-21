@@ -23,7 +23,7 @@ export interface Badge {
 }
 
 /** The highest level any building reached, in any city (global services count once). */
-export function bestLevel(p: Progress) {
+function bestLevel(p: Progress) {
   let best = -1;
   const regions: (string | undefined)[] = [undefined, ...Object.keys(p.cities ?? {})];
   for (const r of regions) for (const s of SERVICES) best = Math.max(best, levelOf(p, s.id, r));

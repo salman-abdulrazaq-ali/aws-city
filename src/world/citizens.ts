@@ -46,7 +46,6 @@ export const WA_RULES = rulesJson.rules as WaRule[];
 export const citizenById = (id: string) => CITIZENS.find((c) => c.id === id);
 export const citizenForPillar = (pillar: PillarKey) => CITIZENS.find((c) => c.pillar === pillar);
 export const ruleById = (id: string) => WA_RULES.find((r) => r.id === id);
-export const isCitizenId = (id: string) => id.startsWith('citizen:') && !!citizenById(id);
 
 /** The Amazonian role a citizen wears (culture.json → amazonians.roles), for the name tag and sprite sheet. */
 export const citizenRole = (c: CitizenDef) => ROLES.find((r) => r.id === c.roleId);

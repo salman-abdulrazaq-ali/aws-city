@@ -19,7 +19,7 @@ export type Authenticate = (req: IncomingMessage, url: URL) => Promise<Principal
 /** The browser WebSocket API can't set headers, so the JWT rides in Sec-WebSocket-Protocol (see bearerSubprotocols in the contract). */
 export const BEARER_PROTOCOL = 'base64UrlBearerAuthorization';
 
-export const bearerFromProtocols = (header: string | undefined): string | undefined => {
+const bearerFromProtocols = (header: string | undefined): string | undefined => {
   for (const p of (header ?? '').split(',').map((s) => s.trim())) {
     if (p.startsWith(`${BEARER_PROTOCOL}.`)) {
       try {

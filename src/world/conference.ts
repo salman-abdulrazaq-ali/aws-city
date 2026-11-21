@@ -2,7 +2,7 @@
 // talk names the buildings it's about; passing its three-question check grows them (store.passTalk) once.
 import data from '../../shared/conference.json' with { type: 'json' };
 
-export interface TalkCheck {
+interface TalkCheck {
   q: string;
   options: string[];
   answer: number;

@@ -40,7 +40,7 @@ const DELETED_CACHE_MS = 10 * 60_000;
 const IDLE_CHECK_MS = 15_000;
 
 /** WebSocket close codes the extension understands (CLOSE_CODES in src/backend/contract.ts; see ServerBackend). */
-export const CLOSE = CLOSE_CODES;
+const CLOSE = CLOSE_CODES;
 
 /** A token bucket: true while the caller is within its rate. */
 export const rateLimiter = (burst: number, perSecond: number, now = () => Date.now()) => {
@@ -63,7 +63,7 @@ class HttpError extends Error {
 }
 
 /** The local single-player server (and the tests) pass their pieces directly. */
-export interface SingleTenantDeps {
+interface SingleTenantDeps {
   poller: Poller;
   orchestrator: Orchestrator;
   uploads: MemoryUploadStore;
@@ -74,7 +74,7 @@ export interface SingleTenantDeps {
   createCopilot?: () => ConsoleCopilot;
 }
 
-export interface HubDeps {
+interface HubDeps {
   tenants: TenantHub;
   authenticate: Authenticate;
   /** The local upload store (PUT /uploads/…); hosted uploads go straight to S3. */
@@ -94,7 +94,7 @@ export interface HubDeps {
 export type Deps = { config: Config } & (SingleTenantDeps | HubDeps);
 
 /** Adapts the local pieces to the multi-player hub: one player, "local". */
-export const singleTenant = (d: SingleTenantDeps & { config: Config }): TenantHub => {
+const singleTenant = (d: SingleTenantDeps & { config: Config }): TenantHub => {
   // One player: the live city is just them (still useful to try the feature locally).
   const localSocial = memorySocial();
   const tenant: Tenant = {

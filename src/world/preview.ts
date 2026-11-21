@@ -6,7 +6,7 @@ import { growthOf } from '@/state/growth';
 import { placeFor } from './places';
 
 /** Stars a new card's review pays (src/learning/srs.ts xpFor; src/state/next.ts counts reviews the same way). */
-export const REVIEW_STARS = 4;
+const REVIEW_STARS = 4;
 
 export interface NextPreview {
   serviceId: string;

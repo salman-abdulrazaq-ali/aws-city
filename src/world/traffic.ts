@@ -31,7 +31,7 @@ export function leavers(busy: readonly boolean[], keep: number): number[] {
   return [...newestFirst.filter((i) => !busy[i]), ...newestFirst.filter((i) => busy[i])].slice(0, over);
 }
 /** Narrower than this and the city is in the side panel (CityScene uses the same break). */
-export const PANEL_MAX_WIDTH = 560;
+const PANEL_MAX_WIDTH = 560;
 export const surfaceFor = (width: number): Surface => (width < PANEL_MAX_WIDTH ? 'panel' : 'tab');
 
 type Inv = Pick<CityInventoryEvent, 'items' | 'region'> & Partial<Pick<CityInventoryEvent, 'regions' | 'homeRegion'>>;

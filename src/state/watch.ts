@@ -66,7 +66,7 @@ const STORIES: Record<string, StoryDef> = {
 };
 
 /** "Sally the Angler" → "Sally". */
-export const firstName = (agentName: string) => agentName.split(' the ')[0];
+const firstName = (agentName: string) => agentName.split(' the ')[0];
 
 export interface TaskStory {
   agentId: string;
@@ -81,7 +81,7 @@ export interface TaskStory {
 }
 
 /** The agent a task goes to: the one the plan named, else the one its words point at, else the concierge's default. */
-export const taskAgent = (task: Pick<TaskView, 'agentId' | 'prompt'>) => task.agentId ?? matchText(task.prompt) ?? 'bedrock';
+const taskAgent = (task: Pick<TaskView, 'agentId' | 'prompt'>) => task.agentId ?? matchText(task.prompt) ?? 'bedrock';
 
 /** The story of a task (any agent: a hand-written one, else the building's own first lesson). */
 export function taskStory(task: Pick<TaskView, 'agentId' | 'prompt'>): TaskStory {

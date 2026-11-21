@@ -11,8 +11,8 @@ export const HEALTH_RSS_URL = 'https://status.aws.amazon.com/rss/all.rss';
 export const WHATS_NEW_URL = 'https://aws.amazon.com/about-aws/whats-new/recent/feed/';
 
 /** The only hosts the server ever fetches a feed from. */
-export const FEED_HOSTS = new Set(['health.aws.amazon.com', 'status.aws.amazon.com', 'aws.amazon.com']);
-export const MAX_FEED_BYTES = 4 * 1024 * 1024;
+const FEED_HOSTS = new Set(['health.aws.amazon.com', 'status.aws.amazon.com', 'aws.amazon.com']);
+const MAX_FEED_BYTES = 4 * 1024 * 1024;
 
 export const HEALTH_EVERY_MS = 3 * 60_000;
 export const NEWS_EVERY_MS = 60 * 60_000;

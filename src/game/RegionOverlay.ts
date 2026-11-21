@@ -33,7 +33,7 @@ const LINK_HOP_MS = 120;
 const CONVOY = 3;
 const CONVOY_GAP_MS = 260;
 /** "Zone A": a friendly island name, from the account's AZ name suffix (us-west-2a → A), else the island's order. */
-export const zoneLetter = (az: { name?: string }, i: number) => {
+const zoneLetter = (az: { name?: string }, i: number) => {
   const m = az.name?.match(/\d([a-z])$/);
   return (m ? m[1] : String.fromCharCode(97 + (i % 26))).toUpperCase();
 };

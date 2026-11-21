@@ -36,7 +36,7 @@ export function lightsOf(p: Pick<Progress, 'lights' | 'streak'>): CityLights {
 }
 
 /** Learning days ever (every window lit). */
-export const totalOf = (l: CityLights) => Math.max(l.total ?? 0, l.days.length);
+const totalOf = (l: CityLights) => Math.max(l.total ?? 0, l.days.length);
 
 /**
  * v2.16: freezes as two counters that only go up (earned, used), like the wallet, so two copies merge without losing a

@@ -39,7 +39,7 @@ const DISTRICT_CELLS: Partial<Record<DistrictId, [number, number]>> = {
   networking: [2, 1],
   aiml: [0, 2],
 };
-export const FUTURE_CELLS: [number, number][] = [];
+const FUTURE_CELLS: [number, number][] = [];
 export const FUTURE_LABELS: string[] = [];
 const DAY1_CELL: [number, number] = [1, 2];
 const CAMPUS_CELL: [number, number] = [2, 2];
@@ -63,7 +63,7 @@ const GATE_SLOTS: Rect[] = [SLOTS[3], SLOTS[4], SLOTS[5], SLOTS[1]];
  * Services that are the same in every Region (Route 53, CloudFront, IAM, Global Accelerator): they stand at the Global
  * Gate, taking its lots in shared/region-facts.json `global` order (a new one goes at the end, so nobody moves).
  */
-export const GLOBAL_SERVICE_IDS: string[] = FACTS.global.filter((id) => SERVICES.some((s) => s.id === id));
+const GLOBAL_SERVICE_IDS: string[] = FACTS.global.filter((id) => SERVICES.some((s) => s.id === id));
 
 export interface PlotLayout {
   id: string;
@@ -146,7 +146,7 @@ export const isPlaque = (id: string) => id.startsWith('lp:') || id.startsWith('m
 /** The river that rings downtown runs this many tiles out from the core (inclusive), all the way round. */
 export const RIVER = { from: 2, to: 4 } as const;
 /** An AZ island is ISLAND×ISLAND tiles, just across the river. */
-export const ISLAND = 7;
+const ISLAND = 7;
 /**
  * Where each Availability Zone's island sits, by how many AZs the Region has: slots on the back (west and north) edges,
  * so an island never hides a landmark. 'N13' = north of the core, centred on the road line x = 13; 'W26' = west, on
@@ -161,7 +161,7 @@ export const AZ_SLOTS: Record<number, readonly string[]> = {
   6: ['W39', 'W26', 'W13', 'N13', 'N26', 'N39'],
 };
 /** Most islands a city draws (us-east-1's six; an account that sees more draws the first six). */
-export const MAX_ISLANDS = 6;
+const MAX_ISLANDS = 6;
 export const azSlotsFor = (n: number) => AZ_SLOTS[Math.max(1, Math.min(MAX_ISLANDS, Math.round(n) || 1))];
 /** The tiles a slot's island covers: across the river from the core, centred on its road line. */
 export const slotRect = (slot: string): Rect => {
@@ -234,8 +234,6 @@ export function azCounts(
 }
 /** Where the highway leaves the Region (an edge road tile, by the campus): delivery vans and Region links use it. */
 export const GATE: Tile = { x: GRID - 1, y: CAMPUS_PLOT.rect.y + 5 };
-/** @deprecated The Region gate's old name (kept for one release): use GATE. */
-export const REGION_EDGE: Tile = GATE;
 
 /**
  * Which slot each of a district's services takes: the first six in world.json order take the six slots (a global
@@ -336,10 +334,6 @@ export function plotAt(t: Tile): string | undefined {
   return undefined;
 }
 
-export const randomTileIn = (r: Rect, rand = Math.random): Tile => ({
-  x: r.x + Math.floor(rand() * r.w),
-  y: r.y + Math.floor(rand() * r.h),
-});
 
 const FOOTPRINT_TILES = new Set(LANDMARKS.flatMap((l) => Array.from({ length: l.footprint.w * l.footprint.h }, (_, i) => (l.footprint.y + Math.floor(i / l.footprint.w)) * GRID + l.footprint.x + (i % l.footprint.w))));
 /** A tile under any landmark's footprint (built or not): what a packet or a path must never cross. */

@@ -8,13 +8,13 @@ import { placeCombos, type Combo } from '@/world/combos';
 import { SEASON_DECALS, SEASON_PROP_SHARE, SEASON_PROPS, type Season } from '@/world/seasons';
 
 /** Share of a district's free street-facing grass that holds a home, at level 0 and per average landmark tier. */
-export const HOME_BASE = 0.12;
-export const HOME_PER_LEVEL = 0.06;
+const HOME_BASE = 0.12;
+const HOME_PER_LEVEL = 0.06;
 const COTTAGES = 6;
 const SHOPS = 4;
 const FLATS = 3;
 /** Which home stands on a tile: mostly cottages, some corner shops, and flats once the district has grown (level ≥ 2). */
-export function homeFor(x: number, y: number, level: number): string {
+function homeFor(x: number, y: number, level: number): string {
   const k = tileHash(x, y, 13);
   const pick = (n: number) => Math.floor(tileHash(x, y, 17) * n);
   if (level >= 2 && k < 0.2) return `house:flats:${pick(FLATS)}`;
@@ -31,7 +31,7 @@ export type TowerSize = 'mid' | 'tall' | 'sky';
 /** Steps of clear ground behind a tower each size needs (its sprite's height above its base / 8 px, sprites.json). */
 export const TOWER_STEPS: Record<TowerSize, number> = { mid: 12, tall: 21, sky: 28 };
 /** The district level (average landmark tier, 0–4) a size needs: mid-rise from 1, towers from 2, skyscrapers from 3. */
-export const TOWER_LEVEL: Record<TowerSize, number> = { mid: 1, tall: 2, sky: 3 };
+const TOWER_LEVEL: Record<TowerSize, number> = { mid: 1, tall: 2, sky: 3 };
 /** Towers per district: two per level, at most eight. */
 export const towerCount = (level: number) => Math.min(8, Math.floor(level * 2));
 const SIZES_TALL_FIRST: TowerSize[] = ['sky', 'tall', 'mid'];
@@ -54,7 +54,7 @@ export function clearBehind(x: number, y: number, hidden: (x: number, y: number)
 }
 
 /** The tallest tower this level allows that fits the clear ground behind, or undefined. */
-export const towerFor = (level: number, clear: number): TowerSize | undefined =>
+const towerFor = (level: number, clear: number): TowerSize | undefined =>
   SIZES_TALL_FIRST.find((sz) => level >= TOWER_LEVEL[sz] && clear >= TOWER_STEPS[sz]);
 
 /** A landmark is drawn by its front corner: it's behind a thing standing on a tile with x + y = `depth` when its front is further back. */

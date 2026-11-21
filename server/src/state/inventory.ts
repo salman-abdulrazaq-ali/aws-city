@@ -10,7 +10,7 @@ import { GAME_TAG, type WorldSnapshot } from './model.js';
 /** The city mirrors a learner's account, not a fleet: the listing stops here. */
 export const MAX_ITEMS = 1000;
 /** Items per city.inventory frame (the rest are counted, not listed), so a frame stays well under 64 KB. */
-export const ITEMS_PER_EVENT = 300;
+const ITEMS_PER_EVENT = 300;
 
 const MAP = arnServices.map as Record<string, string>;
 
@@ -25,7 +25,7 @@ export const serviceForArn = (arn: string): { serviceId: string | null; type: st
 };
 
 /** The Region in an ARN (empty for global services like IAM or S3 bucket ARNs). */
-export const regionOfArn = (arn: string) => arn.split(':')[3] ?? '';
+const regionOfArn = (arn: string) => arn.split(':')[3] ?? '';
 
 const item = (arn: string, managedByGame: boolean, region?: string): InventoryItem => {
   const { serviceId, type, name } = serviceForArn(arn);
@@ -115,11 +115,11 @@ export const enrich = (inv: Inventory, snapshot: WorldSnapshot | undefined, regi
 // ── v2.5: the account's real map: AZ name → AZ ID per Region, and which Regions are turned on ──
 
 /** AZ maps and Region opt-ins rarely change: read each once a day. */
-export const GEO_TTL_MS = 24 * 60 * 60_000;
+const GEO_TTL_MS = 24 * 60 * 60_000;
 /** A Region we couldn't read (no permission, not opted in) is tried again after an hour, not every refresh. */
 export const GEO_RETRY_MS = 60 * 60_000;
 /** A learner's account, not a fleet: AZ maps for at most this many Regions per refresh. */
-export const MAX_ZONE_REGIONS = 40;
+const MAX_ZONE_REGIONS = 40;
 
 type Cached<T> = { value: T | undefined; at: number; ttl: number };
 const geoCache = new WeakMap<AwsClients, Map<string, Cached<unknown>>>();
@@ -144,7 +144,7 @@ const cachedGeo = async <T>(clients: AwsClients, key: string, read: () => Promis
 };
 
 /** One Region's Availability Zones (not Local or Wavelength Zones), sorted by name. */
-export const readZones = (clients: AwsClients, region: string, now = Date.now()): Promise<AzInfo[] | undefined> =>
+const readZones = (clients: AwsClients, region: string, now = Date.now()): Promise<AzInfo[] | undefined> =>
   cachedGeo(
     clients,
     `zones:${region}`,
@@ -158,7 +158,7 @@ export const readZones = (clients: AwsClients, region: string, now = Date.now())
   );
 
 /** Every Region the account knows about, and whether it's turned on (from the home Region). */
-export const readRegionStatus = (clients: AwsClients, now = Date.now()): Promise<CityInventoryEvent['regionStatus']> =>
+const readRegionStatus = (clients: AwsClients, now = Date.now()): Promise<CityInventoryEvent['regionStatus']> =>
   cachedGeo(
     clients,
     'regions',

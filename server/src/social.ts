@@ -10,7 +10,7 @@ export interface Mayor {
   name: string;
   rank: string;
 }
-export interface BoardEntry {
+interface BoardEntry {
   name: string;
   score: number;
   you?: boolean;
@@ -29,13 +29,13 @@ export interface SocialStore {
 export const PRESENCE_MS = 90_000;
 export const BOARD_TTL_MS = 9 * 7 * 86_400_000;
 export const MAX_MAYORS = 12;
-export const BOARD_SIZE = 10;
+const BOARD_SIZE = 10;
 
 /** The salted hash a player is filed under (never their Cognito sub). */
 export const whoOf = (sub: string) => createHash('sha256').update(`aws-city-social:${sub}`).digest('hex').slice(0, 20);
 
 /** Boards: one per mini-game, and "Mayors of <Region>" (city rank points). */
-export const GAME_BOARDS = ['fishing', 'shield', 'route53', 'lambda', 'ec2', 'dynamodb', 'redteam', 'launch', 'queue', 'iamgate', 'edge'] as const;
+const GAME_BOARDS = ['fishing', 'shield', 'route53', 'lambda', 'ec2', 'dynamodb', 'redteam', 'launch', 'queue', 'iamgate', 'edge'] as const;
 export const isBoard = (b: string) => (GAME_BOARDS as readonly string[]).includes(b) || /^mayors:[a-z]{2}(-[a-z]+)+-\d$/.test(b);
 /** The most a real round (or a city) can score: anything above is clamped, so a forged score can't top a board by much. */
 export const maxScore = (board: string) => (board.startsWith('mayors:') ? 3_000 : 2_000);

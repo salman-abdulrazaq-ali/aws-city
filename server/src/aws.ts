@@ -21,7 +21,7 @@ import type { Config } from './config.js';
  * are picked up without restarting the server. (Static session keys carry no expiry, so
  * the SDK would otherwise cache the first ones forever.)
  */
-export const refreshingProfile = (profile: string): AwsCredentialIdentityProvider => async () => {
+const refreshingProfile = (profile: string): AwsCredentialIdentityProvider => async () => {
   const creds = await fromIni({ profile, ignoreCache: true })();
   return { ...creds, expiration: new Date(Date.now() + 60_000) };
 };
@@ -60,7 +60,7 @@ export const SDK_DEFAULTS = {
 export const createAwsClients = (config: Config) => clientsFor({ region: config.region, credentials: refreshingProfile(config.awsProfile) });
 
 /** Cost Explorer has one endpoint, in us-east-1, whatever the account's home Region. */
-export const COST_EXPLORER_REGION = 'us-east-1';
+const COST_EXPLORER_REGION = 'us-east-1';
 
 export const clientsFor = (opts: { region: string; credentials: AwsCredentialIdentityProvider }) => {
   const base = { ...SDK_DEFAULTS, ...opts };

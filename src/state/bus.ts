@@ -19,7 +19,7 @@ export interface MinimapState {
   stations?: Tile[];
 }
 
-export interface BusEvents {
+interface BusEvents {
   /** Every event from the backend, after the store has applied it. */
   server: ServerEvent;
   /** The browser tab the user is looking at changed. */

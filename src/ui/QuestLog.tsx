@@ -20,7 +20,7 @@ const KIND: Record<QuestStep['kind'], string> = { visit: 'Visit', cards: 'Flashc
 export type OpenTab = (t: 'learn' | 'arch' | 'sandbox' | 'deploy' | 'jobs' | 'feed' | 'quests' | 'map' | 'cards') => void;
 
 /** What a quest step's button does (its label, src/state/next.ts stepButton, says the same thing). */
-export function runQuestStep(step: QuestStep, openTab: OpenTab) {
+function runQuestStep(step: QuestStep, openTab: OpenTab) {
   switch (step.kind) {
     case 'visit':
       walkTo(step.serviceId);

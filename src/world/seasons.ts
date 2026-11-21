@@ -8,7 +8,7 @@ export type Season = 'winter' | 'spring' | 'summer' | 'autumn';
 export const SEASONS: Season[] = ['winter', 'spring', 'summer', 'autumn'];
 
 /** Inside the tropics (|latitude| under this) there's no winter to draw: the city stays in summer all year. */
-export const TROPICS = 23.44;
+const TROPICS = 23.44;
 
 /** Meteorological seasons in the north: Dec–Feb winter, Mar–May spring, Jun–Aug summer, Sep–Nov autumn. */
 const NORTH: Season[] = ['winter', 'winter', 'spring', 'spring', 'spring', 'summer', 'summer', 'summer', 'autumn', 'autumn', 'autumn', 'winter'];

@@ -76,9 +76,9 @@ interface Task {
 }
 
 /** One Copilot per socket, one console task at a time. */
-export const MAX_CONSOLE_TASKS = 1;
+const MAX_CONSOLE_TASKS = 1;
 /** Model calls per player per 10 minutes, across their tabs and reconnects (stop→start loops can't run up the bill). */
-export const MODEL_CALL_BUDGET = 60;
+const MODEL_CALL_BUDGET = 60;
 const BUDGET_WINDOW_MS = 10 * 60_000;
 
 type Item = PageSnapshot['items'][number];

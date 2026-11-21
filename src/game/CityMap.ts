@@ -27,7 +27,7 @@ import { SEASON_TINT, type Season } from '@/world/seasons';
  * Core ground chunks are chunk×chunk tiles: 10 on the legacy 40×40 core (16 chunks), 16 on a real map's 64×64 core (16
  * chunks again, each about 530×280 px): a district opening re-bakes the few it touches.
  */
-export const chunkFor = (size: number) => (size > 40 ? 16 : 10);
+const chunkFor = (size: number) => (size > 40 ? 16 : 10);
 /**
  * The baked core ground: over the ring's baked ground (Landscape, −0.5) and the fibre line beside the highway
  * (RegionOverlay, 1), as the per-tile Images were (depth x + y). The edge slabs stay under the ring's ground, as before.

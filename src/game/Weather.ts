@@ -7,7 +7,7 @@ import Phaser from 'phaser';
 import type { Surface } from '@/world/traffic';
 import { reducedMotion } from './motion';
 
-export const RAIN_CAP: Record<Surface, number> = { tab: 90, panel: 50 };
+const RAIN_CAP: Record<Surface, number> = { tab: 90, panel: 50 };
 const CLOUD_DEPTH = 66_100;
 const RAIN_DEPTH = 66_150;
 /** Under the night overlay (70,000), so night still darkens the storm. */
@@ -17,7 +17,7 @@ const DROP = 5; // px long
 const LOCAL_SPREAD = 34;
 const LOCAL_FALL = 56;
 
-export type StormLevel = 'degradation' | 'disruption';
+type StormLevel = 'degradation' | 'disruption';
 export interface Storm {
   /** The whole city (most of its landmarks are hit). */
   regionWide?: StormLevel;

@@ -51,7 +51,7 @@ export type Action = { [K in ActionName]: { type: K } & z.infer<(typeof ACTION_S
 export const DESTRUCTIVE: ReadonlySet<ActionName> = new Set(['terminate_instance', 'delete_table', 'delete_bucket']);
 export const READ_ONLY: ReadonlySet<ActionName> = new Set(['describe_resource', 'review_architecture']);
 
-export const isActionName = (name: string): name is ActionName => Object.hasOwn(ACTION_SCHEMAS, name);
+const isActionName = (name: string): name is ActionName => Object.hasOwn(ACTION_SCHEMAS, name);
 
 export type ParseResult = { ok: true; action: Action } | { ok: false; error: string };
 
@@ -66,7 +66,7 @@ export const parseAction = (name: unknown, input: unknown): ParseResult => {
 };
 
 /** Which city agent (taxonomy service id) may use each action, and which AWS service it calls. */
-export const ACTION_SERVICE: Record<ActionName, string | null> = {
+const ACTION_SERVICE: Record<ActionName, string | null> = {
   launch_instance: 'ec2',
   stop_instance: 'ec2',
   start_instance: 'ec2',

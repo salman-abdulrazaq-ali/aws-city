@@ -30,5 +30,3 @@ export const createMfaCheck = (deps: { cognito: Pick<CognitoIdentityProviderClie
     return ready;
   };
 };
-
-export type MfaCheck = ReturnType<typeof createMfaCheck>;

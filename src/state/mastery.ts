@@ -33,7 +33,7 @@ export interface CrownStep {
 }
 
 /** Cards of this service the player knows (interval ≥ MASTERED_DAYS) out of its deck. */
-export function knownCards(p: Progress, serviceId: string) {
+function knownCards(p: Progress, serviceId: string) {
   const deck = cardsFor(serviceId);
   return { known: deck.filter((c) => (p.cards?.[c.id]?.interval ?? 0) >= MASTERED_DAYS).length, of: deck.length };
 }

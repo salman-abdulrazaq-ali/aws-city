@@ -26,7 +26,7 @@ export const worstByRegion = (health: AwsHealthEvent | undefined): Record<string
  * How the city shows an incident in its Region: 'region' when most of the city's landmarks are hit (a Region-wide
  * event, like Bahrain 2026), else 'services' for the landmarks named.
  */
-export const REGION_WIDE_SHARE = 0.5;
+const REGION_WIDE_SHARE = 0.5;
 export type Impact = Exclude<Severity, 'informational'>;
 export function cityImpact(incidents: AwsIncident[], landmarkCount: number) {
   const services = new Map<string, Impact>();

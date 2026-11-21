@@ -2,7 +2,7 @@
 // Links only: the extension never fetches them, and our own cards stay in our words with AWS docs as the source.
 import readingJson from '../../shared/further-reading.json' with { type: 'json' };
 
-export type PartnerId = 'tutorialsdojo' | 'awsfundamentals' | 'oreilly';
+type PartnerId = 'tutorialsdojo' | 'awsfundamentals' | 'oreilly';
 
 export interface Partner {
   name: string;
@@ -46,7 +46,7 @@ export const BOOKS = data.books;
 export const READING = data.services;
 
 /** The only hosts a reading link may open: the partners' own sites, over https. */
-export const READING_HOSTS = ['tutorialsdojo.com', 'awsfundamentals.com', 'www.oreilly.com'] as const;
+const READING_HOSTS = ['tutorialsdojo.com', 'awsfundamentals.com', 'www.oreilly.com'] as const;
 
 export const isReadingUrl = (raw: string) => {
   try {

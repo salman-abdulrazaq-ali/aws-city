@@ -2,7 +2,7 @@
 
 export const SPEEDS = { slow: 2500, normal: 1400, fast: 700 } as const;
 export type Speed = keyof typeof SPEEDS;
-export const DEFAULT_SPEED: Speed = 'normal';
+const DEFAULT_SPEED: Speed = 'normal';
 /** chrome.storage.local key (the content script reads it; the chip's toggle writes it). */
 export const SPEED_KEY = 'copilotSpeed';
 export const SPEED_LABEL: Record<Speed, string> = { slow: 'Slow', normal: 'Normal', fast: 'Fast' };
