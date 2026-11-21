@@ -394,22 +394,33 @@ describe('a disconnected or changed account changes nothing (v2.17)', () => {
   const setupWorld = async () => {
     pollers.length = 0;
     const sent: string[] = [];
+    const WRITE = /^(Delete|Terminate|Create|Run|Put|Update|Enable|Modify|Revoke)/;
+    /** While set, a write waits here (in flight, holding the account lock) until released. */
+    let held: Promise<void> | undefined;
     const requestHandler = {
       async handle(r: { headers: Record<string, string>; body?: unknown }) {
         const body = typeof r.body === 'string' ? r.body : '';
-        sent.push(r.headers['x-amz-target']?.split('.')[1] ?? /(?:^|&)Action=(\w+)/.exec(body)?.[1] ?? 'other');
+        const op = r.headers['x-amz-target']?.split('.')[1] ?? /(?:^|&)Action=(\w+)/.exec(body)?.[1] ?? 'other';
+        sent.push(op);
+        if (held && WRITE.test(op)) await held;
         return { response: { statusCode: 200, headers: {}, body: new TextEncoder().encode('') } };
       },
     };
     const clients = clientsFor({ region: 'us-west-2', credentials: async () => ({ accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 'not-a-secret' }), accountId: () => ACCOUNT, requestHandler: requestHandler as never });
     /** Every request that would change AWS (the inventory's and the fix's reads go to the same recorder). */
-    const writes = () => sent.filter((op) => /^(Delete|Terminate|Create|Run|Put|Update|Enable|Modify|Revoke)/.test(op));
+    const writes = () => sent.filter((op) => WRITE.test(op));
+    /** Holds every write until the returned function is called. */
+    const hold = () => {
+      let release!: () => void;
+      held = new Promise((r) => (release = r));
+      return () => ((held = undefined), release());
+    };
     // A table the city built, without point-in-time recovery (a fix City care offers), and room for one more.
     reading.snap = { ...emptyWorld('us-west-2'), accountId: ACCOUNT, resources: [{ ...table('city-quest'), meta: { pitr: false } }] };
     const stores = localStores(`${process.env.TEMP ?? '/tmp'}/aws-city-retire-${Date.now()}-${Math.random()}/progress.json`);
     await stores.accounts.put('u1', record);
     await stores.progress.put('u1', { version: 2, landmarks: {}, updatedAt: '2026-11-21T10:00:00.000Z', citizens: { 'citizen:reliability': { xp: 25 } } });
-    return { stores, clients, writes };
+    return { stores, clients, writes, hold };
   };
   const previews = (events: ServerEvent[]) => events.filter((e): e is Extract<ServerEvent, { type: 'deploy.preview' }> => e.type === 'deploy.preview');
   const statusOf = (events: ServerEvent[], deployId: string) => events.filter((e) => e.type === 'deploy.status' && e.deployId === deployId).at(-1);
@@ -485,6 +496,107 @@ describe('a disconnected or changed account changes nothing (v2.17)', () => {
     await vi.waitFor(() => expect(tab.filter((e) => e.type === 'account.status').at(-1)).toMatchObject({ linked: false, broken: true }));
     here.closeAll();
     there.closeAll();
+  });
+
+  it('a warm city with no tab open still re-reads its record: a Disconnect on another task stops its poller within a minute', async () => {
+    const { stores, clients } = await setupWorld();
+    const here = hubOn(stores, clients, { accountCheckMs: 20 });
+    const there = hubOn(stores, clients);
+    await here.acquire({ sub: 'u1' });
+    here.release({ sub: 'u1' }); // the last tab closed: the city stays warm (and polling) for a while
+    const elsewhere = await there.acquire({ sub: 'u1' });
+    expect(running()).toBe(2);
+    await elsewhere.unlink('r-unlink', () => {});
+    await vi.waitFor(() => expect(running()).toBe(0));
+    here.closeAll();
+    there.closeAll();
+  });
+
+  it('a disconnect and a new link of the same account and Region on another task: this task rebuilds, and never marks the new link broken', async () => {
+    const { stores, clients } = await setupWorld();
+    await stores.accounts.put('u1', { ...record, linkedAt: '2026-11-21T10:00:00.000Z' });
+    const here = hubOn(stores, clients);
+    const there = hubOn(stores, clients);
+    const tenant = await here.acquire({ sub: 'u1' });
+    const elsewhere = await there.acquire({ sub: 'u1' });
+    const tab: ServerEvent[] = [];
+    tenant.subscribe((e) => tab.push(e));
+    const old = pollers[0]!;
+    // Another task: Disconnect, then a new stack (a new ExternalId) for the same account and Region, verified.
+    await elsewhere.unlink('r-unlink', () => {});
+    const relinked = { ...record, externalId: 'z'.repeat(32), linkedAt: '2026-11-21T11:00:00.000Z' };
+    await stores.accounts.put('u1', relinked);
+    // This task's world still uses the old ExternalId, which the new stack refuses.
+    const refused: Snap = { ...emptyWorld('us-west-2'), accountId: ACCOUNT, roleRefused: true };
+    for (let i = 0; i < BROKEN_AFTER; i++) old.poll(refused);
+    await vi.waitFor(() => expect(tab).toContainEqual(expect.objectContaining({ type: 'account.status', linked: true, accountId: ACCOUNT })));
+    expect(await stores.accounts.get('u1')).toEqual(relinked); // no brokenAt written onto the new link
+    expect(old.running).toBe(false);
+    expect(pollers.at(-1)!.running).toBe(true); // rebuilt on the new link
+    here.closeAll();
+    there.closeAll();
+  });
+
+  it('a link that broke is marked only if it is still the same link when the mark is written', async () => {
+    const { stores, clients } = await setupWorld();
+    await stores.accounts.put('u1', { ...record, linkedAt: '2026-11-21T10:00:00.000Z' });
+    const relinked = { ...record, externalId: 'z'.repeat(32), linkedAt: '2026-11-21T11:00:00.000Z' };
+    // Another task relinks right after this one reads the record for the mark (between its read and its write).
+    let reads = 0;
+    const get = stores.accounts.get.bind(stores.accounts);
+    stores.accounts.get = async (sub) => {
+      const r = await get(sub);
+      if (++reads === 2) await stores.accounts.put(sub, relinked); // read 1 builds the world; read 2 is the mark's
+      return r;
+    };
+    const here = hubOn(stores, clients);
+    const tenant = await here.acquire({ sub: 'u1' });
+    const tab: ServerEvent[] = [];
+    tenant.subscribe((e) => tab.push(e));
+    const refused: Snap = { ...emptyWorld('us-west-2'), accountId: ACCOUNT, roleRefused: true };
+    for (let i = 0; i < BROKEN_AFTER; i++) pollers[0]!.poll(refused);
+    await vi.waitFor(() => expect(tab).toContainEqual(expect.objectContaining({ type: 'account.status', linked: true })));
+    expect(await get('u1')).toEqual(relinked);
+    here.closeAll();
+  });
+
+  it('refusals the breaker took for our side (many players at once) never count toward breaking the link', async () => {
+    const { stores, clients } = await setupWorld();
+    const tenants = hubOn(stores, clients);
+    const tenant = await tenants.acquire({ sub: 'u1' });
+    const tab: ServerEvent[] = [];
+    tenant.subscribe((e) => tab.push(e));
+    const ours: Snap = { ...emptyWorld('us-west-2'), accountId: ACCOUNT, roleRefused: true, refusedOurSide: true };
+    for (let i = 0; i < BROKEN_AFTER + 2; i++) pollers[0]!.poll(ours);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(pollers[0]!.running).toBe(true);
+    expect(await stores.accounts.get('u1')).not.toHaveProperty('brokenAt');
+    // And nothing is said for those polls (nothing was read): only the first inventory read, from before them.
+    expect(tab.filter((e) => e.type !== 'city.inventory')).toEqual([]);
+    tenants.closeAll();
+  });
+
+  it('Disconnect waits for a write already past the live check (it holds the account lock): once it returns, nothing more changes', async () => {
+    const { stores, clients, writes, hold } = await setupWorld();
+    const tenants = hubOn(stores, clients);
+    const tenant = await tenants.acquire({ sub: 'u1' });
+    const events: ServerEvent[] = [];
+    const approvals = createApprovals({ region: 'us-west-2' });
+    const release = hold();
+    const job = tenant.remove({ requestId: 'rm1', kind: 'table', id: 'city-quest' }, (e) => events.push(e), approvals);
+    await vi.waitFor(() => expect(previews(events)).toHaveLength(1));
+    approvals.answer(previews(events)[0]!.deployId, true);
+    await vi.waitFor(() => expect(writes()).toEqual(['DeleteTable'])); // in flight
+    let unlinked = false;
+    const unlinking = tenant.unlink('r-unlink', () => {}).then(() => void (unlinked = true));
+    await new Promise((r) => setTimeout(r, 40));
+    expect(unlinked).toBe(false);
+    expect(await stores.accounts.get('u1')).toBeDefined(); // not forgotten while the write runs
+    release();
+    await Promise.all([job, unlinking]);
+    expect(await stores.accounts.get('u1')).toBeUndefined();
+    expect(statusOf(events, previews(events)[0]!.deployId)).toMatchObject({ status: 'complete' });
+    tenants.closeAll();
   });
 
   it('Check again (account.recheck) refreshes fixes on every tab, keeps the role version and the same world (pending cards stand)', async () => {

@@ -119,7 +119,8 @@ When a change touches a decision, update its entry and run its Proof.
   Hosted, fixes are per account (v2.17): the setup link sets `AllowFixes=true` when the player asks (`account.link {allowFixes}`),
   and verify learns whether the role allows them without changing anything (`fixesAllowed`: EC2's DryRun of the EBS fix,
   `DryRunOperation` = yes); "Check again" re-runs that DryRun for the linked record (`account.recheck`, read-only: no MFA, no
-  new link window, the role version stays, the same world); `createCityCare` reads the latest answer at each fix (unknown:
+  new link window, the role version stays, the same world; an answer that can't tell keeps the known one, and a link that
+  changed meanwhile is refused, never written back); `createCityCare` reads the latest answer at each fix (unknown:
   the server's setting) and `account.status` says it (`fixes`).
   Proof: `cd server && npx vitest run test/fixes.test.ts test/player-role.test.ts test/care.test.ts test/tenants.test.ts -t "Check again"`,
   `cd server && npx vitest run test/hosted.test.ts -t "Check again"`, `npx vitest run tests/deploy-account.test.tsx tests/account-ui.test.tsx`.
@@ -172,25 +173,43 @@ When a change touches a decision, update its entry and run its Proof.
   (`Stores.mfa` `since`, files or DynamoDB `USER#<sub> MFA`; seeing it off forgets it) and passes only an access token whose `auth_time` is at
   or after it; an older session gets code `auth` with `SIGN_IN_AGAIN_MESSAGE`, which the UI shows as sent (`errorText` keeps an
   `auth` error's own words). After enrolling, the extension calls `POST /me/mfa` (the server
-  looks now), then `GlobalSignOut` ends every session and the player signs in again with the code (`src/backend/auth.ts`); if that
-  call never landed, the first sight is dated from AdminGetUser's `UserLastModifiedDate` (never later than now), so one sign-in
-  is still enough. A refused `resource.remove` is tracked like a fix (`StepUp` in `src/app/runtime.ts`: "press Take it down
+  looks now; `NOTE_TRIES` 3 tries, waits doubling from 250 ms, an older server's 404 counts as heard), then `GlobalSignOut` ends
+  every session and the player signs in again with the code (`src/backend/auth.ts`). If that call never landed, the first sight
+  is dated when the server first looks (`now()`), never from AdminGetUser's `UserLastModifiedDate`: whether Cognito moves it when
+  TOTP goes on is unconfirmed, and an earlier date could pass a session a stolen password opened before the authenticator. So
+  the player may have to sign in twice, and the toast says so (`confirmTotp` → `{signInTwice}`, `afterMfa`). A refused
+  `resource.remove` is tracked like a fix (`StepUp` in `src/app/runtime.ts`: "press Take it down
   again"). `account.recheck` and `account.unlink` need no MFA (they change nothing, or take access away). Sign-out
   revokes the refresh token (`/oauth2/revoke`, bounded); an email change waits for its code (`keepOriginal`). A "TOTP is on" answer is
   cached 60 s at most. Proof: `cd server && npx vitest run test/hosted.test.ts -t "MFA"` (includes "MFA step-up for writes"),
-  `npx vitest run tests/auth.test.ts tests/ui-logic.test.ts tests/runtime-session.test.ts`, `cd infra && npm test`.
+  `npx vitest run tests/auth.test.ts tests/ui-logic.test.ts tests/runtime-session.test.ts tests/server-backend.test.ts`, `cd infra && npm test`.
 - **A linked account can be disconnected, notices a deleted stack, and upgrades its role** (contract v2.17). `account.unlink`
   needs no MFA (taking access away): `AccountStore.delete` (files or DynamoDB `USER#<sub> ACCOUNT`), an unlinked world, the
-  poller stopped, `account.status {linked: false}` to every tab. Replacing a world retires the old one (`World.retired`, an
+  poller stopped, `account.status {linked: false}` to every tab. Unlink and DELETE /me forget the record holding that AWS
+  account's lock (`forgetUnderLock` in `server/src/tenants.ts`; no account id: at once), so a write already past `live()` on any
+  task finishes first and once they return nothing more changes. Replacing a world retires the old one (`World.retired`, an
   AbortController aborted in `replaceWorld` with the reason): its pending previews (agent writes, fixes, removals) end
   `rejected` "That account was disconnected, so nothing changed." (`Approvals` watch the signal), and ActionService and
   CityCare ask `live()` inside the account lock right before minting a grant, which also re-reads the stored link before a
-  write. Every open city re-reads its record once a minute (`ACCOUNT_CHECK_MS`) and rebuilds when it's gone or its
-  status/account/Region/`brokenAt` changed (`linkKey`), so an unlink or broken mark on another ECS task reaches it. STS
-  refusing the role itself (`RoleRefusedError`: only AccessDenied for `sts:AssumeRole` on the player's own role,
+  write (CityCare checks the retired signal once more after its re-read; a store error in `live()` is a plain refusal,
+  `LINK_UNCHECKED_REASON`, so the approved card still gets its outcome). Every open or warm city (its last tab closed, kept
+  until eviction, still polling) re-reads its record once a minute (`ACCOUNT_CHECK_MS`, one read whether or not a tab is open)
+  and rebuilds when it's gone or its status/account/Region/`brokenAt` or link changed (`linkKey`: also `linkedAt` and a hash
+  of the ExternalId, kept in memory and never logged), so an unlink, a disconnect and new link of the same account and Region,
+  or a broken mark on another ECS task reaches it. A write that must not land on another link is conditional
+  (`AccountStore.put(sub, record, ifLink)`: the same ExternalId and `linkedAt`, DynamoDB `ConditionExpression`, files in one
+  synchronous step): "Check again" (`recheck`) re-reads the record, refuses "Your AWS account link changed meanwhile. Try
+  again." when it's gone or another link, and never writes a deleted link back; a DryRun that can't tell keeps the known
+  `fixes`. STS refusing the role itself (`RoleRefusedError`: only AccessDenied for `sts:AssumeRole` on the player's own role,
   `refusalsMarked`; our task credentials failing, ExpiredToken/InvalidClientTokenId, never mark a link broken, and
   'expired' never persists `brokenAt`) on `BROKEN_AFTER` (3) polls in a row stops polling and marks the
-  record `brokenAt` (`broken: true`: "Was the stack deleted? Link again, or disconnect."); a refused poll says nothing else
+  record `brokenAt` (`broken: true`: "Was the stack deleted? Link again, or disconnect."), only when the record is still
+  the link that world was built from (`linkKey`, and the write is conditional; otherwise the world is rebuilt from the
+  record). The "identity-based policy" wording test has a breaker (`createRefusalBreaker`, `server/src/aws.ts`): the role
+  refusing `REFUSAL_PLAYERS` (3) different players within `REFUSAL_WINDOW_MS` (5 min) on one server task, with no AssumeRole
+  working in between, is our side (`ourSide`, the poll's `refusedOurSide`): not counted toward `BROKEN_AFTER`, and one
+  `log.error` until an AssumeRole works again (a single line is under the `LoggedErrors` alarm's 20 per 5 minutes; a task
+  with fewer than 3 players can't tell). A refused poll says nothing else
   (no lock lessons, no findings resolved), a restart doesn't retry it, and a new link (back to pending) or a verify clears it.
   A deleted stack's last role session can last an hour, so its districts may show locked first (`docs/connect-aws-account.md`).
   Verify learns fixes by DryRun; the role version is the template version the link points at (`v<N>` of its URL), recorded
@@ -203,11 +222,12 @@ When a change touches a decision, update its entry and run its Proof.
   (`infra/player-role/player-role.yaml` v5): the stack's visible `ConnectsPlayer` names who it serves (public Mayor name, else
   a masked email, else "Player " + 8 characters of the sub: `connectsPlayerLabel`), and verify is refused 24 h after the link.
   A refused link or verify (the 24 h one included) is `error {requestId}`, never an `account.status`: a status with a requestId always means success. `resource.remove` takes down one game-owned thing with no model (approved
-  like any write). `GET /me/export` (once a minute per player, 429 otherwise) downloads everything the privacy policy lists:
+  like any write). `GET /me/export` (once a minute per player on each server task, an in-memory map in `server/src/http.ts`,
+  so with N tasks up to N a minute; 429 otherwise) downloads everything the privacy policy lists:
   progress, link metadata (never the ExternalId or role ARN), social rows, the bill, AI counts, the first AI day and the
   MFA time (`firstDay`/`mfa.get` are plain reads).
   Serverless quest templates (`hello-api`, `queue-worker`) are practice builds on the server (`ServerBackend.planPractice`),
-  never an EC2 house. Proof: `cd server && npx vitest run test/tenants.test.ts test/hosted.test.ts test/poller.test.ts test/guard.test.ts test/player-role.test.ts`,
+  never an EC2 house. Proof: `cd server && npx vitest run test/tenants.test.ts test/hosted.test.ts test/poller.test.ts test/guard.test.ts test/player-role.test.ts test/care.test.ts test/service.test.ts`,
   `npx vitest run tests/server-backend.test.ts tests/contract.test.ts tests/runtime-session.test.ts`, `cfn-lint` on the template (CI).
 - **The player's own AWS account: easy to find, linked where they choose, easy to let go** (contract v2.17; rules pure in
   `src/state/account.ts`, `src/ui/Account.tsx`, the card in `src/ui/DeployPanel.tsx`). On the hosted server ⋯ → Account

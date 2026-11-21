@@ -5,7 +5,7 @@ import type { AwsCredentialIdentityProvider } from '@smithy/types';
 import { fixesAllowed } from '../agents/fixes.js';
 import { assumedRole, SDK_DEFAULTS } from '../aws.js';
 import { guard } from '../guard/gate.js';
-import type { AccountRecord, AccountStore } from '../store/types.js';
+import { type AccountRecord, type AccountStore, sameLink } from '../store/types.js';
 
 /** The player role's fixed name (infra/player-role/player-role.yaml): players only need their account id. */
 export const playerRoleName = (region: string, prefix = 'AWSCityPlayerRole') => `${prefix}-${region}`;
@@ -171,8 +171,8 @@ export const createAccountLinker = (deps: {
 
     /**
      * "Check again": asks the linked role, without changing anything, whether it allows fixes (the DryRun verify makes).
-     * No new link window and the role version stays; only `fixes` is written. Refused (LinkError) with nothing linked or
-     * a role that can't be used.
+     * No new link window and the role version stays; only `fixes` is written (an unclear answer keeps the known one).
+     * Refused (LinkError) with nothing linked, a role that can't be used, or a link that changed while it asked.
      */
     async recheck(sub: string): Promise<AccountRecord & { status: 'linked' }> {
       const stored = await deps.accounts.get(sub);
@@ -186,13 +186,18 @@ export const createAccountLinker = (deps: {
       } catch {
         throw new LinkError(`I couldn’t use the AWSCity role in ${accountId} (${region}) just now. Is the stack still there? Try again in a minute.`);
       }
-      const fixes = await canFix(region, credentials, accountId).catch(() => undefined);
-      // Only `fixes` changes, on the record as it is now (a link or verify since may have changed the rest).
-      const latest = (await deps.accounts.get(sub)) ?? stored;
-      if (latest.status !== 'linked' || latest.accountId !== accountId || latest.region !== region) throw new LinkError('Your AWS account link changed meanwhile. Try again.');
+      const probed = await canFix(region, credentials, accountId).catch(() => undefined);
+      // Only `fixes` changes, on the record as it is now (a new setup link since may have changed the rest), and only
+      // while it's still this link: a Disconnect, DELETE /me or a new link on another task meanwhile is never written back
+      // (the ExternalId and role ARN would outlive them). The write itself is conditional on the same link.
+      const changed = () => new LinkError('Your AWS account link changed meanwhile. Try again.');
+      const latest = await deps.accounts.get(sub);
+      if (latest?.status !== 'linked' || latest.accountId !== accountId || latest.region !== region || !sameLink(latest, stored)) throw changed();
+      // A DryRun that can't tell keeps the known answer.
+      const fixes = probed ?? latest.fixes;
       const { fixes: _f, ...rest } = latest;
       const next = { ...rest, status: 'linked' as const, ...(fixes !== undefined ? { fixes } : {}) };
-      await deps.accounts.put(sub, next);
+      if (!(await deps.accounts.put(sub, next, stored))) throw changed();
       return next;
     },
   };

@@ -167,14 +167,20 @@ describe('ServerBackend connection status', () => {
 
   it('turning the authenticator on tells the server (POST /me/mfa) before every session ends, then shows signed-out', async () => {
     const calls: string[] = [];
+    let status = 204;
     vi.stubGlobal('fetch', async (url: URL, init: RequestInit) => {
       calls.push(`${init.method} ${url.pathname} ${(init.headers as Record<string, string>).authorization}`);
-      return new Response(null, { status: 204 });
+      return new Response(null, { status });
     });
+    // Like CognitoAuth.confirmTotp: noted only when POST /me/mfa landed (it throws otherwise).
     const confirmTotp = vi.fn(async (_code: string, beforeSignOut?: () => Promise<void>) => {
       calls.push('enrolled');
-      await beforeSignOut?.();
+      const noted = await beforeSignOut!().then(
+        () => true,
+        () => false,
+      );
       calls.push('signed out everywhere');
+      return { noted };
     });
     const backend = new ServerBackend({ wsUrl: 'wss://x/ws', apiUrl: 'https://x', auth: auth(async () => 't', { confirmTotp }) });
     const statuses: string[] = [];
@@ -182,9 +188,14 @@ describe('ServerBackend connection status', () => {
     backend.connect();
     await vi.waitFor(() => expect(FakeSocket.all).toHaveLength(1));
     FakeSocket.all[0]!.open();
-    await backend.confirmTotp('123456');
+    expect(await backend.confirmTotp('123456')).toEqual({ signInTwice: false });
     expect(calls).toEqual(['enrolled', 'POST /me/mfa Bearer t', 'signed out everywhere']);
     expect(statuses.at(-1)).toBe('signed-out');
+    // The server didn't hear (a 5xx): the player may have to sign in twice. An older server's 404 isn't retried.
+    status = 503;
+    expect(await backend.confirmTotp('123456')).toEqual({ signInTwice: true });
+    status = 404;
+    expect(await backend.confirmTotp('123456')).toEqual({ signInTwice: false });
   });
 
   it('a 401 from GET /progress is "unknown", never "no progress"', async () => {

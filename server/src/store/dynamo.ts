@@ -148,8 +148,22 @@ export const dynamoStores = (deps: { client: DynamoDBClient; table: string; now?
         const out = await db.send(new GetCommand({ TableName, Key: { pk: user(sub), sk: 'ACCOUNT' } }));
         return out.Item?.record as AccountRecord | undefined;
       },
-      async put(sub, record) {
-        await db.send(new PutCommand({ TableName, Item: { pk: user(sub), sk: 'ACCOUNT', record } }));
+      async put(sub, record, ifLink) {
+        // With ifLink: only onto that same link, atomically (a Disconnect, DELETE /me or a new verify on another task wins).
+        const condition = ifLink
+          ? {
+              ConditionExpression: `attribute_exists(pk) AND #r.#e = :e AND ${ifLink.linkedAt === undefined ? 'attribute_not_exists(#r.#l)' : '#r.#l = :l'}`,
+              ExpressionAttributeNames: { '#r': 'record', '#e': 'externalId', '#l': 'linkedAt' },
+              ExpressionAttributeValues: { ':e': ifLink.externalId, ...(ifLink.linkedAt !== undefined ? { ':l': ifLink.linkedAt } : {}) },
+            }
+          : {};
+        try {
+          await db.send(new PutCommand({ TableName, Item: { pk: user(sub), sk: 'ACCOUNT', record }, ...condition }));
+          return true;
+        } catch (err) {
+          if (ifLink && isConditional(err)) return false;
+          throw err;
+        }
       },
       async delete(sub) {
         await db.send(new DeleteCommand({ TableName, Key: { pk: user(sub), sk: 'ACCOUNT' } }));

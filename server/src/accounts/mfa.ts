@@ -30,9 +30,10 @@ export const memoryMfa = (): MfaStore => {
  * player must have TOTP MFA on, and this session must have signed in after it was turned on. "Enrolled now" alone
  * isn't enough: a session that signed in with only a (perhaps stolen) password before the authenticator existed would
  * pass it. So the server keeps, per player, the first time it saw TOTP on (`since`, in the player store) and compares
- * the access token's auth_time with it. The extension tells the server right after enrolling (POST /me/mfa) and then
- * signs every session out, so the sign-in that follows is after `since`; if that call never landed, the first sight is
- * dated from the user's UserLastModifiedDate (no later than now). Seeing TOTP off forgets `since`, so turning
+ * the access token's auth_time with it. The extension tells the server right after enrolling (POST /me/mfa, a few tries)
+ * and then signs every session out, so the sign-in that follows is after `since`; if that call never landed, the first
+ * sight is dated when the server first looks, and the player may have to sign in twice (the extension says so; the safe
+ * side: nothing from before the authenticator can pass). Seeing TOTP off forgets `since`, so turning
  * it on again starts over. Players who sign in with Google have their MFA at Google (Cognito can't add a factor to a
  * federated user) and pass. A "yes" is cached for 60 s by default (one AdminGetUser a minute per active player); a
  * "no" is re-checked every time so turning MFA on works at once.
@@ -65,10 +66,9 @@ export const createMfaCheck = (deps: {
     let since: number;
     if (user.UserStatus === 'EXTERNAL_PROVIDER') since = 0;
     else if ((user.UserMFASettingList ?? []).includes('SOFTWARE_TOKEN_MFA')) {
-      // A first sight with nothing recorded (POST /me/mfa didn't land) dates it from Cognito's last change to the user, which
-      // turning TOTP on was, so the sign-in right after it passes; never later than now.
-      const modified = user.UserLastModifiedDate?.getTime();
-      since = await store.since(p.sub, modified !== undefined && modified < now() ? modified : now());
+      // A first sight with nothing recorded (POST /me/mfa didn't land) is dated now. Not from UserLastModifiedDate: whether
+      // turning TOTP on moves it is unconfirmed, and an earlier date could pass a session from before (a stolen password).
+      since = await store.since(p.sub, now());
     } else {
       ok.delete(p.sub);
       await store.forget(p.sub);

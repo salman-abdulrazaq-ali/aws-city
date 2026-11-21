@@ -365,7 +365,7 @@ export const createPoller = (opts: {
     const results = await Promise.all(
       SERVICES.map(async (service) => {
         try {
-          return { service, status: 'ok' as ServiceStatus, resources: await COLLECTORS[service](opts.clients, opts.accountId), expired: false, refused: false };
+          return { service, status: 'ok' as ServiceStatus, resources: await COLLECTORS[service](opts.clients, opts.accountId), expired: false, refused: false, ourSide: false };
         } catch (err) {
           // STS refused the role itself (not this service): every read fails alike. It isn't "IAM locked this service",
           // so the buildings stay as last seen and no lesson is said six times; the tenant counts these polls (tenants.ts).
@@ -374,7 +374,7 @@ export const createPoller = (opts: {
           if (kind === 'other') log.warn('poll failed', { service, err: (err as Error).name, detail: (err as Error).message?.slice(0, 200) });
           // Keep the last known resources on transient errors so buildings don't flicker away.
           const kept = kind === 'denied' ? [] : (snapshot?.resources.filter((r) => r.service === service) ?? []);
-          return { service, status: (kind === 'denied' ? 'locked' : 'error') as ServiceStatus, resources: kept, expired: kind === 'expired', refused };
+          return { service, status: (kind === 'denied' ? 'locked' : 'error') as ServiceStatus, resources: kept, expired: kind === 'expired', refused, ourSide: isRoleRefused(err) && err.ourSide };
         }
       }),
     );
@@ -388,6 +388,7 @@ export const createPoller = (opts: {
       resources: results.flatMap((r) => r.resources),
       account: await accountSettings,
       ...(results.some((r) => r.refused) ? { roleRefused: true as const } : {}),
+      ...(results.some((r) => r.ourSide) ? { refusedOurSide: true as const } : {}),
     };
     const prev = snapshot;
     snapshot = next;

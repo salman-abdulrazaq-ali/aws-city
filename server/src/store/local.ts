@@ -4,7 +4,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createProgressStore } from '../contract/progress.js';
 import { type Resource, resourceKey } from '../state/model.js';
-import { type AccountLocks, type AccountRecord, type BillRecord, type BillStore, DELETED_TOMBSTONE_MS, type MfaStore, type ProgressStore, type QuotaStore, type Stores } from './types.js';
+import { type AccountLocks, type AccountRecord, type BillRecord, type BillStore, DELETED_TOMBSTONE_MS, type MfaStore, type ProgressStore, type QuotaStore, sameLink, type Stores } from './types.js';
 
 /** Progress as JSON files: progress.json for the local player, progress-<hash>.json for anyone else. */
 export const fileProgress = (file: string): ProgressStore & { fileFor(sub: string): string; forget(sub: string): void } => {
@@ -166,7 +166,16 @@ export const localStores = (progressFile: string): Stores => {
   return {
     progress,
     bills,
-    accounts: { get: async (sub) => accounts.get(sub), put: async (sub, r) => void accounts.set(sub, r), delete: async (sub) => void accounts.delete(sub) },
+    accounts: {
+      get: async (sub) => accounts.get(sub),
+      // One process, and the check and the write are one synchronous step: nothing can land between them.
+      put: async (sub, r, ifLink) => {
+        if (ifLink && !sameLink(accounts.get(sub), ifLink)) return false;
+        accounts.set(sub, r);
+        return true;
+      },
+      delete: async (sub) => void accounts.delete(sub),
+    },
     quota: memoryQuota(),
     mfa,
     locks: memoryLocks(),

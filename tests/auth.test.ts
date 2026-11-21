@@ -60,10 +60,39 @@ describe('CognitoAuth', () => {
       return order.at(-1) === 'VerifySoftwareToken' ? json(200, { Status: 'SUCCESS' }) : json(200, {});
     });
     const beforeSignOut = vi.fn(async () => void order.push('server looks'));
-    await auth.confirmTotp('123456', beforeSignOut);
+    expect(await auth.confirmTotp('123456', beforeSignOut)).toEqual({ noted: true });
     expect(order).toEqual(['VerifySoftwareToken', 'SetUserMFAPreference', 'server looks', 'GlobalSignOut']);
     expect(JSON.parse((fetchMock.mock.calls[2]![1] as RequestInit).body as string)).toEqual({ AccessToken: 'a1' });
     expect((await fakeBrowser.storage.local.get('auth.refresh'))['auth.refresh']).toBeUndefined();
+    expect((await fakeBrowser.storage.session.get('auth.tokens'))['auth.tokens']).toBeUndefined();
+  });
+
+  it('telling the server (POST /me/mfa) is tried again before every session ends; if it never lands, that is reported', async () => {
+    const auth = new CognitoAuth({ domain: DOMAIN, clientId: 'c' });
+    const signedIn = () => fakeBrowser.storage.session.set({ 'auth.tokens': { accessToken: 'a1', expiresAt: Date.now() + 3_600_000 } });
+    const order: string[] = [];
+    fetchMock.mockImplementation(async (_url: unknown, init: RequestInit) => {
+      order.push(String((init.headers as Record<string, string>)['x-amz-target'] ?? 'other').replace('AWSCognitoIdentityProviderService.', ''));
+      return order.at(-1) === 'VerifySoftwareToken' ? json(200, { Status: 'SUCCESS' }) : json(200, {});
+    });
+    // A blip, then it lands: the sign-in after this one is enough.
+    await signedIn();
+    let fails = 1;
+    const flaky = vi.fn(async () => {
+      order.push('server looks');
+      if (fails-- > 0) throw new Error('POST /me/mfa 503');
+    });
+    expect(await auth.confirmTotp('123456', flaky)).toEqual({ noted: true });
+    expect(order).toEqual(['VerifySoftwareToken', 'SetUserMFAPreference', 'server looks', 'server looks', 'GlobalSignOut']);
+    // It never lands: three tries, then every session still ends, and the player is told (noted: false).
+    await signedIn();
+    order.length = 0;
+    const down = vi.fn(async () => {
+      order.push('server looks');
+      throw new Error('POST /me/mfa 500');
+    });
+    expect(await auth.confirmTotp('123456', down)).toEqual({ noted: false });
+    expect(order).toEqual(['VerifySoftwareToken', 'SetUserMFAPreference', 'server looks', 'server looks', 'server looks', 'GlobalSignOut']);
     expect((await fakeBrowser.storage.session.get('auth.tokens'))['auth.tokens']).toBeUndefined();
   });
 

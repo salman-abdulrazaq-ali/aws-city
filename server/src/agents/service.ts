@@ -26,6 +26,8 @@ export const NEEDS_APPROVAL_REASON =
 export const REJECTED_REASON = 'The player said no, so nothing was changed.';
 /** The account this world acts in was disconnected or changed (unlink, a new link, another task's change): nothing runs. */
 export const RETIRED_REASON = 'Your AWS account was disconnected or changed meanwhile, so nothing was changed.';
+/** The stored link couldn't be read right before the write (a store error): nothing runs. */
+export const LINK_UNCHECKED_REASON = 'I couldn’t check your AWS account link just now, so nothing was changed. Try again in a moment.';
 
 export interface ApprovalRequest {
   action: Action;
@@ -90,7 +92,15 @@ export const createActionService = (deps: {
       if (decision.verdict === 'deny') return { status: 'denied', reason: decision.reason };
       if (decision.verdict === 'confirm') return { status: 'denied', reason: NEEDS_APPROVAL_REASON };
       // The account may have been disconnected or changed while the player decided (or another task changed the link).
-      if (deps.live && !(await deps.live(confirmed))) return { status: 'denied', reason: RETIRED_REASON };
+      // A store error reading the link refuses too (a plain sentence), so an approved card still gets its outcome.
+      let live: boolean;
+      try {
+        live = !deps.live || (await deps.live(confirmed));
+      } catch (err) {
+        log.warn('link re-read failed', { err: (err as Error)?.name });
+        return { status: 'denied', reason: LINK_UNCHECKED_REASON };
+      }
+      if (!live) return { status: 'denied', reason: RETIRED_REASON };
 
       // Past policy and the player's approval: the gate lets through exactly this action's writes, once each.
       const grant = confirmed ? actionGrant(action, snapshot.accountId) : undefined;

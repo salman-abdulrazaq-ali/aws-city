@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { socialFor } from './social.js';
 import type { Knowledge } from './knowledge/mcp.js';
 import type { AwsCredentialIdentityProvider } from '@smithy/types';
@@ -119,8 +120,13 @@ export const BROKEN_AFTER = 3;
  */
 export const ACCOUNT_CHECK_MS = 60_000;
 
-/** What decides which world a record gets: a change in any of these rebuilds it (a new link window or fixes don't). */
-const linkKey = (r: AccountRecord | undefined) => (r ? [r.status, r.accountId ?? '', r.region, r.brokenAt ?? ''].join('|') : '');
+/**
+ * What decides which world a record gets: a change in any of these rebuilds it (a new link window or fixes don't). The
+ * link itself (linkedAt, set by each verify, and a hash of the ExternalId, never the secret) tells a disconnect and a new
+ * link of the same account and Region apart. Kept in memory only, never logged.
+ */
+const linkKey = (r: AccountRecord | undefined) =>
+  r ? [r.status, r.accountId ?? '', r.region, r.brokenAt ?? '', r.linkedAt ?? '', createHash('sha256').update(r.externalId).digest('hex').slice(0, 16)].join('|') : '';
 
 /** v2.17 resource.remove: the existing destructive action for each kind the city builds, and what the city calls it. */
 const REMOVE: Record<ResourceRemove['kind'], { action: ActionName; input: (id: string) => Record<string, string>; label: string }> = {
@@ -238,6 +244,17 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
   const tenants = new Map<string, { tenant: Tenant; refs: number; evict?: NodeJS.Timeout; stop: () => void }>();
   // Jev's second opinion on agents' writes (only tightens): one judge for every player, off without TYPESAFE_API_KEY.
   const judge = deps.config.jev ? createJev(deps.config.jev) : undefined;
+  /** Writes to one AWS account, and forgetting its link, take this account's lock (DynamoDB when hosted: every task). */
+  const locks = deps.stores.locks ?? memoryLocks();
+  /**
+   * Forgets a player's link (Disconnect, DELETE /me) holding its AWS account's lock (the stored record's account, else
+   * `accountId`): a write already past its `live()` check, on any task, finishes first, and one after it finds the link
+   * gone. So once this returns, nothing more changes in that account. Nothing linked yet (no account id): at once.
+   */
+  const forgetUnderLock = async (sub: string, forget: () => Promise<void>, accountId?: string) => {
+    const key = (await deps.stores.accounts.get(sub))?.accountId ?? accountId;
+    await (key ? locks.withLock(key, forget) : forget());
+  };
 
   const build = async (p: Principal) => {
     const sub = p.sub;
@@ -297,7 +314,8 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         intervalMs: deps.config.pollIntervalMs,
         onSnapshot(prev, next) {
           if (next.roleRefused) {
-            refusedPolls++;
+            // Refusals the breaker took for our side (many players at once: aws.ts) never count against this link.
+            if (!next.refusedOurSide) refusedPolls++;
             if (refusedPolls >= BROKEN_AFTER && self) {
               poller.stop();
               void markBroken(self).catch((err) => log.warn('marking the link broken failed', { who: who(sub), err: (err as Error).name }));
@@ -311,7 +329,6 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         },
       });
       const snapshot = async () => poller.current() ?? poller.refresh();
-      const locks = deps.stores.locks ?? memoryLocks();
       const actions = createActionService({ clients: aws.clients, poller, region: aws.region, locks, accountKey: () => aws.accountId, judge, live, retired: retired.signal });
       const runnerDeps = { llm, actions, snapshot, knowledge: deps.knowledge };
       const strands = createStrandsRunner(runnerDeps);
@@ -429,9 +446,9 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
           : { type: 'account.status', requestId, linked: false, region: world.region, message: 'Connect your AWS account to let agents build for real.' };
 
     /**
-     * Re-reads the account record (once a minute while a tab is open, and when a write finds it changed): a record that's
-     * gone or changed (status, account, Region, broken) rebuilds the world, so an unlink or a broken link on another task
-     * or device reaches this one; a new fixes answer or role version is taken as it is.
+     * Re-reads the account record (once a minute, and when a write finds it changed): a record that's gone or changed
+     * (status, account, Region, broken, or another link: linkKey) rebuilds the world, so an unlink, a new link or a broken
+     * link on another task or device reaches this one; a new fixes answer or role version is taken as it is.
      */
     const resync = () =>
       serial(async () => {
@@ -448,9 +465,10 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         world.roleVersion = record.roleVersion;
         broadcast([accountStatus()]);
       });
-    const accountCheck = setInterval(() => {
-      if (active()) void resync().catch((err) => log.warn('account re-read failed', { who: who(sub), err: (err as Error).name }));
-    }, deps.accountCheckMs ?? ACCOUNT_CHECK_MS);
+    const resyncSoon = () => void resync().catch((err) => log.warn('account re-read failed', { who: who(sub), err: (err as Error).name }));
+    // Whether or not a tab is open: a warm city (its last tab closed, kept until evictAfterMs) still polls, so it must
+    // notice an unlink or a new link on another task too. One record read a minute per open or warm city.
+    const accountCheck = setInterval(resyncSoon, deps.accountCheckMs ?? ACCOUNT_CHECK_MS);
     accountCheck.unref?.();
 
     /** STS refused the role BROKEN_AFTER polls in a row: keep the link marked broken, stop reading, tell every tab. */
@@ -459,9 +477,12 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         // A link, verify or unlink since (or an evicted city) settled it already.
         if (world !== was || stopped) return;
         const record = await deps.stores.accounts.get(sub);
-        if (record?.status !== 'linked' || record.accountId !== was.accountId) return;
+        // Only the very link this world was built from: an old world never marks a newer one (a disconnect and a new link
+        // of the same account on another task) broken. A stale world is rebuilt from the record instead.
+        if (record?.status !== 'linked' || linkKey(record) !== was.link) return resyncSoon();
         const broken = { ...record, brokenAt: new Date().toISOString() };
-        await deps.stores.accounts.put(sub, broken);
+        // Written only onto that same link, atomically: a disconnect or new link landing after the read wins.
+        if (!(await deps.stores.accounts.put(sub, broken, record))) return resyncSoon();
         replaceWorld(await makeWorld(broken));
         log.warn('account role refused: polling stopped', { who: who(sub), polls: BROKEN_AFTER });
         broadcast([accountStatus()]);
@@ -553,7 +574,8 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
       }),
       unlink: (requestId, emit) => serial(async () => {
         if (!deps.linker) return emit({ ...accountStatus(requestId), message: 'The local server uses the workshop AWS profile, so there’s no account to disconnect.' });
-        await deps.stores.accounts.delete(sub);
+        // Under the account lock: a write already past its live check finishes first; none can change it afterwards.
+        await forgetUnderLock(sub, () => deps.stores.accounts.delete(sub), world.accountId);
         replaceWorld(await makeWorld(undefined), DISCONNECTED_MESSAGE);
         log.info('account unlinked', { who: who(sub) });
         const status: AccountStatusEvent = {
@@ -591,7 +613,8 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         world.poller?.stop();
         clearInterval(world.inventoryTimer);
         world.retired.abort(DISCONNECTED_MESSAGE);
-        await deps.stores.deleteUser(sub);
+        // The link goes under the account lock, like a Disconnect (a write already past its live check finishes first).
+        await forgetUnderLock(sub, () => deps.stores.deleteUser(sub), world.accountId);
         await deps.uploads.deleteOwner(sub);
         await deps.onDelete?.(p);
         replaceWorld(await makeWorld(undefined), DISCONNECTED_MESSAGE);
@@ -622,7 +645,8 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         uploads: { create: (contentType) => deps.uploads.create(contentType, p.sub) },
         exportMe: () => exportFor(deps.stores, p.sub),
         async deleteMe() {
-          await deps.stores.deleteUser(p.sub);
+          // A write for this player on another task may hold the account lock: the link goes after it.
+          await forgetUnderLock(p.sub, () => deps.stores.deleteUser(p.sub));
           await deps.uploads.deleteOwner(p.sub);
           await deps.onDelete?.(p);
           log.info('player deleted', { who: who(p.sub) });

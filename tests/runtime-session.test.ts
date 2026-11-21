@@ -316,6 +316,17 @@ describe('runtime sessions', () => {
     expect(fake.sent).toEqual([]);
     expect(useCity.getState().toasts.map((t) => t.text)).toContainEqual(expect.stringMatching(/sign in again with your app’s code, then press Get my setup link again/));
     expect(rt.afterMfa({ action: 'deploy.approve' }, true).message).toMatch(/ask for the change again/);
+    expect(rt.afterMfa({ action: 'deploy.approve' }, true).message).not.toMatch(/once more/);
+  });
+
+  it('if the server never heard the authenticator went on, the player is told they may have to sign in twice', async () => {
+    const { rt, useCity } = await boot();
+    fake.status('connected');
+    await settle();
+    Object.assign(fake, { confirmTotp: async () => (fake.status('signed-out'), { signInTwice: true }) });
+    useCity.getState().clearToasts();
+    expect(await rt.confirmMfaSetup('123456')).toBe(true);
+    expect(useCity.getState().toasts.map((t) => t.text)).toContainEqual(expect.stringMatching(/sign in again with your app’s code\..*may ask you to sign in once more/));
   });
 
   it('"Your data" (sign out, delete my account) is for signed-in players only, never the local server', async () => {

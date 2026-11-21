@@ -9,6 +9,7 @@ import { diffFindings, findingId, findingsFor } from '../src/agents/findings.js'
 import type { AgentRunner } from '../src/agents/runner.js';
 import type { AwsClients } from '../src/aws.js';
 import { setPublicErrors } from '../src/log.js';
+import { RETIRED_REASON } from '../src/agents/service.js';
 import { createApprovals } from '../src/contract/approvals.js';
 import { enrich, GEO_RETRY_MS, inventoryEvent, readGeo, readInventory, serviceForArn } from '../src/state/inventory.js';
 import type { Resource } from '../src/state/model.js';
@@ -209,7 +210,7 @@ describe('city care: fixes with the player in charge', () => {
   const world = snapshot([{ ...table('city-orders'), meta: { pitr: false } }], { account: { ebsEncryptionByDefault: false } });
   const runner: AgentRunner = { turn: vi.fn(async (agentId: string) => ({ agentId, reply: 'Backups let you rewind.', toolCalls: [], refused: false })), reset: () => undefined };
 
-  const setup = (opts: { xp?: number; fixesEnabled?: boolean; lease?: AbortSignal } = {}) => {
+  const setup = (opts: { xp?: number; fixesEnabled?: boolean; lease?: AbortSignal; retired?: AbortSignal; live?: () => Promise<boolean> } = {}) => {
     const events: ServerEvent[] = [];
     const emit = (e: ServerEvent) => events.push(e);
     const progress: Progress = { version: 2, landmarks: {}, updatedAt: '', citizens: { 'citizen:reliability': { xp: opts.xp ?? 25 }, 'citizen:security': { xp: opts.xp ?? 25 } } };
@@ -222,6 +223,8 @@ describe('city care: fixes with the player in charge', () => {
       refresh: async () => undefined,
       progress: async () => progress,
       fixesEnabled: opts.fixesEnabled ?? true,
+      ...(opts.retired ? { retired: opts.retired } : {}),
+      ...(opts.live ? { live: opts.live } : {}),
     });
     care.update(world);
     const approvals = createApprovals({ region: 'us-west-2' });
@@ -293,6 +296,23 @@ describe('city care: fixes with the player in charge', () => {
     await job;
     expect(dynamodb.commandCalls(UpdateContinuousBackupsCommand)).toHaveLength(0);
     expect(events).toContainEqual(expect.objectContaining({ type: 'deploy.status', status: 'failed', message: expect.stringContaining('stopped before changing anything else') }));
+    expect(resolved(events, pitr)).toBe(false);
+  });
+
+  it('a world retired while the fix re-reads inside the lock (after its live check) mints no grant and changes nothing', async () => {
+    const retired = new AbortController();
+    const { care, events, emit, approvals, pitr } = setup({ retired: retired.signal, live: async () => !retired.signal.aborted });
+    const job = care.fix('r1', pitr.id, emit, approvals);
+    await vi.waitFor(() => expect(preview(events)).toBeDefined());
+    // The re-read inside the lock (live already said yes): the account is disconnected right then.
+    dynamodb.on(DescribeContinuousBackupsCommand).callsFake(() => {
+      retired.abort('That account was disconnected, so nothing changed.');
+      return { ContinuousBackupsDescription: { ContinuousBackupsStatus: 'ENABLED', PointInTimeRecoveryDescription: { PointInTimeRecoveryStatus: 'DISABLED' } } };
+    });
+    approvals.answer(preview(events)!.deployId, true);
+    await job;
+    expect(dynamodb.commandCalls(UpdateContinuousBackupsCommand)).toHaveLength(0);
+    expect(events).toContainEqual({ type: 'deploy.status', deployId: preview(events)!.deployId, status: 'failed', message: RETIRED_REASON });
     expect(resolved(events, pitr)).toBe(false);
   });
 

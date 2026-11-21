@@ -124,6 +124,8 @@ export const createCityCare = (deps: {
         if ((await def.stillOpen(deps.clients, f, ctx)) === false) return null;
         // The lock may have been lost while that was read (another task could be changing the account now).
         lease?.throwIfAborted();
+        // Or the world retired meanwhile (a Disconnect here, or a change another task made): no grant, nothing changed.
+        if (deps.retired?.aborted) return false;
         emit({ type: 'agent.state', agentId: f.citizenId, state: 'working', service: f.serviceId, detail: def.iamAction });
         try {
           // Approved, re-read and locked: only now is the grant minted, for exactly this fix's one write in this account.

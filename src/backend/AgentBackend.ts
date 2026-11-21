@@ -47,8 +47,11 @@ export interface AgentBackend {
   signOut?(): Promise<void>;
   /** Hosted: enrol an authenticator app (step-up MFA before linking an AWS account). */
   startTotp?(): Promise<{ secret: string; uri: string }>;
-  /** Turns it on, then ends every session of the player: they sign in again with the code. */
-  confirmTotp?(code: string): Promise<void>;
+  /**
+   * Turns it on, then ends every session of the player: they sign in again with the code. `signInTwice`: the server
+   * never heard it was turned on, so the sign-in after this one may be asked for too.
+   */
+  confirmTotp?(code: string): Promise<{ signInTwice?: boolean } | undefined>;
   /** Hosted: whether the player's authenticator is on (`external`: Google sign-in keeps its own second step). */
   mfaStatus?(): Promise<'on' | 'off' | 'external' | undefined>;
   /** Try connecting again now (after going offline). */

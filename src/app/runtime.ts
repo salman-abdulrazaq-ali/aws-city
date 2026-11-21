@@ -792,11 +792,15 @@ const AGAIN: Record<StepUp['action'], string> = {
  * What to do once the authenticator is on. The hosted backend then ends every session (`signedOut`): the player signs
  * in again and presses the button once more. A backend that stays signed in resends a refused link or verify as it
  * was sent; an approval or a fix is the player's to press again (the server keeps the preview pending; a refused fix
- * never made one).
+ * never made one). `signInTwice`: the server never heard it was turned on (POST /me/mfa didn't land), so it may ask
+ * for one more sign-in after this one.
  */
-export function afterMfa(refused: StepUp | undefined, signedOut = false): { resend?: StepUp; message: string } {
+export function afterMfa(refused: StepUp | undefined, signedOut = false, signInTwice = false): { resend?: StepUp; message: string } {
   // Turning it on ended every session (src/backend/auth.ts): nothing can be resent until the player signs in again.
-  if (signedOut) return { message: `Authenticator on. Every older sign-in has ended: sign in again with your app’s code${refused ? AGAIN[refused.action] : ''}.` };
+  if (signedOut) {
+    const twice = signInTwice ? ' The city didn’t hear about your authenticator in time, so it may ask you to sign in once more.' : '';
+    return { message: `Authenticator on. Every older sign-in has ended: sign in again with your app’s code${refused ? AGAIN[refused.action] : ''}.${twice}` };
+  }
   switch (refused?.action) {
     case 'account.link':
       return { resend: refused, message: 'Authenticator on. Linking your AWS account now.' };
@@ -818,8 +822,8 @@ export async function confirmMfaSetup(code: string) {
   try {
     // Read first: turning it on ends the session, and the session's end forgets what was refused.
     const refused = mfaRefused;
-    await backend!.confirmTotp!(code);
-    const next = afterMfa(refused, store().backendStatus === 'signed-out');
+    const out = await backend!.confirmTotp!(code);
+    const next = afterMfa(refused, store().backendStatus === 'signed-out', out?.signInTwice);
     mfaRefused = undefined;
     store().setMfaRequired(false);
     store().toast('🔐', next.message);

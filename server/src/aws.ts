@@ -16,6 +16,7 @@ import { createHash } from 'node:crypto';
 import type { AwsCredentialIdentityProvider } from '@smithy/types';
 import type { Config } from './config.js';
 import { GUARD_DENIED, guard, type GateContext } from './guard/gate.js';
+import { log, who } from './log.js';
 
 /**
  * Re-reads the profile from ~/.aws/credentials every minute, so refreshed workshop keys
@@ -33,9 +34,12 @@ export const refreshingProfile = (profile: string): AwsCredentialIdentityProvide
  * the poller tells it apart from one service's AccessDenied by its class.
  */
 export class RoleRefusedError extends Error {
-  constructor(cause: unknown) {
+  /** The refusal breaker took it for our side (the role refusing many players at once), so it never breaks a link. */
+  readonly ourSide: boolean;
+  constructor(cause: unknown, ourSide = false) {
     super((cause as Error)?.message ?? 'AssumeRole refused', { cause });
     this.name = (cause as Error)?.name ?? 'AccessDenied';
+    this.ourSide = ourSide;
   }
 }
 export const isRoleRefused = (err: unknown): err is RoleRefusedError => err instanceof RoleRefusedError;
@@ -56,7 +60,7 @@ export const assumedRole = (opts: { roleArn: string; externalId: string; sub: st
       DurationSeconds: 3600,
     },
   });
-  return refusalsMarked(provider, opts.roleArn);
+  return refusalsMarked(provider, opts.roleArn, { player: who(opts.sub) });
 };
 
 /**
@@ -64,21 +68,72 @@ export const assumedRole = (opts: { roleArn: string; externalId: string; sub: st
  * when known). Never our own task credentials failing (ExpiredToken, InvalidClientTokenId: 'expired', or our role's
  * identity policy not allowing the call): those would mark every player's link broken at once.
  */
-const isPlayerRoleRefusal =(err: unknown, roleArn?: string): boolean => {
+const isPlayerRoleRefusal = (err: unknown, roleArn?: string): boolean => {
   const e = err as { name?: string; message?: string } | undefined;
   const message = e?.message ?? '';
   return e?.name === 'AccessDenied' && message.includes('sts:AssumeRole') && (!roleArn || message.includes(roleArn)) && !/identity-based policy/i.test(message);
 };
 
-/** Wraps a credential provider so the player role refusing it comes out as RoleRefusedError (assumedRole's; a test seam too). */
+/** The refusal breaker: this many different players refused within REFUSAL_WINDOW_MS, with no AssumeRole working between. */
+export const REFUSAL_PLAYERS = 3;
+export const REFUSAL_WINDOW_MS = 5 * 60_000;
+
+/**
+ * isPlayerRoleRefusal leans on STS's wording ("identity-based policy" marks our own role's refusal). If that wording
+ * changes, or our task role breaks some other way, every player's role would look deleted at once. So, per server
+ * process: the role refusing REFUSAL_PLAYERS different players within REFUSAL_WINDOW_MS, with no AssumeRole succeeding in
+ * between, is taken for our side: those refusals don't count toward breaking anyone's link (tenants.ts BROKEN_AFTER), and
+ * it's logged as an error once (until an AssumeRole works again, or a whole window passes with no refusal). A task
+ * serving fewer players than that can't tell, and counts refusals as before.
+ */
+export const createRefusalBreaker = (opts: { players?: number; windowMs?: number; now?: () => number } = {}) => {
+  const players = opts.players ?? REFUSAL_PLAYERS;
+  const windowMs = opts.windowMs ?? REFUSAL_WINDOW_MS;
+  const now = opts.now ?? Date.now;
+  /** Player (who(sub)) → when the role last refused them, since the last AssumeRole that worked. */
+  const refused = new Map<string, number>();
+  let logged = false;
+  return {
+    /** An AssumeRole worked: STS and our side are fine, so the refusals since were the players' own. */
+    succeeded() {
+      refused.clear();
+      logged = false;
+    },
+    /** A player's role refused: true when it looks like our side (it mustn't count against that player). */
+    ourSide(player: string): boolean {
+      const t = now();
+      for (const [k, at] of refused) if (t - at > windowMs) refused.delete(k);
+      if (refused.size === 0) logged = false;
+      refused.set(player, t);
+      if (refused.size < players) return false;
+      if (!logged) {
+        logged = true;
+        log.error('player role refused for several players at once: taken for our side, no link is marked broken', { players: refused.size, windowMs });
+      }
+      return true;
+    },
+  };
+};
+export type RefusalBreaker = ReturnType<typeof createRefusalBreaker>;
+/** The process's breaker (every player's assumedRole shares it). */
+const roleRefusals = createRefusalBreaker();
+
+/**
+ * Wraps a credential provider so the player role refusing it comes out as RoleRefusedError (assumedRole's; a test seam
+ * too), marked `ourSide` when the breaker says so. `player`: who it's for (who(sub)), as the breaker counts players.
+ */
 export const refusalsMarked =
-  (provider: AwsCredentialIdentityProvider, roleArn?: string): AwsCredentialIdentityProvider =>
+  (provider: AwsCredentialIdentityProvider, roleArn?: string, opts: { player?: string; breaker?: RefusalBreaker } = {}): AwsCredentialIdentityProvider =>
   async (...args) => {
+    const breaker = opts.breaker ?? roleRefusals;
+    let credentials: Awaited<ReturnType<AwsCredentialIdentityProvider>>;
     try {
-      return await provider(...args);
+      credentials = await provider(...args);
     } catch (err) {
-      throw isPlayerRoleRefusal(err, roleArn) ? new RoleRefusedError(err) : err;
+      throw isPlayerRoleRefusal(err, roleArn) ? new RoleRefusedError(err, breaker.ourSide(opts.player ?? roleArn ?? 'unknown')) : err;
     }
+    breaker.succeeded();
+    return credentials;
   };
 
 /** Credentials for our own infrastructure (Bedrock, the table, the bucket): the profile locally, the task role hosted. */

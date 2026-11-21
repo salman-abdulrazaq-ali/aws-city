@@ -185,20 +185,21 @@ export class ServerBackend implements AgentBackend {
   }
 
   /**
-   * Turns the authenticator on, tells the server first (it must see it before the sign-in that follows), then every
-   * session ends: the player signs in again with the code. A session that died (not a sign-out), so this device keeps
-   * the city for the same player.
+   * Turns the authenticator on, tells the server first (it must see it before the sign-in that follows; a few tries),
+   * then every session ends: the player signs in again with the code. A session that died (not a sign-out), so this
+   * device keeps the city for the same player. `signInTwice`: the server never heard, so it may ask for one more sign-in.
    */
   async confirmTotp(code: string) {
     if (!this.cfg.auth) throw new Error('This server has no sign-in.');
-    await this.cfg.auth.confirmTotp(code, () => this.noteMfa());
+    const { noted } = await this.cfg.auth.confirmTotp(code, () => this.noteMfa());
     this.endSession();
+    return { signInTwice: !noted };
   }
 
-  /** POST /me/mfa: the server looks at the authenticator now (an older server answers 404; then it looks later). */
+  /** POST /me/mfa: the server looks at the authenticator now. Throws when it didn't land (an older server's 404 counts: it looks later). */
   private async noteMfa() {
     const res = await fetch(this.url('/me/mfa'), { method: 'POST', headers: await this.headers(), signal: AbortSignal.timeout(5_000) });
-    if (!res.ok && res.status !== 404) console.warn('[server] POST /me/mfa', res.status);
+    if (!res.ok && res.status !== 404) throw new Error(`POST /me/mfa ${res.status}`);
   }
 
   async mfaStatus() {

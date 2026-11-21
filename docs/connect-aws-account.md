@@ -76,7 +76,8 @@ company accounts can't: see Troubleshooting), and an authenticator app.
    To-do list. Both open the Deploy tab with the steps unfolded.
 2. **Turn on an authenticator** if the card asks ("Protect your account first" → **Set up an authenticator**). Add the key
    to your app, enter a code, then **sign in again** with the code: turning it on ends every session, and a sign-in from
-   before it doesn't count.
+   before it doesn't count. If the city didn't hear about your authenticator in time (the game says so), it may ask you to
+   sign in once more.
 3. **Pick a Region and press Get my setup link.** The Region is where the key is made and the only one the city reads.
    Only AWS's standard Regions are listed (GovCloud and China can't link). An opt-in Region must be turned on in your
    account first. It starts on the Region you asked for last, your linked one, or your city's.
@@ -184,6 +185,7 @@ The privacy policy for the service you signed in to has the full list of what is
 | "That role isn't the AWSCity player role." or "That's the city's own account." | You typed another role or account. Use the account the stack is in. |
 | "Turn on an authenticator app first" | Set one up in the Deploy tab (**Set up an authenticator**), then sign in again with its code. |
 | "Your authenticator app is on, but this sign-in started before it was. Sign out, then sign in again with your app's code." | Sign out and sign back in, entering the app's code. A sign-in from before the authenticator doesn't count for linking, approving or fixing. |
+| "Your AWS account link changed meanwhile. Try again." (after **Check again**) | The link was disconnected or made again (on another device, perhaps) while the city was asking. Nothing was written. Look at the card, then press **Check again** once more if it's still linked. |
 | `ConnectsPlayer` on the stack page isn't you | Close the page and don't create the stack. Get your own link in the game. |
 | The Region isn't in the list | Only AWS's standard (commercial) Regions can link. GovCloud and China can't. |
 | "Small fixes: off", and no Fix button | The stack was made without `AllowFixes`. See "Allow small fixes later". |

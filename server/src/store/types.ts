@@ -36,9 +36,20 @@ export interface AccountRecord {
   brokenAt?: string;
 }
 
+/** What tells one link apart from the next: a verify sets a new linkedAt, a disconnect forgets the ExternalId. */
+export type LinkIdentity = Pick<AccountRecord, 'externalId' | 'linkedAt'>;
+
+/** Whether `r` is still the link `id` names (same ExternalId and linkedAt). */
+export const sameLink = (r: AccountRecord | undefined, id: LinkIdentity) => r !== undefined && r.externalId === id.externalId && r.linkedAt === id.linkedAt;
+
 export interface AccountStore {
   get(sub: string): Promise<AccountRecord | undefined>;
-  put(sub: string, record: AccountRecord): Promise<void>;
+  /**
+   * Saves the record; true when written. `ifLink`: only while the stored record is still that link (sameLink), checked
+   * atomically with the write, so a Disconnect, DELETE /me or a new verify on another task meanwhile is never written
+   * over: false, and nothing written.
+   */
+  put(sub: string, record: AccountRecord, ifLink?: LinkIdentity): Promise<boolean>;
   /** v2.17 account.unlink: forgets the link (role ARN, account id and ExternalId); a no-op when there's none. */
   delete(sub: string): Promise<void>;
 }

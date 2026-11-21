@@ -424,11 +424,76 @@ describe('account linking', () => {
     expect(rechecked).toEqual({ ...linked, fixes: true });
     expect(await stores.accounts.get('u1')).toEqual({ ...linked, fixes: true });
     expect(canFix).toHaveBeenLastCalledWith('us-west-2', expect.any(Function), '111122223333');
-    // Can't tell: unknown, not the last answer.
+    // Can't tell (the DryRun's answer was unclear): the known answer stands.
     answer = undefined;
-    expect(await linker.recheck('u1')).not.toHaveProperty('fixes');
+    expect(await linker.recheck('u1')).toEqual({ ...linked, fixes: true });
+    expect(await stores.accounts.get('u1')).toEqual({ ...linked, fixes: true });
     await stores.accounts.put('u1', { ...linked, brokenAt: '2026-11-21T10:00:00.000Z' });
     await expect(linker.recheck('u1')).rejects.toThrow(/stopped working/);
+  });
+
+  it('v2.17 Check again racing a Disconnect or DELETE /me on another task writes nothing back (the ExternalId and role ARN stay gone)', async () => {
+    let held: Promise<boolean | undefined> | undefined;
+    let probe!: (allowed: boolean | undefined) => void;
+    const { linker, stores, link, canFix } = setup(ok, { canFix: async () => held ?? false });
+    await link('u1', 'us-west-2');
+    await linker.verify('u1', '111122223333');
+    held = new Promise((r) => (probe = r));
+    const checking = linker.recheck('u1');
+    await vi.waitFor(() => expect(canFix).toHaveBeenCalledTimes(2)); // the DryRun is in flight
+    await stores.accounts.delete('u1'); // another task: Disconnect (DELETE /me deletes the same record)
+    probe(true);
+    await expect(checking).rejects.toThrow('Your AWS account link changed meanwhile. Try again.');
+    expect(await stores.accounts.get('u1')).toBeUndefined();
+  });
+
+  it('v2.17 Check again racing a disconnect and a new link of the same account and Region leaves the new link as it is', async () => {
+    let held: Promise<boolean | undefined> | undefined;
+    let probe!: (allowed: boolean | undefined) => void;
+    const { linker, stores, link, canFix } = setup(ok, { canFix: async () => held ?? false });
+    await link('u1', 'us-west-2');
+    await linker.verify('u1', '111122223333');
+    held = new Promise((r) => (probe = r));
+    const checking = linker.recheck('u1');
+    await vi.waitFor(() => expect(canFix).toHaveBeenCalledTimes(2));
+    // Another task: Disconnect, then a new link (a new ExternalId) to the same account and Region, verified.
+    await stores.accounts.delete('u1');
+    held = undefined;
+    await link('u1', 'us-west-2');
+    const relinked = await linker.verify('u1', '111122223333');
+    probe(true);
+    await expect(checking).rejects.toThrow(/changed meanwhile/);
+    expect(await stores.accounts.get('u1')).toEqual(relinked);
+  });
+
+  it('v2.17 Check again writes only onto the link it read: a delete landing between its re-read and its write wins', async () => {
+    const stores = localStores(`${process.env.TEMP ?? '/tmp'}/aws-city-recheck-${Date.now()}/progress.json`);
+    let deleteAfterNextRead = false;
+    const accounts = {
+      ...stores.accounts,
+      async get(sub: string) {
+        const r = await stores.accounts.get(sub);
+        if (deleteAfterNextRead) {
+          deleteAfterNextRead = false;
+          await stores.accounts.delete(sub); // another task's Disconnect, right after this read
+        }
+        return r;
+      },
+    };
+    let calls = 0;
+    const linker = createAccountLinker({
+      accounts,
+      templateUrl: 'https://templates.example/player-role/v5.yaml',
+      selfAccountId: SELF,
+      credentialsFor: () => async () => ({ accessKeyId: 'x', secretAccessKey: 'y' }),
+      whoAmI: async () => ok('arn:aws:iam::111122223333:role/AWSCityPlayerRole-us-west-2'),
+      // The DryRun of Check again (the second call) is followed by the re-read: that read is the one a delete races.
+      canFix: async () => (++calls === 2 && (deleteAfterNextRead = true), true),
+    });
+    await linker.link('u1', 'us-west-2', { label: 'Player u1' });
+    await linker.verify('u1', '111122223333');
+    await expect(linker.recheck('u1')).rejects.toThrow(/changed meanwhile/);
+    expect(await stores.accounts.get('u1')).toBeUndefined();
   });
 
   it('v2.17 Check again with a role that no longer works is a plain refusal, and nothing is written', async () => {
@@ -458,6 +523,18 @@ describe('account store: unlink forgets the link (v2.17)', () => {
     await s.accounts.delete('u1');
     expect(await s.accounts.get('u1')).toBeUndefined();
     await s.accounts.delete('nobody');
+  });
+
+  it('local: a put with ifLink writes only onto that same link (same ExternalId and linkedAt)', async () => {
+    const s = localStores(`${process.env.TEMP ?? '/tmp'}/aws-city-iflink-${Date.now()}/progress.json`);
+    const rec = { status: 'linked' as const, externalId: 'e'.repeat(32), region: 'us-west-2', accountId: '111122223333', linkedAt: '2026-11-21T10:00:00.000Z' };
+    expect(await s.accounts.put('u1', rec, rec)).toBe(false); // nothing stored yet
+    expect(await s.accounts.get('u1')).toBeUndefined();
+    expect(await s.accounts.put('u1', rec)).toBe(true);
+    expect(await s.accounts.put('u1', { ...rec, fixes: true }, rec)).toBe(true);
+    expect(await s.accounts.put('u1', { ...rec, fixes: false }, { ...rec, linkedAt: '2026-11-21T11:00:00.000Z' })).toBe(false);
+    expect(await s.accounts.put('u1', { ...rec, fixes: false }, { ...rec, externalId: 'f'.repeat(32) })).toBe(false);
+    expect(await s.accounts.get('u1')).toEqual({ ...rec, fixes: true });
   });
 });
 
@@ -524,6 +601,22 @@ describe('DynamoDB store', () => {
     ddb.on(DeleteCommand).resolves({});
     await stores().accounts.delete('u1');
     expect(ddb.commandCalls(DeleteCommand)[0]!.args[0].input).toMatchObject({ TableName: 'aws-city-test', Key: { pk: 'USER#u1', sk: 'ACCOUNT' } });
+  });
+
+  it('v2.17 a put with ifLink is conditional on the same link; a failed condition (deleted or relinked) is false, not an error', async () => {
+    const rec = { status: 'linked' as const, externalId: 'e'.repeat(32), region: 'us-west-2', accountId: '111122223333', linkedAt: '2026-11-21T10:00:00.000Z' };
+    ddb.on(PutCommand).resolvesOnce({}).rejectsOnce(conditional()).rejectsOnce(conditional());
+    expect(await stores().accounts.put('u1', { ...rec, fixes: true }, rec)).toBe(true);
+    expect(await stores().accounts.put('u1', { ...rec, fixes: true }, rec)).toBe(false);
+    expect(ddb.commandCalls(PutCommand)[0]!.args[0].input).toMatchObject({
+      Item: { pk: 'USER#u1', sk: 'ACCOUNT', record: { ...rec, fixes: true } },
+      ConditionExpression: 'attribute_exists(pk) AND #r.#e = :e AND #r.#l = :l',
+      ExpressionAttributeNames: { '#r': 'record', '#e': 'externalId', '#l': 'linkedAt' },
+      ExpressionAttributeValues: { ':e': rec.externalId, ':l': rec.linkedAt },
+    });
+    // A plain put has no condition, and a failure there is still an error.
+    await expect(stores().accounts.put('u1', rec)).rejects.toThrow();
+    expect(ddb.commandCalls(PutCommand).at(-1)!.args[0].input).not.toHaveProperty('ConditionExpression');
   });
 
   it("v2.17 GET /me/export: the social rows are the player's own refs, each read by its key (the salted hash)", async () => {
@@ -971,22 +1064,20 @@ describe('MFA step-up check', () => {
     expect(SIGN_IN_AGAIN_MESSAGE).toMatch(/sign in again/);
   });
 
-  it('a first sight with nothing recorded (POST /me/mfa never landed) dates from the user’s last change, so one sign-in after enrolling is enough', async () => {
+  it('a first sight with nothing recorded (POST /me/mfa never landed) is dated now, never from Cognito’s last change to the user', async () => {
     const since = memoryMfa();
-    // TOTP turned on at 8 s (Cognito's UserLastModifiedDate), the player signed in again at 9 s; the server first looks at 10 s.
+    // Whether turning TOTP on moves UserLastModifiedDate is unconfirmed: dating the first sight from it (8 s) could let a
+    // session from before the authenticator (a stolen password, signed in at 9 s) pass. The server first looks at 10 s.
     const user = { ...totp, UserLastModifiedDate: new Date(8_000) };
     const check = createMfaCheck({ cognito: cognito(user as never) as never, userPoolId: 'p', since, now: () => 10_000 });
-    expect(await check({ sub: 's1', authTime: 9_000 })).toBe('ok');
-    expect(await since.since('s1', 0)).toBe(8_000);
-    // A password-only session from before it still has to sign in again.
-    expect(await check({ sub: 's1', authTime: 7_000 })).toBe('reauth');
-    // Never later than now (a clock ahead of ours), and a recorded first sight always wins.
-    const ahead = memoryMfa();
-    await createMfaCheck({ cognito: cognito({ ...totp, UserLastModifiedDate: new Date(50_000) } as never) as never, userPoolId: 'p', since: ahead, now: () => 10_000 })({ sub: 's2', authTime: 10_000 });
-    expect(await ahead.since('s2', 0)).toBe(10_000);
+    expect(await check({ sub: 's1', authTime: 9_000 })).toBe('reauth');
+    expect(await since.since('s1', 0)).toBe(10_000);
+    // The player signs in once more (the extension says they may have to): that one passes.
+    expect(await check({ sub: 's1', authTime: 10_000 })).toBe('ok');
+    // A recorded first sight (POST /me/mfa landed before every session ended) always wins.
     const recorded = memoryMfa();
-    await recorded.since('s3', 10_000);
-    expect(await createMfaCheck({ cognito: cognito(user as never) as never, userPoolId: 'p', since: recorded, now: () => 10_000 })({ sub: 's3', authTime: 9_000 })).toBe('reauth');
+    await recorded.since('s3', 8_000);
+    expect(await createMfaCheck({ cognito: cognito(user as never) as never, userPoolId: 'p', since: recorded, now: () => 10_000 })({ sub: 's3', authTime: 9_000 })).toBe('ok');
   });
 
   it('the first sight is kept in the store, so another task (or a restart) agrees', async () => {

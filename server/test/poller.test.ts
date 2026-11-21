@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DescribeInstancesCommand } from '@aws-sdk/client-ec2';
-import { type AwsClients, classifyAwsError, clientsFor, isRoleRefused, refusalsMarked, RoleRefusedError } from '../src/aws.js';
+import { type AwsClients, classifyAwsError, clientsFor, createRefusalBreaker, isRoleRefused, refusalsMarked, REFUSAL_WINDOW_MS, RoleRefusedError } from '../src/aws.js';
+import { log } from '../src/log.js';
 import { createPoller, mapLimit } from '../src/state/poller.js';
 
 describe('poller helpers', () => {
@@ -112,6 +113,45 @@ describe('a refused role (v2.17)', () => {
     expect(sent).toEqual([]);
   });
 
+  it('the refusal breaker: the role refusing 3 different players within 5 minutes, with no AssumeRole working between, is our side (logged once)', async () => {
+    const ROLE = 'arn:aws:iam::111122223333:role/AWSCityPlayerRole-us-west-2';
+    let t = 0;
+    const breaker = createRefusalBreaker({ now: () => t });
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    const refusal = () => Object.assign(new Error(`User: arn:aws:sts::999999999999:assumed-role/Task/x is not authorized to perform: sts:AssumeRole on resource: ${ROLE}`), { name: 'AccessDenied' });
+    const ourSide = async (player: string) => {
+      const err: unknown = await refusalsMarked(async () => Promise.reject(refusal()), ROLE, { player, breaker })().catch((e: unknown) => e);
+      expect(isRoleRefused(err)).toBe(true);
+      return (err as RoleRefusedError).ourSide;
+    };
+    try {
+      expect(await ourSide('p1')).toBe(false);
+      expect(await ourSide('p1')).toBe(false); // the same player again (every client of a poll asks) is still one
+      expect(await ourSide('p2')).toBe(false);
+      expect(await ourSide('p3')).toBe(true);
+      expect(await ourSide('p1')).toBe(true);
+      expect(error).toHaveBeenCalledTimes(1);
+      // An AssumeRole that works (anyone's): STS and our role are fine, so later refusals are the players' own again.
+      await refusalsMarked(async () => ({ accessKeyId: 'a', secretAccessKey: 'b' }), ROLE, { player: 'p4', breaker })();
+      expect(await ourSide('p1')).toBe(false);
+      expect(await ourSide('p2')).toBe(false);
+      // Spread over more than the window: still each player's own.
+      t += REFUSAL_WINDOW_MS + 1;
+      expect(await ourSide('p3')).toBe(false);
+      expect(error).toHaveBeenCalledTimes(1);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('a poll whose refusals the breaker took for our side says so (refusedOurSide), so the tenant does not count it', async () => {
+    const clients = fakeClients(() => {
+      throw new RoleRefusedError(Object.assign(new Error('not authorized to perform: sts:AssumeRole'), { name: 'AccessDenied' }), true);
+    });
+    const poller = createPoller({ clients, accountId: '123456789012', region: 'us-east-1', intervalMs: 60_000, onSnapshot: () => {} });
+    expect(await poller.refresh()).toMatchObject({ roleRefused: true, refusedOurSide: true });
+  });
+
   it("marks the poll roleRefused and keeps what was seen; one service's AccessDenied only locks that service", async () => {
     let mode: 'ok' | 'refused' | 'lambda-denied' = 'ok';
     const clients = fakeClients((cmd) => {
@@ -127,6 +167,7 @@ describe('a refused role (v2.17)', () => {
     mode = 'refused';
     const second = await poller.refresh();
     expect(second).toMatchObject({ roleRefused: true, credentials: 'ok' });
+    expect(second.refusedOurSide).toBeUndefined(); // the player's own refusal counts
     expect(new Set(Object.values(second.services))).toEqual(new Set(['error'])); // not "locked": IAM didn't lock a service
     expect(second.resources.map((r) => r.id)).toEqual(first.resources.map((r) => r.id));
     mode = 'lambda-denied';

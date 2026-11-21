@@ -18,7 +18,7 @@ const { executeAction } = vi.hoisted(() => {
 });
 vi.mock('../src/agents/executor.js', () => ({ executeAction }));
 
-const { createActionService, NEEDS_APPROVAL_REASON, REJECTED_REASON } = await import('../src/agents/service.js');
+const { createActionService, LINK_UNCHECKED_REASON, NEEDS_APPROVAL_REASON, REJECTED_REASON } = await import('../src/agents/service.js');
 const { UNCHECKED_REASON } = await import('../src/agents/jev.js');
 
 const pollerFor = (resources = snapshot([])) => ({ current: () => resources, refresh: async () => resources, start() {}, stop() {} }) as Poller;
@@ -72,6 +72,22 @@ describe('action service', () => {
     // not built by the game → policy denies before the player is even asked
     expect(await service.submit('terminate_instance', { instanceId: 'i-0000000000000009f' }, { approve })).toMatchObject({ status: 'denied' });
     expect(approve).not.toHaveBeenCalled();
+  });
+
+  it('a store error in the live check after an approval is a plain refusal (the approved card still gets its outcome), never a throw', async () => {
+    executeAction.mockClear();
+    const service = createActionService({
+      clients: {} as AwsClients,
+      poller: pollerFor(),
+      region: 'us-west-2',
+      live: async () => {
+        throw Object.assign(new Error('Throughput exceeds the current capacity of your table'), { name: 'ProvisionedThroughputExceededException' });
+      },
+    });
+    const out = await service.submit('create_table', { name: 'city-quest' }, { approve: async () => true });
+    expect(out).toEqual({ status: 'denied', reason: LINK_UNCHECKED_REASON });
+    expect(LINK_UNCHECKED_REASON).not.toMatch(/Throughput|Exception/);
+    expect(executeAction).not.toHaveBeenCalled();
   });
 
   it('reads never need approval', async () => {

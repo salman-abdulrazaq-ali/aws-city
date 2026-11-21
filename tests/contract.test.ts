@@ -682,6 +682,9 @@ describe('The account lifecycle (v2.17)', () => {
     const policy = readFileSync('docs/privacy-policy.md', 'utf8');
     for (const f of ['TypeSafe', '500 characters', 'authenticator', 'first AI request', 'setup link', 'role version', 'stopped working', 'cached bill'])
       expect(policy).toContain(f);
+    // What Download my data leaves out (Lookout screenshots), and the deletion marker DELETE /me keeps (server/src/store/dynamo.ts).
+    expect(policy).toMatch(/Screenshots you sent to the Lookout aren't in it/);
+    expect(policy).toMatch(/`DELETED#<sign-in id>`[\s\S]*2 hours/);
     for (const placeholder of ['{{OPERATOR_NAME}}', '{{CONTACT_EMAIL}}', '{{REGION}}']) expect(policy).toContain(placeholder);
     expect(readFileSync('docs/connect-aws-account.md', 'utf8')).toMatch(/up to an hour/);
   });

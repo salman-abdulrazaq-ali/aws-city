@@ -120,11 +120,16 @@ address and sign-in id are in Amazon Cognito: write to us for those): your progr
 role version, the role version you installed, whether fixes are on, and when it stopped working: never the ExternalId or
 the role ARN); your live-city and leaderboard rows; the bill switch and your cached bill; today's and yesterday's AI
 request counts; the day of your first AI request; and when the service first saw your authenticator on. Nobody else's
-rows are in it. You can download it once a minute.
+rows are in it. Screenshots you sent to the Lookout aren't in it: they're kept for a day at most (see "What we store")
+and you already have them. You can download it about once a minute.
 
 **Delete.** In the game: **⋯ → Account → Delete my account…** (also Deploy → Your data), or write to {{CONTACT_EMAIL}}.
 This deletes your progress, account link, cached bill, live-city presence, leaderboard scores, first AI day,
-authenticator time and sign-in (`DELETE /me`) from the live database immediately; screenshots expire within a day anyway. If you want your AWS
+authenticator time and sign-in (`DELETE /me`) from the live database immediately; screenshots are deleted too (and
+expire within a day anyway). One small record stays for a while: a deletion marker (`DELETED#<sign-in id>`) holding only
+your random sign-in id and when the marker ends, so a sign-in token issued before the deletion (they last up to an hour)
+can't save anything for you again. The service honours it for 2 hours; the database then removes it automatically,
+usually within a few days, and it ages out of backups like the rest (see Backups). If you want your AWS
 account to be left clean too, take down what the game built there first, then delete the `AWSCity` stack in your AWS
 account's CloudFormation console to remove the role.
 
