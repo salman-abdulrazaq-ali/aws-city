@@ -16,7 +16,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A string since v2.10 (the number 2.10 is 2.1, which reads as older than 2.9). */
-export const CONTRACT_VERSION = '2.17';
+export const CONTRACT_VERSION = '2.18';
 
 // ── Console Copilot shapes (also used by the content script in src/console/) ──
 export type ConsoleAction = 'click' | 'type' | 'select' | 'point' | 'done';
@@ -419,6 +419,8 @@ interface DeployPreviewEvent {
   templateId: string;
   stackName: string;
   region: string;
+  /** v2.18: the AWS account the change goes to (12 digits; absent before one is linked). The card names it with the Region. */
+  accountId?: string;
   changes: DeployChange[];
   /** Rough monthly cost note for the player, e.g. "Free tier: ~$0". */
   costNote?: string;

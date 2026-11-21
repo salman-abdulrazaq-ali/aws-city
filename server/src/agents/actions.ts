@@ -67,6 +67,10 @@ export const parseAction = (name: unknown, input: unknown): ParseResult => {
   return { ok: true, action: { type: name, ...parsed.data } as Action };
 };
 
+/** What an action changes, as one label: a name, an instance id or a bucket's suffix. */
+export const actionTarget = (a: Action): string =>
+  'name' in a ? a.name : 'instanceId' in a ? a.instanceId : 'suffix' in a ? `aws-city-<account>-${a.suffix}` : 'id' in a ? a.id : a.type;
+
 /** Which city agent (taxonomy service id) may use each action, and which AWS service it calls. */
 const ACTION_SERVICE: Record<ActionName, string | null> = {
   launch_instance: 'ec2',

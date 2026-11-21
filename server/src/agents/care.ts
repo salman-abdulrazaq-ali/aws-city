@@ -10,6 +10,7 @@ import type { CityFinding, CityInventoryEvent, Progress, ServerEvent } from '../
 import { diffFindings, findingsFor } from './findings.js';
 import { FIXES, PartialFix, type FixContext } from './fixes.js';
 import { escapeTags, type AgentRunner } from './runner.js';
+import type { Audit, AuditEntry } from './service.js';
 
 type Emit = (e: ServerEvent) => void;
 
@@ -44,6 +45,8 @@ export const createCityCare = (deps: {
   snapshot?: () => WorldSnapshot | null;
   /** The player role was installed with AllowFixes=true (hosted), or fixes are allowed locally. */
   fixesEnabled: boolean;
+  /** Called once per approval card answered: the fix was done, failed or the player said no (an audit line). */
+  audit?: Audit;
 }) => {
   let open = new Map<string, CityFinding>();
   let inventory: CityInventoryEvent | undefined;
@@ -98,7 +101,8 @@ export const createCityCare = (deps: {
     }
 
     const { deployId, approved } = approvals.requestFix(requestId, { ...f, fix }, emit, confirmFor(f), detail);
-    if (!(await approved)) return;
+    const audit = (outcome: AuditEntry['outcome']) => deps.audit?.({ action: `fix:${fix.fixId}`, target: f.resource.id, outcome });
+    if (!(await approved)) return audit('rejected');
     try {
       // The approval may have waited minutes: check again inside the account lock, right before the change.
       const message = await deps.withLock(async (lease) => {
@@ -121,17 +125,20 @@ export const createCityCare = (deps: {
       }
       const key = SETTING_KEY[fix.fixId]?.(f);
       if (key) forgetSetting(deps.clients, key);
+      audit('done');
       emit({ type: 'deploy.status', deployId, status: 'complete', message });
       emit({ type: 'city.finding', finding: resolve(f) });
       say(emit, f.citizenId, `${message} Thanks for the help! ${fix.rollback}`);
       void deps.refresh().catch((err) => log.warn('refresh after fix failed', { err: (err as Error).name })); // the next poll retries
     } catch (err) {
       if (err instanceof PartialFix) {
+        audit('done'); // part of it changed: the message says which
         emit({ type: 'deploy.status', deployId, status: 'complete', message: err.message });
         say(emit, f.citizenId, err.message);
         void deps.refresh().catch((err) => log.warn('refresh after fix failed', { err: (err as Error).name })); // the next poll retries
         return;
       }
+      audit('failed');
       if (err instanceof LockLostError) return emit({ type: 'deploy.status', deployId, status: 'failed', message: err.message });
       log.warn('fix failed', { fix: fix.fixId, err: (err as Error).name });
       const denied = classifyAwsError(err) === 'denied';

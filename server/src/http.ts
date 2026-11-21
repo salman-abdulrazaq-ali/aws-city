@@ -454,7 +454,8 @@ export const createHttpServer = (deps: Deps) => {
     const raw = (e: ServerEvent) => sendTo(ws, e);
     const emit = tenant.emitter(raw);
     // Events for a task still running when its socket closes are dropped (accepted limitation).
-    const approvals = createApprovals({ region: tenant.region });
+    // Read when each card is made, not once per socket: a re-link changes the account and Region mid-connection.
+    const approvals = createApprovals({ region: () => tenant.region, accountId: () => tenant.accountId });
     /** Aborted on close: this socket's agent turns stop (other tabs' turns run on). */
     const turns = new AbortController();
     /**

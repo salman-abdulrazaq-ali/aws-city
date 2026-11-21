@@ -33,6 +33,19 @@ export function CostNote({ note, className = 'muted' }: { note: string; classNam
   );
 }
 
+/** An account id as the AWS console shows it: 0474-6343-8585. */
+export const accountLabel = (id: string) => id.replace(/^(\d{4})(\d{4})(\d{4})$/, '$1-$2-$3');
+
+/** v2.18: exactly where an approval writes, so a player linked to two accounts can tell which one before approving. */
+export function ChangeTarget({ d }: { d: Pick<DeployView, 'accountId' | 'region'> }) {
+  if (!d.accountId) return null;
+  return (
+    <div className="muted change-target">
+      Changes AWS account <b>{accountLabel(d.accountId)}</b> · {d.region}
+    </div>
+  );
+}
+
 const STATUS_TEXT: Record<DeployView['status'], string> = {
   preview: 'waiting for your OK',
   creating: 'building…',
@@ -466,6 +479,7 @@ export function DeployPanel() {
             </span>
             {d.status === 'preview' && (
               <>
+                <ChangeTarget d={d} />
                 <table className="changes">
                   <tbody>
                     {d.changes.map((c) => (

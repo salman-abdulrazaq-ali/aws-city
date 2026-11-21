@@ -90,4 +90,22 @@ describe('action service', () => {
     await service.submit('describe_resource', { id: 'anything' }, { approve });
     expect(approve).not.toHaveBeenCalled();
   });
+
+  it('audits every write asked for, done or refused, and never a read or input that did not parse', async () => {
+    const mine = instance('i-0000000000000001a', 'running');
+    const audit = vi.fn();
+    const service = createActionService({ clients: {} as AwsClients, poller: pollerFor(snapshot([mine])), region: 'us-west-2', audit });
+    await service.submit('create_table', { name: 'city-quest' }, { approve: async () => true });
+    await service.submit('terminate_instance', { instanceId: mine.id }, { approve: async () => false });
+    await service.submit('stop_instance', { instanceId: 'i-00000000000000bad' }, { approve: async () => true }); // not the city's
+    await service.submit('launch_instance', { name: 'house' }); // no Approve button
+    await service.submit('describe_resource', { id: mine.id });
+    await service.submit('create_bucket', { suffix: 'X' }, { approve: async () => true });
+    expect(audit.mock.calls.map(([e]) => [e.action, e.target, e.outcome])).toEqual([
+      ['create_table', 'city-quest', 'done'],
+      ['terminate_instance', mine.id, 'rejected'],
+      ['stop_instance', 'i-00000000000000bad', 'denied'],
+      ['launch_instance', 'house', 'denied'],
+    ]);
+  });
 });

@@ -14,7 +14,14 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   per player, DynamoDB/S3, each player's own account via `AWSCityPlayerRole-<region>` + ExternalId).
   `server/src/config.ts` refuses unsafe mixes. Proof: `cd server && npx vitest run test/hosted.test.ts`.
 - **The player role allows exactly what the server calls, and trusts only our account.** The trust is
-  fixed at publish time, not a parameter. Proof: `cd server && npx vitest run test/player-role.test.ts`.
+  fixed at publish time, not a parameter. Proof: `cd server && npx vitest run test/player-role.test.ts`. The installed
+  role, read-only through IAM's policy simulator (SCPs included): allowed on `aws-city-<account>-*` buckets, `city-*`
+  tables and tagged IMDSv2 t4g instances in its Region; denied on other names, untagged resources, m5.large, other
+  Regions, object/item reads, IAM, STS, secrets, KMS and Lambda. Proof: `cd infra && AWS_PROFILE=aws-city node
+  scripts/check-player-role.mjs --account <test account> --assume arn:aws:iam::<test account>:role/OrganizationAccountAccessRole`
+  (28/28 on 21 Nov 2026). Every agent write works end to end on a real account (ActionService → policy → executor →
+  AWS, checked in AWS after each, everything named `livetest` removed): `cd server && AWS_PROFILE=aws-city
+  AWS_CITY_LIVE_ROLE_ARN=<role> npx vitest run test/live/actions.live.test.ts --silent=false` (skipped without it).
 - **Infra is CDK with cdk-nag AwsSolutions clean.** Every acknowledgement carries a reason. Deploys need no
   Docker: the server image is built in CodeBuild (`@cdklabs/deploy-time-build`). `npm run setup` prints a ⏳ line a
   minute from the busy stack's events while cdk deploys (`infra/lib/deploy-progress.ts`; cdk runs with `--progress
@@ -575,8 +582,15 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   far as the player asked; a step that destroys something reaches it only when the player's own words ask for one (`withPlan`,
   `planForAgent`, `server/src/contract/orchestrator.ts`: the concierge reads page context, which anyone can word), and
   a plan step that changes AWS (`isActionStep`: its first verb) but that no tool call made shows `failed`, "not done: no
-  change was made", and the task isn't ok; only explanation steps walk through as done. Proof: `cd server && npx vitest
-  run test/contract.test.ts`.
+  change was made", and the task isn't ok; only explanation steps walk through as done. A plain request in the player's
+  own words ("Create a bucket called holiday-123", "Stop i-0123…": `parseCommand`, `server/src/agents/commands.ts`) that
+  the agent's turn made no tool call for is submitted by the server through the same ActionService and approval card,
+  when that agent owns the action (`directRequest`): only `task.submit`'s prompt is read, never page context or the plan,
+  never after a refusal; a small model sometimes says "I'll build it now" and doesn't (Qwen3 4B, 21 Nov 2026; Ollama's
+  OpenAI API ignores `tool_choice`). Every approval card names the account and Region it writes to (`deploy.preview.accountId`,
+  v2.18, read when the card is made), and every write asked for, done or refused (fixes too), is logged as `aws change`
+  (`audit`, `server/src/tenants.ts`). Proof: `cd server && npx vitest run test/contract.test.ts test/commands.test.ts
+  test/service.test.ts test/approvals.test.ts test/care.test.ts`; `npx vitest run tests/approval-target.test.tsx`.
 - **City Clients: side jobs for real kinds of business** (`shared/clients.json`, `src/world/clients.ts`, `src/ui/clients/`).
   18 businesses: wave 1 (Amazon Air hub, bank, stadium, hospital, shop, school) and wave 2 (streaming studio, game studio,
   news site, port, energy utility, factory, farm co-op, car maker, phone network, town council, hotel, charity), three

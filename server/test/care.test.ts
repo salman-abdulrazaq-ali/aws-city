@@ -208,7 +208,9 @@ describe('city care: fixes with the player in charge', () => {
   const world = snapshot([{ ...table('city-orders'), meta: { pitr: false } }], { account: { ebsEncryptionByDefault: false } });
   const runner: AgentRunner = { turn: vi.fn(async (agentId: string) => ({ agentId, reply: 'Backups let you rewind.', toolCalls: [], refused: false })), reset: () => undefined };
 
+  const audit = vi.fn();
   const setup = (opts: { xp?: number; fixesEnabled?: boolean; lease?: AbortSignal } = {}) => {
+    audit.mockClear();
     const events: ServerEvent[] = [];
     const emit = (e: ServerEvent) => events.push(e);
     const progress: Progress = { version: 2, landmarks: {}, updatedAt: '', citizens: { 'citizen:reliability': { xp: opts.xp ?? 25 }, 'citizen:security': { xp: opts.xp ?? 25 } } };
@@ -221,6 +223,7 @@ describe('city care: fixes with the player in charge', () => {
       refresh: async () => undefined,
       progress: async () => progress,
       fixesEnabled: opts.fixesEnabled ?? true,
+      audit,
     });
     care.update(world);
     const approvals = createApprovals({ region: 'us-west-2' });
@@ -265,6 +268,17 @@ describe('city care: fixes with the player in charge', () => {
     expect(dynamodb.commandCalls(UpdateContinuousBackupsCommand)).toHaveLength(1);
     expect(resolved(events, pitr)).toBe(true);
     expect(events).toContainEqual(expect.objectContaining({ type: 'deploy.status', status: 'complete' }));
+    expect(audit).toHaveBeenCalledWith({ action: `fix:${pitr.fix!.fixId}`, target: pitr.resource.id, outcome: 'done' });
+  });
+
+  it('a fix the player says no to changes nothing and is audited as rejected', async () => {
+    const { care, events, emit, approvals, pitr } = setup();
+    const job = care.fix('r1', pitr.id, emit, approvals);
+    await vi.waitFor(() => expect(preview(events)).toBeDefined());
+    approvals.answer(preview(events)!.deployId, false);
+    await job;
+    expect(dynamodb.commandCalls(UpdateContinuousBackupsCommand)).toHaveLength(0);
+    expect(audit.mock.calls).toEqual([[{ action: `fix:${pitr.fix!.fixId}`, target: pitr.resource.id, outcome: 'rejected' }]]);
   });
 
   it('re-checks after the approval, inside the lock, and never runs the same fix twice at once', async () => {

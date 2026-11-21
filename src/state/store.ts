@@ -189,6 +189,8 @@ export interface DeployView {
   templateId: string;
   stackName: string;
   region: string;
+  /** v2.18: the AWS account the change goes to. */
+  accountId?: string;
   changes: DeployChange[];
   costNote?: string;
   status: 'preview' | DeployStatusEvent['status'];
@@ -1213,7 +1215,7 @@ export const useCity = create<CityState>()((set, get) => ({
         set({
           deploys: {
             ...s.deploys,
-            [e.deployId]: { deployId: e.deployId, templateId: e.templateId, stackName: e.stackName, region: e.region, changes: e.changes, costNote: e.costNote, status: 'preview', ...care },
+            [e.deployId]: { deployId: e.deployId, templateId: e.templateId, stackName: e.stackName, region: e.region, accountId: e.accountId, changes: e.changes, costNote: e.costNote, status: 'preview', ...care },
           },
         });
         if (e.findingId) get().noteCare(e.findingId);

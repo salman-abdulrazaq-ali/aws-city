@@ -1,4 +1,4 @@
-# Backend contract v2.17
+# Backend contract v2.18
 
 **Source of truth:** `src/backend/contract.ts`. If this doc and that file disagree, the file wins,
 so fix this doc. Both backends import or mirror that file:
@@ -48,7 +48,7 @@ Client-internal, not on the wire: `storage.local` keeps `progress.parked` (a sig
 | `agent.state {agentId, state, service?, detail?}` | **`working` means a real AWS call is running.** The agent plays its work animation. |
 | `agent.message {from, to, text}` | A speech bubble appears and a data packet travels the roads between the two agents. |
 | `task.done {taskId, ok, result, xp[]}` | XP goes to landmarks: tiers go up, the city grows, and quests advance. |
-| `deploy.preview {deployId, taskId?, templateId, stackName, region, changes[], costNote?}` | The Deploy tab shows the change list with **Approve / Reject**. |
+| `deploy.preview {deployId, taskId?, templateId, stackName, region, accountId?, changes[], costNote?}` | The Deploy tab shows the change list with **Approve / Reject**, and the account and Region it changes (v2.18). |
 | `deploy.status {deployId, status, message?, outputs?}` | `status` is one of `creating`, `complete`, `failed`, `rejected`, `deleting` or `deleted`. |
 | `agent.level {agentId, level, skill?}` | The agent gets faster and announces its new skill. |
 | `account.status`, `account.linkUrl` | These drive the Deploy tab's account section. |
@@ -305,6 +305,16 @@ Everything here is earned and cosmetic: no coins or stars inside, nothing bought
 - `Progress.codex?: {combos: {[comboId]: day}}`: the Service Codex's combos found (`shared/combos.json`), each with the
   local date first found (at most 200). Service cards and sets are read from the rest of Progress. On merge: the union,
   the earlier date per combo.
+
+**v2.18 additions, every approval says where it writes:**
+
+- `deploy.preview.accountId?`: the 12-digit AWS account the change goes to (absent before one is linked). The card
+  reads "Changes AWS account 0474-6343-8585 · us-west-2". The server reads the account and Region when each card is
+  made, so a re-link on an open socket never shows the old ones. An older client ignores the field.
+- Server only, no wire change: a plain request in the player's own words ("Create a bucket called holiday-123", "Stop
+  i-0123…", `server/src/agents/commands.ts`) that the agent's turn made no tool call for is submitted by the server
+  through the same ActionService and `deploy.preview`, when that agent owns the action. Only `task.submit`'s `prompt`
+  is read, never page context or the plan. Every write asked for, done or refused, is logged as `aws change`.
 
 **v2.17 additions, step-up on an open socket:**
 
