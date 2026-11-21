@@ -117,6 +117,11 @@ your data, sign-in and server stay in your Region, and only the agents' question
 answers but Pro doesn't, the city runs on Nova Lite. Run setup again once your Region answers to move it back. On your
 own computer, `npm run live -- --model nova --region us-west-2` does the same.
 
+**On your own computer, the AI doesn't need Bedrock at all.** `npm run live -- --model local` runs the agents on a
+model in Ollama on your computer (the launcher offers to install it and download the model once), and
+`npm run live -- --model nova --local-fallback` tries Bedrock first and uses that model when Bedrock is held. The
+hosted city always uses Bedrock.
+
 **You don't have to wait to host.** When no Region answers, `npm run setup` offers to deploy the city with its AI
 switched off. Sign-in, saving progress, linking an account, City care's findings and AWS status all work without it.
 Once Bedrock answers, run `npm run setup` again and the AI switches on. `npm run setup -- --dry-run` checks everything

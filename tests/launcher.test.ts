@@ -7,17 +7,22 @@ import { depsPlan, explainNpmError, installMessage, readDepsFacts } from '../scr
 import { panelReserve, renderPanel, wrap, type PanelState } from '../scripts/launcher/panel.mjs';
 import { buildEnv, sourceEntries, sourceStamp, stampOf } from '../scripts/launcher/stamp.mjs';
 import { modelsFor, modelsForChoice, NOVA_MODELS } from '../infra/lib/models';
+import { DEFAULT_LOCAL_MODEL as SERVER_LOCAL_MODEL, DEFAULT_LOCAL_URL as SERVER_LOCAL_URL } from '../server/src/config';
 import {
   browserFromArg,
   choiceLabel,
+  DEFAULT_LOCAL_MODEL,
   detectBrowsers,
   elapsed,
   explainAwsError,
   explainDownloadError,
   extensionsPage,
+  hasLocalModel,
   helpText,
   introPlays,
   listProfiles,
+  LOCAL_URL,
+  localEnv,
   modelEnv,
   parseArgs,
   parseBuildProgress,
@@ -134,8 +139,16 @@ describe('npm start options (the stage one-liner)', () => {
     // The agents' models: Claude or Amazon Nova (real AWS only).
     expect(parseArgs(['--live', '--model', 'nova', '--region', 'eu-west-2'])).toEqual({ help: false, mode: 'live', model: 'nova', region: 'eu-west-2' });
     expect(parseArgs(['--live', '--model=Claude'])).toEqual({ help: false, mode: 'live', model: 'claude' });
-    expect(parseArgs(['--live', '--model', 'gpt']).error).toMatch(/claude or nova/);
+    expect(parseArgs(['--live', '--model', 'gpt']).error).toMatch(/claude, nova or local/);
     expect(parseArgs(['--demo', '--model', 'nova']).error).toMatch(/real AWS/);
+    // The AI on this computer (Ollama), alone or behind Amazon Nova.
+    expect(parseArgs(['--live', '--model', 'local'])).toEqual({ help: false, mode: 'live', model: 'local' });
+    expect(parseArgs(['--live', '--model', 'local', '--local-model', 'llama3.1:8b'])).toEqual({ help: false, mode: 'live', model: 'local', localModel: 'llama3.1:8b' });
+    expect(parseArgs(['--live', '--model', 'nova', '--local-fallback'])).toEqual({ help: false, mode: 'live', model: 'nova', localFallback: true });
+    expect(parseArgs(['--live', '--model', 'claude', '--local-fallback']).error).toMatch(/goes with --model nova/);
+    expect(parseArgs(['--live', '--local-model', '; rm -rf /']).error).toMatch(/Ollama model name/);
+    expect(parseArgs(['--demo', '--local-fallback']).error).toMatch(/real AWS/);
+    expect(helpText()).toContain('--model local');
     expect(parseArgs(['-b', 'Edge']).browser).toBe('edge');
     expect(parseArgs(['--browser', 'city']).browser).toBe('cft');
     expect(parseArgs(['--browser', 'safari']).browser).toBe('safari');
@@ -535,5 +548,25 @@ describe('an AWS City window that is already open', async () => {
     const lines = meaningfulLines(out);
     expect(lines[0]).toMatch(/has been closed/);
     expect(lines.join(' ')).not.toMatch(/cleanup|gracefully|Node\.js/);
+  });
+});
+
+describe('the AI on this computer (Ollama)', () => {
+  it('finds the model among Ollama’s ids; a name without a tag means :latest', () => {
+    expect(hasLocalModel(['qwen3:8b', 'llama3.1:latest'], 'qwen3:8b')).toBe(true);
+    expect(hasLocalModel(['llama3.1:latest'], 'llama3.1')).toBe(true);
+    expect(hasLocalModel(['qwen3'], 'qwen3:latest')).toBe(true);
+    expect(hasLocalModel(['qwen3:4b'], 'qwen3:8b')).toBe(false);
+    expect(hasLocalModel([], 'qwen3:8b')).toBe(false);
+  });
+
+  it('gives the server the local model alone, or behind Bedrock; a player’s own env wins', () => {
+    expect(localEnv({ model: 'qwen3:8b' })).toEqual({ AWS_CITY_MODEL_PROVIDER: 'local', AWS_CITY_LOCAL_MODEL: 'qwen3:8b', AWS_CITY_LOCAL_URL: LOCAL_URL });
+    expect(localEnv({ model: 'qwen3:8b', fallback: true })).toEqual({ AWS_CITY_LOCAL_FALLBACK: 'true', AWS_CITY_LOCAL_MODEL: 'qwen3:8b', AWS_CITY_LOCAL_URL: LOCAL_URL });
+    expect(localEnv({ model: 'qwen3:8b' }, { AWS_CITY_LOCAL_MODEL: 'gemma3:4b' }).AWS_CITY_LOCAL_MODEL).toBe('gemma3:4b');
+    expect(LOCAL_URL).toBe('http://127.0.0.1:11434/v1');
+    // The launcher and the server agree on the defaults.
+    expect(LOCAL_URL).toBe(SERVER_LOCAL_URL);
+    expect(DEFAULT_LOCAL_MODEL).toBe(SERVER_LOCAL_MODEL);
   });
 });

@@ -107,6 +107,31 @@ export const modelEnv = ({ main, light }, env = {}) => ({
   AWS_CITY_LIGHT_MODEL: env.AWS_CITY_LIGHT_MODEL || env.AWS_CITY_FALLBACK_MODEL || light,
 });
 
+/**
+ * The model on this computer: Ollama's OpenAI-compatible endpoint (the server allows only loopback addresses) and a model
+ * with tool calling that fits a 16 GB laptop. The same defaults as server/src/config.ts.
+ */
+export const LOCAL_URL = 'http://127.0.0.1:11434/v1';
+export const DEFAULT_LOCAL_MODEL = 'qwen3:8b';
+/** An Ollama model name: letters, digits, . _ - / and one :tag (e.g. qwen3:8b, library/llama3.1:8b). */
+const LOCAL_MODEL_RE = /^[a-z0-9][\w./-]*(:[\w.-]+)?$/i;
+
+/** Is `model` among Ollama's models (`/v1/models` ids)? A name without a tag means its `:latest`. */
+export const hasLocalModel = (ids, model) => {
+  const full = (m) => (m.includes(':') ? m : `${m}:latest`);
+  return ids.some((id) => full(id) === full(model));
+};
+
+/**
+ * The server's env for the model on this computer (server/src/config.ts): all of it there (`local`), or behind Bedrock
+ * (`fallback`: Strands' ModelRouter tries Amazon Nova first). A player's own env wins, as in modelEnv.
+ */
+export const localEnv = ({ model, fallback = false }, env = {}) => ({
+  ...(fallback ? { AWS_CITY_LOCAL_FALLBACK: 'true' } : { AWS_CITY_MODEL_PROVIDER: 'local' }),
+  AWS_CITY_LOCAL_MODEL: env.AWS_CITY_LOCAL_MODEL || model,
+  AWS_CITY_LOCAL_URL: env.AWS_CITY_LOCAL_URL || LOCAL_URL,
+});
+
 /** Plain-language fixes for the errors people actually hit. */
 export const explainAwsError = (err) => {
   const name = err?.name ?? '';
@@ -235,11 +260,19 @@ export const parseArgs = (argv, env = {}) => {
       out.region = v;
     } else if (flag === '--model') {
       const v = value()?.toLowerCase();
-      if (v !== 'claude' && v !== 'nova') return fail('--model needs claude or nova, e.g. --model nova');
+      if (v !== 'claude' && v !== 'nova' && v !== 'local') return fail('--model needs claude, nova or local, e.g. --model nova');
       out.model = v;
+    } else if (flag === '--local-fallback') out.localFallback = true;
+    else if (flag === '--local-model') {
+      const v = value();
+      if (!v || !LOCAL_MODEL_RE.test(v)) return fail('--local-model needs an Ollama model name, e.g. --local-model llama3.1:8b');
+      out.localModel = v;
     } else return fail(`Unknown option "${args[i]}".`);
   }
-  if ((out.profile || out.region || out.model) && out.mode === 'demo') return fail('--profile, --region and --model are for real AWS (--live); the demo needs no AWS account.');
+  if ((out.profile || out.region || out.model || out.localFallback || out.localModel) && out.mode === 'demo')
+    return fail('--profile, --region, --model and the local model options are for real AWS (--live); the demo needs no AWS account.');
+  // Bedrock first, this computer next: behind Amazon Nova only (Claude keeps its own fallback; the server refuses it too).
+  if (out.localFallback && out.model && out.model !== 'nova') return fail('--local-fallback goes with --model nova (Bedrock first, the model on this computer when Bedrock is held)');
   return out;
 };
 
@@ -287,7 +320,11 @@ export const helpText = () =>
     ...BROWSERS.map((b) => `                         ${b.id.padEnd(9)}${HELP_NOTES[b.id] ?? `${b.name} (3 guided clicks the first time)`}`),
     '  --profile <name>     real AWS: the AWS profile to use (default: the one that worked last time)',
     '  --region <name>      real AWS: where Claude runs (default: last time, or us-west-2)',
-    '  --model claude|nova  real AWS: the agents’ models on Bedrock: Claude, or Amazon Nova (default: last time, or claude)',
+    '  --model claude|nova|local',
+    '                       real AWS: the agents’ models: Claude or Amazon Nova on Bedrock, or local, a model on this',
+    '                       computer (Ollama; it offers to install it and download the model) (default: last time, or claude)',
+    `  --local-model <name> the Ollama model for local (default: ${DEFAULT_LOCAL_MODEL})`,
+    '  --local-fallback     with --model nova: Bedrock first, the model on this computer when Bedrock is held or offline',
     '  --rebuild            build the extension even if nothing changed since the last build',
     '  --no-intro           skip the 2 s title animation (any key skips it too)',
     '  -h, --help           show this help',
@@ -296,6 +333,7 @@ export const helpText = () =>
     '  npm start -- --demo --browser cft        straight to the demo, zero clicks',
     '  npm start -- --demo --browser chrome     the demo in Google Chrome (load it once from chrome://extensions)',
     '  npm start -- --live --browser firefox    real AWS in Firefox',
+    '  npm run live -- --model local            real AWS, the agents’ AI on this computer (when Bedrock is held)',
     '',
     'Without --browser it uses the browser you picked last time (or the AWS City browser).',
     'Once the city is open, the terminal is its remote: c city, p practice console, a AWS console, r reopen, q quit.',
