@@ -298,7 +298,7 @@ export function Builder({ p, job }: { p: Puzzle; job?: { onPass: () => void } })
             </button>
           )}
           <button
-            className="btn tiny"
+            className="btn tiny arch-hint"
             disabled={filledReq === required.length}
             onClick={() => {
               feel.tap();

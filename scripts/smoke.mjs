@@ -231,7 +231,7 @@ await shot('14-flashcards');
 await page.locator('.seg button[data-sub="build"]').click();
 // Architecture diagram: a refused drop first (a required card on a bonus spot), then follow the hints.
 // The first hinted card is dragged with the mouse; the rest are tap card → tap spot.
-const hintBtn = page.locator('.arch-row .btn');
+const hintBtn = page.locator('.arch-row .arch-hint');
 await hintBtn.click(); // the free nudge
 await hintBtn.click(); // show the card (−3)
 await page.locator('.tray .card.hinted').click();
@@ -1120,7 +1120,7 @@ await panel.screenshot({ path: `${out}/12-lookout.png` });
       await page.locator('.job-card .explain-back button[type="submit"]').click();
       await wait(2000);
     } else if (t.type === 'wire') {
-      const hintBtn = page.locator('.job-card .arch-row .btn');
+      const hintBtn = page.locator('.job-card .arch-row .arch-hint');
       for (let i = 0; i < 12 && (await hintBtn.isEnabled()); i++) {
         await hintBtn.click();
         if (!(await page.locator('.job-card .tray .card.hinted').count())) await hintBtn.click();
