@@ -113,6 +113,9 @@ describe('infrastructure guarantees', () => {
   it('alarms cover throttling and missing tasks, and a bad deploy rolls back on the 5xx alarm', () => {
     for (const metric of ['ModelThrottled', 'RunningTaskCount']) t.svc.hasResourceProperties('AWS::CloudWatch::Alarm', { MetricName: metric });
     t.svc.hasResourceProperties('AWS::ECS::Service', { DeploymentConfiguration: Match.objectLike({ Alarms: Match.objectLike({ Enable: true, Rollback: true }) }) });
+    // One-minute periods: ECS watches a finished deploy for as long as this alarm's settings say (3 × 5 min kept every
+    // deploy open ~16 minutes after the new servers were live). 5 a minute is the old 20 in 5 minutes.
+    t.svc.hasResourceProperties('AWS::CloudWatch::Alarm', { AlarmName: Match.stringLikeRegexp('^aws-city-.+-http5xx$'), MetricName: 'HTTPCode_Target_5XX_Count', Period: 60, EvaluationPeriods: 3, Threshold: 5 });
   });
 
   it('Firefox and Safari: their sign-in callbacks, server origins and screenshot CORS are added only when enabled', () => {

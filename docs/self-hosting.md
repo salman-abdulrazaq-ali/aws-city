@@ -151,6 +151,7 @@ models. Then it asks a few questions:
 | SES sender | Skip until SES has production access (a new account's SES only emails addresses you verify) |
 | Allow the local build | **Yes** until your Chrome Web Store listing is live (otherwise nothing can sign in) |
 | Chrome Web Store id | Leave empty |
+| Firefox / Safari | Chrome and Edge always work. Answer **Yes** to let players use Firefox or Safari too (one question each) |
 | GitHub deploys | Skip |
 
 **Nothing changes in AWS while you answer.** At the end, a review screen lists every answer and every change it will
@@ -158,6 +159,12 @@ make (storing the Google secret, verifying an SES address, preparing CDK, the de
 answer** (the questions again, with your answers filled in) or **Cancel**. Then it asks before each change, deploys
 (15–25 minutes the first time), smoke-tests the live API and builds the extension. Your answers are saved in
 `aws-city.config.json` (no secrets).
+
+**The deploy shows where it is.** Every minute a ⏳ line says what AWS is doing and for how long, so a quiet step
+doesn't look stuck. The slow ones are the server's: after a code change AWS CodeBuild builds its image (3–6 minutes),
+then ECS starts the new servers, checks they're healthy, lets the old ones finish their players' connections and
+watches the error alarm for a few minutes (it rolls back by itself if errors show up). Players are on the new version
+as soon as the old servers stop.
 
 **Why us-east-1 when you chose another Region?** Without a custom domain, the city is served through CloudFront, which is
 global, and AWS requires CloudFront's firewall (AWS WAF) to be created in us-east-1 (N. Virginia)
