@@ -16,7 +16,9 @@ const rt = vi.hoisted(() => ({
   recheckAccount: vi.fn(() => 'r-check'),
   openUrl: vi.fn(),
   deleteAccount: vi.fn(async () => {}),
+  openPrivacyPolicy: vi.fn(),
 }));
+const privacy = vi.hoisted(() => ({ url: undefined as string | undefined }));
 vi.mock('@/app/runtime', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/app/runtime')>()),
   ...rt,
@@ -24,6 +26,7 @@ vi.mock('@/app/runtime', async (importOriginal) => ({
   canDeleteAccount: () => hosted.on,
   canDownloadData: () => hosted.on,
   mfaStatus: async () => 'on' as const,
+  privacyPolicyUrl: () => privacy.url,
 }));
 
 const { useCity } = await import('@/state/store');
@@ -35,12 +38,25 @@ const linked = { linked: true, accountId: '111122223333', region: 'eu-west-1' };
 
 beforeEach(() => {
   hosted.on = true;
+  privacy.url = undefined;
   for (const f of Object.values(rt)) f.mockClear();
   useCity.setState({ backendKind: 'server', backendStatus: 'connected', hosted: true, deploys: {}, inventory: undefined, cityRegion: 'eu-west-2', account: { linked: false }, toasts: [] });
 });
 afterEach(() => cleanup());
 
 describe('the Deploy tab’s account cards', () => {
+  it('the sign-in card links the privacy policy when the build has its address (WXT_PRIVACY_URL)', () => {
+    useCity.setState({ backendStatus: 'signed-out' });
+    const { unmount } = render(<DeployPanel />);
+    expect(screen.getByText('Sign in to your AWS City account')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Privacy policy/ })).toBeNull();
+    unmount();
+    privacy.url = 'https://city.example.com/privacy';
+    render(<DeployPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'Privacy policy ↗' }));
+    expect(rt.openPrivacyPolicy).toHaveBeenCalledOnce();
+  });
+
   it('a linked player asked for MFA (approving a change, a fix) gets the authenticator setup too', () => {
     useCity.setState({ account: { linked: true, accountId: '123456789012', region: 'us-west-2', mfaRequired: true } });
     render(<DeployPanel />);

@@ -7,17 +7,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Progress } from '@/backend/contract';
 
 vi.mock('@/ui/Portrait', () => ({ Portrait: () => <span data-testid="portrait" /> }));
-const rt = vi.hoisted(() => ({ signOut: vi.fn(), signIn: vi.fn(), downloadMyData: vi.fn(async () => {}), deleteAccount: vi.fn(async () => {}), fixFinding: vi.fn() }));
+const rt = vi.hoisted(() => ({ signOut: vi.fn(), signIn: vi.fn(), downloadMyData: vi.fn(async () => {}), deleteAccount: vi.fn(async () => {}), fixFinding: vi.fn(), openPrivacyPolicy: vi.fn(), reconnect: vi.fn() }));
+const privacy = vi.hoisted(() => ({ url: undefined as string | undefined }));
 vi.mock('@/app/runtime', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/app/runtime')>()),
   ...rt,
   canSignIn: () => true,
   canDownloadData: () => true,
   canDeleteAccount: () => true,
+  canReconnect: () => true,
+  privacyPolicyUrl: () => privacy.url,
 }));
 
 const { useCity } = await import('@/state/store');
-const { Hud } = await import('@/ui/Hud');
+const { Hud, SyncNote } = await import('@/ui/Hud');
+const { NOT_SAVED_LINE, SERVER_UPDATING_LINE, UPDATE_EXTENSION_LINE } = await import('@/ui/logic');
 const { Home } = await import('@/ui/Home');
 const { FindingCard } = await import('@/ui/FindingCard');
 const { bus } = await import('@/state/bus');
@@ -35,12 +39,14 @@ const player = (): Progress => ({
 
 beforeEach(() => {
   localStorage.clear();
+  privacy.url = undefined;
   for (const f of Object.values(rt)) f.mockClear();
   useCity.setState({
     cityRegion: REGION,
     view: { name: 'city' },
     backendKind: 'server',
     backendStatus: 'connected',
+    saveRefused: false,
     hosted: true,
     progress: player(),
     today: undefined,
@@ -129,6 +135,68 @@ describe('⋯ → Account (the hosted server)', () => {
     openMenu();
     expect(within(screen.getByRole('menu')).queryByText('Account')).toBeNull();
     expect(screen.queryByRole('menuitem', { name: /Connect your AWS account/ })).toBeNull();
+  });
+});
+
+describe('⋯ → Account: the privacy policy (WXT_PRIVACY_URL)', () => {
+  it('is listed signed in and signed out when the build has its address, and opens it; absent without one', () => {
+    privacy.url = 'https://city.example.com/privacy';
+    const { unmount } = render(<Hud layout="panel" />);
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Privacy policy ↗' }));
+    expect(rt.openPrivacyPolicy).toHaveBeenCalledOnce();
+    act(() => useCity.setState({ backendStatus: 'signed-out' }));
+    openMenu();
+    expect(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Privacy policy ↗' })).toBeTruthy();
+    unmount();
+    privacy.url = undefined;
+    render(<Hud layout="panel" />);
+    openMenu();
+    expect(screen.queryByRole('menuitem', { name: /Privacy policy/ })).toBeNull();
+  });
+
+  it('the address is used only when it is a plain https one', async () => {
+    const { privacyPolicyUrl } = await vi.importActual<typeof import('@/app/runtime')>('@/app/runtime');
+    expect(privacyPolicyUrl('https://city.example.com/privacy')).toBe('https://city.example.com/privacy');
+    for (const bad of [undefined, '', 'http://city.example.com/p', 'javascript:alert(1)', 'https://u:p@city.example.com/p', 'city.example.com/p'])
+      expect(privacyPolicyUrl(bad), String(bad)).toBeUndefined();
+  });
+});
+
+describe('saving, said calmly (the version handshake and refused saves)', () => {
+  const both = () => render(<><Hud layout="full" /><SyncNote /></>);
+
+  it('a server being updated: the pill says so in amber words, one calm line, no Retry, never Offline', () => {
+    useCity.setState({ backendStatus: 'updating' });
+    both();
+    expect(screen.getByText(SERVER_UPDATING_LINE)).toBeTruthy();
+    expect(screen.getByText('Server updating').closest('.dot')?.className).toMatch(/(^| )updating( |$)/);
+    expect(screen.queryByText('Offline')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('an extension too old for its server: “update the extension”', () => {
+    useCity.setState({ backendStatus: 'outdated' });
+    both();
+    expect(screen.getByText(UPDATE_EXTENSION_LINE)).toBeTruthy();
+    expect(screen.getByText('Update needed')).toBeTruthy();
+  });
+
+  it('a refused save: “Not saved to your account”, while still Connected, until a save goes through', () => {
+    useCity.setState({ saveRefused: true });
+    both();
+    expect(screen.getByText(NOT_SAVED_LINE)).toBeTruthy();
+    expect(screen.getByText('Connected')).toBeTruthy();
+    act(() => useCity.getState().setSaveRefused(false));
+    expect(screen.queryByText(NOT_SAVED_LINE)).toBeNull();
+  });
+
+  it('nothing to say: no line (and none on the demo)', () => {
+    const { container, unmount } = render(<SyncNote />);
+    expect(container.textContent).toBe('');
+    unmount();
+    useCity.setState({ backendKind: 'mock', backendStatus: 'updating', saveRefused: true });
+    expect(render(<SyncNote />).container.textContent).toBe('');
   });
 });
 

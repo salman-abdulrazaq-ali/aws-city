@@ -7,10 +7,10 @@ import type { Approvals } from '../src/contract/approvals.js';
 import type { Orchestrator } from '../src/contract/orchestrator.js';
 import { createProgressStore } from '../src/contract/progress.js';
 import { createUploadStore } from '../src/contract/uploads.js';
-import { createHttpServer, DELETED_CHECK_MS, health, rateLimiter } from '../src/http.js';
+import { createHttpServer, DELETED_CHECK_MS, health, MIN_CLIENT_CONTRACT, rateLimiter, versionRefusal } from '../src/http.js';
 import type { Poller } from '../src/state/poller.js';
 import type { Tenant } from '../src/tenants.js';
-import { CONTRACT_VERSION, type ServerEvent } from '../src/world.js';
+import { CONTRACT_HEADER, CONTRACT_VERSION, type ServerEvent } from '../src/world.js';
 import pkg from '../package.json' with { type: 'json' };
 import { snapshot } from './fixtures.js';
 import { bearerSubprotocols, CLOSE_CODES } from '../../src/backend/contract.js';
@@ -240,6 +240,75 @@ describe('player approvals over the socket (contract v2)', () => {
       s.on('end', () => resolve(data));
     });
     expect(res).toMatch(/^HTTP\/1.1 401 Missing or wrong token\r\n/);
+  });
+});
+
+describe('the version handshake (v2.17)', () => {
+  const auth = { authorization: `Bearer ${TOKEN}` };
+  const progress = (contract?: string, init: RequestInit = {}) => fetch(`${base}/progress${contract === undefined ? '' : `?contract=${contract}`}`, { ...init, headers: { ...auth, ...init.headers } });
+  const newer = `${CONTRACT_VERSION.split('.')[0]}.${Number(CONTRACT_VERSION.split('.')[1]) + 1}`;
+  const copy = () => ({ method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version: 1, landmarks: {}, updatedAt: new Date().toISOString() }) });
+
+  it('compares major.minor as numbers, refuses a newer client or one older than the oldest served, and lets unknown ones in', () => {
+    expect(versionRefusal('2.18', '2.17')).toBe('behind');
+    expect(versionRefusal('2.10', '2.9')).toBe('behind'); // 2.10 is newer than 2.9, not 2.1
+    expect(versionRefusal('3.0', '2.17')).toBe('behind');
+    expect(versionRefusal('2.17', '2.17')).toBeUndefined();
+    expect(versionRefusal('2.9', '2.17')).toBeUndefined(); // an older client: this server still speaks its shapes
+    expect(versionRefusal('2.9', '2.17', '2.10')).toBe('outdated');
+    expect(versionRefusal('1.9', '2.17', MIN_CLIENT_CONTRACT)).toBe('outdated');
+    // No version (a client from before the handshake) or nonsense: let in, never refused for it.
+    for (const v of [undefined, null, '', 'abc', '2', '2.17.1', ' 2.18']) expect(versionRefusal(v, '2.17')).toBeUndefined();
+  });
+
+  it('every REST answer names the server’s contract (exposed to the extension), errors included', async () => {
+    const ok = await progress(CONTRACT_VERSION, { headers: { origin: 'chrome-extension://abc' } });
+    expect(ok.headers.get(CONTRACT_HEADER)).toBe(CONTRACT_VERSION);
+    expect(ok.headers.get('access-control-expose-headers')).toBe(CONTRACT_HEADER);
+    expect((await fetch(`${base}/progress`)).headers.get(CONTRACT_HEADER)).toBe(CONTRACT_VERSION); // 401
+    // The preflight still allows only what it did: the version rides in the query, so older servers' preflights pass too.
+    const pre = await fetch(`${base}/progress?contract=${CONTRACT_VERSION}`, { method: 'OPTIONS', headers: { origin: 'chrome-extension://abc' } });
+    expect(pre.headers.get('access-control-allow-headers')).toBe('authorization, content-type');
+  });
+
+  it('a newer client neither reads nor writes progress (409 with the server’s version); the same, an older or an unversioned client does', async () => {
+    for (const c of [CONTRACT_VERSION, '2.0', undefined, 'junk']) expect((await progress(c, copy())).status, String(c)).toBe(204);
+    const put = await progress(newer, copy());
+    expect(put.status).toBe(409);
+    expect(put.headers.get(CONTRACT_HEADER)).toBe(CONTRACT_VERSION);
+    expect(await put.json()).toEqual({ error: `This server speaks contract ${CONTRACT_VERSION}` });
+    expect((await progress(newer)).status).toBe(409);
+    expect((await progress(CONTRACT_VERSION)).status).toBe(200);
+    // Privacy routes always answer, whatever the version.
+    expect((await fetch(`${base}/me/export?contract=${newer}`, { headers: auth })).status).toBe(200);
+  });
+
+  it('a newer client’s WebSocket upgrade is refused with 409 before any sign-in; the same version opens', async () => {
+    const upgrade = (contract: string, token = TOKEN) =>
+      new Promise<{ ws?: WebSocket; status?: number }>((resolve) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?contract=${contract}`, token ? bearerSubprotocols(token) : []);
+        ws.on('open', () => resolve({ ws }));
+        ws.on('unexpected-response', (_q, res) => resolve({ status: res.statusCode }));
+      });
+    expect((await upgrade(newer)).status).toBe(409);
+    expect((await upgrade(newer, '')).status).toBe(409);
+    const { ws } = await upgrade(CONTRACT_VERSION);
+    expect(ws!.protocol).toBe('base64UrlBearerAuthorization'); // the bearer subprotocol scheme is untouched
+    ws!.close();
+  });
+
+  it('an unknown command (a stray or very old client) gets a plain sentence, never the schema’s words, and the socket keeps working', async () => {
+    const { ws } = await openWs(TOKEN);
+    const events: ServerEvent[] = [];
+    ws!.on('message', (raw) => events.push(JSON.parse(raw.toString())));
+    ws!.send(JSON.stringify({ action: 'city.teleport', to: 'mars' }));
+    ws!.send(JSON.stringify({ action: 'task.submit', taskId: 'after-unknown', prompt: 'hi', context: {} }));
+    await until(() => events.some((e) => e.type === 'task.done'));
+    const err = events.find((e) => e.type === 'error') as Extract<ServerEvent, { type: 'error' }>;
+    expect(err.message).toBe('Bad command: this server didn’t understand that request.');
+    expect(err.message).not.toMatch(/discriminator|Expected|Invalid/);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'task.done', taskId: 'after-unknown' }));
+    ws!.close();
   });
 });
 

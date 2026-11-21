@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { mergeProgress } from '@/state/progress';
 import { MockBackend } from '@/backend/MockBackend';
-import { bearerSubprotocols, CONTRACT_VERSION, isServerEvent, type AwsHealthEvent, type CityFinding, type ServerEvent } from '@/backend/contract';
+import { bearerSubprotocols, CONTRACT_HEADER, CONTRACT_PARAM, CONTRACT_VERSION, isServerEvent, parseContract, type AwsHealthEvent, type CityFinding, type ServerEvent } from '@/backend/contract';
 import { DEMO, demoBill, demoFindings, demoFlow, demoHealth, demoInventory, demoNews } from '@/backend/mockAccount';
 import regionFacts from '../shared/region-facts.json' with { type: 'json' };
 import { ruleById } from '@/world/citizens';
@@ -658,5 +658,15 @@ describe('The account lifecycle (v2.17)', () => {
   it('the docs mirror the new commands, fields and REST route', () => {
     const doc = readFileSync('docs/backend-contract.md', 'utf8');
     for (const f of ['account.unlink', 'resource.remove', 'allowFixes', 'broken', 'fixes', 'roleVersion', 'latestRoleVersion', 'templateUrl', 'GET /me/export', 'ConnectsPlayer']) expect(doc).toContain(f);
+  });
+});
+
+describe('The version handshake (v2.17)', () => {
+  it('the version is major.minor; the client names it in a query parameter, the server in a header; the docs mirror both', () => {
+    expect(parseContract(CONTRACT_VERSION)).toBeDefined();
+    expect(CONTRACT_PARAM).toBe('contract');
+    expect(CONTRACT_HEADER).toBe('x-aws-city-contract');
+    const doc = readFileSync('docs/backend-contract.md', 'utf8');
+    for (const f of ['?contract=', 'x-aws-city-contract', '409', 'MIN_CLIENT_CONTRACT', '`updating`', '`outdated`', 'Not saved to your account']) expect(doc).toContain(f);
   });
 });

@@ -62,6 +62,8 @@ export function startRuntime(l: Layout) {
       void endSession();
     }
   });
+  // "Not saved to your account" after a refused save, until one goes through (src/ui/Hud.tsx SyncNote).
+  backend.onSave?.((s) => store().setSaveRefused(s === 'refused'));
   backend.onEvent((raw) => {
     // An account reply goes to every tab of the player: only the tab that asked hears it as its own (its toast); in the
     // others it's a quiet update, as if no one asked.
@@ -978,6 +980,24 @@ export const isOsmUrl = (raw: string) => {
 export function openOsmCopyright(url = OSM_COPYRIGHT_URL) {
   if (!isOsmUrl(url)) return;
   void browser.tabs.create({ url });
+}
+
+/**
+ * The privacy policy's address (the WXT_PRIVACY_URL build setting; a hosted store build must have one:
+ * scripts/release-check.mjs), or undefined when it's unset or isn't a plain https address.
+ */
+export const privacyPolicyUrl = (raw = import.meta.env.WXT_PRIVACY_URL): string | undefined => {
+  try {
+    const u = new URL(raw ?? '');
+    return u.protocol === 'https:' && !u.username && !u.password ? u.href : undefined;
+  } catch {
+    return undefined;
+  }
+};
+/** ⋯ → Account and the sign-in card's "Privacy policy": opens it in a new tab (never fetched by the extension). */
+export function openPrivacyPolicy() {
+  const url = privacyPolicyUrl();
+  if (url) void browser.tabs.create({ url });
 }
 
 /** v2.6: AWS's own status page (a fixed address, never one from a feed). */

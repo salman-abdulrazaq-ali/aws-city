@@ -38,6 +38,7 @@ const YES = flag('--yes');
 
 const saved = existsSync(CONFIG) ? JSON.parse(readFileSync(CONFIG, 'utf8')) : {};
 const { DEV_EXTENSION_ID, FIREFOX_ADDON_ID } = await import(new URL('../../scripts/extension-id.mjs', import.meta.url));
+const { isHttpsUrl } = await import(new URL('../../scripts/release-check.mjs', import.meta.url));
 
 const bye = (msg = 'Stopped. Nothing else was changed.') => {
   p.cancel(msg);
@@ -227,6 +228,8 @@ if (!alarmEmail) p.log.warn('No alarm email: the AI still switches off at 100% o
 // Optional: who the privacy policy names as the operator (docs/privacy-policy.md is a template). Remembered like the rest.
 const operatorName = (await ask('text', { message: 'Your name or organisation, for the privacy policy (optional; you run this service)', initialValue: prev.operatorName ?? '' }, prev.operatorName ?? '')).trim();
 const contactEmail = (await ask('text', { message: 'Contact email for privacy questions (optional)', initialValue: prev.contactEmail ?? alarmEmail ?? '', validate: (v) => (!v || /^\S+@\S+\.\S+$/.test(v) ? undefined : 'an email address, or leave empty') }, prev.contactEmail ?? '')).trim();
+// The extension links it (⋯ → Account, the sign-in card) and a store build stops without it (scripts/release-check.mjs).
+const privacyUrl = (await ask('text', { message: 'Where your privacy policy is published, https (optional now; store builds need it: this run writes the policy for you to host)', initialValue: prev.privacyUrl ?? '', validate: (v) => (!v || isHttpsUrl(v) ? undefined : 'an https address, or leave empty') }, prev.privacyUrl ?? '')).trim();
 const monthlyBudgetUsd = Number(await ask('text', { message: 'Monthly AWS budget in USD (AI switches off at 100%)', initialValue: String(prev.monthlyBudgetUsd ?? (envName === 'prod' ? 300 : 50)), validate: (v) => (Number(v) > 0 ? undefined : 'a number') }, prev.monthlyBudgetUsd));
 const useSes = await ask('confirm', { message: 'Send sign-up emails from your own address with Amazon SES? (otherwise Cognito’s default sender, ~50/day)', initialValue: Boolean(prev.sesFromEmail) }, Boolean(prev.sesFromEmail));
 let sesFromEmail = '';
@@ -314,7 +317,7 @@ if (githubRepo) {
 
 // ── 9. Save the answers (no secrets) ─────────────────────────────────────────
 const envConfig = {
-  region, domainName, hostedZoneId: zone ? zoneChoice : '', zoneName, cognitoDomainPrefix, extensionIds, chromeStoreId: storeId, edgeStoreId, firefoxAddonId, safari, googleClientId, sesFromEmail, alarmEmail, operatorName, contactEmail,
+  region, domainName, hostedZoneId: zone ? zoneChoice : '', zoneName, cognitoDomainPrefix, extensionIds, chromeStoreId: storeId, edgeStoreId, firefoxAddonId, safari, googleClientId, sesFromEmail, alarmEmail, operatorName, contactEmail, privacyUrl,
   monthlyBudgetUsd, dailyModelCalls: prev.dailyModelCalls ?? 100, globalDailyModelCalls: prev.globalDailyModelCalls ?? (envName === 'prod' ? 20000 : 5000),
   minTasks: prev.minTasks ?? (envName === 'prod' ? 2 : 1), maxTasks: prev.maxTasks ?? (envName === 'prod' ? 10 : 3),
 };
@@ -356,14 +359,18 @@ const unset = Object.keys(buildVars).filter((k) => !buildVars[k]);
 if (unset.length) bye(`${outputsFile} has no value for ${unset.join(', ')}: run setup again to finish the deploy.`);
 // Every plain build (npm run build, zip, zip:firefox, safari:xcode) now builds for this deployment; the demo
 // (npm start), npm run smoke and smoke:copilot set WXT_BACKEND=mock, which beats .env files.
-writeFileSync(`${ROOT}.env.production`, `${Object.entries(buildVars).map(([k, v]) => `${k}=${v}`).join('\n')}\n`);
+const envVars = privacyUrl ? { ...buildVars, WXT_PRIVACY_URL: privacyUrl } : buildVars;
+writeFileSync(`${ROOT}.env.production`, `${Object.entries(envVars).map(([k, v]) => `${k}=${v}`).join('\n')}\n`);
 if (!existsSync(`${ROOT}node_modules`)) run('npm', ['ci']);
 // Store builds (WXT_STORE_BUILD=true: no manifest key, so each store assigns its id; no window.awsCity debug handles;
-// the brand off) each rebuild .output/<browser>-mv3, so the keyed copy for trying it here is built last.
+// the brand off) each rebuild .output/<browser>-mv3, so the keyed copy for trying it here is built last. They need the
+// privacy policy's address (wxt.config.ts stops without it), so without one they wait for the next run.
 const store = { WXT_STORE_BUILD: 'true' };
-run('npx', ['wxt', 'zip', '--mode', 'production'], ROOT, store);
-if (firefoxAddonId) run('npx', ['wxt', 'zip', '-b', 'firefox', '--mode', 'production'], ROOT, store);
-if (safari) run('npx', ['wxt', 'build', '-b', 'safari', '--mode', 'production'], ROOT, store);
+if (privacyUrl) {
+  run('npx', ['wxt', 'zip', '--mode', 'production'], ROOT, store);
+  if (firefoxAddonId) run('npx', ['wxt', 'zip', '-b', 'firefox', '--mode', 'production'], ROOT, store);
+  if (safari) run('npx', ['wxt', 'build', '-b', 'safari', '--mode', 'production'], ROOT, store);
+}
 // The copy to try keeps the repo's key (id DEV_EXTENSION_ID, the one Cognito knows), in a folder of its own: the demo
 // (npm start) builds into .output/chrome-mv3 and would replace it there.
 const tryCopy = `.output/chrome-mv3-${envName}`;
@@ -391,14 +398,18 @@ p.note(
     `Sign-in:  ${pick('Auth', 'CognitoDomain')}`,
     '',
     allowDev ? `Try it now: chrome://extensions → Developer mode → Load unpacked → ${tryCopy} (id ${DEV_EXTENSION_ID}).` : 'The local build is not allowed to sign in (prod); use the store build.',
-    'Publish:   upload .output/*-chrome.zip to the Chrome Web Store (docs/chrome-web-store.md) and, if you like, Edge Add-ons,',
-    '           then run setup again with their ids so store players can sign in too.',
-    firefoxAddonId ? 'Firefox:   upload .output/*-firefox.zip (+ the -sources.zip) to addons.mozilla.org (docs/firefox-addons.md).' : '',
+    privacyUrl
+      ? 'Publish:   upload .output/*-chrome.zip to the Chrome Web Store (docs/chrome-web-store.md) and, if you like, Edge Add-ons,'
+      : 'Publish:   no store zips yet: they need your privacy policy’s https address. Host the policy below, then run setup again with it.',
+    privacyUrl ? '           then run setup again with their ids so store players can sign in too.' : '',
+    privacyUrl && firefoxAddonId ? 'Firefox:   upload .output/*-firefox.zip (+ the -sources.zip) to addons.mozilla.org (docs/firefox-addons.md).' : '',
     safari ? 'Safari:    WXT_STORE_BUILD=true npm run safari:xcode, then build and submit the app in Xcode (docs/safari.md).' : '',
     'Builds:    npm run build / zip now build for this server (.env.production); npm start’s demo and npm run smoke stay the demo.',
     alarmEmail ? `Confirm:   click the AWS Notification emails sent to ${alarmEmail}.` : '',
     githubRepo ? `GitHub:    add AWS_DEPLOY_ROLE_ARN (see the AWSCity-CI stack) + AWS_REGION=${region} to the ${envName} environment.` : '',
-    `Privacy:   ${policyFile}: host it at a public URL; the Chrome, Edge, Firefox and Apple listings all ask for one.`,
+    privacyUrl
+      ? `Privacy:   ${policyFile}: publish it at ${privacyUrl} (the extension links it; the store listings ask for it too).`
+      : `Privacy:   ${policyFile}: host it at a public https URL; the Chrome, Edge, Firefox and Apple listings all ask for one.`,
     'Kill switch / runbook: docs/runbook.md',
   ]
     .filter((l) => l !== undefined)

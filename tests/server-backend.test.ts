@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CognitoAuth } from '@/backend/auth';
-import { CLOSE_CODES, type ClientCommand, type ServerEvent } from '@/backend/contract';
+import { bearerSubprotocols, CLOSE_CODES, compareContract, CONTRACT_HEADER, CONTRACT_VERSION, parseContract, type ClientCommand, type ServerEvent } from '@/backend/contract';
 import { GUARDED_EQUIV, isPracticeDeploy, ServerBackend, subOf } from '@/backend/ServerBackend';
 
 /** A WebSocket stand-in: the test opens and closes it; close() fires onclose asynchronously like the real one. */
@@ -13,7 +13,10 @@ class FakeSocket {
   onclose?: (ev: { code: number }) => void;
   onmessage?: (ev: { data: string }) => void;
   onerror?: () => void;
-  constructor(readonly url: string) {
+  constructor(
+    readonly url: string,
+    readonly protocols?: string[],
+  ) {
     FakeSocket.all.push(this);
   }
   send(data: string) {
@@ -260,6 +263,181 @@ describe('ServerBackend connection status', () => {
     await vi.waitFor(() => expect(FakeSocket.all).toHaveLength(1));
     FakeSocket.all[0]!.open();
     await vi.waitFor(() => expect(puts).toEqual([503, 200]));
+  });
+});
+
+describe('the version handshake (v2.17)', () => {
+  const [major, minor] = parseContract(CONTRACT_VERSION)!;
+  const older = `${major}.${minor - 1}`;
+  const newer = `${major}.${minor + 1}`;
+  const p = (n: number) => ({ version: 1 as const, landmarks: {}, updatedAt: `2026-01-0${n}T00:00:00Z` });
+  beforeEach(() => {
+    FakeSocket.all = [];
+    vi.stubGlobal('WebSocket', FakeSocket);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  /** A server that refuses this extension's version: GET /progress answers 409 naming `speaks`; PUTs are counted. */
+  const refusing = (speaks: string | undefined) => {
+    const puts: string[] = [];
+    let serves = false;
+    vi.stubGlobal('fetch', async (u: URL, init?: RequestInit) => {
+      if (init?.method === 'PUT') puts.push(u.searchParams.get('contract') ?? '');
+      if (serves) return new Response(null, { status: 204 });
+      return new Response(JSON.stringify({ error: 'x' }), { status: 409, headers: speaks ? { [CONTRACT_HEADER]: speaks } : {} });
+    });
+    return { puts, serve: () => (serves = true) };
+  };
+  /** Connects and lets two upgrades fail (1006), as a refused handshake looks to a browser: the second asks GET /progress why. */
+  const refusedTwice = async (backend: ServerBackend) => {
+    backend.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    FakeSocket.all[0]!.close(1006);
+    await vi.advanceTimersByTimeAsync(2_000);
+    FakeSocket.all[1]!.close(1006);
+    await vi.advanceTimersByTimeAsync(0);
+  };
+
+  it('compares major.minor as numbers (the contract version is a string)', () => {
+    expect(compareContract('2.10', '2.9')).toBeGreaterThan(0);
+    expect(compareContract('2.9', '2.10')).toBeLessThan(0);
+    expect(compareContract('3.0', '2.17')).toBeGreaterThan(0);
+    expect(compareContract('2.17', '2.17')).toBe(0);
+    for (const bad of [undefined, null, '', '2', 'v2.17', '2.17.0']) expect(compareContract(bad, '2.17')).toBeUndefined();
+  });
+
+  it('every socket and REST call names this extension’s contract version; the bearer subprotocols are untouched', async () => {
+    const urls: URL[] = [];
+    vi.stubGlobal('fetch', async (u: URL) => (urls.push(u), new Response(null, { status: 404 })));
+    const backend = new ServerBackend({ wsUrl: 'wss://x/ws', apiUrl: 'https://x', auth: auth(async () => 'jwt') });
+    backend.connect();
+    await vi.waitFor(() => expect(FakeSocket.all).toHaveLength(1));
+    const url = new URL(FakeSocket.all[0]!.url);
+    expect(`${url.origin}${url.pathname}`).toBe('wss://x/ws');
+    expect(url.searchParams.get('contract')).toBe(CONTRACT_VERSION);
+    expect(FakeSocket.all[0]!.protocols).toEqual(bearerSubprotocols('jwt'));
+    await backend.getProgress();
+    await backend.exportMe().catch(() => undefined);
+    expect(urls.map((u) => `${u.pathname}?${u.search.slice(1)}`)).toEqual([`/progress?contract=${CONTRACT_VERSION}`, `/me/export?contract=${CONTRACT_VERSION}`]);
+  });
+
+  it('a server older than the extension: one calm "updating" status, saves wait on this device, asked again about a minute later, and all resumes on the next open', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const server = refusing(older);
+    const backend = new ServerBackend({ wsUrl: 'wss://x/ws', apiUrl: 'https://x', token: 'local' });
+    const statuses: string[] = [];
+    backend.onStatus((s) => statuses.push(s));
+    await refusedTwice(backend);
+    expect(statuses.at(-1)).toBe('updating');
+    const from = statuses.length - 1;
+    backend.putProgress(p(1));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(server.puts).toEqual([]); // held here, not sent to be refused
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(FakeSocket.all).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(FakeSocket.all).toHaveLength(3); // asked again, quietly
+    FakeSocket.all[2]!.close(1006); // still being updated
+    await vi.advanceTimersByTimeAsync(91_000);
+    expect(FakeSocket.all).toHaveLength(4);
+    server.serve();
+    FakeSocket.all[3]!.open();
+    await vi.advanceTimersByTimeAsync(0);
+    // Never "Offline" or "Connecting…" in between: the line stays until the server serves this version.
+    expect(statuses.slice(from)).toEqual(['updating', 'updating', 'updating', 'updating', 'connected']);
+    expect(server.puts).toEqual([CONTRACT_VERSION]); // the held copy, sent on the open
+  });
+
+  it('a server that no longer serves this version: "outdated", and no retries (the extension needs its update)', async () => {
+    vi.useFakeTimers();
+    refusing(newer);
+    const backend = new ServerBackend({ wsUrl: 'wss://x/ws', apiUrl: 'https://x', token: 'local' });
+    const statuses: string[] = [];
+    backend.onStatus((s) => statuses.push(s));
+    await refusedTwice(backend);
+    expect(statuses.at(-1)).toBe('outdated');
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(FakeSocket.all).toHaveLength(2);
+  });
+
+  it('a 409 that doesn’t name a version reads as the server being updated', async () => {
+    vi.useFakeTimers();
+    refusing(undefined);
+    const backend = new ServerBackend({ wsUrl: 'wss://x/ws', apiUrl: 'https://x', token: 'local' });
+    const statuses: string[] = [];
+    backend.onStatus((s) => statuses.push(s));
+    await refusedTwice(backend);
+    expect(statuses.at(-1)).toBe('updating');
+  });
+
+  it('unknown events from a newer server are dropped; the rest of the frame still arrives', async () => {
+    const backend = new ServerBackend({ wsUrl: 'wss://x/ws', apiUrl: 'https://x', token: 'local' });
+    const events: ServerEvent[] = [];
+    backend.onEvent((e) => events.push(e));
+    backend.connect();
+    await vi.waitFor(() => expect(FakeSocket.all).toHaveLength(1));
+    FakeSocket.all[0]!.open();
+    const hi = { type: 'agent.message', from: 'concierge', to: 'user', text: 'hi' };
+    FakeSocket.all[0]!.onmessage?.({ data: JSON.stringify([{ type: 'city.weather', rain: true }, hi]) });
+    expect(events).toEqual([hi]);
+  });
+});
+
+describe('a save the server refuses', () => {
+  beforeEach(() => {
+    FakeSocket.all = [];
+    vi.stubGlobal('WebSocket', FakeSocket);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** PUT /progress answers `status.now`; each PUT's answer is recorded. */
+  const server = (first: number) => {
+    const status = { now: first };
+    const puts: number[] = [];
+    vi.stubGlobal('fetch', async (_u: URL, init?: RequestInit) => {
+      if (init?.method === 'PUT') puts.push(status.now);
+      return new Response(null, { status: status.now });
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const backend = new ServerBackend({ wsUrl: 'wss://x/ws', apiUrl: 'https://x', token: 'local' });
+    const saves: string[] = [];
+    backend.onSave((s) => saves.push(s));
+    const open = async () => {
+      backend.connect();
+      await vi.waitFor(() => expect(FakeSocket.all).toHaveLength(1));
+      FakeSocket.all[0]!.open();
+      await new Promise((r) => setTimeout(r, 0));
+    };
+    return { backend, status, puts, saves, open };
+  };
+  const copy = (day: number) => ({ version: 1 as const, landmarks: {}, updatedAt: `2026-01-0${day}T00:00:00Z` });
+
+  it('a 4xx refusal isn’t re-sent on every open: it says "refused" until a later save goes through', async () => {
+    const { backend, status, puts, saves, open } = server(400);
+    backend.putProgress(copy(1));
+    await vi.waitFor(() => expect(saves).toEqual(['refused']));
+    await open();
+    expect(puts).toEqual([400]); // the refused copy isn't sent again on the open
+    // The next change tries afresh (each save is the whole progress); once one goes through, the line clears.
+    status.now = 204;
+    backend.putProgress(copy(2));
+    await vi.waitFor(() => expect(saves).toEqual(['refused', 'saved']));
+  });
+
+  it.each([401, 409, 503])('a %i keeps the copy for the next open, and isn’t a refusal (a stale token, the version handshake, the server’s own trouble)', async (kept) => {
+    const { backend, status, puts, saves, open } = server(kept);
+    backend.putProgress(copy(1));
+    await vi.waitFor(() => expect(puts).toEqual([kept]));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(saves).toEqual([]);
+    status.now = 204;
+    await open();
+    await vi.waitFor(() => expect(puts).toEqual([kept, 204]));
+    expect(saves).toEqual(['saved']);
   });
 });
 

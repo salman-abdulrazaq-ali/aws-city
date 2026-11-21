@@ -48,8 +48,9 @@ and the infra job cfn-lints `infra/player-role/player-role.yaml`.
   `hosted` is the deployed one with Cognito sign-in, and anything else (or a hosted build in "Play the demo") is
   `MockBackend`, the in-browser demo. Both implement `AgentBackend`. `npm run setup` writes `.env.production` (hosted), which
   every plain build reads; the launcher's demo and `npm run smoke` force `WXT_BACKEND=mock`. A store build
-  (`WXT_STORE_BUILD=true`: no manifest key, no `window.awsCity`, brand off) that is `hosted` fails when a `WXT_*` setting
-  is missing (`wxt.config.ts` → `scripts/release-check.mjs`) instead of falling back to the demo.
+  (`WXT_STORE_BUILD=true`: no manifest key, no `window.awsCity`, brand off, the `?season=` and `?map=legacy` dev params
+  ignored) that is `hosted` fails when a `WXT_*` setting is missing, the privacy policy's `WXT_PRIVACY_URL` (https only) included
+  (`wxt.config.ts` → `scripts/release-check.mjs`), instead of falling back to the demo. Proof: `npx vitest run tests/release-check.test.ts`.
 - **Entrypoints** (`src/entrypoints/`): `sidepanel/` (`mount('panel')`; WXT turns it into Firefox's sidebar) and `city/`
   (`mount('full')`, the tab) run the same app (`src/app/mount.tsx` → `App.tsx`). `practice/` is the practice console,
   `console.content.ts` is the Console Copilot on console pages and `background.ts` is the service worker.
@@ -188,7 +189,9 @@ When a change touches a decision, update its entry and run its Proof.
 - **The player's own AWS account: easy to find, linked where they choose, easy to let go** (contract v2.17; rules pure in
   `src/state/account.ts`, `src/ui/Account.tsx`, the card in `src/ui/DeployPanel.tsx`). On the hosted server ⋯ → Account
   has the AWS account (its card in Deploy), Sign in or out, Download my data (`exportMe`, saved as a local JSON file) and
-  Delete my account… (asked first, in a dialog); there's no privacy-policy item, since no build setting holds its address.
+  Delete my account… (asked first, in a dialog), and Privacy policy ↗ when the build has its address (`WXT_PRIVACY_URL`,
+  https only, `privacyPolicyUrl`/`openPrivacyPolicy` in `src/app/runtime.ts`; also on Deploy's sign-in card; a hosted store
+  build needs it, and `npm run setup` asks for it and builds the store zips only with it).
   The To-do row, the shift's line (Everything) and ⋯ open Deploy with the steps unfolded (`openAccountCard`). Step 1
   picks the Region by name (`LINK_REGIONS`, the commercial partition only; it starts on the Region asked for last, the
   linked one, else the city's) and says "Your key will be made in <Region>; the city reads that Region"; step 2 has
@@ -213,7 +216,7 @@ When a change touches a decision, update its entry and run its Proof.
   'detail' lines in words ("Safety check: …") and the name typed before Approve. A practice build (`isPracticeDeploy`)
   says it made nothing in the AWS account and has no Tear down. Proof: `npx vitest run
   tests/account.test.ts tests/account-ui.test.tsx tests/deploy-account.test.tsx tests/runtime-session.test.ts
-  tests/session.test.ts tests/finding-pacing.test.ts`.
+  tests/session.test.ts tests/finding-pacing.test.ts tests/release-check.test.ts`.
 - **Hosted deploys only run in Regions with a Claude geo inference profile** (`infra/lib/models.ts`: `us`, `eu`, `au`,
   `in`; there is no `apac` profile, so e.g. Tokyo is refused). Each geo gets the newest pair with a profile there for
   both models (`GEO_MODELS`, from the Bedrock model cards): Claude Opus 5.5 / Sonnet 5.5 in `us`/`eu`/`au`; India has no
@@ -228,7 +231,10 @@ When a change touches a decision, update its entry and run its Proof.
   Proof: `cd server && npx vitest run test/console.test.ts`.
 - **Players see no internal errors.** Hosted errors are a sentence plus a `ref` that finds the log line
   (`publicError` in `server/src/log.ts`); Bedrock's AccessDenied (the budget's deny policy) reads as the city's AI resting (code `paused`).
-  Proof: `cd server && npx vitest run test/log.test.ts`, `cd server && npx vitest run test/hosted.test.ts -t "metered"`.
+  A WebSocket frame the server can't read is answered "Bad command: this server didn’t understand that request.", never the
+  schema's own words, and the socket stays open.
+  Proof: `cd server && npx vitest run test/log.test.ts`, `cd server && npx vitest run test/hosted.test.ts -t "metered"`,
+  `cd server && npx vitest run test/http.test.ts -t "version handshake"`.
 - **Shared AI calls can't be farmed with free sign-ups** (`server/src/agents/metered.ts`). A player first seen today (`QuotaStore.firstSeen`)
   gets a fifth of `DAILY_MODEL_CALLS` (100 → 20), and those players together at most a quarter of `GLOBAL_DAILY_MODEL_CALLS`
   (`GLOBAL#NEW`, 20,000 → 5,000); a call Bedrock refused before answering (throttled, denied) is refunded, an aborted one isn't. Scores and
@@ -237,12 +243,24 @@ When a change touches a decision, update its entry and run its Proof.
 - **One seam to the backend.** Only `src/backend/` does network I/O. `contract.ts` is the source of
   truth; `docs/backend-contract.md` mirrors it. UI code reading the extension's own files goes through
   `readAsset` (`src/backend/assets.ts`: same-origin `/assets/` paths only). A client needs a server of its contract version or newer
-  (`CONTRACT_VERSION`, `src/backend/contract.ts`; the server's strict `Progress` schema refuses unknown fields, and nothing checks
-  versions otherwise; `/health` reports the server's): deploy the server first. v2.17 adds `account.unlink`, `resource.remove`,
+  (`CONTRACT_VERSION`, `src/backend/contract.ts`; the server's strict `Progress` schema refuses unknown fields): deploy the server
+  first. The v2.17 version handshake checks it: the client names its version as `?contract=` on `/ws` and every REST call (a
+  query parameter, since a new request header would fail an older server's CORS preflight); every REST answer names the
+  server's in `x-aws-city-contract` (CORS-exposed; `/health` has it in its body); a client newer than the server, or older than
+  `MIN_CLIENT_CONTRACT` (`versionRefusal` in `server/src/http.ts`; versions compare as major.minor numbers, `compareContract`),
+  is refused with 409 on the upgrade and on `GET`/`PUT /progress`, and an unversioned client predates it and is let in. After
+  two refused upgrades `ServerBackend` asks GET /progress why: status `updating` (the server is older: saves wait on the device,
+  asked again every 60–90 s) or `outdated` (update the extension; no retries), an amber dot and one calm line above the tabs
+  (`SyncNote`, `syncLine` in `src/ui/logic.ts`: "The city’s server is being updated — your progress is kept on this device" /
+  "A newer AWS City is ready — update the extension"), never a schema error. A `PUT /progress` refused with a 4xx (not 401 or
+  409) isn't re-sent on every open: `onSave` reports `refused`, and the same line says "Not saved to your account — kept on
+  this device" until a save goes through (`CityState.saveRefused`); 5xx, network errors, 401 and 409 keep the copy for the
+  next open. v2.17 adds `account.unlink`, `resource.remove`,
   `account.link.allowFixes` (the strict command schema refuses them on an older server), `account.status`'s lifecycle fields
   and REST `GET /me/export`; `ServerBackend.send` ends in a `never` default, so a new command can't be dropped silently.
-  Proof: `npx vitest run tests/contract.test.ts tests/server-backend.test.ts tests/assets.test.ts`, and
-  `grep -rn -e "fetch(" -e "WebSocket(" src | grep -v src/backend/` prints nothing.
+  Proof: `npx vitest run tests/contract.test.ts tests/server-backend.test.ts tests/assets.test.ts tests/ui-logic.test.ts
+  tests/account-ui.test.tsx tests/runtime-session.test.ts`, `cd server && npx vitest run test/http.test.ts -t "version handshake"`,
+  and `grep -rn -e "fetch(" -e "WebSocket(" src | grep -v src/backend/` prints nothing.
 - **Content is data in `shared/`** (world, flashcards, puzzles, quests, templates). JSON imports need
   `with { type: 'json' }` because the server runs as NodeNext ESM.
 - **Art is generated, not hand-placed:** `npm run art` imports the team pack from
@@ -293,7 +311,7 @@ When a change touches a decision, update its entry and run its Proof.
   nobody while its district has room; the map must hold services + 20 lots). A tight map tries harder before giving up
   (`EFFORTS`: drop minor streets, a neighbour's spare block, split big blocks, back streets `withAlleys`, build on the
   smallest parks; `CityPlan.zoning` says what it took): every baked Region zones. Anything that doesn't decode or zone,
-  a Region without a file, or `?map=legacy` keeps `legacyPlan()` (`tests/plan-snapshot.test.ts`): six lots a district
+  a Region without a file, or `?map=legacy` (a dev param: a store build ignores it, `legacyForced`) keeps `legacyPlan()` (`tests/plan-snapshot.test.ts`): six lots a district
   and no plot for the seventh (management), so the services it has no lot for (`UNPLACED_SERVICES`) aren't in that
   city (the places list says "not here in the classic city"; a quest's visit counts at once). The
   ring's land and sea come from the baked water mask; the ring river, islands, highway, park and airport keep their rules.
@@ -336,7 +354,7 @@ When a change touches a decision, update its entry and run its Proof.
   each prop stands on free ground nearest the middle of its buildings within its `radius` (`placeCombos`, before the
   rest of decor, a tile apart, never beside a door; no `rng()`), is tappable for its fact, and a new one sparkles and goes
   to the Codex (`discoverCombo`). *Seasons* (`src/world/seasons.ts`): meteorological, by the real month and the Region's
-  hemisphere (summer all year inside the tropics); `?season=winter` (dev) or `prefs.season` overrides. The art swaps
+  hemisphere (summer all year inside the tropics); `?season=winter` (a dev param: a store build ignores it, `seasonParam`) or `prefs.season` overrides. The art swaps
   `<name>` for `season:<s>:<name>` where it exists (`seasonal()` in `src/game/assets.ts`, same canvas and anchor), the baked
   ground takes `SEASON_TINT` and stamped decals (snow, leaves, petals), and some flower beds become snowmen or umbrellas
   (nothing added, so no extra draw calls). *Next-level previews* (`src/world/preview.ts`): a picked building shows its next

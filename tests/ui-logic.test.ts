@@ -1,5 +1,23 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { connectionLabel, DEMO_KEY, placeSuggestions, isAccountIdOrRoleArn, isDemo, setDemo, isOnline, newlyUnlocked, nextTabIndex, offlineReason, shuffle, signLegend, unlockText } from '@/ui/logic';
+import {
+  connectionLabel,
+  DEMO_KEY,
+  NOT_SAVED_LINE,
+  placeSuggestions,
+  isAccountIdOrRoleArn,
+  isDemo,
+  setDemo,
+  isOnline,
+  newlyUnlocked,
+  nextTabIndex,
+  offlineReason,
+  SERVER_UPDATING_LINE,
+  shuffle,
+  signLegend,
+  syncLine,
+  unlockText,
+  UPDATE_EXTENSION_LINE,
+} from '@/ui/logic';
 import type { Progress } from '@/backend/contract';
 import { badgeCount, dueDeck, NEW_CARDS_PER_DAY, newCardsLeft } from '@/state/srs';
 import { CARDS, QUESTS, type QuestStep } from '@/world/content';
@@ -28,6 +46,8 @@ describe('connection pill', () => {
     expect(connectionLabel('server', 'disconnected')).toBe('Offline');
     expect(connectionLabel('server', 'error')).toBe('Offline');
     expect(connectionLabel('server', 'signed-out')).toBe('Signed out');
+    expect(connectionLabel('server', 'updating')).toBe('Server updating');
+    expect(connectionLabel('server', 'outdated')).toBe('Update needed');
   });
   it('blocks actions only when a real backend is not connected', () => {
     expect(isOnline('mock', 'disconnected')).toBe(true);
@@ -36,6 +56,22 @@ describe('connection pill', () => {
     expect(offlineReason('server', 'connected')).toBeUndefined();
     expect(offlineReason('server', 'signed-out')).toMatch(/sign in/i);
     expect(offlineReason('server', 'disconnected')).toMatch(/not connected/i);
+    // Short: the full calm line is already above the tabs.
+    expect(offlineReason('server', 'updating')).toMatch(/server to finish updating/);
+    expect(offlineReason('server', 'outdated')).toBe('Update the extension first');
+  });
+
+  it('one calm line about saving: the version handshake first, then a refused save; never on the demo', () => {
+    expect(SERVER_UPDATING_LINE).toBe('The city’s server is being updated — your progress is kept on this device');
+    expect(UPDATE_EXTENSION_LINE).toBe('A newer AWS City is ready — update the extension');
+    expect(NOT_SAVED_LINE).toBe('Not saved to your account — kept on this device');
+    expect(syncLine('server', 'updating', true)).toBe(SERVER_UPDATING_LINE);
+    expect(syncLine('server', 'outdated', false)).toBe(UPDATE_EXTENSION_LINE);
+    expect(syncLine('server', 'connected', true)).toBe(NOT_SAVED_LINE);
+    expect(syncLine('server', 'disconnected', true)).toBe(NOT_SAVED_LINE);
+    expect(syncLine('server', 'connected', false)).toBeUndefined();
+    expect(syncLine('server', 'signed-out', true)).toBeUndefined();
+    expect(syncLine('mock', 'updating', true)).toBeUndefined();
   });
 });
 

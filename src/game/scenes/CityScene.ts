@@ -83,16 +83,19 @@ import { beam, pushIn, windowSpots, type WindowHost } from '../juice';
 import { MAX_ZOOM } from '../camera';
 import { setSeason, addSprite } from '../assets';
 import { SpeechBubble } from '../SpeechBubble';
-import { seasonFor, SEASON_TINT, type Season } from '@/world/seasons';
+import { seasonFor, seasonParam, SEASON_TINT, type Season } from '@/world/seasons';
 import type { Combo } from '@/world/combos';
 import { SCALERS, SURGE_MS, SURGE_WORKERS, type CourierLeg } from '@/world/couriers';
 import { nextLevelPreview } from '@/world/preview';
 import { shows } from '@/state/simple';
 
-/** The season to draw: the `?season=winter` dev param, else prefs.season (testing), else the calendar (seasons.ts). */
+/**
+ * The season to draw: the `?season=winter` dev param (not in store builds: seasonParam), else prefs.season (testing),
+ * else the calendar (seasons.ts).
+ */
 const seasonOverride = (): unknown => {
   try {
-    const q = new URLSearchParams(window.location.search).get('season');
+    const q = seasonParam(window.location.search);
     if (q) return q;
   } catch {
     /* no location: the calendar decides */

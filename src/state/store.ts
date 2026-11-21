@@ -385,6 +385,9 @@ export interface CityState {
   backendKind: 'mock' | 'server';
   deployMode: 'templates' | 'guarded';
   backendStatus: ConnectionStatus;
+  /** The server refused the last save (a 4xx): "Not saved to your account" shows until a save goes through. */
+  saveRefused: boolean;
+  setSaveRefused(on: boolean): void;
   /** The hosted server (players sign in; their own AWS account links through the AWSCity role). */
   hosted: boolean;
   focus?: PageFocus;
@@ -749,6 +752,8 @@ export const useCity = create<CityState>()((set, get) => ({
   backendKind: 'mock',
   deployMode: 'templates',
   backendStatus: 'disconnected',
+  saveRefused: false,
+  setSaveRefused: (saveRefused) => set({ saveRefused }),
   hosted: false,
   progress: emptyProgress(),
   agents: {},
@@ -1463,6 +1468,7 @@ export const useCity = create<CityState>()((set, get) => ({
     stopDrip();
     set({
       progress: emptyProgress(),
+      saveRefused: false,
       agents: {},
       tasks: {},
       taskOrder: [],

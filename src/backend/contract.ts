@@ -3,7 +3,8 @@
 // server (server/) imports it, so drift breaks its build.
 //
 // Transport: ONE WebSocket to the AWS City server (server/src/http.ts): ws://127.0.0.1:<port>/ws locally,
-// wss://<api host>/ws hosted. REST beside it: /progress, /screenshots, /me (v2.17: GET /me/export).
+// wss://<api host>/ws hosted. REST beside it: /progress, /screenshots, /me (v2.17: GET /me/export). Both carry
+// `?contract=<CONTRACT_VERSION>` (v2.17, the version handshake: CONTRACT_PARAM below).
 // Auth (hosted): the Cognito access token in the Sec-WebSocket-Protocol header (never the URL, which ends
 // up in logs):
 //   protocols = ['base64UrlBearerAuthorization.<base64url(jwt)>', 'base64UrlBearerAuthorization']
@@ -17,6 +18,31 @@
 
 /** A string since v2.10 (the number 2.10 is 2.1, which reads as older than 2.9). */
 export const CONTRACT_VERSION = '2.17';
+
+/**
+ * v2.17 version handshake. The client names its CONTRACT_VERSION as `?contract=` on the WebSocket URL and on every REST
+ * call: a query parameter, not a header, because a new request header would fail the CORS preflight of a server from
+ * before the handshake. Every REST answer after the Host/Origin checks names the server's version in the
+ * `x-aws-city-contract` header (CORS-exposed). A client the server can't serve (newer than the server, which would
+ * refuse its newer fields; or older than the oldest client it still serves) is refused with HTTP 409: the WebSocket
+ * upgrade (the browser sees 1006, and the client asks GET /progress why), GET /progress and PUT /progress. A client with
+ * no `contract` predates the handshake and is let in. Versions compare as major.minor numbers (compareContract).
+ */
+export const CONTRACT_PARAM = 'contract';
+export const CONTRACT_HEADER = 'x-aws-city-contract';
+
+/** A contract version as [major, minor] numbers ('2.10' → [2, 10]); undefined unless it's exactly major.minor. */
+export function parseContract(v: string | null | undefined): [number, number] | undefined {
+  const m = /^(\d{1,4})\.(\d{1,4})$/.exec(v ?? '');
+  return m ? [Number(m[1]), Number(m[2])] : undefined;
+}
+
+/** Below 0 when `a` is older than `b`, 0 when the same, above 0 when newer (2.10 > 2.9); undefined if either isn't major.minor. */
+export function compareContract(a: string | null | undefined, b: string | null | undefined): number | undefined {
+  const x = parseContract(a);
+  const y = parseContract(b);
+  return x && y ? x[0] - y[0] || x[1] - y[1] : undefined;
+}
 
 // ── Console Copilot shapes (also used by the content script in src/console/) ──
 export type ConsoleAction = 'click' | 'type' | 'select' | 'point' | 'done';

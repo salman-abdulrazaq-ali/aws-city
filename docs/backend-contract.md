@@ -17,6 +17,30 @@ so fix this doc. Both backends import or mirror that file:
 
 The workshop account denies CloudFormation and `iam:CreateRole`, so `aws` is the backend in use.
 
+## Version handshake (v2.17)
+
+`CONTRACT_VERSION` is a `major.minor` string, and versions compare as numbers (`compareContract`: 2.10 is newer than 2.9).
+A client needs a server of its version or newer, so deploy the server first; the handshake catches a release out of order.
+- The client names its version as `?contract=<version>` on `/ws` and on every REST call (`CONTRACT_PARAM`). It's a query
+  parameter, not a header, because a new request header would fail the CORS preflight of a server from before the
+  handshake. The bearer token stays in `Sec-WebSocket-Protocol` / `Authorization`, never in the URL.
+- Every REST answer after the Host and Origin checks carries `x-aws-city-contract: <server version>` (`CONTRACT_HEADER`,
+  listed in `Access-Control-Expose-Headers`). `GET /health` has it in its body (`contract`).
+- The server refuses a client it can't serve with `409 {error}`. That's a client newer than the server (its strict schemas
+  would refuse the newer fields) or older than `MIN_CLIENT_CONTRACT` (`server/src/http.ts`, `2.0` today). It applies to the
+  WebSocket upgrade (before any sign-in; a browser sees only `1006`), `GET /progress` and `PUT /progress`. `DELETE /me`,
+  `GET /me/export` and `POST /me/mfa` always answer. A client with no `contract`, or one that isn't `major.minor`, predates
+  the handshake and is let in.
+- `ServerBackend` asks `GET /progress` why after two refused upgrades, as it does for 401/403/410. A `409` whose header
+  names an older server gives the status `updating`: saves wait on the device, and it asks again every 60–90 s. A newer
+  server gives `outdated`: the extension needs its update, so it doesn't retry. Either way the player reads one calm line,
+  never the server's words.
+- A frame the server can't parse (an unknown action, a wrong shape) is answered `error {message: 'Bad command: this server
+  didn’t understand that request.'}`, and the socket stays open.
+- `PUT /progress` refused with any other 4xx (400: the strict schema refused the copy; 413: too big) isn't re-sent on the
+  next open. The client says "Not saved to your account — kept on this device" until a later save goes through. 5xx,
+  network errors, 401 and 409 keep the copy for the next open.
+
 ## Client → server
 
 | Command | Fields | Notes |

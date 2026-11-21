@@ -10,6 +10,8 @@ interface ImportMetaEnv {
   readonly WXT_COGNITO_REDIRECT_URL?: string;
   /** Set by release builds for the Chrome Web Store (wxt.config.ts). */
   readonly WXT_STORE_BUILD?: string;
+  /** The privacy policy's https address, linked from ⋯ → Account and the sign-in card (required for hosted store builds). */
+  readonly WXT_PRIVACY_URL?: string;
 }
 interface ImportMeta {
   readonly env: ImportMetaEnv;

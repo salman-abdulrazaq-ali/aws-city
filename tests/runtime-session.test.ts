@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
-import type { ConnectionStatus } from '@/backend/AgentBackend';
+import type { ConnectionStatus, SaveState } from '@/backend/AgentBackend';
 import type { ClientCommand, Progress, ServerEvent } from '@/backend/contract';
 import { landmarkOf } from '@/state/cities';
 
@@ -10,6 +10,14 @@ class FakeBackend {
   readonly deployMode = 'guarded' as const;
   private statuses = new Set<(s: ConnectionStatus) => void>();
   private events = new Set<(e: ServerEvent) => void>();
+  private saves = new Set<(s: SaveState) => void>();
+  onSave(cb: (s: SaveState) => void) {
+    this.saves.add(cb);
+    return () => void this.saves.delete(cb);
+  }
+  save(s: SaveState) {
+    for (const cb of this.saves) cb(s);
+  }
   sent: ClientCommand[] = [];
   puts: Progress[] = [];
   remote: Progress | null | Error = null;
@@ -96,6 +104,21 @@ describe('runtime sessions', () => {
     await settle();
     expect(fake.puts.length).toBeGreaterThan(0);
     expect(['lambda', 's3'].every((id) => landmarkOf(fake.puts[0]!, id))).toBe(true);
+  });
+
+  it('a refused save shows "Not saved" until a save goes through; the next player never inherits it', async () => {
+    const { useCity } = await boot();
+    fake.status('connected');
+    await settle();
+    expect(useCity.getState().saveRefused).toBe(false);
+    fake.save('refused');
+    expect(useCity.getState().saveRefused).toBe(true);
+    fake.save('saved');
+    expect(useCity.getState().saveRefused).toBe(false);
+    fake.save('refused');
+    fake.status('signed-out');
+    await settle();
+    expect(useCity.getState().saveRefused).toBe(false);
   });
 
   it('a session that died parks this device’s progress for the same player only', async () => {

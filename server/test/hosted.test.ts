@@ -23,7 +23,7 @@ import type { AwsClients } from '../src/aws.js';
 import type { Approvals } from '../src/contract/approvals.js';
 import { createTenants, type Tenant, UNLINKED_REASON } from '../src/tenants.js';
 import type { ServerEvent } from '../src/world.js';
-import { bearerSubprotocols, CLOSE_CODES, CONTRACT_VERSION } from '../../src/backend/contract.js';
+import { bearerSubprotocols, CLOSE_CODES, CONTRACT_HEADER, CONTRACT_VERSION } from '../../src/backend/contract.js';
 import { fakeLlm, message, text } from './fakes.js';
 
 const EXT = 'chrome-extension://storeid';
@@ -719,6 +719,30 @@ describe('hosted server: Cognito players and tenants', () => {
     expect(carol.progress).toBeNull();
     expect((await fetch(`http://127.0.0.1:${port}/me/export`, { headers: { origin: EXT } })).status).toBe(401);
     expect((await fetch(`http://127.0.0.1:${port}/me/export`, { headers: auth('jwt-alice') })).status).toBe(410); // deleted above
+  });
+
+  it('v2.17 version handshake: a newer extension is refused (409, naming the server’s version) on the upgrade and on progress', async () => {
+    const [major, minor] = CONTRACT_VERSION.split('.').map(Number);
+    const newer = `${major}.${minor! + 1}`;
+    expect((await open('jwt-bob', `?contract=${newer}`)).status).toBe(409);
+    const same = await open('jwt-bob', `?contract=${CONTRACT_VERSION}`);
+    expect(same.ws!.protocol).toBe('base64UrlBearerAuthorization');
+    same.ws!.close();
+    const progress = (contract: string, method = 'GET') =>
+      fetch(`http://127.0.0.1:${port}/progress?contract=${contract}`, {
+        method,
+        headers: { authorization: 'Bearer jwt-bob', 'content-type': 'application/json', origin: EXT },
+        ...(method === 'PUT' ? { body: JSON.stringify({ version: 1, landmarks: {}, updatedAt: new Date().toISOString() }) } : {}),
+      });
+    for (const method of ['GET', 'PUT']) {
+      const refused = await progress(newer, method);
+      expect(refused.status).toBe(409);
+      expect(refused.headers.get(CONTRACT_HEADER)).toBe(CONTRACT_VERSION);
+      expect(refused.headers.get('access-control-expose-headers')).toBe(CONTRACT_HEADER);
+    }
+    expect((await progress(CONTRACT_VERSION)).status).toBe(200);
+    // Taking data out (and deleting it) never waits for a version.
+    expect((await fetch(`http://127.0.0.1:${port}/me/export?contract=${newer}`, { headers: { authorization: 'Bearer jwt-bob', origin: EXT } })).status).toBe(200);
   });
 
   it('an unlinked player can learn but agents refuse to build', async () => {

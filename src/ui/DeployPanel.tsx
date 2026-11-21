@@ -9,8 +9,10 @@ import {
   isSafeAwsUrl,
   linkAccount,
   mfaStatus,
+  openPrivacyPolicy,
   openUrl,
   planDeploy,
+  privacyPolicyUrl,
   removeResource,
   signIn,
   signOut,
@@ -452,6 +454,11 @@ export function DeployPanel() {
           <PendingButton className="btn primary" pending={signingIn} busyLabel="Waiting for sign-in…" onClick={signIn}>
             Sign in
           </PendingButton>
+          {privacyPolicyUrl() && (
+            <button className="btn tiny ghost" title="Opens in a new tab" onClick={openPrivacyPolicy}>
+              Privacy policy ↗
+            </button>
+          )}
         </div>
       )}
       <div className="card account">

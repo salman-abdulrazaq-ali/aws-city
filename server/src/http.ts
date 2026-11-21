@@ -15,7 +15,7 @@ import { verifyStep } from './workshops/checks.js';
 import { isBoard, memorySocial, socialFor } from './social.js';
 import type { Poller } from './state/poller.js';
 import type { Tenant, TenantHub } from './tenants.js';
-import { CLOSE_CODES, CONTRACT_VERSION, type ServerEvent } from './world.js';
+import { CLOSE_CODES, compareContract, CONTRACT_HEADER, CONTRACT_PARAM, CONTRACT_VERSION, type ServerEvent } from './world.js';
 import pkg from '../package.json' with { type: 'json' };
 
 const JSON_LIMIT = 64 * 1024;
@@ -50,6 +50,20 @@ const IDLE_CHECK_MS = 15_000;
 
 /** WebSocket close codes the extension understands (CLOSE_CODES in src/backend/contract.ts; see ServerBackend). */
 export const CLOSE = CLOSE_CODES;
+
+/**
+ * The oldest client contract this server still serves: raise it when a release drops an old client's shapes. Clients
+ * with no `contract` predate the handshake and are always let in (they couldn't read the refusal).
+ */
+export const MIN_CLIENT_CONTRACT = '2.0';
+
+/**
+ * The version handshake (CONTRACT_PARAM in src/backend/contract.ts): why this server can't serve a client that says it
+ * speaks `client`, or undefined when it can. `behind`: the client is newer (this server would refuse its newer fields);
+ * `outdated`: the client is older than MIN_CLIENT_CONTRACT. A missing or malformed version is let in.
+ */
+export const versionRefusal = (client: string | null | undefined, server = CONTRACT_VERSION, min = MIN_CLIENT_CONTRACT): 'behind' | 'outdated' | undefined =>
+  (compareContract(client, server) ?? 0) > 0 ? 'behind' : (compareContract(client, min) ?? 0) < 0 ? 'outdated' : undefined;
 
 /** A token bucket: true while the caller is within its rate. */
 export const rateLimiter = (burst: number, perSecond: number, now = () => Date.now()) => {
@@ -278,8 +292,11 @@ export const createHttpServer = (deps: Deps) => {
       return send(res, h.status, h.body);
     }
     const url = guard(req);
+    // The version handshake: every answer from here on names this server's contract version.
+    res.setHeader(CONTRACT_HEADER, CONTRACT_VERSION);
     if (req.headers.origin) {
       res.setHeader('access-control-allow-origin', req.headers.origin);
+      res.setHeader('access-control-expose-headers', CONTRACT_HEADER);
       res.setHeader('vary', 'Origin');
     }
     if (req.method === 'OPTIONS') {
@@ -306,6 +323,10 @@ export const createHttpServer = (deps: Deps) => {
     const principal = await principalFor(req, url);
 
     if (route === 'GET /progress' || route === 'PUT /progress' || route === 'POST /screenshots' || route === 'GET /me/export') await refuseDeleted(principal.sub);
+    // A client this server can't serve neither reads nor writes progress (a copy from a newer client could lose its newer
+    // fields here). 409 + the header above tell it why; DELETE /me, GET /me/export and POST /me/mfa always answer.
+    if ((route === 'GET /progress' || route === 'PUT /progress') && versionRefusal(url.searchParams.get(CONTRACT_PARAM)))
+      throw new HttpError(409, `This server speaks contract ${CONTRACT_VERSION}`);
     if (route === 'GET /progress') {
       const p = await hub.data(principal).progress.get();
       return p ? send(res, 200, p) : send(res, 404, { error: 'No progress yet' });
@@ -403,6 +424,8 @@ export const createHttpServer = (deps: Deps) => {
       if (draining) throw new HttpError(503, 'Server restarting');
       url = guard(req);
       if (url.pathname !== '/ws') throw new HttpError(404, 'WebSocket endpoint is /ws');
+      // The version handshake, before any sign-in or slot: the client asks GET /progress why (409 + its version header).
+      if (versionRefusal(url.searchParams.get(CONTRACT_PARAM))) throw new HttpError(409, `This server speaks contract ${CONTRACT_VERSION}`);
       if (slots >= config.maxSockets) throw new HttpError(429, 'Too many connections');
     } catch (err) {
       return reject(socket, err);
@@ -548,7 +571,11 @@ export const createHttpServer = (deps: Deps) => {
       }
       const parsed = Command.safeParse(json);
       if (!parsed.success) {
-        emit({ type: 'error', message: `Bad command: ${parsed.error.issues[0]?.message ?? 'invalid'}` });
+        // Never the schema's own words (players see no internal errors), and the socket stays open. The handshake keeps
+        // a newer client off an older server, so an unknown action here is a stray or very old client.
+        const action = (json as { action?: unknown } | null)?.action;
+        log.warn('bad command', { who: who(principal.sub), connId, action: typeof action === 'string' ? action.slice(0, 40) : undefined });
+        emit({ type: 'error', message: 'Bad command: this server didn’t understand that request.' });
         return;
       }
       const cmd = parsed.data;

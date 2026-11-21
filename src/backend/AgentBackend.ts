@@ -1,6 +1,14 @@
 import type { ClientCommand, PlayerDataExport, Progress, ServerEvent } from './contract';
 
-export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error' | 'signed-out';
+/**
+ * `updating`: the server is older than this extension (the v2.17 version handshake refused it), so it waits for the
+ * server's update; `outdated`: the server no longer serves this extension's version, so the extension needs its update.
+ * Progress stays on this device in both.
+ */
+export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error' | 'signed-out' | 'updating' | 'outdated';
+
+/** What became of a progress save: `saved` to the account, or `refused` by it (a 4xx: sending the same copy again can't work). */
+export type SaveState = 'saved' | 'refused';
 
 /**
  * Everything the frontend needs from a backend. MockBackend fakes it in-browser; ServerBackend
@@ -26,6 +34,8 @@ export interface AgentBackend {
   /** null = backend has no progress for this user yet. */
   getProgress(): Promise<Progress | null>;
   putProgress(p: Progress): void;
+  /** Each save's outcome (the server): "Not saved to your account" shows after a refusal, until a save goes through. */
+  onSave?(cb: (s: SaveState) => void): () => void;
   /**
    * v2.17 "Download my data": everything the backend keeps about the player (the server: GET /me/export; the demo: this
    * device's progress, `practice: true`). The account link is metadata only, never the ExternalId.

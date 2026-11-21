@@ -11,7 +11,7 @@ import { courierLegs, isRushHour, LEARN_CAP, LEARN_RUSH_CAP, learnTarget, SCALER
 import { FLOWS } from '@/world/culture';
 import { cityPlanFor, legacyPlan, type CityPlan } from '@/world/plan';
 import { nextLevelPreview } from '@/world/preview';
-import { parseSeason, SEASON_DECALS, SEASON_PROPS, SEASON_TINT, seasonAt, seasonFor, SEASONS } from '@/world/seasons';
+import { parseSeason, SEASON_DECALS, SEASON_PROPS, SEASON_TINT, seasonAt, seasonFor, seasonParam, SEASONS } from '@/world/seasons';
 import { serviceById } from '@/world/taxonomy';
 import { VEHICLE_CAP } from '@/world/traffic';
 
@@ -106,6 +106,13 @@ describe('seasons (src/world/seasons.ts)', () => {
     expect(parseSeason('monsoon')).toBeUndefined();
     expect(seasonFor('us-east-1', new Date('2026-07-01T00:00:00Z'), 'winter')).toBe('winter');
     expect(seasonFor('us-east-1', new Date('2026-07-01T00:00:00Z'), 'nope')).toBe('summer');
+  });
+
+  it('the ?season= param is a dev tool: read in developers’ builds (the smoke), ignored in a store build', () => {
+    expect(seasonParam('?season=winter')).toBe('winter');
+    expect(seasonParam('?season=winter', 'false')).toBe('winter');
+    expect(seasonParam('?season=winter', 'true')).toBeUndefined();
+    expect(seasonParam('?map=legacy')).toBeUndefined();
   });
 
   it('every decal and seasonal prop is drawn, and the tints stay close to white', () => {

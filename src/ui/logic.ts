@@ -43,7 +43,28 @@ export function connectionLabel(kind: BackendKind, status: ConnectionStatus, was
     case 'disconnected':
     case 'error':
       return 'Offline';
+    case 'updating':
+      return 'Server updating';
+    case 'outdated':
+      return 'Update needed';
   }
+}
+
+/** The version handshake refused this extension: the server is older (it's being updated) or no longer serves it. */
+export const SERVER_UPDATING_LINE = 'The city’s server is being updated — your progress is kept on this device';
+export const UPDATE_EXTENSION_LINE = 'A newer AWS City is ready — update the extension';
+/** The server refused a save (a 4xx): said until a save goes through. */
+export const NOT_SAVED_LINE = 'Not saved to your account — kept on this device';
+
+/**
+ * The one calm line about saving (the HUD's SyncNote), or undefined when there's nothing to say: the version handshake
+ * first (it holds every save), then a refused save. Never on the demo, which saves nowhere else.
+ */
+export function syncLine(kind: BackendKind, status: ConnectionStatus, saveRefused: boolean): string | undefined {
+  if (kind === 'mock') return undefined;
+  if (status === 'outdated') return UPDATE_EXTENSION_LINE;
+  if (status === 'updating') return SERVER_UPDATING_LINE;
+  return saveRefused && status !== 'signed-out' ? NOT_SAVED_LINE : undefined;
 }
 
 /** Each mini-game's name (My City's best scores, the HUD while one is open). */
@@ -63,6 +84,9 @@ export function offlineReason(kind: BackendKind, status: ConnectionStatus): stri
   if (isOnline(kind, status)) return undefined;
   if (status === 'signed-out') return 'Sign in first, with the Sign in button at the top';
   if (status === 'connecting') return 'Connecting to the AWS City server…';
+  // The version handshake: short, because the full line is already above the tabs (SyncNote).
+  if (status === 'updating') return 'Waiting for the city’s server to finish updating';
+  if (status === 'outdated') return 'Update the extension first';
   return 'Not connected to the AWS City server. Press Retry at the top.';
 }
 

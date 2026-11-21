@@ -1,6 +1,20 @@
-import { Listeners, uid, type AgentBackend, type ConnectionStatus } from './AgentBackend';
+import { Listeners, uid, type AgentBackend, type ConnectionStatus, type SaveState } from './AgentBackend';
 import type { CognitoAuth } from './auth';
-import { bearerSubprotocols, CLOSE_CODES, isServerEvent, type ClientCommand, type DeployDecision, type DeployPlan, type PlayerDataExport, type Progress, type ServerEvent } from './contract';
+import {
+  bearerSubprotocols,
+  CLOSE_CODES,
+  compareContract,
+  CONTRACT_HEADER,
+  CONTRACT_PARAM,
+  CONTRACT_VERSION,
+  isServerEvent,
+  type ClientCommand,
+  type DeployDecision,
+  type DeployPlan,
+  type PlayerDataExport,
+  type Progress,
+  type ServerEvent,
+} from './contract';
 import templatesJson from '../../shared/templates.json' with { type: 'json' };
 
 /**
@@ -36,6 +50,8 @@ export const GUARDED_BLUEPRINTS = [
 
 /** Commands kept while offline; older ones are dropped first. */
 const MAX_QUEUED = 50;
+/** A server behind this extension is being updated: ask it again after this long (plus up to 30 s of jitter). */
+const HELD_RETRY_MS = 60_000;
 
 export class ServerBackend implements AgentBackend {
   readonly kind = 'server' as const;
@@ -55,6 +71,13 @@ export class ServerBackend implements AgentBackend {
   private diagnosed = false;
   /** The last progress the server didn't accept (offline, 5xx); re-sent on the next open. */
   private unsaved?: Progress;
+  /**
+   * The version handshake refused this extension (GET /progress answered 409 and named the server's version): `updating`
+   * while the server is older (asked again every minute or so), `outdated` while it no longer serves this version. Saves
+   * wait on this device; cleared by the next successful open.
+   */
+  private held?: 'updating' | 'outdated';
+  private saves = new Listeners<SaveState>();
   /** Set while the player is signed out (no token); cleared when a connection attempt starts with one. */
   private signedOut = false;
   /** Hosted (Cognito sign-in) rather than the local server. */
@@ -90,6 +113,9 @@ export class ServerBackend implements AgentBackend {
   }
   onStatus(cb: (s: ConnectionStatus) => void) {
     return this.statuses.add(cb);
+  }
+  onSave(cb: (s: SaveState) => void) {
+    return this.saves.add(cb);
   }
 
   connect() {
@@ -202,7 +228,8 @@ export class ServerBackend implements AgentBackend {
   private async open() {
     if (this.opening) return;
     this.opening = true;
-    this.statuses.emit('connecting');
+    // Held by the version handshake: the line stays as it is while the server is asked again.
+    this.statuses.emit(this.held ?? 'connecting');
     let ws: WebSocket;
     try {
       let protocols: string[] = [];
@@ -222,7 +249,9 @@ export class ServerBackend implements AgentBackend {
         protocols = bearerSubprotocols(token);
       } else if (this.cfg.token) protocols = bearerSubprotocols(this.cfg.token);
       if (this.closedByUser) return this.statuses.emit(this.signedOut ? 'signed-out' : 'disconnected');
-      ws = new WebSocket(this.cfg.wsUrl, protocols);
+      const wsUrl = new URL(this.cfg.wsUrl);
+      wsUrl.searchParams.set(CONTRACT_PARAM, CONTRACT_VERSION);
+      ws = new WebSocket(wsUrl.href, protocols);
     } catch (err) {
       // A token refresh that failed or a bad URL: report it and retry like a dropped connection.
       console.warn('[server] connect failed', err);
@@ -243,6 +272,7 @@ export class ServerBackend implements AgentBackend {
       this.retry = 0;
       this.failedOpens = 0;
       this.diagnosed = false;
+      this.held = undefined;
       this.statuses.emit('connected');
       for (const cmd of this.queue.splice(0)) ws.send(JSON.stringify(cmd));
       if (this.unsaved) this.putProgress(this.unsaved);
@@ -259,7 +289,7 @@ export class ServerBackend implements AgentBackend {
     ws.onerror = () => this.ws === ws && this.statuses.emit('error');
     ws.onclose = (ev) => {
       if (this.ws !== ws) return;
-      this.statuses.emit('disconnected');
+      this.statuses.emit(this.held ?? 'disconnected');
       if (this.closedByUser) return;
       if (ev.code === CLOSE_TOO_MANY) {
         this.events.emit({ type: 'error', message: 'AWS City is open in too many tabs. Close one and press Retry.' });
@@ -272,6 +302,10 @@ export class ServerBackend implements AgentBackend {
       if (ev.code === CLOSE_REAUTH) return this.schedule(200);
       // A deploy is rolling: spread reconnects out so the new tasks aren't stampeded.
       if (ev.code === CLOSE_RESTARTING) return this.schedule(1000 + Math.random() * 4000);
+      // Refused for its version (diagnose found out): a server behind is asked again in a minute or so; an extension too
+      // old waits for its own update (the browser installs it and reloads the extension).
+      if (this.held === 'updating') return this.schedule(HELD_RETRY_MS + Math.random() * 30_000);
+      if (this.held === 'outdated') return;
       // A refused handshake reaches the browser only as 1006: after two in a row, ask the REST API why.
       if (!opened && ++this.failedOpens >= 2 && !this.diagnosed) return void this.diagnose();
       this.backoff();
@@ -280,18 +314,28 @@ export class ServerBackend implements AgentBackend {
 
   /**
    * The WebSocket was refused before it opened. The same checks guard GET /progress, so its status says
-   * why: 401 = token rejected, 403/421 = this build isn't allowed, 410 = this account was deleted, 2xx = per-player tab
-   * limit (429 on /ws only).
+   * why: 401 = token rejected, 403/421 = this build isn't allowed, 409 = the version handshake (the server can't serve
+   * this extension's contract version; its header names the one it speaks), 410 = this account was deleted, 2xx =
+   * per-player tab limit (429 on /ws only).
    */
   private async diagnose() {
     this.diagnosed = true;
-    let status: number | undefined;
+    let res: Response | undefined;
     try {
-      status = (await fetch(this.url('/progress'), { headers: await this.headers(), signal: AbortSignal.timeout(10_000) })).status;
+      res = await fetch(this.url('/progress'), { headers: await this.headers(), signal: AbortSignal.timeout(10_000) });
     } catch {
       // Unreachable: a plain outage. Keep retrying quietly.
     }
+    const status = res?.status;
     if (this.closedByUser) return;
+    if (res && status === 409) {
+      // A server older than this extension (or one that doesn't say) is being updated; a newer one has stopped serving
+      // this version. One calm status either way, never the server's own words.
+      this.held = (compareContract(CONTRACT_VERSION, res.headers.get(CONTRACT_HEADER)) ?? 1) > 0 ? 'updating' : 'outdated';
+      this.statuses.emit(this.held);
+      if (this.held === 'updating') this.schedule(HELD_RETRY_MS + Math.random() * 30_000);
+      return;
+    }
     if (status === 410) return this.deleted();
     if (status === 401) {
       if (this.cfg.auth) {
@@ -429,8 +473,11 @@ export class ServerBackend implements AgentBackend {
     });
   }
 
+  /** A REST address on the server, naming this extension's contract version (the v2.17 handshake). */
   private url(path: string) {
-    return new URL(path, this.cfg.apiUrl);
+    const u = new URL(path, this.cfg.apiUrl);
+    u.searchParams.set(CONTRACT_PARAM, CONTRACT_VERSION);
+    return u;
   }
 
   async uploadScreenshot(dataUrl: string) {
@@ -464,11 +511,23 @@ export class ServerBackend implements AgentBackend {
 
   putProgress(p: Progress) {
     this.unsaved = p;
+    // Held by the version handshake: kept here and sent on the next open, once the server serves this version again.
+    if (this.held) return;
     void this.headers({ 'content-type': 'application/json' })
       .then((headers) => fetch(this.url('/progress'), { method: 'PUT', headers, body: JSON.stringify(p) }))
       .then((res) => {
-        if (!res.ok) throw new Error(`PUT /progress → ${res.status}`);
+        if (res.ok) {
+          if (this.unsaved === p) this.unsaved = undefined;
+          return this.saves.emit('saved');
+        }
+        // Kept for the next open: the server's own trouble (5xx), a stale token (401: re-sent after a fresh one) or the
+        // version handshake (409: re-sent once the server serves this version).
+        if (res.status >= 500 || res.status === 401 || res.status === 409) throw new Error(`PUT /progress → ${res.status}`);
+        // Refused (400: the server's schema refused this copy; 413: too big…): the same copy would be refused again, so
+        // it isn't re-sent. The player is told, and the next change tries afresh (each save sends the whole progress).
         if (this.unsaved === p) this.unsaved = undefined;
+        console.warn('[server] putProgress refused', res.status);
+        this.saves.emit('refused');
       })
       .catch((e) => console.warn('[server] putProgress (will retry on reconnect)', e));
   }

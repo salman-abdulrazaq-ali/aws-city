@@ -5,7 +5,7 @@ import { REGIONS } from '@/world/culture';
 import { bus } from '@/state/bus';
 import { openFindings, useCity } from '@/state/store';
 import { ChatPanel } from '@/ui/ChatPanel';
-import { Hud } from '@/ui/Hud';
+import { Hud, SyncNote } from '@/ui/Hud';
 import { Workshop } from '@/ui/Workshop';
 import { Collection } from '@/ui/Collection';
 import { CoinFly } from '@/ui/CoinFly';
@@ -273,6 +273,7 @@ export function App({ layout }: { layout: Layout }) {
         )}
       </div>
       <aside className="side">
+        <SyncNote />
         {view.name === 'interior' && view.districtId !== 'spheres' ? (
           <ChatPanel districtId={view.districtId} />
         ) : (

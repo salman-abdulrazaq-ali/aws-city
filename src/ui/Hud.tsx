@@ -1,5 +1,20 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
-import { canDeleteAccount, canDownloadData, canReconnect, canSignIn, downloadMyData, openFullCity, openLeaderboard, reconnect, setAutoSnap, signIn, signOut, type Layout } from '@/app/runtime';
+import {
+  canDeleteAccount,
+  canDownloadData,
+  canReconnect,
+  canSignIn,
+  downloadMyData,
+  openFullCity,
+  openLeaderboard,
+  openPrivacyPolicy,
+  privacyPolicyUrl,
+  reconnect,
+  setAutoSnap,
+  signIn,
+  signOut,
+  type Layout,
+} from '@/app/runtime';
 import { chime, isMuted, onMuteChange, setMuted } from '@/game/audio';
 import { isRushNow, subscribeRush } from '@/game/rush';
 import { bus } from '@/state/bus';
@@ -10,7 +25,7 @@ import { coins } from '@/state/wallet';
 import { lightsLine } from '@/state/lights';
 import { glowingNow } from './Loops';
 import { useBump } from './feedback';
-import { connectionLabel, DEMO_KEY, GAME_NAMES, isDemo, readPref, setDemo, TIP_COINS_KEY, writePref } from './logic';
+import { connectionLabel, DEMO_KEY, GAME_NAMES, isDemo, readPref, setDemo, syncLine, TIP_COINS_KEY, writePref } from './logic';
 import { Coin, Icon } from './icons';
 import { RankChip } from './Collection';
 import { openEverything, useLocked } from './useLadder';
@@ -161,8 +176,23 @@ function ConnectionPill() {
 }
 
 /**
+ * The one calm line about saving, above the tabs (src/ui/logic.ts syncLine): the server is being updated, the extension
+ * needs its update (the v2.17 version handshake), or the account refused a save. Progress stays on this device in all three.
+ */
+export function SyncNote() {
+  const line = useCity((s) => syncLine(s.backendKind, s.backendStatus, s.saveRefused));
+  if (!line) return null;
+  return (
+    <p className="sync-note" role="status">
+      {line}
+    </p>
+  );
+}
+
+/**
  * ⋯ → Account, on the hosted server: the player's own AWS account (its card in Deploy), sign in or out, download their
- * data, and delete their account (asked first, in a dialog: DeleteAccountDialog).
+ * data, delete their account (asked first, in a dialog: DeleteAccountDialog) and the privacy policy (when the build has
+ * its address, WXT_PRIVACY_URL).
  */
 function AccountItems({ run, askDelete }: { run: (fn: () => void) => () => void; askDelete: () => void }) {
   const status = useCity((s) => s.backendStatus);
@@ -197,6 +227,11 @@ function AccountItems({ run, askDelete }: { run: (fn: () => void) => () => void;
             </button>
           )}
         </>
+      )}
+      {privacyPolicyUrl() && (
+        <button role="menuitem" title="Opens in a new tab" onClick={run(openPrivacyPolicy)}>
+          Privacy policy ↗
+        </button>
       )}
       <hr />
     </>

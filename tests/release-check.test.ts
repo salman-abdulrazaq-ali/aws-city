@@ -1,9 +1,14 @@
-// Release safety (scripts/release-check.mjs): a hosted store build can't ship without its backend, and a release's tag,
-// package.json and built manifests agree, with no manifest key.
+// Release safety (scripts/release-check.mjs): a hosted store build can't ship without its backend or its privacy policy's
+// https address, and a release's tag, package.json and built manifests agree, with no manifest key.
 import { describe, expect, it } from 'vitest';
-import { HOSTED_VARS, manifestVersionOf, releaseProblems, storeBuildProblems } from '../scripts/release-check.mjs';
+import { HOSTED_VARS, isHttpsUrl, manifestVersionOf, PRIVACY_VAR, releaseProblems, storeBuildProblems } from '../scripts/release-check.mjs';
 
-const hosted = { WXT_STORE_BUILD: 'true', WXT_BACKEND: 'hosted', ...Object.fromEntries(HOSTED_VARS.map((k) => [k, `value-of-${k}`])) };
+const hosted = {
+  WXT_STORE_BUILD: 'true',
+  WXT_BACKEND: 'hosted',
+  ...Object.fromEntries(HOSTED_VARS.map((k) => [k, `value-of-${k}`])),
+  [PRIVACY_VAR]: 'https://city.example.com/privacy',
+};
 
 describe('store builds', () => {
   it('a hosted store build with every setting passes, and names each one that is missing', () => {
@@ -16,6 +21,16 @@ describe('store builds', () => {
   it('Safari also needs the sign-in relay page', () => {
     expect(storeBuildProblems(hosted, 'safari').join()).toMatch(/WXT_COGNITO_REDIRECT_URL/);
     expect(storeBuildProblems({ ...hosted, WXT_COGNITO_REDIRECT_URL: 'https://relay/' }, 'safari')).toEqual([]);
+  });
+
+  it('needs the privacy policy, at a plain https address (the stores require one; the extension opens nothing else)', () => {
+    expect(PRIVACY_VAR).toBe('WXT_PRIVACY_URL');
+    expect(storeBuildProblems({ ...hosted, WXT_PRIVACY_URL: '' }).join()).toMatch(/needs WXT_PRIVACY_URL: the https address where your privacy policy is published/);
+    for (const bad of ['http://city.example.com/privacy', 'javascript:alert(1)', 'https://user:pw@city.example.com/p', 'city.example.com/privacy'])
+      expect(storeBuildProblems({ ...hosted, WXT_PRIVACY_URL: bad }).join(), bad).toMatch(/must be a plain https address/);
+    expect(isHttpsUrl('https://github.com/me/aws-city/blob/main/PRIVACY.md')).toBe(true);
+    // Only hosted store builds need it: a developer's build or the demo has no account to explain.
+    expect(storeBuildProblems({ WXT_BACKEND: 'hosted' })).toEqual([]);
   });
 
   it("developers' builds keep the demo fallback: only a hosted store build is checked", () => {
