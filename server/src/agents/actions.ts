@@ -28,9 +28,11 @@ export const ACTION_SCHEMAS = {
     .strict()
     .describe('Demolish a library: delete a DynamoDB table built by the game, with all its items. The player must approve.'),
   create_bucket: z
-    .object({ suffix: z.string().regex(/^[a-z0-9-]{3,20}$/, '3-20 lowercase letters, digits or -') })
+    // aws-city-<12-digit account>- is 22 characters and S3 allows 63, so the player's part may be up to 40 (ending in a
+    // letter or digit, as S3 requires). The message names the rule as AWS City's naming, not AWS's.
+    .object({ suffix: z.string().regex(/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/, "AWS City names buckets aws-city-<account>-<name>: the name part must be 3-40 lowercase letters, digits or hyphens, starting and ending with a letter or digit") })
     .strict()
-    .describe('Build a warehouse: create an S3 bucket named aws-city-<account>-<suffix>.'),
+    .describe('Build a warehouse: create an S3 bucket named aws-city-<account>-<suffix>. suffix: 3-40 lowercase letters, digits or hyphens.'),
   delete_bucket: z
     .object({ name: z.string().startsWith('aws-city-') })
     .strict()

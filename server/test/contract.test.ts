@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createAgentRunner } from '../src/agents/runner.js';
 import { feedEvents, welcomeEvents } from '../src/contract/aws-feed.js';
-import { createOrchestrator, isActionStep, withPlan } from '../src/contract/orchestrator.js';
+import { createOrchestrator, isActionStep, planForAgent, withPlan } from '../src/contract/orchestrator.js';
 import { createUploadStore } from '../src/contract/uploads.js';
 import { isServerEvent, type ServerEvent, SERVICES } from '../src/world.js';
 import { emptySnapshot, fakeActions, fakeLlm, message, text, toolUse } from './fakes.js';
@@ -71,7 +71,7 @@ describe('server speaks the frontend contract', () => {
     expect(steps).toContainEqual(expect.objectContaining({ index: 2, status: 'done', text: 'Explain S3 storage classes' }));
     expect(events.find((e) => e.type === 'task.done')).toMatchObject({ taskId: 't6', ok: false, xp: [{ serviceId: 's3', amount: 3 }] });
     // The agent was told the plan, after the player's own words.
-    expect(JSON.stringify(calls.at(-1))).toContain("The concierge's plan for you:");
+    expect(JSON.stringify(calls.at(-1))).toContain('<concierge_plan>');
   });
 
   it('a text-only reply to an explanation-only plan still walks its steps as done', async () => {
@@ -86,9 +86,17 @@ describe('server speaks the frontend contract', () => {
     expect(withPlan('store photos', [])).toBe('store photos');
     const out = withPlan('Store my holiday photos cheaply', ["Create a bucket named 'holiday-photos-123'", 'Explain <b>tiers</b>']);
     expect(out.startsWith('Store my holiday photos cheaply\n\n')).toBe(true);
-    expect(out).toContain("1. Create a bucket named 'holiday-photos-123'\n2. Explain b tiers /b");
+    expect(out).toContain("<concierge_plan>\n1. Create a bucket named 'holiday-photos-123'\n2. Explain b tiers /b\n</concierge_plan>");
     expect(out).not.toContain('<b>');
-    expect(out).toMatch(/with your tools now \(each change waits for the player's Approve\), then explain briefly\.$/);
+    expect(out).toMatch(/Do what the player's own words ask\. If that changes AWS, use your tools now \(each change waits for the player's Approve\), then explain briefly\.$/);
+  });
+
+  it('planForAgent: a plan (built from page text too) never adds a destructive step the player did not ask for', () => {
+    const steps = ['Create a bucket named photos', 'Delete the bucket aws-city-1-old', 'Terminate the web server', 'Explain lifecycle rules'];
+    expect(planForAgent('Store my holiday photos cheaply', steps)).toEqual(['Create a bucket named photos', 'Explain lifecycle rules']);
+    expect(withPlan('Store my holiday photos cheaply', steps)).not.toMatch(/Delete|Terminate/);
+    expect(planForAgent('Delete the bucket aws-city-1-old', steps)).toEqual(steps);
+    expect(planForAgent('please tear down my test stuff', steps)).toEqual(steps);
   });
 
   it('isActionStep: steps that change AWS by their first verb, not explanations', () => {

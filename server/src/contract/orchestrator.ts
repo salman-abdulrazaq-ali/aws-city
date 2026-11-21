@@ -31,14 +31,28 @@ const SERVICE_IDS = SERVICES.map((s) => s.id) as [string, ...string[]];
 const XP = { task: 15, perWrite: 5, attempted: 3, classify: 3 } as const;
 
 /**
- * The landmark agent's words to act on: the player's request (first, unchanged), then the concierge's plan, so the agent
- * does what the city just showed the player it would. A small model left with only "Store my holiday photos cheaply"
- * answered with advice and made no change (21 Nov 2026). Plan steps are model text: neutralised like other page data.
+ * The landmark agent's words to act on: the player's request (first, unchanged), then the concierge's plan as fenced data
+ * (<concierge_plan>), so the agent does what the city just showed the player it would. A small model left with only
+ * "Store my holiday photos cheaply" answered with advice and made no change (21 Nov 2026).
+ *
+ * The plan is model text, and the concierge reads page context (a console page's title can carry anyone's words), so it
+ * never becomes instructions: it's neutralised, fenced, and a step that destroys something stays only when the player's
+ * own words ask for one (planForAgent). The agent acts on what the player asked; every change still waits for their Approve.
  */
-export const withPlan = (prompt: string, steps: readonly string[]) =>
-  steps.length
-    ? `${prompt}\n\nThe concierge's plan for you:\n${steps.map((s, i) => `${i + 1}. ${neutralise(s)}`).join('\n')}\nDo the steps that change AWS with your tools now (each change waits for the player's Approve), then explain briefly.`
+export const withPlan = (prompt: string, steps: readonly string[]) => {
+  const plan = planForAgent(prompt, steps);
+  return plan.length
+    ? `${prompt}\n\n<concierge_plan>\n${plan.map((s, i) => `${i + 1}. ${neutralise(s)}`).join('\n')}\n</concierge_plan>\nDo what the player's own words ask. If that changes AWS, use your tools now (each change waits for the player's Approve), then explain briefly.`
     : prompt;
+};
+
+/** The leading verb of a plan step, lower-case letters only. */
+const leadingVerb = (step: string) => (step.trim().split(/\s+/)[0] ?? '').toLowerCase().replace(/[^a-z]/g, '');
+const DESTROYS = /^(delete|terminate|demolish|remove|stop|detach|revoke|disable|destroy|drop|empty|purge)$/;
+const ASKS_TO_DESTROY = /\b(delete|terminate|demolish|remove|stop|detach|revoke|disable|destroy|drop|empty|purge|tear down|teardown|clean up)\b/i;
+/** The plan the agent sees: steps that destroy something only when the player's own words ask for it. */
+export const planForAgent = (prompt: string, steps: readonly string[]) =>
+  ASKS_TO_DESTROY.test(prompt) ? [...steps] : steps.filter((s) => !DESTROYS.test(leadingVerb(s)));
 
 /**
  * A plan step that changes AWS (the concierge puts those first, one action each: "Create a bucket named X", "Launch a
@@ -47,7 +61,7 @@ export const withPlan = (prompt: string, steps: readonly string[]) =>
  */
 const REMOVES = /^(delete|terminate|demolish|remove|make|build|put|turn)$/;
 export const isActionStep = (step: string) => {
-  const verb = (step.trim().split(/\s+/)[0] ?? '').toLowerCase().replace(/[^a-z]/g, '');
+  const verb = leadingVerb(step);
   return isCommit(verb) || REMOVES.test(verb);
 };
 

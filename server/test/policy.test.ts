@@ -21,9 +21,16 @@ describe('parseAction (untrusted tool calls / player input)', () => {
     ['bad instance id', 'stop_instance', { instanceId: 'not-an-id' }],
     ['table without prefix', 'create_table', { name: 'users' }],
     ['uppercase bucket suffix', 'create_bucket', { suffix: 'Crates' }],
+    ['bucket suffix over 40 characters', 'create_bucket', { suffix: 'a'.repeat(41) }],
+    ['bucket suffix ending in a hyphen', 'create_bucket', { suffix: 'photos-' }],
     ['wrong input type', 'stop_instance', 'i-0123456789abcdef0'],
   ])('rejects %s', (_label, name, input) => {
     expect(parseAction(name, input).ok).toBe(false);
+  });
+
+  it('a bucket name part of 3 to 40 characters fits S3\u2019s 63 with the aws-city-<account>- prefix', () => {
+    for (const suffix of ['abc', 'holiday-photos-test-123', 'a'.repeat(40)]) expect(parseAction('create_bucket', { suffix }).ok, suffix).toBe(true);
+    expect(`aws-city-111122223333-${'a'.repeat(40)}`.length).toBeLessThanOrEqual(63);
   });
 
   it('generates a tool definition for every action', () => {
