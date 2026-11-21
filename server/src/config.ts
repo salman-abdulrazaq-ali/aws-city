@@ -9,6 +9,11 @@ import { randomBytes } from 'node:crypto';
 export interface Config {
   awsProfile: string;
   region: string;
+  /**
+   * Where Bedrock is called (AWS_CITY_BEDROCK_REGION; default: `region`). A new account's Bedrock can be held at 0
+   * tokens a day in one Region and not another: the AI can run there while data and sign-in stay in `region`.
+   */
+  bedrockRegion: string;
   host: string;
   port: number;
   /**
@@ -96,9 +101,11 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
   const port = positiveInt('PORT', env.PORT, 8787, 0);
   const hosted = env.AWS_CITY_MODE === 'hosted';
   const host = env.HOST ?? '127.0.0.1';
+  const region = env.AWS_CITY_REGION ?? env.AWS_REGION ?? 'us-west-2';
   const cfg: Config = {
     awsProfile: env.AWS_CITY_PROFILE ?? 'workshop',
-    region: env.AWS_CITY_REGION ?? env.AWS_REGION ?? 'us-west-2',
+    region,
+    bedrockRegion: env.AWS_CITY_BEDROCK_REGION || region,
     host,
     port,
     extensionOrigins: list(env.EXTENSION_ORIGIN),

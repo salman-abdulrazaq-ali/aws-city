@@ -108,7 +108,13 @@ increase** → Amazon Bedrock, your Region. You can paste:
 > Please apply the default on-demand quotas for Amazon Nova Pro and Nova Lite. It's for a small educational app (a
 > few users).
 
-**You don't have to wait to host.** When the AI check fails, `npm run setup` offers to deploy the city with its AI
+**The hold is often Region by Region, and model by model.** For Amazon Nova, `npm run setup` then looks for a Region
+where Nova answers (it tries us-west-2, us-east-1 and eu-central-1) and offers to run the city's AI there for now:
+your data, sign-in and server stay in your Region, and only the agents' questions are processed in that one. If Lite
+answers but Pro doesn't, the city runs on Nova Lite. Run setup again once your Region answers to move it back. On your
+own computer, `npm run live -- --model nova --region us-west-2` does the same.
+
+**You don't have to wait to host.** When no Region answers, `npm run setup` offers to deploy the city with its AI
 switched off. Sign-in, saving progress, linking an account, City care's findings and AWS status all work without it.
 Once Bedrock answers, run `npm run setup` again and the AI switches on. `npm run setup -- --dry-run` checks everything
 and changes nothing in AWS.

@@ -53,8 +53,13 @@ export const NOVA_MODELS = { main: 'amazon.nova-pro-v1:0', light: 'amazon.nova-l
 
 export type ModelChoice = 'claude' | 'nova';
 
-/** The server's two models for this Region and choice; Claude throws where it has no geo profile, Nova doesn't. */
-export const modelsForChoice = (region: string, choice: ModelChoice): { main: string; light: string } => (choice === 'nova' ? { ...NOVA_MODELS } : modelsFor(region));
+/**
+ * The server's two models for this Region and choice; Claude throws where it has no geo profile, Nova doesn't.
+ * `liteOnly` (Nova): Lite in both slots, for an account whose Region has a Nova Lite quota but none for Pro yet (a new
+ * account's Bedrock hold lifts model by model).
+ */
+export const modelsForChoice = (region: string, choice: ModelChoice, opts: { liteOnly?: boolean } = {}): { main: string; light: string } =>
+  choice === 'nova' ? (opts.liteOnly ? { main: NOVA_MODELS.light, light: NOVA_MODELS.light } : { ...NOVA_MODELS }) : modelsFor(region);
 
 /** The foundation model behind a profile id: us.anthropic.claude-opus-5-5 → anthropic.claude-opus-5-5. */
 export const foundationModel = (profileId: string) => profileId.replace(/^[a-z]+\.(?=anthropic\.)/, '');

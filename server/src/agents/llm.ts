@@ -39,7 +39,7 @@ export const createLlm = (config: Config) => {
   const credentials = serviceCredentials(config);
   const family = familyOf(config.model);
   const client = new AnthropicBedrock({
-    awsRegion: config.region,
+    awsRegion: config.bedrockRegion,
     // The SDK default is 10 minutes per attempt; a turn should fail well inside the 100 s deploy drain.
     timeout: 90_000,
     maxRetries: 2,
@@ -64,7 +64,7 @@ export const createLlm = (config: Config) => {
     strands(opts: StrandsModelOptions, gate: () => Promise<void> = NO_GATE): Model {
       const modelId = opts.light ? config.lightModel : config.model;
       if (family === 'anthropic') return new MeteredAnthropicModel({ client: client as unknown as Anthropic, modelId, maxTokens: opts.maxTokens, effort: opts.effort }, gate);
-      return new MeteredBedrockModel({ modelId, region: config.region, credentials, maxTokens: opts.maxTokens }, gate);
+      return new MeteredBedrockModel({ modelId, region: config.bedrockRegion, credentials, maxTokens: opts.maxTokens }, gate);
     },
 
     /**

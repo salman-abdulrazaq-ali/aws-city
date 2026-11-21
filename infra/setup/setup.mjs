@@ -31,7 +31,7 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const INFRA = fileURLToPath(new URL('../', import.meta.url));
 const CONFIG = `${ROOT}aws-city.config.json`;
 // Claude's inference-profile ids follow the Region (us./eu./au./in.): one table for the wizard and the CDK app.
-const { SUPPORTED_REGIONS, geoFor, modelsForChoice, unsupportedRegionMessage } = await import(new URL('../lib/models.ts', import.meta.url));
+const { NOVA_MODELS, SUPPORTED_REGIONS, geoFor, modelsForChoice, unsupportedRegionMessage } = await import(new URL('../lib/models.ts', import.meta.url));
 // The review screen's text (pure, tested in test/review.test.ts).
 const { cloudFrontNote, isFreeMail, plannedActions, reviewRows, reviewText } = await import(new URL('../lib/review.ts', import.meta.url));
 const GOOGLE_SECRET = 'aws-city/google-oauth';
@@ -200,6 +200,16 @@ const missing = [];
 const failures = [];
 /** The kill switch at deploy: off only when Bedrock isn't ready and the player chose to deploy anyway. */
 let aiEnabled = true;
+/** Where the AI runs ('' = this Region) and whether Nova runs on Lite alone: set when Bedrock answers only elsewhere. */
+let aiRegion = '';
+let novaLiteOnly = false;
+/** Amazon Nova answers (one token) in this Region? */
+const novaAnswers = (r, modelId) =>
+  new BedrockRuntimeClient({ region: r, credentials })
+    .send(new ConverseCommand({ modelId, messages: [{ role: 'user', content: [{ text: 'hi' }] }], inferenceConfig: { maxTokens: 1 } }))
+    .then(() => true, () => false);
+/** Regions with Nova on demand to try when this one is held (a new account's hold is Region by Region, model by model). */
+const NOVA_ELSEWHERE = ['us-west-2', 'us-east-1', 'eu-central-1'];
 for (const modelId of offline ? [] : MODELS) {
   try {
     await aws(BedrockRuntimeClient).send(new ConverseCommand({ modelId, messages: [{ role: 'user', content: [{ text: 'hi' }] }], inferenceConfig: { maxTokens: 1 } }));
@@ -229,9 +239,36 @@ if (missing.length) {
       : `In the Amazon Bedrock console (Region ${region}), open the Model catalog, pick an Anthropic Claude model and\nsubmit the one-time use-case form (once per account or organization). How-to:\nhttps://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html\nThe first call also needs aws-marketplace:Subscribe and a valid payment method. Access can take a few minutes; then run setup again.`,
     verifying ? 'Wait for AWS to verify the account' : unavailable ? 'Upgrade to the Paid plan' : quota ? 'Bedrock has no quota yet' : modelChoice === 'nova' ? 'Amazon Nova isn’t answering' : 'Enable Claude on Bedrock',
   );
+  // Nova held here? It may answer in another Region (or Lite alone here): offer that before deploying without AI.
+  if (modelChoice === 'nova' && quota && !offline) {
+    s.start('Looking for a Region where Amazon Nova answers');
+    let found;
+    for (const r of [region, ...NOVA_ELSEWHERE.filter((x) => x !== region)]) {
+      if (!(await novaAnswers(r, NOVA_MODELS.light))) continue;
+      found = { region: r, liteOnly: !(await novaAnswers(r, NOVA_MODELS.main)) };
+      break;
+    }
+    s.stop(found ? `Amazon Nova ${found.liteOnly ? 'Lite' : 'Pro and Lite'} answer${found.liteOnly ? 's' : ''} in ${found.region}` : 'No Region answers yet', found ? 0 : 1);
+    if (found) {
+      const away = found.region !== region;
+      p.note(
+        [
+          `The city's agents can run on Amazon Nova ${found.liteOnly ? 'Lite' : 'Pro and Lite'} in ${found.region} for now.`,
+          away ? `Your data, sign-in and server stay in ${region}; only the agents' questions (and the Lookout's screenshots) are processed in ${found.region}.` : '',
+          `Run setup again once ${region} answers${found.liteOnly ? ' Nova Pro' : ''} to move it back.`,
+        ].filter(Boolean).join('\n'),
+        `Bedrock answers ${away ? 'in another Region' : 'with Nova Lite'}`,
+      );
+      const use = await ask('confirm', { message: `Run the city's AI ${away ? `in ${found.region}` : 'on Nova Lite'} for now?`, initialValue: true }, Boolean(prev.aiRegion || prev.novaLiteOnly));
+      if (use) {
+        aiRegion = away ? found.region : '';
+        novaLiteOnly = found.liteOnly;
+      }
+    }
+  }
   // The rest of the city doesn't need the AI: sign-in, progress, linking an account, City care's findings (rules), AWS
   // status. Deploy it now with the kill switch off; re-running setup once Bedrock answers switches the AI on.
-  if (!DRY) {
+  if (!DRY && !aiRegion && !novaLiteOnly) {
     const withoutAi = !YES && (await ask('confirm', { message: 'Deploy the city now with its AI switched off? (Re-run setup once Bedrock answers to switch it on.)', initialValue: true }));
     if (!withoutAi) bye();
     aiEnabled = false;
@@ -402,7 +439,7 @@ for (;;) {
   deleteSes = (prev.sesIdentitiesCreated ?? []).filter((e) => e !== A.sesFromEmail && !otherEnvSes.includes(e));
   const regions = [...new Set([region, ...(A.domainName ? [] : ['us-east-1'])])];
   const bootstrap = offline ? [] : (await Promise.all(regions.map(async (r) => ((await cdkReady(r)) ? undefined : r)))).filter(Boolean);
-  const review = { envName, modelChoice, region, aiEnabled, ...A, firefox: Boolean(A.firefoxAddonId) };
+  const review = { envName, modelChoice, region, aiEnabled, aiRegion, novaLiteOnly, ...A, firefox: Boolean(A.firefoxAddonId) };
   const actions = plannedActions(review, { account, storeGoogleSecret: Boolean(A.googleSecret), verifySes: Boolean(A.sesFromEmail) && sesStatus === undefined, deleteSes, bootstrap });
   if (YES) break;
   p.note(reviewText(reviewRows(review), actions), 'Check your answers');
@@ -446,7 +483,7 @@ for (const e of deleteSes) {
 }
 
 const envConfig = {
-  modelChoice, aiEnabled, region, domainName, hostedZoneId, zoneName, cognitoDomainPrefix, extensionIds, firefoxAddonId, safari, googleClientId, sesFromEmail, alarmEmail,
+  modelChoice, aiEnabled, aiRegion, novaLiteOnly, region, domainName, hostedZoneId, zoneName, cognitoDomainPrefix, extensionIds, firefoxAddonId, safari, googleClientId, sesFromEmail, alarmEmail,
   monthlyBudgetUsd, dailyModelCalls: prev.dailyModelCalls ?? 100, globalDailyModelCalls: prev.globalDailyModelCalls ?? (envName === 'prod' ? 20000 : 5000),
   minTasks: prev.minTasks ?? (envName === 'prod' ? 2 : 1), maxTasks: prev.maxTasks ?? (envName === 'prod' ? 10 : 3),
   // SES addresses this wizard asked AWS to verify, so a later run can offer to remove one nothing uses.
@@ -516,6 +553,7 @@ p.note(
     safari ? 'Safari:    npm run safari:xcode, then build and submit the app in Xcode (docs/safari.md).' : '',
     alarmEmail ? `Confirm:   click the AWS Notification emails sent to ${alarmEmail}.` : '',
     aiEnabled ? '' : `AI:        off for now. Once Bedrock answers, run npm run setup again (or: aws ssm put-parameter --name /cloud-city/${envName}/ai-enabled --value true --overwrite).`,
+    aiRegion ? `AI:        runs in ${aiRegion}${novaLiteOnly ? ' on Nova Lite' : ''} until ${region} answers; then run npm run setup again to move it back.` : novaLiteOnly ? 'AI:        runs on Nova Lite until Nova Pro answers here; then run npm run setup again.' : '',
     githubRepo ? `GitHub:    add AWS_DEPLOY_ROLE_ARN (see the AWSCity-CI stack) + AWS_REGION=${region} to the ${envName} environment.` : '',
     'Kill switch / runbook: docs/runbook.md',
   ]

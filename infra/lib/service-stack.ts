@@ -92,14 +92,16 @@ export class ServiceStack extends Stack {
     });
     this.taskRole.applyRemovalPolicy(RemovalPolicy.RETAIN);
 
-    const models = [env.models.main, env.models.light];
+    const models = [...new Set([env.models.main, env.models.light])];
+    // The AI can run in another Region than the stack (EnvConfig.aiRegion): the grant follows it.
+    const aiRegion = env.aiRegion || this.region;
     this.taskRole.addToPolicy(
       new iam.PolicyStatement({
         sid: 'Bedrock',
         // InvokeModel (Claude) and Converse (Amazon Nova) use the same two actions. A geo inference profile (us./eu./au./
         // in., lib/models.ts) routes to its foundation model in that geography's Regions; Nova is on demand, in this one.
         actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
-        resources: bedrockResources(this.region, this.account, models),
+        resources: bedrockResources(aiRegion, this.account, models),
       }),
     );
     this.taskRole.addToPolicy(
@@ -241,6 +243,7 @@ export class ServiceStack extends Stack {
       environment: {
         AWS_CITY_MODE: 'hosted',
         AWS_CITY_REGION: this.region,
+        AWS_CITY_BEDROCK_REGION: aiRegion,
         PUBLIC_HOSTS: publicHost,
         PUBLIC_URL: `https://${publicHost}`,
         EXTENSION_ORIGIN: origins.join(',') || 'chrome-extension://not-configured',

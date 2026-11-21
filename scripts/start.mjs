@@ -236,16 +236,30 @@ async function bedrockHello(tools, profile, region, choice = 'claude') {
 }
 
 /** Amazon Nova (Bedrock's Converse API, the same route the server's Strands agents use): Lite, then Pro. */
+/** Nova Pro had no quota where Lite answered (novaHello): the server runs Lite in both slots. */
+let novaLiteOnly = false;
+
 async function novaHello(tools, profile, region) {
   const { main, light } = modelsForChoice(region, 'nova');
   try {
     const client = new tools.runtime.BedrockRuntimeClient({ region, credentials: tools.providers.fromIni({ profile }) });
     const hello = (modelId) => client.send(new tools.runtime.ConverseCommand({ modelId, messages: [{ role: 'user', content: [{ text: 'Reply with OK.' }] }], inferenceConfig: { maxTokens: 16 } }));
     await hello(light);
-    await hello(main);
-    return { ok: true, detail: 'Amazon Nova Pro + Lite are ready (Strands Agents on Bedrock)' };
+    // A new account's Bedrock hold lifts model by model: Pro can still be at 0 where Lite answers. Play on Lite then.
+    novaLiteOnly = !(await hello(main).then(
+      () => true,
+      () => false,
+    ));
+    return { ok: true, detail: novaLiteOnly ? 'Amazon Nova Lite is ready (Pro has no quota here yet, so the city uses Lite)' : 'Amazon Nova Pro + Lite are ready (Strands Agents on Bedrock)' };
   } catch (err) {
-    return { ok: false, message: explainAwsError(err), hint: `Amazon Nova on Bedrock in ${region}: https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html` };
+    const held = /Throttl|too many tokens|quota/i.test(`${err?.name} ${err?.message}`);
+    return {
+      ok: false,
+      message: explainAwsError(err),
+      hint: held && region !== 'us-west-2'
+        ? `A new account's hold is Region by Region: quit and try npm run live -- --model nova --region us-west-2.`
+        : `Amazon Nova on Bedrock in ${region}: https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html`,
+    };
   }
 }
 
@@ -678,7 +692,7 @@ async function main() {
       dash.status(`Starting the server with AWS profile "${profile}"…`);
       let ready = false;
       dash.logTitle('Server log');
-      server = startServer({ profile, region, models: choice === 'nova' || geoFor(region) ? modelsForChoice(region, choice) : undefined, cfg, onLog: (l) => (dash.log(l), !ready && dash.status(`server: ${l}`)) });
+      server = startServer({ profile, region, models: choice === 'nova' || geoFor(region) ? modelsForChoice(region, choice, { liteOnly: novaLiteOnly }) : undefined, cfg, onLog: (l) => (dash.log(l), !ready && dash.status(`server: ${l}`)) });
       void server.exited.then((code) => {
         if (!ready || stopping) return;
         dash.set('server', { status: 'failed', detail: `stopped (exit ${code ?? '?'})` });

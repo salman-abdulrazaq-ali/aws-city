@@ -105,6 +105,21 @@ describe('one-shot calls on Strands Agents (Nova)', () => {
   });
 });
 
+describe('the AI can run in another Region', () => {
+  it('Bedrock is called in AWS_CITY_BEDROCK_REGION; data and sign-in keep AWS_CITY_REGION; without it, the same Region', async () => {
+    expect(loadConfig({ AWS_CITY_REGION: 'eu-west-2', AWS_CITY_TOKEN: 'x'.repeat(32) }).bedrockRegion).toBe('eu-west-2');
+    const cfg = loadConfig({ ...NOVA, AWS_CITY_BEDROCK_REGION: 'us-west-2', AWS_CITY_TOKEN: 'x'.repeat(32) });
+    expect(cfg).toMatchObject({ region: 'eu-west-2', bedrockRegion: 'us-west-2' });
+    const regions: string[] = [];
+    bedrock.on(ConverseStreamCommand).callsFake(async (_input, getClient) => {
+      regions.push(await getClient().config.region());
+      return textReply('Hi.');
+    });
+    await say(createLlm(cfg), { system: 's', prompt: 'p', model: { light: true, maxTokens: 50 }, onText: () => {} });
+    expect(regions).toEqual(['us-west-2']);
+  });
+});
+
 describe('the city on Nova', () => {
   const orchestrator = (llm: Llm) =>
     createOrchestrator({ llm, runner: { run: vi.fn() } as never, snapshot: async () => snapshot([]), uploads: { get: async () => undefined }, walkMs: 0, paceMs: 0 });
