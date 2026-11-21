@@ -37,12 +37,18 @@ const FIX_RESOURCE_TYPE: Record<string, string> = {
   dynamodb: 'AWS::DynamoDB::Table',
 };
 
-const labelOf = (a: ApprovalRequest['action']): string =>
-  'name' in a ? String(a.name) : 'instanceId' in a ? String(a.instanceId) : 'suffix' in a ? `aws-city-…-${String(a.suffix)}` : a.type;
+/** The resource's own name or id as the action gives it (a new bucket: only its suffix so far), if it gives one. */
+const ownName = (a: ApprovalRequest['action']): string | undefined => {
+  if ('name' in a) return String(a.name);
+  if ('instanceId' in a) return String(a.instanceId);
+  if ('suffix' in a) return String(a.suffix);
+  return undefined;
+};
+
+const labelOf = (a: ApprovalRequest['action']): string => ('suffix' in a ? `aws-city-…-${String(a.suffix)}` : (ownName(a) ?? a.type));
 
 /** What the player types when a write gets a second look: the resource's own name or id (never empty, never "…"). */
-const typedName = (a: ApprovalRequest['action']): string =>
-  ('name' in a ? String(a.name) : 'instanceId' in a ? String(a.instanceId) : 'suffix' in a ? String(a.suffix) : '').trim() || a.type;
+const typedName = (a: ApprovalRequest['action']): string => ownName(a)?.trim() || a.type;
 
 /**
  * Per-socket player approvals (contract v2): a guarded write becomes deploy.preview; the player answers

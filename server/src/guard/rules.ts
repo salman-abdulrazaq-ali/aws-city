@@ -70,6 +70,9 @@ const instanceId = z.string().regex(/^i-[0-9a-f]{8,17}$/);
 const tag = z.object({ Key: z.string(), Value: z.string() }).strict();
 const gameTags = z.array(tag).refine((tags) => tags.some((t) => t.Key === GAME_TAG.key && t.Value === GAME_TAG.value), 'missing the city tag');
 const oneInstance = z.object({ InstanceIds: z.tuple([instanceId]) }).strict();
+/** Stop, start or terminate: exactly one instance, named by its own id (the grant's target). */
+const oneInstanceWrite = (iam: string) =>
+  write({ iam: [iam], wire: () => oneInstance, refusal: 'houses are changed one at a time, by their own id.', target: (i) => i.InstanceIds[0] });
 /** A bucket of this account's: aws-city-<account>-… (none until the account is known). */
 const gameBucket = (ctx: WireContext) => (ctx.accountId ? z.string().startsWith(bucketPrefix(ctx.accountId)) : z.never());
 /** S3's ExpectedBucketOwner, which must be the account the credentials act in (bucket names are global). */
@@ -128,9 +131,9 @@ export const RULES = {
         return name === undefined ? undefined : launchTarget(i.InstanceType, name);
       },
     }),
-    StopInstancesCommand: write({ iam: ['ec2:StopInstances'], wire: () => oneInstance, refusal: 'houses are changed one at a time, by their own id.', target: (i) => i.InstanceIds[0] }),
-    StartInstancesCommand: write({ iam: ['ec2:StartInstances'], wire: () => oneInstance, refusal: 'houses are changed one at a time, by their own id.', target: (i) => i.InstanceIds[0] }),
-    TerminateInstancesCommand: write({ iam: ['ec2:TerminateInstances'], wire: () => oneInstance, refusal: 'houses are changed one at a time, by their own id.', target: (i) => i.InstanceIds[0] }),
+    StopInstancesCommand: oneInstanceWrite('ec2:StopInstances'),
+    StartInstancesCommand: oneInstanceWrite('ec2:StartInstances'),
+    TerminateInstancesCommand: oneInstanceWrite('ec2:TerminateInstances'),
     RevokeSecurityGroupIngressCommand: fix({
       iam: ['ec2:RevokeSecurityGroupIngress'],
       wire: () => z.object({ GroupId: z.string().regex(/^sg-[0-9a-f]+$/), SecurityGroupRuleIds: z.array(z.string().regex(/^sgr-[0-9a-f]+$/)).min(1) }).strict(),

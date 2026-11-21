@@ -78,7 +78,9 @@ export const fixesAllowed = async (ec2: AwsClients['ec2']): Promise<boolean | un
     return undefined; // EC2 always answers a DryRun with an error; a plain success says nothing either way
   } catch (err) {
     const name = (err as Error)?.name;
-    return name === 'DryRunOperation' ? true : name === 'UnauthorizedOperation' ? false : undefined;
+    if (name === 'DryRunOperation') return true;
+    if (name === 'UnauthorizedOperation') return false;
+    return undefined;
   }
 };
 

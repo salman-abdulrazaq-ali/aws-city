@@ -18,10 +18,31 @@ export const fileProgress = (file: string): ProgressStore & { fileFor(sub: strin
   return { get: (sub) => forSub(sub).get(), put: (sub, input) => forSub(sub).put(input), fileFor, forget: (sub) => void stores.delete(sub) };
 };
 
+/** A per-player JSON file beside progress: <name>.json for the local player, <name>-<hash>.json for anyone else. */
+const playerFile = (progressFile: string, name: string) => (sub: string) =>
+  join(dirname(progressFile), sub === 'local' ? `${name}.json` : `${name}-${createHash('sha256').update(sub).digest('hex').slice(0, 24)}.json`);
+
+/** Writes `value` as JSON through a temp file renamed over `file`, so a reader never sees half of it. */
+const writeJson = async (file: string, value: unknown) => {
+  await mkdir(dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(tmp, JSON.stringify(value));
+  await rename(tmp, file);
+};
+
+/** Runs the calls given to it one at a time (one process), so one call's read and write can't interleave with another's. */
+const serialQueue = () => {
+  let chain: Promise<unknown> = Promise.resolve();
+  return <T>(fn: () => Promise<T>): Promise<T> => {
+    const run = chain.then(fn, fn);
+    chain = run.catch(() => undefined);
+    return run;
+  };
+};
+
 /** The bill cache as JSON files beside progress: bill.json for the local player, bill-<hash>.json for anyone else. */
 export const fileBills = (progressFile: string): BillStore & { fileFor(sub: string): string } => {
-  const dir = dirname(progressFile);
-  const fileFor = (sub: string) => join(dir, sub === 'local' ? 'bill.json' : `bill-${createHash('sha256').update(sub).digest('hex').slice(0, 24)}.json`);
+  const fileFor = playerFile(progressFile, 'bill');
   const get = async (sub: string) => {
     try {
       const r = JSON.parse(await readFile(fileFor(sub), 'utf8')) as BillRecord;
@@ -30,20 +51,9 @@ export const fileBills = (progressFile: string): BillStore & { fileFor(sub: stri
       return undefined;
     }
   };
-  const write = async (sub: string, record: BillRecord) => {
-    const file = fileFor(sub);
-    await mkdir(dir, { recursive: true });
-    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(tmp, JSON.stringify(record));
-    await rename(tmp, file);
-  };
-  // Writes run one at a time (one process), so saveRead's check and write can't interleave with a put.
-  let chain: Promise<unknown> = Promise.resolve();
-  const serial = <T>(fn: () => Promise<T>): Promise<T> => {
-    const run = chain.then(fn, fn);
-    chain = run.catch(() => undefined);
-    return run;
-  };
+  const write = (sub: string, record: BillRecord) => writeJson(fileFor(sub), record);
+  // Writes run one at a time, so saveRead's check and write can't interleave with a put.
+  const serial = serialQueue();
   return {
     fileFor,
     get,
@@ -61,15 +71,9 @@ export const fileBills = (progressFile: string): BillStore & { fileFor(sub: stri
 
 /** Step-up MFA's "authenticator on since" as JSON files beside progress: mfa.json for the local player, mfa-<hash>.json for anyone else. */
 export const fileMfa = (progressFile: string): MfaStore & { fileFor(sub: string): string } => {
-  const dir = dirname(progressFile);
-  const fileFor = (sub: string) => join(dir, sub === 'local' ? 'mfa.json' : `mfa-${createHash('sha256').update(sub).digest('hex').slice(0, 24)}.json`);
-  // One process: the read and the write of since() can't interleave with another call.
-  let chain: Promise<unknown> = Promise.resolve();
-  const serial = <T>(fn: () => Promise<T>): Promise<T> => {
-    const run = chain.then(fn, fn);
-    chain = run.catch(() => undefined);
-    return run;
-  };
+  const fileFor = playerFile(progressFile, 'mfa');
+  // The read and the write of since() can't interleave with another call.
+  const serial = serialQueue();
   return {
     fileFor,
     since: (sub, now) =>
@@ -80,11 +84,7 @@ export const fileMfa = (progressFile: string): MfaStore & { fileFor(sub: string)
         } catch {
           // none yet (or unreadable): this is the first sight
         }
-        const file = fileFor(sub);
-        await mkdir(dir, { recursive: true });
-        const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-        await writeFile(tmp, JSON.stringify({ since: now }));
-        await rename(tmp, file);
+        await writeJson(fileFor(sub), { since: now });
         return now;
       }),
     forget: (sub) => serial(() => rm(fileFor(sub), { force: true })),

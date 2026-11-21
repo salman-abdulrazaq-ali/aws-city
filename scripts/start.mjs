@@ -624,12 +624,18 @@ async function main() {
 
   // Real AWS: sign-in first (questions only if it has to), then the panel does the rest.
   const tools = await awsTools();
+  /** Why a typed Region won't do (not a Region name, or no Claude there), or undefined when it will. */
+  const regionProblem = (v) => {
+    if (!REGION_RE.test(v ?? '')) return 'e.g. us-west-2';
+    const m = localModels(v);
+    return m.ok ? undefined : m.message;
+  };
   const region =
     args.region ??
     (plan.kind !== 'ask' && REGION_RE.test(prefs.region ?? '')
       ? prefs.region
       : interactive
-        ? ((sceneDirty = true), await ask(p.text({ message: 'AWS Region (where Claude runs for you)', initialValue: prefs.region ?? 'us-west-2', validate: (v) => (!REGION_RE.test(v ?? '') ? 'e.g. us-west-2' : localModels(v).ok ? undefined : localModels(v).message) })))
+        ? ((sceneDirty = true), await ask(p.text({ message: 'AWS Region (where Claude runs for you)', initialValue: prefs.region ?? 'us-west-2', validate: regionProblem })))
         : 'us-west-2');
   // One Region drives Claude and the mirrored account, and not every Region has Claude: say so before signing in.
   const models = localModels(region);

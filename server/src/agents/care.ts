@@ -148,8 +148,11 @@ export const createCityCare = (deps: {
       log.warn('fix failed', { fix: fix.fixId, err: (err as Error).name });
       // The city's own gate refused it: not an IAM problem, so don't send the player to their stack.
       if (err instanceof GuardDeniedError) return emit({ type: 'deploy.status', deployId, status: 'failed', message: err.publicMessage });
-      const denied = classifyAwsError(err) === 'denied';
-      emit({ type: 'deploy.status', deployId, status: 'failed', message: denied ? (publicErrors() ? `AWS said no. To let the citizens make fixes, ${howToAllowFixes()}.` : 'AWS said no: the AWS profile this server runs with isn’t allowed to make this change.') : 'The change didn’t go through. Nothing else was touched.' });
+      let message = 'The change didn’t go through. Nothing else was touched.';
+      if (classifyAwsError(err) === 'denied') {
+        message = publicErrors() ? `AWS said no. To let the citizens make fixes, ${howToAllowFixes()}.` : 'AWS said no: the AWS profile this server runs with isn’t allowed to make this change.';
+      }
+      emit({ type: 'deploy.status', deployId, status: 'failed', message });
     }
   };
 

@@ -6,7 +6,7 @@ import { connectsPlayerLabel, LinkError } from './accounts/link.js';
 import type { Llm } from './agents/llm.js';
 import { metered, withErrorCodes } from './agents/metered.js';
 import { type CityCare, createCityCare } from './agents/care.js';
-import { type AgentRunner, createAgentRunner } from './agents/runner.js';
+import { type AgentRunner, createAgentRunner, outcomeMessage } from './agents/runner.js';
 import { createStrandsRunner } from './citizens/engine.js';
 import { isCitizen } from './citizens/roles.js';
 import { type ActionService, createActionService, REJECTED_REASON } from './agents/service.js';
@@ -462,13 +462,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         const out = await w.actions.submit(action, input(id), { approve });
         // A "no" already said so on the preview's own deploy.status.
         if (out.status === 'denied' && out.reason === REJECTED_REASON && !stale) return;
-        const message = stale
-          ? 'Your AWS account was disconnected or changed meanwhile, so nothing was changed.'
-          : out.status === 'done' || out.status === 'failed'
-            ? out.result.message
-            : out.status === 'denied'
-              ? out.reason
-              : out.error;
+        const message = stale ? 'Your AWS account was disconnected or changed meanwhile, so nothing was changed.' : outcomeMessage(out);
         // After an approval: the outcome on the same deployId. Refused before any preview: an error for the request.
         if (!approvals.reportResult(requestId, { name: action, input: input(id), outcome: out.status, message }, emit)) emit({ type: 'error', requestId, message });
       },

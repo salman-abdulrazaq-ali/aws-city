@@ -99,8 +99,10 @@ export function memorySocial(now: () => number = Date.now): SocialStore {
       }
       for (const [key, b] of boards) {
         const e = b.get(who);
-        const [board, week] = [key.slice(0, key.lastIndexOf('#')), key.slice(key.lastIndexOf('#') + 1)];
-        if (e) rows.push({ kind: 'leaderboard', board, week, name: e.name, score: e.score });
+        if (!e) continue;
+        // The key is `${board}#${week}` (submit).
+        const cut = key.lastIndexOf('#');
+        rows.push({ kind: 'leaderboard', board: key.slice(0, cut), week: key.slice(cut + 1), name: e.name, score: e.score });
       }
       return rows;
     },
