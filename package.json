@@ -34,6 +34,7 @@
     "region-facts": "node scripts/fetch-region-facts.mjs",
     "city-maps": "node scripts/fetch-city-maps.mjs",
     "setup": "node scripts/launcher/require-node.mjs && npm --prefix infra ci --no-audit --no-fund --loglevel=error && node infra/setup/setup.mjs",
+    "ai": "node scripts/ai-switch.mjs",
     "lint:firefox": "wxt build -b firefox && web-ext lint -s .output/firefox-mv3",
     "safari:xcode": "wxt build -b safari && xcrun safari-web-extension-converter .output/safari-mv3 --project-location .cache/safari --app-name \"AWS City\" --bundle-identifier dev.awscity.AWS-City --macos-only --no-prompt --force"
   },

@@ -26,6 +26,8 @@ export interface ReviewAnswers {
   aiRegion?: string;
   /** Amazon Nova on Lite alone (no Pro quota yet). */
   novaLiteOnly?: boolean;
+  /** The AI on the city's own Fargate service (EnvConfig.aiCpu): the model's name and its on-demand cost a day. */
+  aiCpu?: { spot: boolean; model: string; daily: number };
 }
 
 /** Big free email providers. Their addresses make a poor SES "from" address: mail sent as them is often filtered. */
@@ -59,6 +61,9 @@ export const reviewRows = (a: ReviewAnswers): [string, string][] => [
   ['AI models', a.modelChoice === 'nova' ? (a.novaLiteOnly ? 'Amazon Nova Lite (no Pro quota yet)' : 'Amazon Nova') : 'Claude'],
   ['AI at first', a.aiEnabled ? 'on' : 'off until Bedrock answers (run setup again to switch it on)'],
   ...(a.aiRegion && a.aiRegion !== a.region ? ([['AI runs in', `${a.aiRegion} (only the agents' questions; data stays in ${a.region})`]] as [string, string][]) : []),
+  ...(a.aiCpu
+    ? ([['AI on Fargate', `${a.aiCpu.model} on Graviton, ${a.aiCpu.spot ? 'Spot' : 'on-demand'}, private to your VPC (about $${a.aiCpu.daily.toFixed(2)} a day on demand${a.aiCpu.spot ? ', Spot less' : ''}; off: npm run ai -- off)`]] as [string, string][])
+    : []),
   ['Region', a.domainName ? a.region : `${a.region} (CloudFront's firewall: us-east-1)`],
   ['Web address', a.domainName || 'CloudFront HTTPS (https://xxxx.cloudfront.net)'],
   ['Sign-in page', `${a.cognitoDomainPrefix}.auth.${a.region}.amazoncognito.com`],
@@ -81,6 +86,7 @@ export const plannedActions = (
   ...(ctx.verifySes ? [`Ask Amazon SES to verify ${a.sesFromEmail} (it sends a verification email)`] : []),
   ...ctx.deleteSes.map((e) => `Remove the SES identity ${e} (set up by an earlier run, no longer used)`),
   ...ctx.bootstrap.map((r) => `Prepare ${ctx.account}/${r} for CDK (one time)${r === 'us-east-1' && r !== a.region ? ': for CloudFront’s firewall' : ''}`),
+  ...(a.aiCpu ? [`Build the AI image (${a.aiCpu.model}, about 4 GB) in AWS CodeBuild and run it on a private Fargate service`] : []),
   `Deploy AWS City (${a.envName}) in ${a.region}: about 15–25 minutes the first time`,
 ];
 

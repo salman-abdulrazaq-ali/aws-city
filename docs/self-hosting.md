@@ -119,11 +119,25 @@ own computer, `npm run live -- --model nova --region us-west-2` does the same.
 
 **On your own computer, the AI doesn't need Bedrock at all.** `npm run live -- --model local` runs the agents on a
 model in Ollama on your computer (the launcher offers to install it and download the model once), and
-`npm run live -- --model nova --local-fallback` tries Bedrock first and uses that model when Bedrock is held. The
-hosted city always uses Bedrock.
+`npm run live -- --model nova --local-fallback` tries Bedrock first and uses that model when Bedrock is held.
 
-**You don't have to wait to host.** When no Region answers, `npm run setup` offers to deploy the city with its AI
-switched off. Sign-in, saving progress, linking an account, City care's findings and AWS status all work without it.
+**The hosted city's AI can run on AWS without Bedrock.** When Bedrock is held, `npm run setup` offers to run the
+agents on an open model (Qwen3 4B, Apache-2.0) on a private Fargate service in your VPC: Graviton CPUs, no GPU, and
+only the city's server can reach it, so questions never leave your AWS account. The server's Strands Agents try
+Bedrock first and this model next, so once Bedrock answers it carries on by itself.
+
+| | Cost while it runs (eu-west-2) | Notes |
+|---|---|---|
+| On-demand | about $0.36 an hour (~$8.70 a day): 8 vCPU + 16 GB of Graviton Fargate | steady: use it for a live demo |
+| Spot | usually well under half of that | AWS can stop it with two minutes' notice; ECS starts another |
+
+It's slower than Bedrock (a CPU, not a GPU). Switch it on and off without a deploy: `npm run ai -- on`,
+`npm run ai -- off`, `npm run ai -- status`. While it's off it costs nothing; the rest of the city keeps working.
+A new account's GPU quota (EC2 G instances, SageMaker GPU endpoints) also starts at 0; ask for it in Service Quotas
+if you want a faster self-hosted model later.
+
+**You don't have to wait to host.** When no Region answers and you don't want the Fargate AI, `npm run setup` offers
+to deploy the city with its AI switched off. Sign-in, saving progress, linking an account, City care's findings and AWS status all work without it.
 Once Bedrock answers, run `npm run setup` again and the AI switches on. `npm run setup -- --dry-run` checks everything
 and changes nothing in AWS.
 

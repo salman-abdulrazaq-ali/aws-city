@@ -31,7 +31,7 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const INFRA = fileURLToPath(new URL('../', import.meta.url));
 const CONFIG = `${ROOT}aws-city.config.json`;
 // Claude's inference-profile ids follow the Region (us./eu./au./in.): one table for the wizard and the CDK app.
-const { NOVA_MODELS, SUPPORTED_REGIONS, geoFor, modelsForChoice, unsupportedRegionMessage } = await import(new URL('../lib/models.ts', import.meta.url));
+const { CPU_MODEL, FARGATE_ARM_PRICE, NOVA_MODELS, SUPPORTED_REGIONS, cpuAiHourly, geoFor, modelsForChoice, unsupportedRegionMessage } = await import(new URL('../lib/models.ts', import.meta.url));
 // The review screen's text (pure, tested in test/review.test.ts).
 const { cloudFrontNote, isFreeMail, plannedActions, reviewRows, reviewText } = await import(new URL('../lib/review.ts', import.meta.url));
 const { progressLine } = await import(new URL('../lib/deploy-progress.ts', import.meta.url));
@@ -247,6 +247,40 @@ let aiEnabled = true;
 /** Where the AI runs ('' = this Region) and whether Nova runs on Lite alone: set when Bedrock answers only elsewhere. */
 let aiRegion = '';
 let novaLiteOnly = false;
+/** The AI on AWS without Bedrock: an open model on the city's own Fargate service (EnvConfig.aiCpu), or undefined. */
+let aiCpu;
+const cpuDay = (cpuAiHourly() * 24).toFixed(2);
+/** Ask whether to run the AI on Fargate, and Spot or on-demand. `held`: Bedrock isn't answering (else: as a backup). */
+const askAiCpu = async (held) => {
+  p.note(
+    [
+      `${CPU_MODEL.name} (open, Apache-2.0), served on a private Fargate service in your VPC: Graviton, ${CPU_MODEL.cpu / 1024} vCPU, ${CPU_MODEL.memoryMiB / 1024} GB, no GPU.`,
+      'Only the city server can reach it; questions never leave your AWS account. The agents keep their tools, approvals and MFA.',
+      held ? 'Slower than Bedrock (a CPU, not a GPU). Once Bedrock answers, the city uses Bedrock first and keeps this as a backup.' : 'Bedrock stays first; this answers when Bedrock is busy or held.',
+      `Cost while it runs: about $${cpuDay} a day on demand (${FARGATE_ARM_PRICE.region} prices), Spot usually well under half. Switch it off any time: npm run ai -- off.`,
+    ].join('\n'),
+    'AI on AWS without Bedrock',
+  );
+  const use = await ask(
+    'confirm',
+    { message: held ? `Run the city's AI on AWS Fargate (${CPU_MODEL.name}) until Bedrock answers?` : `Bedrock answers. Keep the AI on Fargate as a backup behind it? (about $${cpuDay} a day on demand)`, initialValue: held || Boolean(prev.aiCpu) },
+    Boolean(prev.aiCpu),
+  );
+  if (!use) return undefined;
+  const mode = await ask(
+    'select',
+    {
+      message: 'Fargate Spot or on-demand?',
+      options: [
+        { value: 'spot', label: 'Spot (cheapest)', hint: 'AWS can stop it with 2 minutes’ notice; ECS starts another' },
+        { value: 'demand', label: 'On-demand', hint: `steady, for a live demo: about $${cpuDay} a day` },
+      ],
+      initialValue: prev.aiCpu?.spot === false ? 'demand' : 'spot',
+    },
+    prev.aiCpu?.spot === false ? 'demand' : 'spot',
+  );
+  return { spot: mode === 'spot' };
+};
 /** Amazon Nova answers (one token) in this Region? */
 const novaAnswers = (r, modelId) =>
   new BedrockRuntimeClient({ region: r, credentials })
@@ -310,15 +344,21 @@ if (missing.length) {
       }
     }
   }
+  // Bedrock held everywhere: the AI can still run on AWS, an open model on the city's own Fargate service.
+  if (!offline && !aiRegion && !novaLiteOnly) aiCpu = await askAiCpu(true);
   // The rest of the city doesn't need the AI: sign-in, progress, linking an account, City care's findings (rules), AWS
   // status. Deploy it now with the kill switch off; re-running setup once Bedrock answers switches the AI on.
-  if (!DRY && !aiRegion && !novaLiteOnly) {
+  if (!DRY && !aiRegion && !novaLiteOnly && !aiCpu) {
     const withoutAi = !YES && (await ask('confirm', { message: 'Deploy the city now with its AI switched off? (Re-run setup once Bedrock answers to switch it on.)', initialValue: true }));
     if (!withoutAi) bye();
     aiEnabled = false;
     p.log.warn('Deploying with the AI off: agents will say "The city’s AI is resting" until you run setup again.');
   }
-} else s.stop(offline ? '[dry run] Bedrock check skipped' : `${MAIN_MODEL} and ${LIGHT_MODEL} are available`);
+} else {
+  s.stop(offline ? '[dry run] Bedrock check skipped' : `${MAIN_MODEL} and ${LIGHT_MODEL} are available`);
+  // Bedrock answers again: the Fargate AI an earlier run set up can stay as a backup, or go (it costs while it runs).
+  if (!offline && prev.aiCpu) aiCpu = await askAiCpu(false);
+}
 
 // ── 3–8. The questions. They only read AWS: nothing is written until you confirm the review (step 9). ───────
 let zones = [];
@@ -475,7 +515,7 @@ for (;;) {
   deleteSes = (prev.sesIdentitiesCreated ?? []).filter((e) => e !== A.sesFromEmail && !otherEnvSes.includes(e));
   const regions = [...new Set([region, ...(A.domainName ? [] : ['us-east-1'])])];
   const bootstrap = offline ? [] : (await Promise.all(regions.map(async (r) => ((await cdkReady(r)) ? undefined : r)))).filter(Boolean);
-  const review = { envName, modelChoice, region, aiEnabled, aiRegion, novaLiteOnly, ...A, firefox: Boolean(A.firefoxAddonId) };
+  const review = { envName, modelChoice, region, aiEnabled, aiRegion, novaLiteOnly, ...A, firefox: Boolean(A.firefoxAddonId), aiCpu: aiCpu && { ...aiCpu, model: CPU_MODEL.name, daily: cpuAiHourly() * 24 } };
   const actions = plannedActions(review, { account, storeGoogleSecret: Boolean(A.googleSecret), verifySes: Boolean(A.sesFromEmail) && sesStatus === undefined, deleteSes, bootstrap });
   if (YES) break;
   p.note(reviewText(reviewRows(review), actions), 'Check your answers');
@@ -519,7 +559,7 @@ for (const e of deleteSes) {
 }
 
 const envConfig = {
-  modelChoice, aiEnabled, aiRegion, novaLiteOnly, region, domainName, hostedZoneId, zoneName, cognitoDomainPrefix, extensionIds, firefoxAddonId, safari, googleClientId, sesFromEmail, alarmEmail,
+  modelChoice, aiEnabled, aiRegion, novaLiteOnly, ...(aiCpu ? { aiCpu } : {}), region, domainName, hostedZoneId, zoneName, cognitoDomainPrefix, extensionIds, firefoxAddonId, safari, googleClientId, sesFromEmail, alarmEmail,
   monthlyBudgetUsd, dailyModelCalls: prev.dailyModelCalls ?? 100, globalDailyModelCalls: prev.globalDailyModelCalls ?? (envName === 'prod' ? 20000 : 5000),
   minTasks: prev.minTasks ?? (envName === 'prod' ? 2 : 1), maxTasks: prev.maxTasks ?? (envName === 'prod' ? 10 : 3),
   // SES addresses this wizard asked AWS to verify, so a later run can offer to remove one nothing uses.
@@ -609,6 +649,7 @@ p.note(
     safari ? 'Safari:    npm run safari:xcode, then build and submit the app in Xcode (docs/safari.md).' : '',
     alarmEmail ? `Confirm:   click the AWS Notification emails sent to ${alarmEmail}.` : '',
     aiEnabled ? '' : `AI:        off for now. Once Bedrock answers, run npm run setup again (or: aws ssm put-parameter --name /cloud-city/${envName}/ai-enabled --value true --overwrite).`,
+    aiCpu ? `AI:        ${CPU_MODEL.name} on your Fargate (${aiCpu.spot ? 'Spot' : 'on-demand'}), private to your VPC${missing.length ? ', until Bedrock answers' : ', behind Bedrock'}. Off: npm run ai -- off · on: npm run ai -- on.` : '',
     aiRegion ? `AI:        runs in ${aiRegion}${novaLiteOnly ? ' on Nova Lite' : ''} until ${region} answers; then run npm run setup again to move it back.` : novaLiteOnly ? 'AI:        runs on Nova Lite until Nova Pro answers here; then run npm run setup again.' : '',
     githubRepo ? `GitHub:    add AWS_DEPLOY_ROLE_ARN (see the AWSCity-CI stack) + AWS_REGION=${region} to the ${envName} environment.` : '',
     'Kill switch / runbook: docs/runbook.md',

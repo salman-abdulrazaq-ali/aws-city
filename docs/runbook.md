@@ -85,6 +85,10 @@ Amazon Nova or Claude, and a new account's Bedrock hold). This section is the op
   and reset the budget action in the Budgets console.
 - Per-player daily cap: `dailyModelCalls` (redeploy); global daily cap: `globalDailyModelCalls`. The Console
   Copilot also has a per-player 60-calls-per-10-minutes budget.
+- **The AI on Fargate** (`aiCpu`, when Bedrock is held): `npm run ai -- off` stops its task (no cost while off),
+  `npm run ai -- on` starts it (2–4 minutes), `npm run ai -- status` shows it. It runs until you switch it off: the
+  budget action only denies Bedrock, so watch the 50%/80% emails. The kill switch above still stops every model call,
+  this one included. Its log group is `AWSCity-<env>-Service-AiLogs…`; `npm run setup` without it removes the service.
 
 ## Alarms (SNS → alarmEmail)
 

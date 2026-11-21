@@ -1,5 +1,5 @@
 // A model on this computer (Ollama's OpenAI-compatible endpoint) on Strands Agents, for when Bedrock is held or offline:
-// local mode only, loopback only, the same gate as every model call, tools offered and never forced, and a Strands
+// loopback only in local mode (hosted: only the city's own private AI service), the same gate as every model call, tools offered and never forced, and a Strands
 // ModelRouter that tries Bedrock first and the local model when a Bedrock call fails. The "Ollama" here is a real HTTP
 // server on 127.0.0.1 speaking the Chat Completions stream, so the wire format is checked, not a mock of the client.
 import { createServer, type Server } from 'node:http';
@@ -12,7 +12,7 @@ import { ModelRouter } from '@strands-agents/sdk/models/routing';
 import { createLlm, type Llm } from '../src/agents/llm.js';
 import { pick, say } from '../src/agents/once.js';
 import { MeteredOpenAIModel } from '../src/citizens/model.js';
-import { DEFAULT_LOCAL_MODEL, DEFAULT_LOCAL_URL, isLoopbackUrl, loadConfig, validate } from '../src/config.js';
+import { DEFAULT_LOCAL_MODEL, DEFAULT_LOCAL_URL, isLoopbackUrl, isPrivateServiceUrl, loadConfig, validate } from '../src/config.js';
 import { createOrchestrator } from '../src/contract/orchestrator.js';
 import type { ServerEvent } from '../src/world.js';
 import { snapshot } from './fixtures.js';
@@ -88,7 +88,7 @@ describe('the local model is for this computer only', () => {
     expect(() => loadConfig({ ...TOKEN, AWS_CITY_MODEL_PROVIDER: 'ollama' })).toThrow(/must be one of bedrock, local/);
   });
 
-  it('hosted refuses it: hosted players’ questions go to Bedrock only', () => {
+  it('hosted: only the city’s own AI service at its private name, never loopback or the internet', () => {
     const hosted = {
       ...loadConfig(TOKEN),
       authMode: 'cognito' as const,
@@ -99,8 +99,21 @@ describe('the local model is for this computer only', () => {
       playerRoleTemplateUrl: 'https://example.com/r.yaml',
     };
     expect(() => validate(hosted)).not.toThrow();
-    expect(() => validate({ ...hosted, modelProvider: 'local' })).toThrow(/local mode only/);
-    expect(() => validate({ ...hosted, ...NOVA_CFG, localFallback: true })).toThrow(/local mode only/);
+    // Without the private namespace (infra sets it with the AI service), a hosted server has no model of its own.
+    expect(() => validate({ ...hosted, modelProvider: 'local' })).toThrow(/own AI service in its VPC/);
+    expect(() => validate({ ...hosted, ...NOVA_CFG, localFallback: true })).toThrow(/own AI service in its VPC/);
+    const aws = { ...hosted, privateDomain: 'awscity-prod.internal', localModel: { url: 'http://ai.awscity-prod.internal:11434/v1', model: 'qwen3:4b-instruct-2507-q4_K_M', vision: false } };
+    expect(() => validate({ ...aws, ...NOVA_CFG, localFallback: true })).not.toThrow();
+    expect(() => validate({ ...aws, modelProvider: 'local' })).not.toThrow();
+    for (const url of ['http://127.0.0.1:11434/v1', 'http://example.com/v1', 'http://ai.awscity-prod.internal.evil.com/v1', 'http://a.b.awscity-prod.internal/v1', 'http://u:p@ai.awscity-prod.internal/v1'])
+      expect(() => validate({ ...aws, modelProvider: 'local', localModel: { ...aws.localModel, url } }), url).toThrow(/own AI service/);
+  });
+
+  it('a private service name: one label under a .internal namespace', () => {
+    expect(isPrivateServiceUrl('http://ai.awscity-prod.internal:11434/v1', 'awscity-prod.internal')).toBe(true);
+    expect(isPrivateServiceUrl('http://ai.awscity-prod.internal:11434/v1', 'example.com')).toBe(false);
+    expect(isPrivateServiceUrl('http://ai.awscity-prod.internal:11434/v1', undefined)).toBe(false);
+    expect(isPrivateServiceUrl('file://ai.awscity-prod.internal/x', 'awscity-prod.internal')).toBe(false);
   });
 
   it('the fallback runs behind Amazon Nova, not Claude (Claude keeps its own fallback)', () => {
