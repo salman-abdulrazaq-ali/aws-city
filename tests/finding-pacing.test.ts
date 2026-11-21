@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CityFinding } from '@/backend/contract';
 import { demoFindings } from '@/backend/mockAccount';
 import { bus } from '@/state/bus';
-import { ADVANCED_RULES, DRIP_MS, heldFindingIds, MAX_OPEN_FINDINGS, openFindings, severityRank, useCity } from '@/state/store';
+import { ADVANCED_RULES, DRIP_MS, forgetGotIt, heldFindingIds, MAX_OPEN_FINDINGS, openFindings, severityRank, useCity } from '@/state/store';
 import { SERVICES } from '@/world/taxonomy';
 import { landmarkOf } from '@/state/cities';
 
@@ -82,12 +82,20 @@ describe('"Got it": a finding with no automatic fix never holds a place forever'
     expect(heldFindingIds()).toEqual([]);
     // The server (or the demo) sends it again: it stays read.
     send({ ...fs.find((f) => f.id === read)! });
-    expect(s().findings[read].status).toBe('resolved');
+    s().releaseCare();
     // The device remembers it (a reload reads it back): still read when it arrives again.
     expect(JSON.parse(localStorage.getItem('awscity.findingsGotIt') ?? '[]')).toContain(read);
-    // The session ends (sign-out): this player's "Got it"s leave with them, so the next player sees their own city's.
+    // The session ends without a sign-out (reload, expired token): the "Got it"s stay, so the finding arrives resolved.
     s().resetSession();
+    expect(JSON.parse(localStorage.getItem('awscity.findingsGotIt') ?? '[]')).toContain(read);
+    send({ ...fs.find((f) => f.id === read)! });
+    s().releaseCare();
+    expect(shown()).not.toContain(read);
+    expect(heldFindingIds()).toEqual([]);
+    // An explicit sign-out forgets them, so the next player sees their own city's.
+    forgetGotIt();
     expect(localStorage.getItem('awscity.findingsGotIt')).toBeNull();
+    s().resetSession();
     send({ ...fs.find((f) => f.id === read)! });
     s().releaseCare();
     expect(s().findings[read].status).toBe('open');

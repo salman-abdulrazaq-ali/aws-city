@@ -739,6 +739,14 @@ const gotIt = (): Set<string> => {
     return new Set();
   }
 };
+/** An explicit sign-out (or account deletion) forgets them: the next player sees their own city's. An expired session keeps them. */
+export const forgetGotIt = () => {
+  try {
+    globalThis.localStorage?.removeItem(GOT_IT_KEY);
+  } catch {
+    /* storage unavailable */
+  }
+};
 const rememberGotIt = (id: string) => {
   try {
     globalThis.localStorage?.setItem(GOT_IT_KEY, JSON.stringify([...gotIt(), id].slice(-GOT_IT_MAX)));
@@ -1501,8 +1509,6 @@ export const useCity = create<CityState>()((set, get) => ({
       globalThis.localStorage?.removeItem(TODAY_KEY);
       globalThis.localStorage?.removeItem(SHIFT_KEY);
       globalThis.localStorage?.removeItem(CULTURE_KEY);
-      // The findings this player said "Got it" to are theirs: the next player sees their own city's.
-      globalThis.localStorage?.removeItem(GOT_IT_KEY);
     } catch {
       /* storage unavailable */
     }

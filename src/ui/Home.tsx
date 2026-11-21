@@ -93,6 +93,11 @@ function taskWhere(t: TodoTask): string | undefined {
       return TASK_WHERE[t.run.goal];
     case 'connect':
       return 'Deploy';
+    default: {
+      // A new TodoRun kind fails to compile here until it says where its button goes.
+      const _never: never = t.run;
+      return _never;
+    }
   }
 }
 

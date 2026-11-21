@@ -1,9 +1,9 @@
 // City Coins (contract v2.14, src/state/wallet.ts): earning, spending, the merge and the one-time decor refund.
 import { describe, expect, it } from 'vitest';
 import type { Progress } from '@/backend/contract';
-import { charge, COIN_PAY, coins, coinsToday, DESIGN_COINS_A_DAY, designPay, earn, HALF_ROUNDS_A_DAY, LOG_DAYS, mergeWallet, migrateWallet, payShift, refund, roundCoins, spend } from '@/state/wallet';
+import { charge, COIN_PAY, coins, coinsToday, DESIGN_COINS_A_DAY, designPay, earn, LOG_DAYS, mergeWallet, migrateWallet, payShift, refund, roundCoins, spend } from '@/state/wallet';
 import { memoryLedger } from '@/learning/dailyLedger';
-import { FULL_ROUNDS_A_DAY } from '@/learning/gameStars';
+import { FULL_ROUNDS_A_DAY, HALF_ROUNDS_A_DAY } from '@/learning/gameStars';
 import { mergeProgress } from '@/state/progress';
 import { CATALOGUE } from '@/state/buildmode';
 

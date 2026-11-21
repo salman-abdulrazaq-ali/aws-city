@@ -36,4 +36,15 @@ describe('per-socket approvals (contract v2 deploy.preview → deploy.approve)',
     expect(a.size).toBe(0);
     vi.useRealTimers();
   });
+
+  it('create_bucket previews its label as aws-city-…-<suffix>, and a second look asks for the typed suffix', () => {
+    const events: ServerEvent[] = [];
+    const a = createApprovals({ region: 'us-west-2' });
+    void a.request('t', { action: { type: 'create_bucket', suffix: 'photos' } as never, summary: 'Create bucket', destructive: false, check: { reason: 'x' } } as never, (e) => events.push(e));
+    const preview = events[0];
+    if (preview?.type !== 'deploy.preview') throw new Error();
+    expect(preview.changes[0]).toEqual({ action: 'Add', logicalId: 'aws-city-…-photos', resourceType: 'AWS::S3::Bucket' });
+    expect(preview.confirmText).toBe('photos');
+    a.cancelAll();
+  });
 });

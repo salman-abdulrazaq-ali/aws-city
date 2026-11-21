@@ -432,6 +432,53 @@ describe('runtime sessions', () => {
     expect(useCity.getState().toasts.at(-1)?.text).toMatch(/saved as aws-city-my-data/);
   });
 
+  it('a failed download says a plain sentence, with no request error in it', async () => {
+    const { rt, useCity } = await boot();
+    Object.assign(fake, { hosted: true, exportMe: async () => Promise.reject(new Error('GET /me/export → 500')) });
+    await rt.downloadMyData();
+    const text = useCity.getState().toasts.at(-1)?.text ?? '';
+    expect(text).toMatch(/Couldn’t download your data/);
+    expect(text).not.toMatch(/500|GET/);
+  });
+
+  it('a failed sign-out or account deletion logs a plain sentence, with the detail only in the console', async () => {
+    const { rt, useCity } = await boot();
+    Object.assign(fake, { hosted: true, deleteAccount: async () => Promise.reject(new Error('DELETE /me → 500')) });
+    await rt.deleteAccount();
+    const text = useCity.getState().feed.at(-1)?.text ?? '';
+    expect(text).toMatch(/Couldn’t delete your account/);
+    expect(text).not.toMatch(/500|DELETE/);
+  });
+
+  describe('"Got it" answers on the device', () => {
+    const KEY = 'awscity.findingsGotIt';
+    beforeEach(() => {
+      const mem = new Map<string, string>([[KEY, '["f1"]']]);
+      vi.stubGlobal('localStorage', { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v), removeItem: (k: string) => void mem.delete(k) });
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    it('an explicit sign-out clears them', async () => {
+      fake.player = 'player-a';
+      const { rt } = await boot();
+      fake.status('connected');
+      await settle();
+      rt.signOut();
+      await settle();
+      expect(localStorage.getItem(KEY)).toBeNull();
+    });
+
+    it('an involuntary end (expired token) keeps them', async () => {
+      fake.player = 'player-a';
+      await boot();
+      fake.status('connected');
+      await settle();
+      fake.status('signed-out');
+      await settle();
+      expect(localStorage.getItem(KEY)).toBe('["f1"]');
+    });
+  });
+
   it('auto-snap fires on AWS pages only, and a snap of another site sends no URL or title', async () => {
     const { rt, useCity } = await boot();
     fake.status('connected');

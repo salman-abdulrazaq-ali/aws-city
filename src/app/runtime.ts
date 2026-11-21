@@ -11,7 +11,7 @@ import { captureVisibleTab, hasCapturePermission, requestCapturePermission } fro
 import { bus } from '@/state/bus';
 import { mergeProgress, sameProgress } from '@/state/progress';
 import { CITIZEN_XP, fixGate } from '@/state/citizens';
-import { knownAgents, useCity, type CityState } from '@/state/store';
+import { forgetGotIt, knownAgents, useCity, type CityState } from '@/state/store';
 import { ladder, questsDone } from '@/state/ladder';
 import { shows } from '@/state/simple';
 import { consoleUrl, DEFAULT_CONSOLE_SERVICE, matchText, matchUrl } from '@/world/taxonomy';
@@ -288,6 +288,7 @@ async function endSession() {
   // The session died (not a sign-out): keep this device's copy for the same player, out of sight of anyone else.
   if (!explicit && player && !sameProgress(emptyProgress(), progress)) await park(player, progress);
   else if (explicit) await browser.storage.local.remove(PARKED_PROGRESS_KEY);
+  if (explicit) forgetGotIt();
   await browser.storage.local.remove([PROGRESS_STORAGE_KEY, PROGRESS_OWNER_KEY]);
 }
 
@@ -719,21 +720,28 @@ export async function deleteAccount() {
     await b.deleteAccount();
     store().toast('🧾', 'Your AWS City account and progress were deleted. Delete the AWSCity stack in CloudFormation to remove the role.');
   } catch (e) {
-    store().log({ kind: 'system', text: `⚠️ Couldn’t delete your account: ${String(e)}` });
+    console.warn('delete account failed', e);
+    store().log({ kind: 'system', text: '⚠️ Couldn’t delete your account just now. Check your connection and try again.' });
   } finally {
     signingOut = false;
   }
 }
 
 export function reconnect() {
-  void Promise.resolve(optional()?.reconnect?.()).catch((e) => store().log({ kind: 'system', text: `⚠️ Reconnect failed: ${String(e)}` }));
+  void Promise.resolve(optional()?.reconnect?.()).catch((e) => {
+    console.warn('reconnect failed', e);
+    store().log({ kind: 'system', text: '⚠️ Couldn’t reconnect just now. Check your connection and try again.' });
+  });
 }
 
 export function signOut() {
   // The backend reports 'signed-out' from inside signOut(), so endSession sees this flag and forgets the device's copy.
   signingOut = true;
   void Promise.resolve(optional()?.signOut?.())
-    .catch((e) => store().log({ kind: 'system', text: `⚠️ Sign-out failed: ${String(e)}` }))
+    .catch((e) => {
+      console.warn('sign-out failed', e);
+      store().log({ kind: 'system', text: '⚠️ Couldn’t sign you out just now. Try again.' });
+    })
     .finally(() => (signingOut = false));
 }
 
