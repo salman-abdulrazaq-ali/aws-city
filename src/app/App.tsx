@@ -28,6 +28,7 @@ import { Flashcards } from '@/ui/Flashcards';
 import { badgeCount } from '@/state/srs';
 import { activeSteps, type Tab } from '@/state/ladder';
 import { isSimple, shows } from '@/state/simple';
+import { linking } from '@/state/account';
 import { setNextRunner } from '@/state/next';
 import { runPlan, type OpenTab as GoTo } from '@/ui/QuestLog';
 import { Home, taskMovedOn } from '@/ui/Home';
@@ -111,7 +112,9 @@ export function App({ layout }: { layout: Layout }) {
   const steps = useCity((s) => activeSteps(s.progress).map((x) => x.kind).join());
   const linked = useCity((s) => s.account.linked);
   const deployWaiting = useCity((s) => Object.values(s.deploys).some((d) => d.status === 'preview' && !d.findingId));
-  const simpleCtx = { steps: steps.split(','), linked, deployWaiting };
+  // A real account being linked keeps Deploy (its steps) in sight, in Simple too (src/state/account.ts).
+  const linkingNow = useCity((s) => linking(s.account));
+  const simpleCtx = { steps: steps.split(','), linked, deployWaiting, linking: linkingNow };
   const deployShown = shows('deployTab', prefs, simpleCtx);
   /** The tabs this player has earned and this mode shows (a new one gets the unlock toast). */
   const earned = useMemo(() => new Set([...l.tabs].filter((t) => t !== 'deploy' || deployShown)), [l.tabs, deployShown]);
@@ -148,6 +151,8 @@ export function App({ layout }: { layout: Layout }) {
   const setTabNow = useRef(setTab);
   setTabNow.current = setTab;
   useEffect(() => setNextRunner((plan) => (taskMovedOn(), runPlan(plan, (t) => setTabNow.current(t)))), []);
+  // ⋯ → Account (outside the tabs) shows a tab the way a button that names it does.
+  useEffect(() => bus.on('showTab', ({ tab }) => setTabNow.current(tab)), []);
   // City Clients (a business tapped in the city, a job closed, "All businesses"): the Jobs tab shows it.
   const clientsOpen = useCity((s) => s.clientsOpen);
   useEffect(() => {

@@ -1,10 +1,32 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { canDeleteAccount, canSetUpMfa, confirmMfaSetup, decideDeploy, deleteAccount, isSafeAwsUrl, linkAccount, mfaStatus, openUrl, planDeploy, signIn, signOut, startMfaSetup, teardownDeploy, verifyAccount } from '@/app/runtime';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  canDeleteAccount,
+  canDownloadData,
+  canSetUpMfa,
+  confirmMfaSetup,
+  decideDeploy,
+  downloadMyData,
+  isSafeAwsUrl,
+  linkAccount,
+  mfaStatus,
+  openUrl,
+  planDeploy,
+  removeResource,
+  signIn,
+  signOut,
+  startMfaSetup,
+  teardownDeploy,
+  unlinkAccount,
+  verifyAccount,
+} from '@/app/runtime';
+import { connectsPlayer, defaultLinkRegion, gameBuilds, isLinkRegion, LINK_REGIONS, linkChecklist, regionName, removeTarget, roleUpdate } from '@/state/account';
 import { useCity, type DeployView } from '@/state/store';
-import { GUARDED_BLUEPRINTS } from '@/backend/ServerBackend';
+import { GUARDED_BLUEPRINTS, isPracticeDeploy } from '@/backend/ServerBackend';
 import { TEMPLATES } from '@/world/content';
+import { serviceById } from '@/world/taxonomy';
 import { TemplateView } from './TemplateView';
 import { offered, perUnit, pricesFor } from '@/world/regions';
+import { DeleteConfirm, FixesOn, RoleUpdate, StackLink } from './Account';
 import { useCopy } from './feedback';
 import { costLine, offlineReason } from './logic';
 import { usePending } from './usePending';
@@ -64,8 +86,8 @@ function PendingButton({ pending, busyLabel, children, className = 'btn', disabl
   );
 }
 
-/** A numbered step: done (✓), current (lit) or still to come. */
-function Step({ n, state, title, children }: { n: number; state: 'done' | 'now' | 'todo'; title: string; children?: ReactNode }) {
+/** A numbered step: done (✓), current (lit) or still to come. `after`: what a done step still offers ("Change the Region"). */
+function Step({ n, state, title, children, after }: { n: number; state: 'done' | 'now' | 'todo'; title: string; children?: ReactNode; after?: ReactNode }) {
   return (
     <li className={`link-step ${state}`}>
       <span className="step-n" aria-hidden="true">
@@ -74,6 +96,7 @@ function Step({ n, state, title, children }: { n: number; state: 'done' | 'now' 
       <div className="step-body">
         <b>{title}</b>
         {state === 'now' && children}
+        {state === 'done' && after}
       </div>
     </li>
   );
@@ -171,8 +194,9 @@ function AuthenticatorRow() {
 }
 
 /**
- * Real deploys to the player's own AWS account: link via a CloudFormation quick-create role (ExternalId),
- * preview a change set, approve it, tear it down. Curated templates only.
+ * Real deploys to the player's own AWS account: link via a CloudFormation quick-create role (ExternalId) in the Region
+ * the player picks, preview a change set, approve it, tear it down; check the link, update the role, disconnect.
+ * Curated templates only.
  */
 export function DeployPanel() {
   const account = useCity((s) => s.account);
@@ -181,15 +205,27 @@ export function DeployPanel() {
   const deploys = Object.values(deployMap);
   const status = useCity((s) => s.backendStatus);
   const kind = useCity((s) => s.backendKind);
+  const hosted = useCity((s) => s.hosted);
+  const inventory = useCity((s) => s.inventory);
   const offline = offlineReason(kind, status);
   const [role, setRole] = useState('');
   const findings = useCity((s) => s.findings);
   // Fixes are approved in their finding's card; here they're only a history, never next to Tear down.
   const stacks = deploys.filter((d) => !d.findingId);
   const fixes = deploys.filter((d) => d.findingId && d.status !== 'preview' && d.status !== 'rejected');
+  // What the city built in the account, from its inventory: it survives a reload (a session's stacks don't).
+  const builds = useMemo(() => (account.linked ? gameBuilds(inventory) : []), [account.linked, inventory]);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmUnlink, setConfirmUnlink] = useState(false);
   /** The linking steps stay folded until the player asks for them (this whole tab is optional). */
-  const [wantsLink, setWantsLink] = useState(false);
+  const wantsLink = !!account.wantsLink;
+  /** The Region picked in step 1 (until then: the one asked for last, the linked one, else this city's). */
+  const [picked, setPicked] = useState<string>();
+  const region = picked ?? defaultLinkRegion(account, cityRegion);
+  /** The Region the setup link out now was made for (step 2's checklist names it). */
+  const linkRegion = account.linkRegion ?? region;
+  // Disconnect and "another Region" are for an account the player linked (the local server reads the developer's own).
+  const canUnlink = hosted || kind === 'mock';
   const mode = useCity((s) => s.deployMode);
   const blueprints = mode === 'guarded' ? GUARDED_BLUEPRINTS : TEMPLATES;
   const signingIn = useCity((s) => s.signingIn);
@@ -198,17 +234,22 @@ export function DeployPanel() {
 
   // Clear each pending button when the event it was waiting for lands.
   useEffect(() => clear('link'), [account.linkUrl, clear]);
-  useEffect(() => clear('verify'), [account.seq, clear]);
+  useEffect(() => {
+    clear('verify');
+    clear('unlink');
+  }, [account.seq, clear]);
   useEffect(() => {
     clear('link');
     clear('verify');
   }, [account.mfaRequired, clear]);
+  // The Disconnect confirm closes once the account's answer lands (linked or not).
+  useEffect(() => setConfirmUnlink(false), [account.linked, account.broken]);
   const deployCount = deploys.length;
-  // Only a new stack (count change) resolves a plan request.
+  // Only a new stack (count change) resolves a plan request, or a take-down's (its preview is a new deploy).
   const pendingKeys = useRef(pending.keys);
   pendingKeys.current = pending.keys;
   useEffect(() => {
-    for (const k of pendingKeys.current) if (k.startsWith('plan:')) clear(k);
+    for (const k of pendingKeys.current) if (k.startsWith('plan:') || k.startsWith('remove:')) clear(k);
   }, [deployCount, clear]);
   useEffect(() => {
     for (const d of Object.values(deployMap)) {
@@ -239,25 +280,54 @@ export function DeployPanel() {
     const requestId = verifyAccount(role);
     if (requestId) pending.start('verify', requestId);
   };
+  const getLink = (where: string, allowFixes: boolean) => pending.start('link', linkAccount(where, { allowFixes }));
+  const restart = () => {
+    setPicked(undefined);
+    useCity.getState().restartLink();
+  };
 
   /** The three linking steps (folded until the player asks; inside "How real accounts connect" in the demo). */
   const linkSteps =
     !wantsLink && !account.linkUrl && !account.mfaRequired ? (
-      <button className="btn" onClick={() => setWantsLink(true)}>
+      <button className="btn" onClick={() => useCity.getState().patchAccount({ wantsLink: true })}>
         Connect an AWS account
       </button>
     ) : (
       <ol className="link-steps">
-        <Step n={1} state={account.linkUrl ? 'done' : 'now'} title="Get your setup link">
+        <Step
+          n={1}
+          state={account.linkUrl ? 'done' : 'now'}
+          title={account.linkUrl ? `Get your setup link: ${regionName(linkRegion)}` : 'Pick a Region and get your setup link'}
+          after={
+            account.linkUrl && (
+              <button className="btn tiny ghost" onClick={restart}>
+                Change the Region
+              </button>
+            )
+          }
+        >
+          <label className="field-hint" htmlFor="link-region">
+            Region
+          </label>
+          <select id="link-region" className="link-region" value={region} onChange={(e) => setPicked(e.target.value)}>
+            {LINK_REGIONS.map((r) => (
+              <option key={r.code} value={r.code}>
+                {r.name} · {r.code}
+                {r.optIn ? ' (opt-in)' : ''}
+              </option>
+            ))}
+          </select>
+          <p className="muted">
+            <Plain text={`Your key will be made in ${regionName(region)}; the city reads that Region.`} />
+            {LINK_REGIONS.find((r) => r.code === region)?.optIn && <Plain text=" It's an opt-in Region: turn it on in your account first (Account → AWS Regions)." />}
+          </p>
           <PendingButton
             className="btn primary"
             pending={pending.is('link')}
             busyLabel="Getting your link…"
             disabled={!!offline}
             title={offline}
-            onClick={() => {
-              pending.start('link', linkAccount());
-            }}
+            onClick={() => getLink(region, !!account.allowFixes)}
           >
             Get my setup link
           </PendingButton>
@@ -266,9 +336,33 @@ export function DeployPanel() {
           <p className="muted">
             <Plain text="One click sets up an IAM role with CloudFormation. It's a key that only opens what the quests need." />
           </p>
-          <button className="btn primary" onClick={() => openUrl(account.linkUrl!)}>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={!!account.allowFixes}
+              disabled={pending.is('link') || !!offline}
+              // The choice is part of the setup link (AllowFixes): a new link is made for it.
+              onChange={(e) => getLink(linkRegion, e.target.checked)}
+            />
+            <span>Allow small fixes (you still approve each one)</span>
+          </label>
+          {connectsPlayer(account.linkUrl) && (
+            <p className="connects-player">
+              The stack page will say <b>ConnectsPlayer: {connectsPlayer(account.linkUrl)}</b>. Don’t create the stack if that isn’t you.
+            </p>
+          )}
+          <b className="checklist-title">What the console will ask</b>
+          <ol className="account-steps link-checklist" aria-label="What the console will ask">
+            {linkChecklist(linkRegion).map((line) => (
+              <li key={line}>
+                <Plain text={line} />
+              </li>
+            ))}
+          </ol>
+          <PendingButton className="btn primary" pending={pending.is('link')} busyLabel="Making your link…" onClick={() => openUrl(account.linkUrl!)}>
             Open CloudFormation ↗
-          </button>
+          </PendingButton>
+          <p className="muted small">This link works for a day. After that, get a new one: the key you made keeps working.</p>
           <details className="why">
             <summary>Details</summary>
             <div className="muted">
@@ -298,8 +392,46 @@ export function DeployPanel() {
             </PendingButton>
           </form>
         </Step>
+        {account.linked && (
+          <li className="link-cancel">
+            <button className="btn tiny ghost" onClick={() => useCity.getState().patchAccount({ wantsLink: false })}>
+              Keep the account I have
+            </button>
+          </li>
+        )}
       </ol>
     );
+
+  /** "Disconnect": asked first; the server forgets the link, and the AWSCity stack stays until the player deletes it. */
+  const unlinkConfirm = confirmUnlink && (account.linked || account.broken) && (
+    <div className="confirm" role="alertdialog" aria-labelledby="unlink-title">
+      <b id="unlink-title">Disconnect your AWS account?</b>
+      <span className="muted">
+        <Plain
+          text={`AWS City stops reading and building in ${account.accountId ?? 'your account'}. What the city built stays there (take it down first in My builds), and so does the AWSCity stack until you delete it.`}
+        />
+      </span>
+      <div className="row">
+        <button className="btn" autoFocus onClick={() => setConfirmUnlink(false)}>
+          Keep it linked
+        </button>
+        <PendingButton
+          className="btn warn"
+          pending={pending.is('unlink')}
+          busyLabel="Disconnecting…"
+          disabled={!!offline}
+          title={offline}
+          onClick={() => {
+            const requestId = unlinkAccount();
+            if (requestId) pending.start('unlink', requestId);
+          }}
+        >
+          Yes, disconnect
+        </PendingButton>
+      </div>
+    </div>
+  );
+  const update = roleUpdate(account);
 
   // Where the player is in building for real: connect, pick a blueprint, approve it.
   const at = !account.linked ? 0 : stacks.some((d) => d.status === 'preview') ? 2 : stacks.length ? 3 : 1;
@@ -322,21 +454,101 @@ export function DeployPanel() {
           </PendingButton>
         </div>
       )}
-      <div className="card">
+      <div className="card account">
         <h3>Your AWS account</h3>
         {/* A linked player is asked too (approving a change, applying a fix): the setup shows whenever the server asks. */}
         {account.mfaRequired && canSetUpMfa() && <MfaSetup />}
+        {/* This tab's link, verify or Disconnect the server refused (a failed verify, a link over a day old). */}
+        {account.error && (
+          <div className="field-error account-error" role="alert">
+            ⚠️ {account.error}
+            {((!account.linked && account.linkUrl) || wantsLink) && (
+              <PendingButton className="btn tiny" pending={pending.is('link')} busyLabel="Getting your link…" disabled={!!offline} onClick={() => getLink(linkRegion, !!account.allowFixes)}>
+                Get a new setup link
+              </PendingButton>
+            )}
+          </div>
+        )}
         {account.linked ? (
-          <p className="linked">
-            <span className="linked-badge">✓ Linked</span> <b>{account.accountId}</b> · {account.region}
-            {account.message ? <span className="muted"> · {account.message}</span> : null}
-          </p>
+          <>
+            <p className="linked">
+              <span className="linked-badge">✓ Linked</span> <b>{account.accountId}</b>
+              {account.region && (
+                <span>
+                  · {regionName(account.region)} <span className="muted">({account.region})</span>
+                </span>
+              )}
+            </p>
+            {account.message && <p className="muted">{account.message}</p>}
+            {account.fixes !== undefined && (
+              <p className="muted">
+                Small fixes: <b>{account.fixes ? 'on' : 'off'}</b>
+                {account.fixes ? ' (you approve each one)' : ' (City care explains what it finds, but changes nothing)'}
+              </p>
+            )}
+            {account.fixes === false && account.region && (
+              <details className="why">
+                <summary>Turn small fixes on</summary>
+                <FixesOn region={account.region} />
+              </details>
+            )}
+            {update && account.region && <RoleUpdate region={account.region} {...update} />}
+            {canUnlink && !wantsLink && (
+              <div className="row account-actions">
+                <button className="btn" onClick={restart}>
+                  Use another Region or account
+                </button>
+                <button className="btn warn" onClick={() => setConfirmUnlink(true)}>
+                  Disconnect
+                </button>
+              </div>
+            )}
+            {unlinkConfirm}
+            {wantsLink && linkSteps}
+          </>
+        ) : account.broken ? (
+          <>
+            {/* The link is kept but its role stopped working: said here once, never as a toast on each reconnect. */}
+            <div className="account-broken" role="status">
+              <p className="field-error">
+                ⚠️{' '}
+                {account.message ??
+                  `I can’t use the AWSCity role in ${account.accountId ?? 'your account'}${account.region ? ` (${account.region})` : ''} any more. Link it again, or disconnect.`}
+              </p>
+              {!wantsLink && (
+                <div className="row account-actions">
+                  <button
+                    className="btn primary"
+                    onClick={() => {
+                      // A new setup link in the broken link's Region (same ExternalId), steps 2 and 3 to follow.
+                      restart();
+                      getLink(account.region && isLinkRegion(account.region) ? account.region : region, !!account.allowFixes);
+                    }}
+                  >
+                    Link again
+                  </button>
+                  <button className="btn warn" onClick={() => setConfirmUnlink(true)}>
+                    Disconnect
+                  </button>
+                </div>
+              )}
+            </div>
+            {unlinkConfirm}
+            {wantsLink && linkSteps}
+          </>
         ) : (
           <>
-            {account.message && (
-              <p className="field-error" role="alert">
-                ⚠️ {account.message}
-              </p>
+            {/* A status's message is a hint (the welcome's "connect"), never an alert: refusals come as account.error. */}
+            {account.message && <p className="muted account-hint">{account.message}</p>}
+            {account.stackLeft && (
+              <div className="account-howto stack-left">
+                <p>
+                  <Plain
+                    text={`Disconnected. To remove AWS City's role too, delete the AWSCity stack in CloudFormation (${regionName(account.stackLeft)}): Stacks, then AWSCity, then Delete.`}
+                  />
+                </p>
+                <StackLink region={account.stackLeft} />
+              </div>
             )}
             {kind === 'mock' && !account.mfaRequired ? (
               <>
@@ -413,74 +625,64 @@ export function DeployPanel() {
         </div>
       ))}
 
-      {stacks.length > 0 && <h4>My builds</h4>}
+      {(stacks.length > 0 || builds.length > 0) && <h4>My builds</h4>}
+      {builds.length > 0 && (
+        <>
+          <ul className="my-builds" aria-label="Built by the city in your account">
+            {builds.map((b) => {
+              const target = removeTarget(b.arn);
+              const key = `remove:${b.arn}`;
+              return (
+                <li key={b.arn}>
+                  <span className="my-build-name">
+                    <b>{b.name}</b>{' '}
+                    <span className="muted">
+                      · {(b.serviceId && serviceById(b.serviceId)?.name) ?? b.type} · {b.region ?? inventory?.homeRegion ?? account.region}
+                    </span>
+                  </span>
+                  {target ? (
+                    <PendingButton
+                      className="btn tiny warn"
+                      pending={pending.is(key)}
+                      busyLabel="Asking…"
+                      disabled={!!offline}
+                      title={offline ?? 'Asks for your OK first, like any change'}
+                      onClick={() => pending.start(key, removeResource(target.kind, target.id))}
+                    >
+                      Take it down
+                    </PendingButton>
+                  ) : (
+                    <span className="muted small">Remove it in the AWS console</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          <p className="muted small">Taking something down asks for your OK first, like any change. Until then it may keep billing.</p>
+        </>
+      )}
       {stacks.map((d) => {
         const deciding = pending.is(`decide:${d.deployId}`);
         return (
           <div key={d.deployId} className={`card stack ${d.status}`}>
             <b>{d.stackName}</b>{' '}
             <span className="muted">
-              · {d.region} · {STATUS_TEXT[d.status] ?? d.status}
+              · {d.region} · {isPracticeDeploy(d.deployId) && d.status === 'complete' ? 'practice: nothing was created' : (STATUS_TEXT[d.status] ?? d.status)}
             </span>
             {d.status === 'preview' && (
-              <>
-                <table className="changes">
-                  <tbody>
-                    {d.changes.map((c) => (
-                      <tr key={c.logicalId}>
-                        <td className={`chg ${c.action}`} aria-label={c.action}>
-                          {c.action === 'Add' ? '+' : c.action === 'Remove' ? '−' : '~'}
-                        </td>
-                        <td>{c.logicalId}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {/* The CloudFormation resource types, for whoever wants them. */}
-                <ForLearners>
-                  <table className="changes">
-                    <tbody>
-                      {d.changes.map((c) => (
-                        <tr key={c.logicalId}>
-                          <td>{c.logicalId}</td>
-                          <td className="muted">{c.resourceType}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </ForLearners>
-                {d.costNote && <CostNote note={d.costNote} />}
-                <div className="actions">
-                  <PendingButton
-                    buttonRef={(el) => {
-                      if (el) approveRefs.current.set(d.deployId, el);
-                      else approveRefs.current.delete(d.deployId);
-                    }}
-                    className="btn primary"
-                    pending={deciding}
-                    busyLabel="Starting…"
-                    disabled={!!offline}
-                    title={offline}
-                    onClick={() => {
-                      decideDeploy(d.deployId, true);
-                      pending.start(`decide:${d.deployId}`);
-                    }}
-                  >
-                    ✅ Approve & deploy
-                  </PendingButton>
-                  <button
-                    className="btn"
-                    disabled={deciding || !!offline}
-                    title={offline}
-                    onClick={() => {
-                      decideDeploy(d.deployId, false);
-                      pending.start(`decide:${d.deployId}`);
-                    }}
-                  >
-                    Reject
-                  </button>
-                </div>
-              </>
+              <BuildPreview
+                d={d}
+                offline={offline}
+                deciding={deciding}
+                buttonRef={(el) => {
+                  if (el) approveRefs.current.set(d.deployId, el);
+                  else approveRefs.current.delete(d.deployId);
+                }}
+                onDecide={(approve, typed) => {
+                  decideDeploy(d.deployId, approve, typed);
+                  pending.start(`decide:${d.deployId}`);
+                }}
+              />
             )}
             {(d.status === 'creating' || d.status === 'deleting') && <div className="busy-bar" aria-hidden="true" />}
             {d.outputs && (
@@ -499,7 +701,8 @@ export function DeployPanel() {
                 ))}
               </ul>
             )}
-            {d.status === 'complete' && (
+            {/* A practice build made nothing in AWS: there's nothing to tear down. */}
+            {d.status === 'complete' && !isPracticeDeploy(d.deployId) && (
               <PendingButton
                 className="btn warn"
                 pending={pending.is(`teardown:${d.deployId}`)}
@@ -541,7 +744,12 @@ export function DeployPanel() {
           <h3>Your data</h3>
           <p className="muted">Progress, your account link and sign-in are stored for you. Screenshots expire after a day.</p>
           <AuthenticatorRow />
-          <div className="row">
+          <div className="row account-actions">
+            {canDownloadData() && (
+              <button className="btn" onClick={() => void downloadMyData()}>
+                Download my data
+              </button>
+            )}
             <button className="btn" onClick={signOut}>
               Sign out
             </button>
@@ -552,28 +760,93 @@ export function DeployPanel() {
             )}
           </div>
           {confirmDelete && (
-            <div className="confirm" role="alertdialog" aria-label="Delete your account?">
-              <b>Delete your account and saved progress?</b>
-              <span className="muted">This can’t be undone.</span>
-              <div className="row">
-                <button className="btn" autoFocus onClick={() => setConfirmDelete(false)}>
-                  Keep it
-                </button>
-                <button
-                  className="btn warn"
-                  onClick={() => {
-                    setConfirmDelete(false);
-                    void deleteAccount();
-                  }}
-                >
-                  Yes, delete
-                </button>
-              </div>
+            <div className="confirm" role="alertdialog" aria-labelledby="delete-here-title">
+              <DeleteConfirm titleId="delete-here-title" onCancel={() => setConfirmDelete(false)} />
             </div>
           )}
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * A build's preview, approved here: what's added or removed, the server's own lines in words ("Safety check: …"), what
+ * it costs, and the typed name when the server asks for one (the same rule as a fix's Approve in City care).
+ */
+function BuildPreview({ d, offline, deciding, buttonRef, onDecide }: {
+  d: DeployView;
+  offline?: string;
+  deciding: boolean;
+  buttonRef: (el: HTMLButtonElement | null) => void;
+  onDecide: (approve: boolean, typed?: string) => void;
+}) {
+  const [typed, setTyped] = useState('');
+  const details = d.changes.filter((c) => c.resourceType === 'detail');
+  const resources = d.changes.filter((c) => c.resourceType !== 'detail');
+  const ok = !d.confirmText || typed.trim() === d.confirmText;
+  const removing = resources.length > 0 && resources.every((c) => c.action === 'Remove');
+  return (
+    <>
+      <table className="changes">
+        <tbody>
+          {resources.map((c) => (
+            <tr key={c.logicalId}>
+              <td className={`chg ${c.action}`} aria-label={c.action}>
+                {c.action === 'Add' ? '+' : c.action === 'Remove' ? '−' : '~'}
+              </td>
+              <td>{c.logicalId}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {/* 'detail' lines spell out the change in words (why the server's safety check asks for care). */}
+      {details.length > 0 && (
+        <ul className="preview-changes">
+          {details.map((c) => (
+            <li key={c.logicalId}>{c.logicalId}</li>
+          ))}
+        </ul>
+      )}
+      {/* The CloudFormation resource types, for whoever wants them. */}
+      <ForLearners>
+        <table className="changes">
+          <tbody>
+            {resources.map((c) => (
+              <tr key={c.logicalId}>
+                <td>{c.logicalId}</td>
+                <td className="muted">{c.resourceType}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </ForLearners>
+      {d.costNote && <CostNote note={d.costNote} />}
+      {d.confirmText && (
+        <div className="confirm-type">
+          <label className="field-hint" htmlFor={`confirm-${d.deployId}`}>
+            To approve, type <code>{d.confirmText}</code>
+          </label>
+          <input id={`confirm-${d.deployId}`} value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" spellCheck={false} placeholder={d.confirmText} />
+        </div>
+      )}
+      <div className="actions">
+        <PendingButton
+          buttonRef={buttonRef}
+          className="btn primary"
+          pending={deciding}
+          busyLabel="Starting…"
+          disabled={!ok || !!offline}
+          title={offline ?? (ok ? undefined : `Type ${d.confirmText} first`)}
+          onClick={() => onDecide(true, d.confirmText ? typed.trim() : undefined)}
+        >
+          {removing ? '✅ Approve & take down' : '✅ Approve & deploy'}
+        </PendingButton>
+        <button className="btn" disabled={deciding || !!offline} title={offline} onClick={() => onDecide(false)}>
+          Reject
+        </button>
+      </div>
+    </>
   );
 }
 

@@ -89,6 +89,13 @@ describe('the unlock ladder', () => {
     expect(ladder(input({ hasDeploys: true })).tabs.has('deploy')).toBe(true);
   });
 
+  it('keeps Deploy in sight while a real account is being linked (its steps are there), and closes it again after', () => {
+    expect(ladder(input({ linking: true })).tabs.has('deploy')).toBe(true);
+    expect(ladder(input({ linking: false })).tabs.has('deploy')).toBe(false);
+    // Linking is not an unlock: nothing else opens with it.
+    expect(ladder(input({ linking: true }))).toMatchObject({ care: false, news: false, clients: false });
+  });
+
   it('Peek at everything opens every area, and what it opened stays open', () => {
     const l = ladder(input({ opened: new Set(ALL_AREAS) }));
     expect([...l.tabs].sort()).toEqual(['deploy', 'home', 'jobs', 'learn']);

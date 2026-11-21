@@ -12,7 +12,7 @@ import { review, xpFor, type Grade } from '@/learning/srs';
 import { countDaily, takeDaily, usedToday } from '@/learning/dailyLedger';
 import { isoWeekUtc } from './events';
 import { firstRemembered, REMEMBERED_STARS } from './mastery';
-import { ACTION_BLUEPRINT, GUARDED_EQUIV } from '@/backend/ServerBackend';
+import { ACTION_BLUEPRINT, GUARDED_EQUIV, isPracticeDeploy } from '@/backend/ServerBackend';
 import { serviceById } from '@/world/taxonomy';
 import { REGIONS } from '@/world/culture';
 import { citizenById, PILLAR_LABEL } from '@/world/citizens';
@@ -184,10 +184,29 @@ export interface AccountState {
   linkUrl?: string;
   externalId?: string;
   message?: string;
+  /**
+   * The server refused this tab's last link, verify or Disconnect (error {requestId}: a failed verify, a setup link more
+   * than a day old): said in the card, as an alert, until the next try. A status's own `message` is only ever a hint.
+   */
+  error?: string;
   /** The server wants an authenticator app on before linking (error code mfa_required). */
   mfaRequired?: boolean;
   /** Bumped on every account.status, so a repeated reply (same message) still settles a pending button. */
   seq?: number;
+  // v2.17 (account.status): a link whose role stopped working, whether fixes are allowed, the role's version.
+  broken?: boolean;
+  fixes?: boolean;
+  roleVersion?: number;
+  latestRoleVersion?: number;
+  templateUrl?: string;
+  // This session's linking (UI only): the steps unfolded, the Region and AllowFixes asked for, a Disconnect in flight.
+  wantsLink?: boolean;
+  linkRegion?: string;
+  allowFixes?: boolean;
+  /** The requestId of the account.unlink sent (its account.status answer says "Disconnected"). */
+  unlinking?: string;
+  /** After a Disconnect: the Region whose AWSCity stack is still in the account until the player deletes it. */
+  stackLeft?: string;
 }
 
 export interface DeployView {
@@ -366,6 +385,8 @@ export interface CityState {
   backendKind: 'mock' | 'server';
   deployMode: 'templates' | 'guarded';
   backendStatus: ConnectionStatus;
+  /** The hosted server (players sign in; their own AWS account links through the AWSCity role). */
+  hosted: boolean;
   focus?: PageFocus;
   progress: Progress;
   agents: Record<string, AgentStatus>;
@@ -518,7 +539,7 @@ export interface CityState {
   recordExpo(score: number): void;
 
   // pure state transitions (no I/O — see app/runtime.ts for commands)
-  setBackend(kind: 'mock' | 'server', status: ConnectionStatus, deployMode?: 'templates' | 'guarded'): void;
+  setBackend(kind: 'mock' | 'server', status: ConnectionStatus, deployMode?: 'templates' | 'guarded', hosted?: boolean): void;
   setFocus(f: PageFocus): void;
   /** `quiet`: built because a finding or XP needed it — no toast, camera move or greeting. */
   /** `toast: false`: the caller says it its own way (browsing a console page). */
@@ -536,6 +557,10 @@ export interface CityState {
   /** Internal: put one toast on screen now (toast() decides when). */
   showToast(t: Omit<Toast, 'id'>): void;
   setMfaRequired(on: boolean): void;
+  /** This session's linking state (src/app/runtime.ts linkAccount/unlinkAccount, the Deploy tab's buttons). */
+  patchAccount(patch: Partial<AccountState>): void;
+  /** Start linking again (another Region or account, or after a link broke): the steps unfold from step 1. */
+  restartLink(): void;
   /** A sign-in window is open (buttons disable until it settles). */
   signingIn: boolean;
   setSigningIn(on: boolean): void;
@@ -724,6 +749,7 @@ export const useCity = create<CityState>()((set, get) => ({
   backendKind: 'mock',
   deployMode: 'templates',
   backendStatus: 'disconnected',
+  hosted: false,
   progress: emptyProgress(),
   agents: {},
   tasks: {},
@@ -1047,7 +1073,8 @@ export const useCity = create<CityState>()((set, get) => ({
     }
   },
 
-  setBackend: (backendKind, backendStatus, deployMode) => set(deployMode ? { backendKind, backendStatus, deployMode } : { backendKind, backendStatus }),
+  setBackend: (backendKind, backendStatus, deployMode, hosted) =>
+    set({ backendKind, backendStatus, ...(deployMode ? { deployMode } : {}), ...(hosted !== undefined ? { hosted } : {}) }),
 
   setFocus: (focus) => {
     set({ focus });
@@ -1252,23 +1279,49 @@ export const useCity = create<CityState>()((set, get) => ({
         s.toast('🧠', `${agentName(e.agentId)} reached level ${e.level}${e.skill ? `: ${e.skill}` : ''}`);
         break;
       case 'account.linkUrl':
-        set({ account: { ...s.account, linkUrl: e.url, externalId: e.externalId } });
+        set({ account: { ...s.account, linkUrl: e.url, externalId: e.externalId, error: undefined } });
         break;
-      case 'account.status':
-        set({ account: { ...s.account, linked: e.linked, accountId: e.accountId, region: e.region, message: e.message, seq: (s.account.seq ?? 0) + 1 } });
+      case 'account.status': {
+        const was = s.account;
+        const disconnected = !!e.requestId && e.requestId === was.unlinking;
+        // A new link took (another account or Region, or none before): the steps fold away.
+        const fresh = e.linked && (!was.linked || e.accountId !== was.accountId || e.region !== was.region);
+        set({
+          account: {
+            ...was,
+            linked: e.linked,
+            accountId: e.accountId,
+            region: e.region,
+            message: e.message,
+            error: undefined,
+            broken: e.broken,
+            fixes: e.fixes,
+            roleVersion: e.roleVersion,
+            latestRoleVersion: e.latestRoleVersion,
+            templateUrl: e.templateUrl,
+            seq: (was.seq ?? 0) + 1,
+            ...(fresh ? { wantsLink: false, linkUrl: undefined, externalId: undefined, stackLeft: undefined } : {}),
+            ...(disconnected ? { unlinking: undefined, wantsLink: false, linkUrl: undefined, externalId: undefined, stackLeft: was.region ?? e.region } : {}),
+          },
+        });
         // A real account's findings show at once (src/state/ladder.ts: linking unlocks care); the practice account's still drip.
         if (e.linked && get().careReleased) {
           if (realAccount(get())) flushHeld();
           else drip();
         }
-        if (e.linked && s.backendKind === 'mock') s.toast('🔗', 'The practice account is linked. Agents can build things there now, and you approve each one.');
-        else if (e.linked) s.toast('🔗', `Your AWS account ${e.accountId} is linked. Agents can build things there now, and you approve each one.`);
-        else if (e.message) s.toast('⚠️', e.message, 'error');
+        // Only a reply to this tab's own request is said out loud (src/app/runtime.ts drops the requestId of a reply another
+        // tab asked for). A welcome (every reconnect) or a link that broke updates the account card quietly.
+        if (!e.requestId) break;
+        if (disconnected) s.toast('🔌', e.message ?? 'Disconnected. AWS City can’t reach your AWS account any more. Delete the AWSCity stack in CloudFormation to remove its role too.');
+        else if (fresh && s.backendKind === 'mock') s.toast('🔗', 'The practice account is linked. Agents can build things there now, and you approve each one.');
+        else if (fresh) s.toast('🔗', `Your AWS account ${e.accountId} is linked. Agents can build things there now, and you approve each one.`);
+        else if (e.message) s.toast(e.linked ? '🔗' : '⚠️', e.message, e.linked ? 'info' : 'error');
         break;
+      }
       case 'deploy.preview': {
-        const care = e.findingId
-          ? { findingId: e.findingId, rollback: e.rollback, confirmText: e.confirmText }
-          : {};
+        // A typed name is asked for any change the server flags (a fix outside the city's own resources, or a write its
+        // second look flagged): every preview keeps its confirmText.
+        const care = { ...(e.findingId ? { findingId: e.findingId, rollback: e.rollback } : {}), ...(e.confirmText ? { confirmText: e.confirmText } : {}) };
         set({
           deploys: {
             ...s.deploys,
@@ -1342,7 +1395,13 @@ export const useCity = create<CityState>()((set, get) => ({
           if (d) get().questEvent((st) => st.kind === 'deploy' && (st.templateId === d.templateId || GUARDED_EQUIV[st.templateId] === ACTION_BLUEPRINT[d.templateId]));
           // The deploy finished a quest: its celebration card is the moment (no toast on top); the feed has the line.
           if (get().celebration === before)
-            s.toast('🚀', `${d?.stackName ?? 'Your stack'} is built in ${s.backendKind === 'mock' ? 'the practice account' : 'your AWS account'}!`);
+            s.toast(
+              '🚀',
+              // A practice build (a serverless template the server can't build for real yet) made nothing in AWS.
+              isPracticeDeploy(e.deployId)
+                ? `${d?.stackName ?? 'Your stack'}: practice build done. Nothing was created in your AWS account.`
+                : `${d?.stackName ?? 'Your stack'} is built in ${s.backendKind === 'mock' ? 'the practice account' : 'your AWS account'}!`,
+            );
         }
         break;
       }
@@ -1357,6 +1416,8 @@ export const useCity = create<CityState>()((set, get) => ({
         const care = e.requestId ? Object.entries(s.careRequests).find(([, r]) => r.requestId === e.requestId) : undefined;
         if (care) get().noteCare(care[0]);
         if (e.code === 'mfa_required') set({ account: { ...s.account, mfaRequired: true } });
+        // A Disconnect that failed: its button stops waiting.
+        if (e.requestId && e.requestId === s.account.unlinking) set({ account: { ...get().account, unlinking: undefined } });
         const text = errorText(e);
         s.log({ kind: 'system', text: `⚠️ ${text}` });
         s.toast('⚠️', text, 'error');
@@ -1393,6 +1454,8 @@ export const useCity = create<CityState>()((set, get) => ({
   log: (item) => set((s) => ({ feed: [...s.feed, { ...item, id: nextId++, at: Date.now() }].slice(-FEED_MAX) })),
 
   setMfaRequired: (on) => set((s) => ({ account: { ...s.account, mfaRequired: on } })),
+  patchAccount: (patch) => set((s) => ({ account: { ...s.account, ...patch } })),
+  restartLink: () => set((s) => ({ account: { ...s.account, wantsLink: true, linkUrl: undefined, externalId: undefined, stackLeft: undefined, error: undefined } })),
   setSigningIn: (signingIn) => set({ signingIn }),
   resetSession: () => {
     // Findings held for this player must not reach the next one.

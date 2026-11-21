@@ -192,19 +192,26 @@ When a change touches a decision, update its entry and run its Proof.
   The To-do row, the shift's line (Everything) and ⋯ open Deploy with the steps unfolded (`openAccountCard`). Step 1
   picks the Region by name (`LINK_REGIONS`, the commercial partition only; it starts on the Region asked for last, the
   linked one, else the city's) and says "Your key will be made in <Region>; the city reads that Region"; step 2 has
-  "Allow small fixes" (a new link with `allowFixes`) and what the console asks (`linkChecklist`: the right account and
-  Region, rights to create IAM roles and stacks, the IAM acknowledgement, CREATE_COMPLETE in about a minute, then Verify).
-  The linked card names the Region, says whether small fixes are on (and how to turn them on), offers "Update your AWS
-  City role (vN → vM)" when `roleVersion < latestRoleVersion` (steps, the template address, the stacks page, Check
-  again), "Use another Region or account" and "Disconnect" (asked first; hosted and the demo, never the local server;
-  afterwards it says how to delete the AWSCity stack in that Region). A broken link shows its message with Link again and
-  Disconnect. Only an `account.status` with a `requestId` (a reply to the player's own request) is toasted: a welcome or
-  a broken link updates the card quietly, and the unlinked hint is a muted line, never an alert. City care says up front
+  "Allow small fixes" (a new link with `allowFixes`; the box follows the link that arrived), who the stack serves
+  (`connectsPlayer`: the link's `param_ConnectsPlayer`, "don't create the stack if that isn't you"), that the link works
+  for a day, and what the console asks (`linkChecklist`: the right account and Region, rights to create IAM roles and
+  stacks, the IAM acknowledgement, CREATE_COMPLETE in about a minute, then Verify). A refused link, verify or Disconnect
+  (`error {requestId}`: a failed verify, a link over a day old) is said in the card as an alert (`account.error`) with
+  "Get a new setup link". The linked card names the Region, says whether small fixes are on (and how to turn them on),
+  offers "Update your AWS City role (vN → vM)" when `roleVersion < latestRoleVersion` (steps, the template address, the
+  ConnectsPlayer name to type, which comes with a fresh setup link, and the stacks page), "Use another Region or account"
+  and "Disconnect" (asked first; hosted and the demo, never the local server; afterwards it says how to delete the AWSCity
+  stack in that Region). "Check again" asks for a fresh link and then verifies (`recheckAccount`: the server verifies only
+  within a day of a link, and reads fixes and the role version there). A broken link shows its message with Link again (a
+  new link in its Region at once) and Disconnect. Only a reply to this tab's own request is toasted (a reply carries the
+  requestId of the tab that asked; `src/app/runtime.ts` drops it in the others): a welcome or a broken link updates the
+  card quietly, and the unlinked hint is a muted line, never an alert. City care says up front
   when the role doesn't allow fixes (no Fix button, so no approve or MFA first), and the Today fix goal is a bonus then.
   My builds lists the inventory's `managedByGame` items, so it survives a reload, each with Take it down
   (`resource.remove` for an instance, a table or a bucket; anything else is removed in the console), and Delete my
   account warns while they're still there (they keep billing). Every build preview keeps `confirmText`, like a fix: its
-  'detail' lines in words ("Safety check: …") and the name typed before Approve. Proof: `npx vitest run
+  'detail' lines in words ("Safety check: …") and the name typed before Approve. A practice build (`isPracticeDeploy`)
+  says it made nothing in the AWS account and has no Tear down. Proof: `npx vitest run
   tests/account.test.ts tests/account-ui.test.tsx tests/deploy-account.test.tsx tests/runtime-session.test.ts
   tests/session.test.ts tests/finding-pacing.test.ts`.
 - **Hosted deploys only run in Regions with a Claude geo inference profile** (`infra/lib/models.ts`: `us`, `eu`, `au`,
@@ -353,8 +360,10 @@ When a change touches a decision, update its entry and run its Proof.
   (`ackFinding`: resolved, remembered on the device), so it never holds a place for good; the demo never sends a finding in
   `Progress.fixes` open again (`MockBackend.putProgress`). AWS news (the ticker and incident toasts) is a rung too:
   it opens after the first quest, and the demo's practice drill waits for it (`MockBackend.putProgress`); storms still show.
-  There's no "Open anyway" list: the shift's "Coming up next" names the next unlock and how to earn it.
-  Proof: `npx vitest run tests/ladder.test.ts tests/finding-pacing.test.ts tests/contract.test.ts`.
+  There's no "Open anyway" list: the shift's "Coming up next" names the next unlock and how to earn it. Deploy also shows
+  while a real account is being linked (`linking` in `src/state/account.ts`: a setup link is out, the server asked for an
+  authenticator first, or the link broke), so its steps never vanish mid-link; linking opens nothing else.
+  Proof: `npx vitest run tests/ladder.test.ts tests/finding-pacing.test.ts tests/contract.test.ts tests/account.test.ts`.
 - **Simple by default** (`prefs.simple`, absent = on; `src/state/simple.ts`). Every surface asks `shows(feature, prefs, ctx)`:
   Home, the HUD, the tabs and the Drawing board (`App.tsx`), My City (`Collection.tsx`), the news ticker, the toasts
   (`discoverCombo`, `watchBadges`), City care's release (`careUnlocked` in `src/app/runtime.ts`) and the city's courier
@@ -363,13 +372,15 @@ When a change touches a decision, update its entry and run its Proof.
   button that says what happens; "To do n/m" counts only the rows that can tick (`todoProgress`: today's goals, never the
   next action or the board's filler jobs), then "Done for today. Come back tomorrow: N cards ready"; on a day with fewer
   than `DAY_MIN_DONE` 2 goals an open quest step holds the day open and counts as a row (`holds`), so a first day is the
-  step plus one goal); a walk run from a game, an HQ or the world map goes back to the city first (`walkTo`,
+  step plus one goal; a hosted, signed-in player with no working link gets one quiet row, "Connect your AWS account", or
+  "Link it again" once the link broke (`connectOffer`, `src/state/account.ts`): after the goals, never counted, the first
+  to go over `TODO_MAX`, gone once the day is done, while ⋯ → Account always has it); a walk run from a game, an HQ or the world map goes back to the city first (`walkTo`,
   `walkToStation`); in the city, Simple drops the islands' "AWS trouble" labels and the drill's citizen talk, and the
   "E · Visit X" hint goes once its step is done; the HUD is ⭐ · coins · To do · Decorate · ⋯; tabs City · Learn · Jobs, Deploy only for a deploy step, a linked
-  account or a change waiting for approval; Learn hides the Drawing board (a design step shows it); City care waits for a
+  account, a change waiting for approval or a real account being linked; Learn hides the Drawing board (a design step shows it); City care waits for a
   finished quest; My City is buildings, stars and coins. Hidden, never deleted: badges, combos, coins, the season road and
   the shift keep recording, and ⋯ → Show everything / Keep it simple switches back and forth with nothing lost. The tour's
-  second step points at the list. Proof: `npx vitest run tests/simple.test.ts tests/simple-ui.test.tsx tests/session.test.ts`, `npm run smoke`
+  second step points at the list. Proof: `npx vitest run tests/simple.test.ts tests/simple-ui.test.tsx tests/session.test.ts tests/account-ui.test.tsx`, `npm run smoke`
   (runs Simple first: `01s-simple-first-city`, `80-simple-home`, `80b-simple-task-ticked`, `80c-simple-day-done`,
   `80d-simple-panel`, `80e-simple-tour`; then turns Everything on for the feature checks).
 - **Home is Today's shift** (with Everything on; the City tab, `src/ui/Home.tsx`): one big button from `nextAction` (`src/state/next.ts`, pure

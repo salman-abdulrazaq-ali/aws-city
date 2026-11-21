@@ -16,6 +16,7 @@ import { useCity } from '@/state/store';
 import { PLACES, placeFor } from '@/world/places';
 import { GAME_NAMES, readPref, TODAY_SET_KEY, writePref } from './logic';
 import type { OpenTab } from './QuestLog';
+import { openAccountCard, useConnectOffer } from './Account';
 import { useLadder } from './useLadder';
 
 /**
@@ -80,8 +81,10 @@ export function useTodayGoals(care: boolean) {
   const game = gameBuilding(progress, region);
   // The order board feeds the shift: how many jobs it has open now (City Clients must be open).
   const jobs = ladder.clients ? openJobs(progress, region, focus, 5).length : 0;
-  // A fix or a workshop step that can't be done now is a bonus chip, so it never holds the day open.
-  const careNow = care && fixableNow(progress, Object.values(findings));
+  // A fix or a workshop step that can't be done now is a bonus chip, so it never holds the day open (a role made
+  // without AllowFixes can't fix anything: v2.17 account.status fixes false).
+  const fixesOff = useCity((s) => s.account.linked && s.account.fixes === false);
+  const careNow = care && !fixesOff && fixableNow(progress, Object.values(findings));
   const labsNow = stepsLeftToPay(progress.workshops, real ? 'real' : 'practice');
   const open = { learn: ladder.tabs.has('learn'), puzzles: ladder.learnBuild, care, careNow, games: !!game, labs: ladder.places, labsNow, designs: ladder.learnBuild, jobs };
   // The finish line is set at the day's first look; what opens later is a bonus (it never moves "2/3" to "2/4").
@@ -106,13 +109,17 @@ export function useTodo() {
   const next = nextAction({ progress, cityRegion: region, clientFocus }, { clients: ladder.clients });
   const jobs = ladder.clients ? openJobs(progress, region, clientFocus, 3) : [];
   const game = placeFor(today.game ?? ANY_GAME)?.game;
-  const list = buildTodo({ next, goals: today.goals, jobs, gameName: game ? GAME_NAMES[game] : undefined });
+  // A hosted, signed-in player with no working link gets one quiet "Connect your AWS account" row.
+  const connect = useConnectOffer();
+  const list = buildTodo({ next, goals: today.goals, jobs, gameName: game ? GAME_NAMES[game] : undefined, connect });
   return { ...list, ...todoProgress(list), today, next, care };
 }
 
 /** Runs a task's "Do it": a plan through the next-action runner, or one of today's goals opened where it's done. */
 export function runTodo(t: TodoTask, openTab: OpenTab, opts: { game?: string; openCare: () => void }) {
   if (t.run.kind === 'plan') return runNext(t.run.plan);
+  // The account row: the account card in Deploy, its linking steps unfolded.
+  if (t.run.kind === 'connect') return openAccountCard(openTab);
   switch (t.run.goal) {
     case 'cards':
       return openTab('cards');

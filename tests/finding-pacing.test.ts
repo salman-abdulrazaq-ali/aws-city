@@ -181,7 +181,8 @@ describe('findings wait until city care unlocks', () => {
     findings(5).forEach(send);
     s().releaseCare();
     expect(shown()).toHaveLength(1);
-    s().applyServerEvent({ type: 'account.status', linked: true, accountId: '123456789012', region: 'us-west-2' });
+    // The reply to the player's verify (its requestId): the one status that's toasted.
+    s().applyServerEvent({ type: 'account.status', requestId: 'r1', linked: true, accountId: '123456789012', region: 'us-west-2' });
     expect(shown()).toHaveLength(1);
     send(findings(6)[5]);
     expect(shown()).toHaveLength(1);

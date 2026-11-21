@@ -67,6 +67,8 @@ describe('shows(feature, prefs)', () => {
     expect(shows('deployTab', SIMPLE, { steps: ['deploy'] })).toBe(true);
     expect(shows('deployTab', SIMPLE, { linked: true })).toBe(true);
     expect(shows('deployTab', SIMPLE, { deployWaiting: true })).toBe(true);
+    // A real account being linked (a setup link out, MFA asked first, a broken link): its steps are in Deploy.
+    expect(shows('deployTab', SIMPLE, { linking: true })).toBe(true);
     // The Drawing board only for a design step.
     expect(shows('drawingBoard', SIMPLE, { steps: ['cards'] })).toBe(false);
     expect(shows('drawingBoard', SIMPLE, { steps: ['design'] })).toBe(true);
@@ -78,7 +80,11 @@ const job = (n: number): OpenJob => ({ taskId: `t${n}`, clientId: 'bank', title:
 const q = QUESTS[0];
 const step = (i: number): NextPlan => ({ kind: 'step', label: `Step ${i}`, questId: q.id, step: q.steps[i] });
 const runnable = (t: TodoTask) =>
-  t.run.kind === 'plan' ? typeof t.run.plan.kind === 'string' && t.run.plan.label.length > 0 : ['cards', 'puzzles', 'games', 'labs', 'fixes', 'jobs', 'designs'].includes(t.run.goal);
+  t.run.kind === 'plan'
+    ? typeof t.run.plan.kind === 'string' && t.run.plan.label.length > 0
+    : t.run.kind === 'goal'
+      ? ['cards', 'puzzles', 'games', 'labs', 'fixes', 'jobs', 'designs'].includes(t.run.goal)
+      : t.run.kind === 'connect';
 /** Every task: a title, one line why, a button that says what happens (never a bare "Go"), and something it runs. */
 const wellFormed = (tasks: TodoTask[]) => {
   for (const t of tasks) {
@@ -211,6 +217,26 @@ describe('the To-do list', () => {
       expect(tasks.length).toBeGreaterThanOrEqual(3);
       wellFormed(tasks);
     }
+  });
+
+  it('a hosted player with no working link gets one quiet account row: after the goals, never counted, first to go', () => {
+    const list = buildList({ next: step(0), goals: [goal('games', 0)], jobs: [job(1), job(2)], connect: 'connect' });
+    expect(list.tasks.map((t) => t.key)).toEqual([`step:${q.id}`, 'games', 'connect']);
+    const row = list.tasks[2];
+    expect(row).toMatchObject({ title: 'Your AWS account', action: 'Connect your AWS account', counts: false, done: false, run: { kind: 'connect' } });
+    expect(row.holds).toBeUndefined();
+    wellFormed(list.tasks);
+    // It never counts: "To do n/m" is the goals (and the quest step holding a short day open).
+    expect(todoProgress(list)).toEqual(todoProgress(buildList({ next: step(0), goals: [goal('games', 0)], jobs: [job(1), job(2)] })));
+    // A broken link says so.
+    expect(buildTodo({ next: step(0), goals: [], jobs: [], connect: 'relink' })[1]).toMatchObject({ key: 'connect', action: 'Link it again', title: 'Your AWS account needs you' });
+    // Over the cap it goes (after the board's filler jobs), never a goal: ⋯ → Account still has it.
+    const goals = (['cards', 'puzzles', 'games', 'labs'] as const).map((id) => goal(id, 0));
+    const full = buildList({ next: step(0), goals, jobs: [job(1)], connect: 'connect' });
+    expect(full.tasks.map((t) => t.key)).toEqual([`step:${q.id}`, 'cards', 'puzzles', 'games', 'labs']);
+    // A done day: the rows that never tick leave, the account row too.
+    const done = buildList({ next: step(0), goals: [goal('games', 1), goal('cards', 5, 5)], jobs: [], connect: 'connect' });
+    expect([...done.tasks, ...done.more].some((t) => t.key === 'connect')).toBe(false);
   });
 
   it('the end of the day says when to come back', () => {

@@ -300,6 +300,115 @@ describe('runtime sessions', () => {
     expect(rt.canDeleteAccount()).toBe(true);
   });
 
+  it('v2.17: a link is made for the Region the player picked (AllowFixes when ticked), and a refused one is resent with both', async () => {
+    const { rt, useCity } = await boot();
+    Object.assign(fake, { confirmTotp: async () => {} });
+    fake.status('connected');
+    await settle();
+    const fire = (e: ServerEvent) => (fake as unknown as { events: Set<(e: ServerEvent) => void> }).events.forEach((cb) => cb(e));
+    const requestId = rt.linkAccount('ap-southeast-2', { allowFixes: true })!;
+    expect(fake.sent.at(-1)).toEqual({ action: 'account.link', requestId, region: 'ap-southeast-2', allowFixes: true });
+    // Nothing is assumed before the link arrives (a refused request leaves step 2 as it was).
+    expect(useCity.getState().account.allowFixes).toBeUndefined();
+    fire({ type: 'error', requestId, code: 'mfa_required', message: 'MFA first' });
+    fake.sent = [];
+    await rt.confirmMfaSetup('123456');
+    const resent = fake.sent[0] as Extract<ClientCommand, { action: 'account.link' }>;
+    expect(fake.sent).toEqual([{ action: 'account.link', requestId: expect.any(String), region: 'ap-southeast-2', allowFixes: true }]);
+    fire({ type: 'account.linkUrl', requestId: resent.requestId, url: 'https://ap-southeast-2.console.aws.amazon.com/x', externalId: 'e' });
+    expect(useCity.getState().account).toMatchObject({ linkRegion: 'ap-southeast-2', allowFixes: true, linkUrl: 'https://ap-southeast-2.console.aws.amazon.com/x' });
+    // Unticked: no allowFixes field at all, and step 2's box clears with the new link.
+    const plain = rt.linkAccount('eu-west-1')!;
+    expect(fake.sent.at(-1)).toEqual({ action: 'account.link', requestId: plain, region: 'eu-west-1' });
+    fire({ type: 'account.linkUrl', requestId: plain, url: 'https://eu-west-1.console.aws.amazon.com/x', externalId: 'e' });
+    expect(useCity.getState().account).toMatchObject({ linkRegion: 'eu-west-1', allowFixes: false });
+  });
+
+  it('v2.17: Disconnect sends account.unlink, and Take it down sends resource.remove (the server asks for approval)', async () => {
+    const { rt, useCity } = await boot();
+    fake.status('connected');
+    await settle();
+    const requestId = rt.unlinkAccount()!;
+    expect(fake.sent.at(-1)).toEqual({ action: 'account.unlink', requestId });
+    expect(useCity.getState().account.unlinking).toBe(requestId);
+    const remove = rt.removeResource('table', 'city-orders')!;
+    expect(fake.sent.at(-1)).toEqual({ action: 'resource.remove', requestId: remove, kind: 'table', id: 'city-orders' });
+  });
+
+  it('v2.17: Check again asks for a fresh setup link in the linked Region, then verifies the account once it’s in', async () => {
+    const { rt, useCity } = await boot();
+    fake.status('connected');
+    await settle();
+    const fire = (e: ServerEvent) => (fake as unknown as { events: Set<(e: ServerEvent) => void> }).events.forEach((cb) => cb(e));
+    expect(rt.recheckAccount()).toBeUndefined(); // nothing linked yet
+    fire({ type: 'account.status', linked: true, accountId: '111122223333', region: 'eu-west-1' });
+    fake.sent = [];
+    const requestId = rt.recheckAccount()!;
+    expect(fake.sent).toEqual([{ action: 'account.link', requestId, region: 'eu-west-1' }]);
+    fire({ type: 'account.linkUrl', requestId, url: 'https://eu-west-1.console.aws.amazon.com/x', externalId: 'e' });
+    expect(fake.sent.at(-1)).toEqual({ action: 'account.verify', requestId: expect.any(String), roleArn: '111122223333' });
+    // Once only: the same link again sends nothing more; a refused link verifies nothing.
+    fire({ type: 'account.linkUrl', requestId, url: 'https://eu-west-1.console.aws.amazon.com/x', externalId: 'e' });
+    expect(fake.sent.filter((c) => c.action === 'account.verify')).toHaveLength(1);
+    const refused = rt.recheckAccount()!;
+    fire({ type: 'error', requestId: refused, message: 'Too many requests.' });
+    fire({ type: 'account.linkUrl', requestId: refused, url: 'https://eu-west-1.console.aws.amazon.com/x', externalId: 'e' });
+    expect(fake.sent.filter((c) => c.action === 'account.verify')).toHaveLength(1);
+    expect(useCity.getState().account.linked).toBe(true);
+  });
+
+  it('v2.17: an account reply is this tab’s own only if it asked; a refusal is said in the card', async () => {
+    const { rt, useCity } = await boot();
+    fake.status('connected');
+    await settle();
+    const fire = (e: ServerEvent) => (fake as unknown as { events: Set<(e: ServerEvent) => void> }).events.forEach((cb) => cb(e));
+    useCity.getState().clearToasts();
+    // Another tab of the same player verified: the broadcast reaches this tab too, quietly.
+    fire({ type: 'account.status', requestId: 'someone-else', linked: true, accountId: '111122223333', region: 'eu-west-1' });
+    expect(useCity.getState().account).toMatchObject({ linked: true, accountId: '111122223333' });
+    expect(useCity.getState().toasts).toEqual([]);
+    // This tab's own verify that failed: an error with its requestId, kept in the card (and toasted, like any error).
+    const asked = rt.verifyAccount('444455556666')!;
+    fire({ type: 'error', requestId: asked, message: 'Your setup link is more than a day old, so I won’t use it.' });
+    expect(useCity.getState().account.error).toMatch(/more than a day old/);
+    // The next try clears it, and its success is this tab's own (one toast).
+    useCity.getState().clearToasts();
+    const again = rt.verifyAccount('444455556666')!;
+    expect(useCity.getState().account.error).toBeUndefined();
+    fire({ type: 'account.status', requestId: again, linked: true, accountId: '444455556666', region: 'eu-west-1' });
+    expect(useCity.getState().toasts.map((t) => t.text)).toEqual([expect.stringMatching(/444455556666 is linked/)]);
+    // An authenticator refusal has its own card, not this line.
+    const link = rt.linkAccount('eu-west-1')!;
+    fire({ type: 'error', requestId: link, code: 'mfa_required', message: 'MFA first' });
+    expect(useCity.getState().account.error).toBeUndefined();
+  });
+
+  it('the store learns at startup whether the backend is the hosted server', async () => {
+    Object.assign(fake, { hosted: true });
+    const { useCity } = await boot();
+    fake.status('connected');
+    expect(useCity.getState().hosted).toBe(true);
+  });
+
+  it('Download my data saves what the server keeps as a JSON file on this device (hosted players only)', async () => {
+    const { rt, useCity } = await boot();
+    Object.assign(fake, { exportMe: async () => ({ progress: { version: 1 }, account: null }) });
+    expect(rt.canDownloadData()).toBe(false);
+    Object.assign(fake, { hosted: true });
+    expect(rt.canDownloadData()).toBe(true);
+    const a = { href: '', download: '', click: vi.fn() };
+    vi.stubGlobal('document', { createElement: () => a });
+    try {
+      await rt.downloadMyData();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(a.click).toHaveBeenCalledOnce();
+    expect(a.download).toMatch(/^aws-city-my-data-\d{4}-\d{2}-\d{2}\.json$/);
+    expect(a.href).toMatch(/^blob:/);
+    expect(useCity.getState().toasts.at(-1)?.text).toMatch(/saved as aws-city-my-data/);
+  });
+
   it('auto-snap fires on AWS pages only, and a snap of another site sends no URL or title', async () => {
     const { rt, useCity } = await boot();
     fake.status('connected');

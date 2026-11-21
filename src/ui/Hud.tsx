@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
-import { canReconnect, canSignIn, openFullCity, openLeaderboard, reconnect, setAutoSnap, signIn, type Layout } from '@/app/runtime';
+import { canDeleteAccount, canDownloadData, canReconnect, canSignIn, downloadMyData, openFullCity, openLeaderboard, reconnect, setAutoSnap, signIn, signOut, type Layout } from '@/app/runtime';
 import { chime, isMuted, onMuteChange, setMuted } from '@/game/audio';
 import { isRushNow, subscribeRush } from '@/game/rush';
 import { bus } from '@/state/bus';
@@ -18,6 +18,7 @@ import { OsmCredit } from './Minimap';
 import { BuildToggle } from './BuildDrawer';
 import { isSimple, shows } from '@/state/simple';
 import { useTodo } from './today';
+import { DeleteAccountDialog, openAccountCard } from './Account';
 
 
 /**
@@ -159,9 +160,54 @@ function ConnectionPill() {
   );
 }
 
+/**
+ * ⋯ → Account, on the hosted server: the player's own AWS account (its card in Deploy), sign in or out, download their
+ * data, and delete their account (asked first, in a dialog: DeleteAccountDialog).
+ */
+function AccountItems({ run, askDelete }: { run: (fn: () => void) => () => void; askDelete: () => void }) {
+  const status = useCity((s) => s.backendStatus);
+  const linked = useCity((s) => s.account.linked);
+  return (
+    <>
+      <div className="menu-label" role="presentation">
+        Account
+      </div>
+      {status === 'signed-out' ? (
+        canSignIn() && (
+          <button role="menuitem" onClick={run(signIn)}>
+            Sign in
+          </button>
+        )
+      ) : (
+        <>
+          <button role="menuitem" title="Its card is in the Deploy tab" onClick={run(() => openAccountCard())}>
+            {linked ? '🔗 Your AWS account' : '🔗 Connect your AWS account'}
+          </button>
+          {canDownloadData() && (
+            <button role="menuitem" title="Everything the server keeps about you, as a file on this device" onClick={run(() => void downloadMyData())}>
+              Download my data
+            </button>
+          )}
+          <button role="menuitem" onClick={run(signOut)}>
+            Sign out
+          </button>
+          {canDeleteAccount() && (
+            <button role="menuitem" onClick={run(askDelete)}>
+              Delete my account…
+            </button>
+          )}
+        </>
+      )}
+      <hr />
+    </>
+  );
+}
+
 /** Everything that isn't needed every minute, in one flat list: sound, chatter, peek, tour, full city, the Lookout. */
 function MoreMenu({ layout }: { layout: Layout }) {
   const [open, setOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const hosted = useCity((s) => s.hosted);
   // Follows the toggle on another surface too (the side panel and the full tab share it).
   const muted = useSyncExternalStore(onMuteChange, isMuted);
   const autoSnap = useCity((s) => s.autoSnap);
@@ -198,135 +244,139 @@ function MoreMenu({ layout }: { layout: Layout }) {
     setOpen(false);
   };
   return (
-    <div className="more" ref={box}>
-      <button className="btn icon ghost" aria-haspopup="menu" aria-expanded={open} aria-label="More" title="More" onClick={() => setOpen((o) => !o)}>
-        <Icon name="more" />
-      </button>
-      {open && (
-        <div className="menu" role="menu">
-          <button
-            role="menuitemcheckbox"
-            aria-checked={!muted}
-            onClick={() => {
-              setMuted(!muted);
-              if (muted) chime();
-            }}
-          >
-            <span>Sound effects</span>
-            <span className={`switch ${muted ? '' : 'on'}`} aria-hidden="true" />
-          </button>
-          <button role="menuitemcheckbox" aria-checked={chatter} onClick={() => setPref('chatter', !chatter)}>
-            <span>Agents chat in the city</span>
-            <span className={`switch ${chatter ? 'on' : ''}`} aria-hidden="true" />
-          </button>
-          <button role="menuitemcheckbox" aria-checked={mapDetails} onClick={() => setPref('mapDetails', !mapDetails)}>
-            <span>Show the map details</span>
-            <span className={`switch ${mapDetails ? 'on' : ''}`} aria-hidden="true" />
-          </button>
-          <hr />
-          <div className="menu-label" role="presentation">
-            Accessibility
-          </div>
-          <button
-            role="menuitem"
-            aria-label={`Text size: ${textSize}%. Choose to make it bigger.`}
-            onClick={() => setPref('textSize', textSize === 100 ? 125 : textSize === 125 ? 150 : undefined)}
-          >
-            <span>Text size</span>
-            <span className="menu-value">{textSize}%</span>
-          </button>
-          <button role="menuitemcheckbox" aria-checked={contrast} onClick={() => setPref('contrast', contrast ? undefined : true)}>
-            <span>High contrast</span>
-            <span className={`switch ${contrast ? 'on' : ''}`} aria-hidden="true" />
-          </button>
-          <button role="menuitemcheckbox" aria-checked={easyFont} onClick={() => setPref('easyFont', easyFont ? undefined : true)}>
-            <span>Easy-read font</span>
-            <span className={`switch ${easyFont ? 'on' : ''}`} aria-hidden="true" />
-          </button>
-          <button
-            role="menuitemcheckbox"
-            aria-checked={relaxed}
-            title="Rounds end when you press Done, and everything moves slower"
-            onClick={() => setPref('relaxed', relaxed ? undefined : true)}
-          >
-            <span>Games without a clock</span>
-            <span className={`switch ${relaxed ? 'on' : ''}`} aria-hidden="true" />
-          </button>
-          <button role="menuitemcheckbox" aria-checked={captions} title="A short caption for each sound" onClick={() => setPref('captions', captions ? undefined : true)}>
-            <span>Sound captions</span>
-            <span className={`switch ${captions ? 'on' : ''}`} aria-hidden="true" />
-          </button>
-          <button
-            role="menuitemcheckbox"
-            aria-checked={builder}
-            title="Every area open, and the deeper “For AWS learners” text shown first"
-            onClick={() => {
-              setPref('builder', builder ? undefined : true);
-              if (!builder) openEverything();
-            }}
-          >
-            <span>I already build on AWS</span>
-            <span className={`switch ${builder ? 'on' : ''}`} aria-hidden="true" />
-          </button>
-          {/* Simple mode (the default) ↔ Everything: one switch, and "Show everything" also opens every locked area. */}
-          {simple ? (
+    <>
+      <div className="more" ref={box}>
+        <button className="btn icon ghost" aria-haspopup="menu" aria-expanded={open} aria-label="More" title="More" onClick={() => setOpen((o) => !o)}>
+          <Icon name="more" />
+        </button>
+        {open && (
+          <div className="menu" role="menu">
+            {hosted && <AccountItems run={run} askDelete={() => setConfirmDelete(true)} />}
+            <button
+              role="menuitemcheckbox"
+              aria-checked={!muted}
+              onClick={() => {
+                setMuted(!muted);
+                if (muted) chime();
+              }}
+            >
+              <span>Sound effects</span>
+              <span className={`switch ${muted ? '' : 'on'}`} aria-hidden="true" />
+            </button>
+            <button role="menuitemcheckbox" aria-checked={chatter} onClick={() => setPref('chatter', !chatter)}>
+              <span>Agents chat in the city</span>
+              <span className={`switch ${chatter ? 'on' : ''}`} aria-hidden="true" />
+            </button>
+            <button role="menuitemcheckbox" aria-checked={mapDetails} onClick={() => setPref('mapDetails', !mapDetails)}>
+              <span>Show the map details</span>
+              <span className={`switch ${mapDetails ? 'on' : ''}`} aria-hidden="true" />
+            </button>
+            <hr />
+            <div className="menu-label" role="presentation">
+              Accessibility
+            </div>
             <button
               role="menuitem"
-              title="Show every extra (rank, City Lights, season road, Codex, news, the Drawing board…) and open every tab and panel now"
-              onClick={run(() => {
-                setPref('simple', false);
-                if (locked.length > 0) openEverything();
-              })}
+              aria-label={`Text size: ${textSize}%. Choose to make it bigger.`}
+              onClick={() => setPref('textSize', textSize === 100 ? 125 : textSize === 125 ? 150 : undefined)}
             >
-              Show everything
+              <span>Text size</span>
+              <span className="menu-value">{textSize}%</span>
             </button>
-          ) : (
-            <button role="menuitem" title="Back to a plain To-do list: the extras hide (nothing you earned is lost)" onClick={run(() => setPref('simple', undefined))}>
-              Keep it simple
+            <button role="menuitemcheckbox" aria-checked={contrast} onClick={() => setPref('contrast', contrast ? undefined : true)}>
+              <span>High contrast</span>
+              <span className={`switch ${contrast ? 'on' : ''}`} aria-hidden="true" />
             </button>
-          )}
-          <hr />
-          <button role="menuitem" onClick={run(() => useCity.getState().openCollection(true))}>
-            🏙️ My City: everything you've earned
-          </button>
-          <button role="menuitem" title="Weekly leaderboards, and whether other players can see you" onClick={run(() => openLeaderboard(`mayors:${useCity.getState().cityRegion}`))}>
-            🏆 Leaderboards and live city
-          </button>
-          {cityView && <BuildToggle menu={() => setOpen(false)} />}
-          {inCity && (
-            <button role="menuitem" title="Download a picture of your city as it is now (nothing is uploaded)" onClick={run(() => bus.emit('postcard'))}>
-              📸 Save a postcard of my city
+            <button role="menuitemcheckbox" aria-checked={easyFont} onClick={() => setPref('easyFont', easyFont ? undefined : true)}>
+              <span>Easy-read font</span>
+              <span className={`switch ${easyFont ? 'on' : ''}`} aria-hidden="true" />
             </button>
-          )}
-          <button role="menuitem" onClick={run(() => setTourOpen(true))}>
-            Replay the tour
-          </button>
-          {layout === 'panel' && (
-            <button role="menuitem" onClick={run(openFullCity)}>
-              Open the full city in a tab ↗
+            <button
+              role="menuitemcheckbox"
+              aria-checked={relaxed}
+              title="Rounds end when you press Done, and everything moves slower"
+              onClick={() => setPref('relaxed', relaxed ? undefined : true)}
+            >
+              <span>Games without a clock</span>
+              <span className={`switch ${relaxed ? 'on' : ''}`} aria-hidden="true" />
             </button>
-          )}
-          {layout === 'panel' && (
-            <button role="menuitemcheckbox" aria-checked={autoSnap} onClick={() => setAutoSnap(!autoSnap)}>
-              <span>Lookout watches my AWS pages</span>
-              <span className={`switch ${autoSnap ? 'on' : ''}`} aria-hidden="true" />
+            <button role="menuitemcheckbox" aria-checked={captions} title="A short caption for each sound" onClick={() => setPref('captions', captions ? undefined : true)}>
+              <span>Sound captions</span>
+              <span className={`switch ${captions ? 'on' : ''}`} aria-hidden="true" />
             </button>
-          )}
-          {inDemo && (
-            <button role="menuitem" onClick={() => switchDemo(false)}>
-              Sign in to save your city
+            <button
+              role="menuitemcheckbox"
+              aria-checked={builder}
+              title="Every area open, and the deeper “For AWS learners” text shown first"
+              onClick={() => {
+                setPref('builder', builder ? undefined : true);
+                if (!builder) openEverything();
+              }}
+            >
+              <span>I already build on AWS</span>
+              <span className={`switch ${builder ? 'on' : ''}`} aria-hidden="true" />
             </button>
-          )}
-          <hr />
-          <div className="menu-label" role="presentation">
-            Credits
+            {/* Simple mode (the default) ↔ Everything: one switch, and "Show everything" also opens every locked area. */}
+            {simple ? (
+              <button
+                role="menuitem"
+                title="Show every extra (rank, City Lights, season road, Codex, news, the Drawing board…) and open every tab and panel now"
+                onClick={run(() => {
+                  setPref('simple', false);
+                  if (locked.length > 0) openEverything();
+                })}
+              >
+                Show everything
+              </button>
+            ) : (
+              <button role="menuitem" title="Back to a plain To-do list: the extras hide (nothing you earned is lost)" onClick={run(() => setPref('simple', undefined))}>
+                Keep it simple
+              </button>
+            )}
+            <hr />
+            <button role="menuitem" onClick={run(() => useCity.getState().openCollection(true))}>
+              🏙️ My City: everything you've earned
+            </button>
+            <button role="menuitem" title="Weekly leaderboards, and whether other players can see you" onClick={run(() => openLeaderboard(`mayors:${useCity.getState().cityRegion}`))}>
+              🏆 Leaderboards and live city
+            </button>
+            {cityView && <BuildToggle menu={() => setOpen(false)} />}
+            {inCity && (
+              <button role="menuitem" title="Download a picture of your city as it is now (nothing is uploaded)" onClick={run(() => bus.emit('postcard'))}>
+                📸 Save a postcard of my city
+              </button>
+            )}
+            <button role="menuitem" onClick={run(() => setTourOpen(true))}>
+              Replay the tour
+            </button>
+            {layout === 'panel' && (
+              <button role="menuitem" onClick={run(openFullCity)}>
+                Open the full city in a tab ↗
+              </button>
+            )}
+            {layout === 'panel' && (
+              <button role="menuitemcheckbox" aria-checked={autoSnap} onClick={() => setAutoSnap(!autoSnap)}>
+                <span>Lookout watches my AWS pages</span>
+                <span className={`switch ${autoSnap ? 'on' : ''}`} aria-hidden="true" />
+              </button>
+            )}
+            {inDemo && (
+              <button role="menuitem" onClick={() => switchDemo(false)}>
+                Sign in to save your city
+              </button>
+            )}
+            <hr />
+            <div className="menu-label" role="presentation">
+              Credits
+            </div>
+            <div className="menu-credit" role="presentation">
+              Street maps: <OsmCredit /> (ODbL 1.0)
+            </div>
           </div>
-          <div className="menu-credit" role="presentation">
-            Street maps: <OsmCredit /> (ODbL 1.0)
-          </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+      <DeleteAccountDialog open={confirmDelete} onClose={() => setConfirmDelete(false)} />
+    </>
   );
 }
 

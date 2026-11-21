@@ -28,6 +28,7 @@ import { glowingNow, ReturnNote, SupplyDrop } from './Loops';
 import { withCoins } from './icons';
 import { doneLine, isSimple, type TodoTask } from '@/state/simple';
 import { ANY_GAME, playAt, runTodo, useCare, useTodayGoals, useTodo } from './today';
+import { ConnectLine } from './Account';
 
 export { gameBuilding } from './today';
 
@@ -84,7 +85,7 @@ export function Home({ openTab, places }: { openTab: OpenTab; places?: ReactNode
 
 /** Where a task's button goes when it's another tab (its label says what happens; this says where). */
 const TASK_WHERE: Partial<Record<TodayGoal['id'], string>> = { cards: 'Learn', puzzles: 'Learn', designs: 'Learn', jobs: 'Jobs' };
-const taskWhere = (t: TodoTask) => (t.run.kind === 'plan' ? whereOf(t.run.plan) : TASK_WHERE[t.run.goal]);
+const taskWhere = (t: TodoTask) => (t.run.kind === 'plan' ? whereOf(t.run.plan) : t.run.kind === 'goal' ? TASK_WHERE[t.run.goal] : 'Deploy');
 
 /**
  * The City tab in Simple mode: what the player asked an agent (while it works), one plain To-do list (a box, one line
@@ -285,6 +286,7 @@ function Shift({ openTab, care, openCare }: { openTab: OpenTab; care: boolean; o
       {/* A finished task's card holds the floor: its next step is this same action, so the shift's button waits. */}
       {taskUp ? <TaskCard key={latest!.taskId} task={latest!} openTab={openTab} /> : <NextButton action={action} calm={summary.done} />}
       {ladder.clients && <OrderBoard max={3} skip={action.kind === 'job' ? action.taskId : undefined} />}
+      <ConnectLine openTab={openTab} />
       {ready.length > 0 && (
         <section className="ready" aria-label="Ready to upgrade">
           <h4 className="label">Ready to upgrade</h4>

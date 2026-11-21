@@ -5,6 +5,7 @@ import { useMemo, useSyncExternalStore } from 'react';
 import { releaseCare } from '@/app/runtime';
 import { ALL_AREAS, ladder, lockedAreas, type Area, type Ladder, type LadderInput } from '@/state/ladder';
 import { useCity } from '@/state/store';
+import { linking } from '@/state/account';
 import { OPENED_KEY, readPref, writePref } from './logic';
 
 const listeners = new Set<() => void>();
@@ -57,8 +58,9 @@ export function useLadderInput(): LadderInput {
   const progress = useCity((s) => s.progress);
   const linked = useCity((s) => s.account.linked);
   const hasDeploys = useCity((s) => Object.keys(s.deploys).length > 0);
+  const linkingNow = useCity((s) => linking(s.account));
   const opened = useOpened();
-  return useMemo(() => ({ progress, linked, hasDeploys, opened }), [progress, linked, hasDeploys, opened]);
+  return useMemo(() => ({ progress, linked, hasDeploys, linking: linkingNow, opened }), [progress, linked, hasDeploys, linkingNow, opened]);
 }
 
 export function useLadder(): Ladder {

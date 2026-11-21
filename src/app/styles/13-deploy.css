@@ -205,3 +205,129 @@
   color: var(--ink-hi);
   font-weight: 800;
 }
+
+/* ── Your AWS account (v2.17): the Region, the console's checklist, the linked card's actions, My builds ── */
+.link-region {
+  max-width: 100%;
+}
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.check-row input {
+  margin-top: 2px;
+  flex: none;
+}
+.checklist-title {
+  font-size: var(--fs-sm);
+}
+.account-steps {
+  margin: 0;
+  padding-left: var(--s-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.account-actions {
+  flex-wrap: wrap;
+  margin-top: var(--s-3);
+}
+.account-howto {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-3);
+  margin-top: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  background: var(--sunken);
+  border-radius: var(--r-md);
+}
+.account-howto p {
+  margin: 0;
+  line-height: 1.45;
+}
+.account-howto .row {
+  flex-wrap: wrap;
+}
+.template-url {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  max-width: 100%;
+}
+.template-url code {
+  overflow-wrap: anywhere;
+}
+.link-cancel {
+  list-style: none;
+  padding-left: var(--s-3);
+}
+.my-builds {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.my-builds li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2) var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  background: var(--panel-3);
+  border-radius: var(--r-md);
+}
+.my-build-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.delete-billing .btn {
+  margin-top: var(--s-2);
+}
+/* ⋯ → Account → Delete my account…: over the whole app, whatever opened it. */
+.finding-scrim.account-scrim {
+  position: fixed;
+  z-index: var(--z-tour);
+}
+.account-card {
+  max-width: 420px;
+  margin: 0 auto;
+}
+/* The shift's quiet "Your AWS account" line (Everything mode): never the primary button. */
+.connect-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2) var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+}
+.connect-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.account-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+}
+.connects-player {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}

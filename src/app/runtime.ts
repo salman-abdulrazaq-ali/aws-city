@@ -4,7 +4,7 @@
 import { browser } from 'wxt/browser';
 import { createBackend, type AgentBackend } from '@/backend';
 import type { ConsoleStepEvent, PageSnapshot } from '@/backend/contract';
-import { agentName, emptyProgress } from '@/state/store';
+import { agentName, emptyProgress, errorText } from '@/state/store';
 import { uid } from '@/backend/AgentBackend';
 import type { Progress } from '@/backend/contract';
 import { captureVisibleTab, hasCapturePermission, requestCapturePermission } from '@/capture/screenshot';
@@ -45,7 +45,7 @@ export function startRuntime(l: Layout) {
   backend = createBackend({ knownAgents: () => knownAgents(store().progress) });
   const kind = backend.kind;
   demo = kind === 'mock' && isDemo();
-  store().setBackend(kind, 'connecting', backend.deployMode ?? 'templates');
+  store().setBackend(kind, 'connecting', backend.deployMode ?? 'templates', backend.hosted === true);
   let hadSession = false;
   backend.onStatus((s) => {
     const prev = store().backendStatus;
@@ -62,9 +62,21 @@ export function startRuntime(l: Layout) {
       void endSession();
     }
   });
-  backend.onEvent((e) => {
+  backend.onEvent((raw) => {
+    // An account reply goes to every tab of the player: only the tab that asked hears it as its own (its toast); in the
+    // others it's a quiet update, as if no one asked.
+    const e = raw.type === 'account.status' && raw.requestId && !accountAsks.delete(raw.requestId) ? { ...raw, requestId: undefined } : raw;
     if (e.type === 'error' && e.code === 'mfa_required') mfaRefused = refusedBy(e, stepUps);
+    // A link, verify or Disconnect refused (a failed verify, a setup link over a day old): said in the account card too.
+    // An authenticator request has its own card.
+    if (e.type === 'error' && e.requestId && accountAsks.delete(e.requestId) && e.code !== 'mfa_required') store().patchAccount({ error: errorText(e) });
     store().applyServerEvent(e);
+    // A setup link arrived: the Region and AllowFixes it was asked with are now what the link says (step 2's checkbox).
+    const asked = e.type === 'account.linkUrl' ? stepUps.get(e.requestId) : undefined;
+    if (asked?.action === 'account.link') store().patchAccount({ linkRegion: asked.region, allowFixes: !!asked.allowFixes });
+    // "Check again": the fresh link is in, so the verify that reads the role can go.
+    if (e.type === 'account.linkUrl' && rechecks.has(e.requestId)) verifyAccount(rechecks.get(e.requestId)!);
+    if ((e.type === 'account.linkUrl' || e.type === 'error') && e.requestId) rechecks.delete(e.requestId);
     bus.emit('server', e);
     if (e.type === 'console.step') void relayConsoleStep(e);
   });
@@ -260,6 +272,8 @@ async function endSession() {
   pulled = false;
   storedOwner = '';
   stepUps.clear();
+  rechecks.clear();
+  accountAsks.clear();
   mfaRefused = undefined;
   // Anything held for this player must not reach the next one.
   clearTimeout(autoSnapTimer);
@@ -646,7 +660,11 @@ export function signIn() {
 }
 
 /** Optional backend methods (added to the AgentBackend contract separately) — read defensively. */
-type MaybeRecoverable = { reconnect?: () => void | Promise<void>; signOut?: () => void | Promise<void>; deleteAccount?: () => Promise<void> };
+type MaybeRecoverable = {
+  reconnect?: () => void | Promise<void>;
+  signOut?: () => void | Promise<void>;
+  deleteAccount?: () => Promise<void>;
+};
 const optional = () => backend as (AgentBackend & MaybeRecoverable) | undefined;
 
 export const canSignIn = () => typeof backend?.signIn === 'function';
@@ -656,6 +674,28 @@ export const canReconnect = () => typeof optional()?.reconnect === 'function';
  * runs the developer's own profile, and its sign-out does nothing).
  */
 export const canDeleteAccount = () => backend?.hosted === true && typeof optional()?.deleteAccount === 'function';
+/** "Download my data" (v2.17 GET /me/export): signed-in players on the hosted server. */
+export const canDownloadData = () => backend?.hosted === true && typeof backend.exportMe === 'function';
+
+/** The file "Download my data" saves (a local download: nothing else is fetched or uploaded). */
+export const exportFileName = (day = new Date().toISOString().slice(0, 10)) => `aws-city-my-data-${day}.json`;
+
+/** Saves everything the server stores about the player as a JSON file on this device (the backend fetches it). */
+export async function downloadMyData() {
+  if (typeof backend?.exportMe !== 'function') return;
+  try {
+    const data = await backend.exportMe();
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = exportFileName();
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    store().toast('🧾', `Your data is saved as ${a.download}.`);
+  } catch (e) {
+    store().toast('⚠️', `Couldn’t download your data: ${e instanceof Error ? e.message : String(e)}`, 'error');
+  }
+}
 
 /** Whether the player's authenticator is on (hosted); undefined when unknown (signed out, offline, no sign-in). */
 export async function mfaStatus() {
@@ -706,7 +746,7 @@ export async function startMfaSetup() {
 }
 
 /** A command the server can refuse with mfa_required (step-up), as sent. */
-export type StepUp = { action: 'account.link'; region: string } | { action: 'account.verify'; roleArn: string } | { action: 'finding.fix' } | { action: 'deploy.approve' };
+export type StepUp = { action: 'account.link'; region: string; allowFixes?: boolean } | { action: 'account.verify'; roleArn: string } | { action: 'finding.fix' } | { action: 'deploy.approve' };
 /** requestId → the step-up command sent with it (its mfa_required error carries that id; deploy.approve's carries none). */
 const stepUps = new Map<string, StepUp>();
 const noteStepUp = (requestId: string, cmd: StepUp) => {
@@ -762,7 +802,7 @@ export async function confirmMfaSetup(code: string) {
     mfaRefused = undefined;
     store().setMfaRequired(false);
     store().toast('🔐', next.message);
-    if (next.resend?.action === 'account.link') linkAccount(next.resend.region);
+    if (next.resend?.action === 'account.link') linkAccount(next.resend.region, { allowFixes: next.resend.allowFixes });
     else if (next.resend?.action === 'account.verify') verifyAccount(next.resend.roleArn);
     return true;
   } catch (e) {
@@ -771,12 +811,65 @@ export async function confirmMfaSetup(code: string) {
   }
 }
 
-/** Returns the requestId (an error for this request carries it), or undefined if nothing was sent. */
-export function linkAccount(region = 'us-west-2') {
+/**
+ * A setup link for `region` (the player picks it: the key is made there and the city reads that Region). `allowFixes`:
+ * the quick-create link turns AllowFixes on (v2.17). Returns the requestId (an error for this request carries it), or
+ * undefined if nothing was sent.
+ */
+export function linkAccount(region: string, opts: { allowFixes?: boolean } = {}) {
   if (!backend) return undefined;
   const requestId = uid();
-  noteStepUp(requestId, { action: 'account.link', region });
-  backend.send({ action: 'account.link', requestId, region });
+  const allowFixes = opts.allowFixes ? { allowFixes: true } : {};
+  noteStepUp(requestId, { action: 'account.link', region, ...allowFixes });
+  askAccount(requestId);
+  backend.send({ action: 'account.link', requestId, region, ...allowFixes });
+  return requestId;
+}
+
+/**
+ * v2.17: Disconnect the linked account (no MFA: taking access away is always allowed). The answer is account.status
+ * {linked: false} with this requestId; the AWSCity stack stays in the account until the player deletes it.
+ */
+export function unlinkAccount() {
+  if (!backend) return undefined;
+  const requestId = uid();
+  askAccount(requestId);
+  store().patchAccount({ unlinking: requestId });
+  backend.send({ action: 'account.unlink', requestId });
+  return requestId;
+}
+
+/** This tab's account.link / account.verify / account.unlink requests still unanswered (their replies are its own). */
+const accountAsks = new Set<string>();
+/** Notes an account request this tab sent, and clears the card's last refusal (a new try). */
+function askAccount(requestId: string) {
+  accountAsks.add(requestId);
+  if (accountAsks.size > 20) accountAsks.delete(accountAsks.values().next().value!);
+  store().patchAccount({ error: undefined });
+}
+
+/** "Check again"'s link requests (requestId → the linked account id to verify once the link is in). */
+const rechecks = new Map<string, string>();
+
+/**
+ * "Check again" (after updating the AWSCity stack in CloudFormation): the server reads the role at verify (whether fixes
+ * are allowed; the role version the setup link named) and verifies only within a day of a setup link, so this asks for a
+ * fresh link in the linked Region (same ExternalId: the stack keeps working, the link stays as it is) and verifies as soon
+ * as it's in. Returns the link's requestId (an error for it carries it).
+ */
+export function recheckAccount() {
+  const { accountId, region, linked } = store().account;
+  if (!linked || !accountId || !region) return undefined;
+  const requestId = linkAccount(region);
+  if (requestId) rechecks.set(requestId, accountId);
+  return requestId;
+}
+
+/** v2.17: Take down one thing the city built; the server asks for approval like any write (deploy.preview → deploy.approve). */
+export function removeResource(kind: 'instance' | 'table' | 'bucket', id: string) {
+  if (!backend) return undefined;
+  const requestId = uid();
+  backend.send({ action: 'resource.remove', requestId, kind, id });
   return requestId;
 }
 
@@ -792,6 +885,7 @@ export function verifyAccount(roleArn: string) {
   if (!backend) return undefined;
   const requestId = uid();
   noteStepUp(requestId, { action: 'account.verify', roleArn: roleArn.trim() });
+  askAccount(requestId);
   backend.send({ action: 'account.verify', requestId, roleArn: roleArn.trim() });
   return requestId;
 }
