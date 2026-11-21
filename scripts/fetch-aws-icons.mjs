@@ -115,7 +115,15 @@ async function zipUrl() {
   const res = await fetch(PAGE, { headers: { 'user-agent': 'Mozilla/5.0 (aws-city icon fetch)' } }).catch((e) => fail(`Couldn't reach ${PAGE}: ${e.message}`));
   if (!res.ok) fail(`${PAGE} answered HTTP ${res.status}`);
   const html = await res.text();
-  const zips = [...new Set(html.match(/https:\/\/[^"'\s]+?\.zip/g) ?? [])].filter((u) => /awsstatic\.com/.test(u));
+  const awsStatic = (u) => {
+    try {
+      const { protocol, hostname } = new URL(u);
+      return protocol === 'https:' && (hostname === 'awsstatic.com' || hostname.endsWith('.awsstatic.com'));
+    } catch {
+      return false;
+    }
+  };
+  const zips = [...new Set(html.match(/https:\/\/[^"'\s]+?\.zip/g) ?? [])].filter(awsStatic);
   const pkg = zips.find((u) => /icon-package|asset-package/i.test(u)) ?? zips.find((u) => !/pptx|keynote|toolkit/i.test(u));
   if (!pkg) fail(`No asset-package .zip link found on ${PAGE} (the page layout may have changed).`);
   return pkg;

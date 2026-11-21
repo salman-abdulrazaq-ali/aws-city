@@ -303,7 +303,8 @@ async function ensureOllama(model) {
     }
     mkdirSync(path.dirname(OLLAMA_LOG), { recursive: true });
     const log = openSync(OLLAMA_LOG, 'a');
-    spawn('ollama', ['serve'], { detached: true, stdio: ['ignore', log, log] }).unref();
+    // Loopback only, whatever OLLAMA_HOST the shell has: the model must never listen on the network (Ollama has no auth).
+    spawn('ollama', ['serve'], { detached: true, stdio: ['ignore', log, log], env: { ...process.env, OLLAMA_HOST: '127.0.0.1:11434' } }).unref();
     for (let i = 0; i < 60 && !ids; i++) {
       await sleep(250);
       ids = await localModels();
