@@ -145,6 +145,8 @@ describe('infrastructure guarantees', () => {
     t.svc.resourceCountIs('Custom::CDKContainerImageBuild', 1);
     t.svc.hasResourceProperties('AWS::CodeBuild::Project', { Environment: Match.objectLike({ Image: Match.stringLikeRegexp('aarch64') }) });
     t.svc.hasResourceProperties('AWS::ECR::Repository', { ImageScanningConfiguration: { ScanOnPush: true }, LifecyclePolicy: Match.anyValue() });
+    // Only the last 3 server images are kept (enough to roll back): older ones carry fixed CVEs that nobody runs.
+    expect(JSON.stringify(t.svc.findResources('AWS::ECR::Repository'))).toContain('Keep the last 3 server images');
   });
 
   it('extension client is a public PKCE client with chromiumapp.org callbacks', () => {
@@ -382,6 +384,9 @@ describe('the AI on AWS without Bedrock: an open model on a private Fargate serv
     expect(dockerfile).toContain('verify-model /root/.ollama/models "$MODEL_MANIFEST" $MODEL_DIGESTS &&');
     // It calls nobody: no Ollama cloud, no model-recommendations fetch.
     expect(dockerfile).toContain('OLLAMA_NO_CLOUD=1');
+    // The base image's Ubuntu packages are patched at build time, before anything else runs.
+    expect(dockerfile.indexOf('apt-get -y upgrade')).toBeGreaterThan(dockerfile.indexOf('FROM ollama/'));
+    expect(dockerfile.indexOf('apt-get -y upgrade')).toBeLessThan(dockerfile.indexOf('ollama pull'));
     expect(dockerfile).toMatch(/^USER 65534:65534$/m);
     expect(dockerfile).toContain('OLLAMA_NOPRUNE=1');
     // About $8.72 a day on demand in eu-west-2 (8 vCPU + 16 GB of Graviton Fargate).

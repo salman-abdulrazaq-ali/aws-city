@@ -215,7 +215,8 @@ export class ServiceStack extends Stack {
       ignoreMode: IgnoreMode.DOCKER,
       exclude: ['**', '!server/**', 'server/node_modules', 'server/dist', 'server/.data', 'server/test', '!src/backend/contract.ts', '!src/console/risk.ts', '!src/console/types.ts', '!src/world/**', '!shared/**'],
     });
-    (image.repository as ecr.Repository).addLifecycleRule({ description: 'Keep the last 10 server images', maxImageCount: 10 });
+    // Three are enough to roll back to; older ones (e.g. before the distroless base) carry fixed CVEs that nobody runs.
+    (image.repository as ecr.Repository).addLifecycleRule({ description: 'Keep the last 3 server images', maxImageCount: 3 });
     // The construct's shared (singleton) CodeBuild project and trigger Lambda: acknowledged on those constructs only.
     for (const helper of this.node.children.filter((c) => /^(ContainerImageBuild|DeployTimeBuildCustomResourceHandler)/.test(c.node.id))) {
       const project = helper.node.tryFindChild('Resource') as CfnResource | undefined;

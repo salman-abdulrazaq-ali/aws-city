@@ -305,7 +305,8 @@ contains no secrets):
 5. Writes `.env.production` and builds the extension, plus a store-ready zip.
 
 **When it's done:**
-- **Try it (staging):** in `chrome://extensions`, click **Load unpacked** and pick `.output/chrome-mv3`.
+- **Try it:** answer Yes to setup's last question, or run `npm run open:hosted` any time. It opens your live city in
+  its own browser window. In your everyday Chrome: `chrome://extensions` → **Load unpacked** → `.output/chrome-mv3`.
 - **Publish:** upload `.output/*-chrome.zip` to the Chrome Web Store
   ([guide](docs/chrome-web-store.md)), then run `npm run setup` again and enter the store id.
 

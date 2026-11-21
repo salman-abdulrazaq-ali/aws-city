@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { frame, introGrowth, introLines, INTRO_SECONDS, sceneLayout, sceneLines, STILL_T } from '../scripts/launcher/banner.mjs';
 import { chmodSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { localToken } from '../scripts/launcher/live-run.mjs';
+import { HOSTED_PROFILE, hostedBuildProblem } from '../scripts/launcher/lib.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { depsPlan, explainNpmError, installMessage, readDepsFacts } from '../scripts/launcher/boot.mjs';
@@ -609,5 +610,23 @@ describe.skipIf(process.platform === 'win32')('the local server token file', () 
     expect(readFileSync(target, 'utf8')).toBe(`${'y'.repeat(43)}\n`); // not written through it
     expect(lstatSync(file).isSymbolicLink()).toBe(false);
     rmSync(r, { recursive: true, force: true });
+  });
+});
+
+describe('opening the live (hosted) city', () => {
+  const env = 'WXT_BACKEND=hosted\nWXT_AWS_API_URL=https://d1example.cloudfront.net\nWXT_COGNITO_CLIENT_ID=abc\n';
+
+  it('needs the addresses setup writes, and a build with the fixed extension id', () => {
+    expect(hostedBuildProblem({ envProduction: env })).toBeUndefined();
+    expect(hostedBuildProblem({ envProduction: env, manifest: JSON.stringify({ key: 'MIIB…' }) })).toBeUndefined();
+    expect(hostedBuildProblem({})).toMatch(/npm run setup/);
+    expect(hostedBuildProblem({ envProduction: 'WXT_AWS_API_URL=http://insecure' })).toMatch(/npm run setup/);
+    expect(hostedBuildProblem({ envProduction: env, manifest: JSON.stringify({ name: 'AWS City' }) })).toMatch(/fixed extension id/);
+    expect(hostedBuildProblem({ envProduction: env, manifest: 'not json' })).toMatch(/fixed extension id/);
+  });
+
+  it('keeps its own profile, apart from the demo’s', () => {
+    expect(HOSTED_PROFILE).toBe('.cache/chrome-profile-hosted');
+    expect(HOSTED_PROFILE).not.toBe('.cache/chrome-profile');
   });
 });

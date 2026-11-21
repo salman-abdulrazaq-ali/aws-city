@@ -350,6 +350,30 @@ export const lockPid = (target) => {
   return m ? Number(m[1]) : undefined;
 };
 
+// ── the live (hosted) city ───────────────────────────────────────────────────────────────────────
+// `npm run open:hosted` (and the end of `npm run setup`) opens the city your setup deployed, in Chrome for Testing: branded
+// Chrome ignores --load-extension, so only you can load an unpacked build there (chrome://extensions, once).
+
+/** Its own profile, so the demo's progress (.cache/chrome-profile) never mixes into a signed-in account. */
+export const HOSTED_PROFILE = '.cache/chrome-profile-hosted';
+
+/**
+ * Why the live city can't be opened, or undefined when it can. `envProduction` is .env.production (setup writes it with
+ * the server and sign-in addresses); `manifest` is the built .output/chrome-mv3/manifest.json, once built.
+ */
+export const hostedBuildProblem = ({ envProduction, manifest } = {}) => {
+  if (!envProduction || !/^WXT_AWS_API_URL=https:\/\/\S+$/m.test(envProduction))
+    return 'No live city to open yet: run  npm run setup  first (it deploys your city and writes .env.production).';
+  if (manifest === undefined) return undefined;
+  let key;
+  try {
+    key = JSON.parse(manifest).key;
+  } catch {
+    key = undefined;
+  }
+  return key ? undefined : '.output/chrome-mv3 has no fixed extension id, so sign-in would fail. Run  npx wxt build --mode production  and try again.';
+};
+
 /** The line scripts/open.mjs prints when the profile is already open (start.mjs reads it back). */
 export const ALREADY_OPEN = 'AWS_CITY_ALREADY_OPEN';
 export const alreadyOpenPid = (output = '') => {
