@@ -1,6 +1,7 @@
 name: codeql
-# Static analysis of the extension, server and infra code, and of these workflows themselves (security-extended
-# queries; the actions language catches workflow injection and over-broad tokens).
+# Static analysis of the extension, server and infra code (security-extended queries), and of these workflows
+# themselves (the actions language catches workflow injection and over-broad tokens). The `analyze` job name is a
+# required check in the "main" ruleset: keep it.
 on:
   pull_request:
   push:
@@ -13,16 +14,24 @@ permissions:
 jobs:
   analyze:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [javascript-typescript, actions]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: { persist-credentials: false }
       - uses: github/codeql-action/init@9f759ee644a3e7c15c1390abf49868036c00067b # v3
         with:
-          languages: ${{ matrix.language }}
+          languages: javascript-typescript
           queries: security-extended
       - uses: github/codeql-action/analyze@9f759ee644a3e7c15c1390abf49868036c00067b # v3
-        with: { category: '/language:${{ matrix.language }}' }
+        with: { category: '/language:javascript-typescript' }
+
+  analyze-actions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
+      - uses: github/codeql-action/init@9f759ee644a3e7c15c1390abf49868036c00067b # v3
+        with:
+          languages: actions
+          queries: security-extended
+      - uses: github/codeql-action/analyze@9f759ee644a3e7c15c1390abf49868036c00067b # v3
+        with: { category: '/language:actions' }
