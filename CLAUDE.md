@@ -44,7 +44,9 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
 - **A new account is walked through, not left to guess** (`docs/self-hosting.md`): root MFA, the Paid plan (upgraded as
   root; a Free plan account closes when its credits run out), an admin user with MFA, `aws login` as that user, Nova or
   Claude, and a new account's Bedrock hold (verifying, 0 tokens a day, Free plan, use-case form, each with its fix and a
-  support-case text). The setup wizard checks the same before asking anything else: it warns on root (`sts` ARN), stops
+  support-case text). An expired or missing sign-in doesn't stop the wizard: it names it (`explainAwsError`) and offers
+  **Sign in with your browser** (`aws login --profile aws-city`), then checks again and carries on (`--yes`, keys in the
+  environment and runs without a terminal stop with the commands). The setup wizard checks the same before asking anything else: it warns on root (`sts` ARN), stops
   on the Free plan (`GetAccountPlanState`, `@aws-sdk/client-freetier`), and names the Bedrock wall (`explainAwsError`),
   each linking the guide's step. When Bedrock isn't ready, the wizard offers to deploy with the AI off (`aiEnabled:
   false` → the kill switch's starting value; everything but the agents works) and re-running it once Bedrock answers

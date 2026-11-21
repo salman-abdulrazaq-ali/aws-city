@@ -104,7 +104,8 @@ const awsFile = (name) => {
   }
 };
 const awsConfigText = awsFile('config');
-const profile = process.env.AWS_PROFILE ?? (process.env.AWS_ACCESS_KEY_ID ? undefined : pickProfile(listProfiles(awsFile('credentials'), awsConfigText)));
+const profiles = listProfiles(awsFile('credentials'), awsConfigText);
+let profile = process.env.AWS_PROFILE ?? (process.env.AWS_ACCESS_KEY_ID ? undefined : pickProfile(profiles));
 if (profile) process.env.AWS_PROFILE = profile;
 
 // Staging first (a test copy; docs/self-hosting.md), prod one arrow away.
@@ -141,29 +142,62 @@ const region = await ask(
 if (modelChoice === 'claude' && !geoFor(region)) bye(unsupportedRegionMessage(region)); // a saved --yes answer skips validate
 const { main: MAIN_MODEL, light: LIGHT_MODEL } = modelsForChoice(region, modelChoice);
 const MODELS = [MAIN_MODEL, LIGHT_MODEL];
-const credentials = fromNodeProviderChain({ profile: process.env.AWS_PROFILE });
+let credentials = fromNodeProviderChain({ profile: process.env.AWS_PROFILE });
 const aws = (C) => new C({ region, credentials });
 
+// Not signed in, or an `aws login` session that ran out (they expire): sign in from here, in the browser, and carry on
+// with the answers already given. The same sign-in the launcher offers (scripts/start.mjs connectAws). CI (--yes), keys
+// in the environment and runs without a terminal can't open a browser sign-in, so they stop with the commands instead.
+const SIGN_IN_PROFILE = 'aws-city';
 const s = p.spinner();
-s.start('Checking your AWS sign-in');
 let account;
-try {
-  const id = await aws(STSClient).send(new GetCallerIdentityCommand({}));
-  account = id.Account;
-  s.stop(`Signed in to AWS account ${account} as ${id.Arn?.split(':').pop()}${profile ? ` (profile ${profile})` : ''}`);
-  // Root can do everything and can't be limited: AWS's advice is an admin user with MFA for everyday work.
-  if (id.Arn?.endsWith(':root')) {
-    p.log.warn(
-      `You're signed in as the account's root user. Keep root for billing; deploy as an admin user with MFA instead.\nHow: ${GUIDE}#4-create-an-admin-user-with-mfa, then aws login again as that user.`,
-    );
-    if (!YES && !DRY && !(await ask('confirm', { message: 'Continue as root anyway?', initialValue: false }))) bye('Sign in as your admin user, then run setup again.');
+for (;;) {
+  s.start('Checking your AWS sign-in');
+  try {
+    const id = await aws(STSClient).send(new GetCallerIdentityCommand({}));
+    account = id.Account;
+    s.stop(`Signed in to AWS account ${account} as ${id.Arn?.split(':').pop()}${profile ? ` (profile ${profile})` : ''}`);
+    // Root can do everything and can't be limited: AWS's advice is an admin user with MFA for everyday work.
+    if (id.Arn?.endsWith(':root')) {
+      p.log.warn(
+        `You're signed in as the account's root user. Keep root for billing; deploy as an admin user with MFA instead.\nHow: ${GUIDE}#4-create-an-admin-user-with-mfa, then aws login again as that user.`,
+      );
+      if (!YES && !DRY && !(await ask('confirm', { message: 'Continue as root anyway?', initialValue: false }))) bye('Sign in as your admin user, then run setup again.');
+    }
+    break;
+  } catch (err) {
+    s.stop('Not signed in to AWS', 1);
+    p.log.error(explainAwsError(err));
+    if (DRY) {
+      account = '000000000000';
+      p.log.warn('[dry run] continuing without AWS: checks are skipped, nothing is written to AWS.');
+      break;
+    }
+    const manual = `Sign in first, then run setup again:\n  aws login --profile ${SIGN_IN_PROFILE}   (AWS CLI 2.32+; setup finds this profile by itself)\n  or: aws configure sso  /  export AWS_PROFILE=<profile>${profile ? `\n(Tried profile ${profile}.)` : ''}`;
+    if (YES || process.env.AWS_ACCESS_KEY_ID || !process.stdin.isTTY) bye(manual);
+    const choice = await ask('select', {
+      message: 'Sign in to AWS now?',
+      options: [
+        { value: 'login', label: '🌐 Sign in with your browser (recommended)', hint: 'a browser tab opens; come back here after' },
+        ...profiles.filter((x) => x !== profile).map((x) => ({ value: `profile:${x}`, label: `Use the "${x}" profile`, hint: 'already on this computer' })),
+        { value: 'stop', label: 'Stop', hint: 'sign in yourself, then run setup again' },
+      ],
+    });
+    if (choice === 'stop') bye(manual);
+    if (choice.startsWith('profile:')) profile = choice.slice('profile:'.length);
+    else {
+      // `aws login` came in AWS CLI 2.32: `aws login help` fails on older versions and when the CLI isn't installed.
+      if (spawnSync('aws', ['login', 'help'], { stdio: 'ignore' }).status !== 0) {
+        bye('Signing in with your browser needs the AWS CLI 2.32 or newer.\nInstall or update it (macOS: brew install awscli, or brew upgrade awscli if you have it; or https://aws.amazon.com/cli/), then run setup again.');
+      }
+      profile ??= SIGN_IN_PROFILE;
+      p.log.info('A browser tab opens: sign in to AWS, then come back here.');
+      spawnSync('aws', ['login', '--profile', profile, '--region', region], { stdio: 'inherit' });
+    }
+    // cdk and every child process read AWS_PROFILE; a new provider so nothing from the failed check is reused.
+    process.env.AWS_PROFILE = profile;
+    credentials = fromNodeProviderChain({ profile });
   }
-} catch (err) {
-  s.stop('Not signed in to AWS', 1);
-  p.log.error(err.message ?? String(err));
-  if (!DRY) bye(`Sign in first, then run setup again:\n  aws login --profile aws-city   (AWS CLI 2.32+; setup finds this profile by itself)\n  or: aws configure sso  /  export AWS_PROFILE=<profile>${profile ? `\n(Tried profile ${profile}.)` : ''}`);
-  account = '000000000000';
-  p.log.warn('[dry run] continuing without AWS: checks are skipped, nothing is written to AWS.');
 }
 const offline = account === '000000000000';
 

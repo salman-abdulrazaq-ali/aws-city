@@ -81,6 +81,9 @@ describe('npm start helpers', () => {
   it('turns AWS errors into a next step', () => {
     expect(explainAwsError({ name: 'ExpiredTokenException', message: 'x' })).toMatch(/expired/);
     expect(explainAwsError({ name: 'CredentialsProviderError', message: 'Could not load credentials from any providers' })).toMatch(/No AWS sign-in/);
+    // The SDK's exact words when an `aws login` session runs out (@aws-sdk/credential-provider-login): expired, not missing.
+    expect(explainAwsError({ name: 'CredentialsProviderError', message: 'Your session has expired. Please reauthenticate.' })).toMatch(/sign-in has expired/);
+    expect(explainAwsError({ name: 'CredentialsProviderError', message: 'Failed to load a token for session x, please re-authenticate using aws login' })).toMatch(/sign-in has expired/);
   });
 
   it("names a new account's Claude walls: verification, the use-case form and a quota of 0", () => {
