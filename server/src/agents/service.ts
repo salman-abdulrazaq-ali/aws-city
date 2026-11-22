@@ -162,7 +162,9 @@ export const createActionService = (deps: {
       const outcome = await write(action, opts.approve, opts.intent);
       deps.audit?.({
         action: action.type,
-        target: targetHash(actionTarget(action)),
+        // The real name, hashed: a bucket's suffix becomes its full name first (seen 22 Nov 2026: the line said
+        // aws-city-<account>-photos-1), so it hashes to the same target as the gate's own line for that bucket.
+        target: targetHash(actionTarget(action).replace('<account>', accountKey())),
         outcome: outcome.status === 'denied' && outcome.reason === REJECTED_REASON ? 'rejected' : (outcome.status as 'done' | 'failed' | 'denied'),
       });
       return outcome;

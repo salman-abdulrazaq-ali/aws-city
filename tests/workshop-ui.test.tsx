@@ -6,7 +6,12 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 vi.mock('@/ui/Portrait', () => ({ Portrait: () => <span data-testid="portrait" /> }));
 const verify = vi.fn();
-vi.mock('@/app/runtime', async (importOriginal) => ({ ...(await importOriginal<object>()), verifyWorkshopStep: verify }));
+// "I got an error": the question goes to the building's agent; the answer comes back through the store's chats.
+const asked = vi.fn((districtId: string, _q: string, shown: string) => {
+  useCity.getState().addUserChat(districtId, 'err-1', shown);
+  return 'err-1';
+});
+vi.mock('@/app/runtime', async (importOriginal) => ({ ...(await importOriginal<object>()), verifyWorkshopStep: verify, askDistrict: asked }));
 
 const { useCity } = await import('@/state/store');
 const { bus } = await import('@/state/bus');
@@ -119,11 +124,49 @@ describe('for real', () => {
     fireEvent.click(screen.getByRole('button', { name: /For real in CloudShell/ }));
     expect(screen.getByRole('note').textContent).toMatch(/Use the same names: table shop\. Region: eu-west-2/);
     fireEvent.click(screen.getByRole('button', { name: /Create the table/ }));
-    const input = screen.getByRole('textbox', { name: /table name you used/ }) as HTMLInputElement;
+    // One box for the name: it fills the command and the account check (never asked twice).
+    const input = screen.getByRole('textbox', { name: /Your table name/ }) as HTMLInputElement;
     expect(input.value).toBe('shop');
     expect(screen.getAllByRole('textbox').filter((t) => t.tagName === 'INPUT')).toHaveLength(1);
+    // For real, the optional Region is the linked account's, so the command runs against the Region the city checks.
+    expect(document.querySelector('.workshop-cmd')?.textContent).toBe(
+      'aws dynamodb create-table --table-name shop --attribute-definitions AttributeName=pk,AttributeType=S --key-schema AttributeName=pk,KeyType=HASH --billing-mode PAY_PER_REQUEST --region eu-west-2',
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Check my account' }));
     expect(verify).toHaveBeenCalledWith(ID, 'create', { table: 'shop' });
+  });
+
+  // Seen 22 Nov 2026 in Oregon: "for real" copied `aws s3api create-bucket --bucket <bucket>`, without the location
+  // constraint S3 needs outside us-east-1 and with the placeholder as typed, and CloudShell refused it.
+  it('S3 in Oregon with no names typed: a name box, Copy waits for it, and the command keeps LocationConstraint', () => {
+    useCity.setState({ backendKind: 'server', account: { linked: true, region: 'us-west-2' } });
+    act(() => useCity.getState().openWorkshop('s3-first-bucket'));
+    render(<Workshop />);
+    fireEvent.click(screen.getByRole('button', { name: /For real in CloudShell/ }));
+    const copy = screen.getByRole('button', { name: 'Copy' }) as HTMLButtonElement;
+    expect(copy.disabled).toBe(true);
+    expect(screen.getByText(/in the boxes above, then copy it/)).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: /Your bucket name/ }), { target: { value: 'aws-city-047463438585-ws-1' } });
+    expect(document.querySelector('.workshop-cmd')?.textContent).toBe('aws s3api create-bucket --bucket aws-city-047463438585-ws-1 --region us-west-2 --create-bucket-configuration LocationConstraint=us-west-2');
+    expect(copy.disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Check my account' }));
+    expect(verify).toHaveBeenCalledWith('s3-first-bucket', 'create', { bucket: 'aws-city-047463438585-ws-1' });
+  });
+});
+
+// Seen 22 Nov 2026: "Help me fix it" said the answer would come up in the Feed, and the player couldn't find it.
+describe('I got an error', () => {
+  it('an unknown error is asked of the building’s agent, and the answer shows here under the step', () => {
+    open();
+    render(<Workshop />);
+    fireEvent.click(screen.getByText('I got an error'));
+    fireEvent.change(screen.getByRole('textbox', { name: 'The error you got' }), { target: { value: 'aws: error: argument operation: Invalid choice' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Help me fix it' }));
+    expect(asked).toHaveBeenCalled();
+    const districtId = asked.mock.calls[0]![0];
+    expect(document.querySelector('.workshop-answer')?.textContent).toMatch(/is looking at it/);
+    act(() => useCity.getState().applyServerEvent({ type: 'chat.answer', requestId: 'err-1', districtId, agentId: 'dynamodb', delta: 'The command name is misspelled: use create-table.', done: true }));
+    expect(document.querySelector('.workshop-answer')?.textContent).toMatch(/misspelled: use create-table/);
   });
 });
 

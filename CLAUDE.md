@@ -550,17 +550,26 @@ When a change touches a decision, update its entry and run its Proof.
 - **The city mirrors the account's map; the bill is opt-in.** `city.inventory.zones`/`regionStatus` come from
   `ec2:DescribeAvailabilityZones`/`DescribeRegions`, cached a day; a Region that can't be read is left out. `city.bill`
   (`ce:GetCostAndUsage`, $0.01 a request) is read only after `bill.enable {on:true}`, then at most once a day per player;
-  `shared/ce-services.json` maps only verified Cost Explorer service names (the rest show as "other"). The home Region's
-  servers follow DescribeInstances, not the listing (Resource Explorer lags by minutes: on 22 Nov 2026 a terminated
-  server stayed on the map and a new one called demo didn't appear): `enrich` (`server/src/state/inventory.ts`) drops
-  servers shutting down or terminated, adds ones the listing hasn't caught up with (first, under the frame's item cap) and
-  names them from their Name tag; a listed server EC2 doesn't show is dropped only when EC2 was read in full (ok, under
-  `MAX_PER_SERVICE`). A poll that creates, removes or changes a server (`movesInventory`, `server/src/state/diff.ts`)
-  re-sends the mirror from the last listing (`care.reconcile`, no AWS call), and the mirror's "changed?" signature
-  includes the items, so a terminate plus a launch with the same counts is still sent. An agent's write re-polls at once
-  and after 4 s, so the map follows it within seconds.
+  `shared/ce-services.json` maps only verified Cost Explorer service names (the rest show as "other"). Servers, tables and
+  buckets follow the poller (DescribeInstances, ListTables + DescribeTable, ListBuckets), not the listing (Resource
+  Explorer lags by minutes: on 22 Nov 2026 a terminated server stayed on the map, a new one called demo didn't appear,
+  and a bucket and a table an agent built took minutes to show): `enrich` (`reconcileLive`, `server/src/state/inventory.ts`)
+  drops what's on its way out (a terminated or shutting-down server, a DELETING table), adds what the listing hasn't
+  caught up with (first, under the frame's item cap; a bucket in its own Region) and names servers from their Name tag;
+  a listed item the poller doesn't show is dropped only when that service was read in full (ok, under
+  `MAX_PER_SERVICE`). A table listed and then not found mid-poll is skipped, not a failed DynamoDB read. A poll that
+  creates, removes or changes a server, table or bucket (`movesInventory`, `server/src/state/diff.ts`) re-sends the
+  mirror from the last listing (`care.reconcile`, no AWS call), and the mirror's "changed?" signature includes the items,
+  so a terminate plus a launch with the same counts is still sent. An agent's write re-polls at once and after 4 s, so the
+  map follows it within seconds. The feed says each kind's and state's lesson once per session (`feedEvents(e, said)`,
+  `server/src/contract/aws-feed.ts`), then just the change. HQ chat on the CPU model names servers the player made
+  themselves (`otherServers` in `snapshotSummary`), and every chat answer knows it can't change AWS and that the city
+  only changes what it built (`CHAT_CAN_DO`, `server/src/contract/orchestrator.ts`; seen 22 Nov 2026: asked to delete a
+  console-made server, Eddie said he couldn't see it). An audit line hashes a new bucket's real name (never the `<account>` placeholder), so it matches the gate's line. A plain request's
+  task ends at `task.done`: the agent's few words after it run on their own (`explainAfter`), so the task's slot (two a
+  socket) is free at once (seen 22 Nov 2026: "Two tasks are already running" right after a card said done).
   Proof: `cd server && npx vitest run test/bill.test.ts test/care.test.ts test/player-role.test.ts`, `cd server && npx vitest
-  run test/care.test.ts -t "DescribeInstances" test/diff.test.ts`, `npx vitest run tests/contract.test.ts`.
+  run test/care.test.ts -t "DescribeInstances|bucket or table" test/diff.test.ts test/poller.test.ts test/contract.test.ts -t "lesson|chat answers" test/runner.test.ts`, `npx vitest run tests/contract.test.ts`.
 - **Street plans come from OpenStreetMap, baked.** A Region with `shared/city-maps/<region>.json` (v1, ODbL, © OpenStreetMap
   contributors) gets a 64×64 core of its real downtown's streets: `src/world/citymap.ts` decodes and validates it,
   `src/world/zoning.ts` zones it (superblocks keep today's insides, blocks → water/park/building, 3×3 lots fronting a
@@ -839,7 +848,12 @@ When a change touches a decision, update its entry and run its Proof.
   unbracketed options, and `outfile`) prints its ParamValidation error, all at once; any other flag the step uses gets a
   coaching line ("Practice terminal: this step also sets …"), never a made-up CLI error; nothing touches AWS) or AWS CloudShell, where `workshop.verify` checks it with a
   read-only look at the poller's snapshot (`server/src/workshops/checks.ts`: a fixed registry, no SDK calls of its own, no
-  new IAM). Pasted errors match the step's known ones first, then go to the building's agent as quoted, redacted data.
+  new IAM). For real, each name a command needs is typed once in a box that fills both the command and the check;
+  `<region>` is the linked account's Region, and optional parts are kept once filled (`commandFor`,
+  `src/world/workshops.ts`), so S3 keeps `LocationConstraint` outside us-east-1 and Copy waits until nothing is left as
+  `<x>` (seen 22 Nov 2026: Oregon got `--bucket <bucket>` with no constraint, and CloudShell refused it). Pasted errors
+  match the step's known ones first, then go to the building's agent as quoted, redacted data, and its answer shows under
+  the step, not only in the HQ chat.
   Steps pay stars once per mode, ever (`src/learning/workshopRewards.ts`, real > practice; no daily ledger, so a
   workshop done in one sitting pays in full). The terminal helps like a shell: Tab finishes a word, ↑ recalls lines,
   💡 Hint types the next word for −1⭐ on that step (a paying step still pays one), and Fill my names swaps `<table>` for
@@ -981,8 +995,14 @@ When a change touches a decision, update its entry and run its Proof.
   more and quicker at a service's `city.flow` rate, `dotPlan`), sit still under reduced motion and pause while the page is
   hidden. Costs (`src/world/accountCost.ts`): AWS's month so far per service; a day = that ÷ UTC days so far, a month = a
   day × the month's days, both marked est. There's no list-price estimate: the client doesn't know a server's size or
-  whether it's running. Each box is a real button (arrow keys move, `nextSlot`) labelled with its name and figures. Proof:
-  `npx vitest run tests/account-map.test.tsx tests/account-diagram.test.ts`, `npm run smoke` (`18b-my-aws-map`,
+  whether it's running. Each box is a real button (arrow keys move, `nextSlot`) labelled with its name and figures.
+  What the city has no building for is listed, not just counted (`unmappedItems`: tap "No building yet" in the Diagram,
+  or open "N more…" under Services; seen 22 Nov 2026: "×15" said nothing). A server named from its Name tag shows its id
+  beside it (`itemLine`: "server demo2 (i-0d3e…)", to copy for "Terminate i-…"); months read "November 2026"
+  (`monthName`, `src/world/accountCost.ts`: "2026-11: $0.00" read like $2,026,110); Show my bill / Show live traffic
+  are real buttons. Sign out is in the ⋯ menu too (signed in and able to sign out), not only Deploy → Your data.
+  Proof:
+  `npx vitest run tests/account-map.test.tsx tests/account-diagram.test.ts tests/menu-signout.test.tsx`, `npm run smoke` (`18b-my-aws-map`,
   `18c-my-aws-diagram`, `18e-my-aws-diagram-panel`, axe, still dots under reduced motion). A third view, **How AWS City
   runs** (`shared/city-architecture.json`, `src/world/cityArchitecture.ts`), draws the city's own hosted parts the same
   way (blue lines, in request order, from `infra/lib`); its only prices are Fargate's, worked out from the task sizes and

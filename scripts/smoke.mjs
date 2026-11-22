@@ -345,6 +345,11 @@ if (!(await page.locator('.account-map', { hasText: 'a day est.' }).count())) er
 if (!(await page.locator('.account-map animateMotion').count())) errors.push('my aws diagram: no moving dots');
 await shot('18c-my-aws-diagram');
 await audit('my aws diagram');
+// "No building yet" lists what it holds (seen 22 Nov 2026: "×15" said nothing about what they were).
+await page.locator('.account-map .arch-hit button[aria-label^="No building yet"]').click();
+await wait(200);
+if (!(await page.locator('.account-map .arch-picked[aria-label="No building yet"] .map-items li').count())) errors.push('my aws diagram: "No building yet" lists nothing when tapped');
+await page.locator('.account-map .arch-hit button[aria-label^="No building yet"]').click();
 // How AWS City runs: the city's own parts and links, with the Fargate prices and the README's idle estimate.
 await page.locator('.account-map .seg button', { hasText: 'How AWS City runs' }).click();
 await wait(600);

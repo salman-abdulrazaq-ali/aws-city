@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CityBillEvent, InventoryItem } from '@/backend/contract';
 import type { Inventory } from '@/state/store';
-import { billDays, costLines, costView, dollars } from '@/world/accountCost';
+import { billDays, costLines, costView, dollars, monthName } from '@/world/accountCost';
 import { accountDiagram, FAN_IN, totalLine } from '@/world/accountDiagram';
 import { accountMap } from '@/world/accountMap';
 import { BOX, dotPlan, layoutArch, PER_LANE, type ArchColumn, type ArchNodeIn, type Orientation } from '@/world/archDiagram';
@@ -41,6 +41,10 @@ describe('cost a day and a month, from the bill so far', () => {
     expect(c.perMonth).toBeCloseTo(0.6);
     expect(costLines(c)).toEqual(['$0.02 a day est.', '$0.60 a month est.']);
     expect(dollars(0.001)).toBe('under $0.01');
+    // Seen 22 Nov 2026: "So far in 2026-11: $0.00" read like $2,026,110.
+    expect(monthName('2026-11')).toBe('November 2026');
+    expect(monthName('2028-02')).toBe('February 2028');
+    expect(monthName('bad')).toBe('bad');
     expect(dollars(0)).toBe('$0.00');
   });
 });
@@ -66,7 +70,7 @@ describe('the account as a diagram', () => {
     expect(costed.costed).toBe(true);
     expect(costed.nodes.find((n) => n.id === 'lambda')!.lines).toEqual(['$0.02 a day est.', '$0.60 a month est.']);
     expect(costed.nodes.find((n) => n.id === 'lambda')!.aria).toMatch(/AWS Lambda, 1 resource, \$0\.02 a day est\., \$0\.60 a month est\./);
-    expect(totalLine(costed.total!)).toBe('So far in 2026-11: $2.64 (AWS’s estimate, all Regions) · $0.12 a day est. · $3.60 for the month est.');
+    expect(totalLine(costed.total!)).toBe('So far in November 2026: $2.64 (AWS’s estimate, all Regions) · $0.12 a day est. · $3.60 for the month est.');
   });
 
   it('typical links are adjacent pairs of an AWS example flow, both ends present, dashed and labelled', () => {

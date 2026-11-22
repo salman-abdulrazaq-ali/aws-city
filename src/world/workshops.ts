@@ -56,3 +56,26 @@ export const isWorkshopUrl = (raw: string) => {
     return false;
   }
 };
+
+/** The `<x>` placeholders in a command, in order, once each. */
+export const placeholdersIn = (cli = '') => [...new Set([...cli.matchAll(/<([a-z0-9-]+)>/gi)].map((m) => m[1]!))];
+
+/**
+ * A step's command as you'd type it: placeholders filled from `values`, optional `[…]` parts kept only when `keepOptional`
+ * and every placeholder inside them is filled. For real AWS (CloudShell) the optional parts matter: S3 needs
+ * `--create-bucket-configuration LocationConstraint=<region>` in every Region but us-east-1, where it must be left out.
+ * Seen 22 Nov 2026: "for real" dropped it and left `<bucket>` as typed, so the command failed in Oregon.
+ */
+export function commandFor(cli: string, values: Record<string, string>, keepOptional: boolean): { text: string; unfilled: string[] } {
+  const fill = (s: string) => s.replace(/<([a-z0-9-]+)>/gi, (m, k: string) => values[k]?.trim() || m);
+  const text = cli
+    .replace(/\[([^\]]*)\]/g, (_, inner: string) => {
+      const part = fill(inner);
+      // A part with a gap stays out; so does a us-east-1 location constraint, which S3 refuses.
+      return keepOptional && !/<[a-z0-9-]+>/i.test(part) && !/LocationConstraint=us-east-1\b/.test(part) ? ` ${part} ` : ' ';
+    })
+    .replace(/<([a-z0-9-]+)>/gi, (m, k: string) => values[k]?.trim() || m)
+    .replace(/\s+/g, ' ')
+    .trim();
+  return { text, unfilled: placeholdersIn(text) };
+}

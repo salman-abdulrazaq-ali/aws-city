@@ -5,7 +5,7 @@ import arnServices from '../../../shared/arn-services.json' with { type: 'json' 
 import { type AwsClients, classifyAwsError } from '../aws.js';
 import { log } from '../log.js';
 import { serviceById, type AzInfo, type CityInventoryEvent, type DataLink, type InventoryItem } from '../world.js';
-import { GAME_TAG, type WorldSnapshot } from './model.js';
+import { GAME_TAG, type Resource, type WorldSnapshot } from './model.js';
 import { MAX_PER_SERVICE } from './poller.js';
 
 /** The city mirrors a learner's account, not a fleet: the listing stops here. */
@@ -135,36 +135,87 @@ const partitionOf = (region: string) => (region.startsWith('cn-') ? 'aws-cn' : r
 /** The id at the end of an ARN (an instance's i-…), whatever name the item shows. */
 const idOf = (i: InventoryItem) => serviceForArn(i.arn).name;
 
+/** What the poller reads live, mirrored on the map as it is now. `where` is the Region an item stands in. */
+interface LiveKind {
+  kind: 'instance' | 'table' | 'bucket';
+  service: 'ec2' | 'dynamodb' | 's3';
+  type: string;
+  /** States that mean it's on its way out (DescribeInstances keeps a terminated server for about an hour). */
+  gone: Set<string>;
+  arn: (r: Resource, region: string, accountId: string) => string;
+  /** The Region it lives in: servers and tables are the poller's (home) Region; a bucket names its own. */
+  where: (r: Resource, region: string) => string;
+  /** Whether a listed item is one the poller covers (home Region for servers and tables; every bucket). */
+  covers: (i: InventoryItem, region: string) => boolean;
+}
+const LIVE: LiveKind[] = [
+  {
+    kind: 'instance',
+    service: 'ec2',
+    type: CFN_TYPE['ec2:instance']!,
+    gone: GONE,
+    arn: (r, region, accountId) => `arn:${partitionOf(region)}:ec2:${region}:${accountId}:instance/${r.id}`,
+    where: (_r, region) => region,
+    covers: (i, region) => (i.region ?? region) === region,
+  },
+  {
+    kind: 'table',
+    service: 'dynamodb',
+    type: CFN_TYPE['dynamodb:table']!,
+    gone: new Set(['DELETING']),
+    arn: (r, region, accountId) => (typeof r.meta.arn === 'string' && r.meta.arn ? r.meta.arn : `arn:${partitionOf(region)}:dynamodb:${region}:${accountId}:table/${r.id}`),
+    where: (_r, region) => region,
+    covers: (i, region) => (i.region ?? region) === region,
+  },
+  {
+    kind: 'bucket',
+    service: 's3',
+    type: CFN_TYPE['s3:bucket']!,
+    gone: new Set(),
+    arn: (r, region) => `arn:${partitionOf(region)}:s3:::${r.id}`,
+    // ListBuckets lists every Region's buckets, each with its own Region.
+    where: (r, region) => (typeof r.meta.bucketRegion === 'string' && r.meta.bucketRegion) || region,
+    covers: () => true,
+  },
+];
+
 /**
- * The home Region's servers as EC2 says they are now, not as the listing last saw them. Resource Explorer (and the
- * tagging API) lag by minutes: seen 22 Nov 2026, a terminated server stayed on the map and a new one called "demo"
- * didn't appear. The poller reads every instance with DescribeInstances each poll, so: drop servers that are shutting
- * down or gone, add ones the listing hasn't caught up with (first, so the frame's item cap never cuts them), and name
- * each from its Name tag. A listed server EC2 doesn't show is dropped only when EC2 was read in full this poll (ok and
- * under the cap), so a denied or failed read never empties the map. Other Regions are left as listed.
+ * Servers, tables and buckets as the poller reads them now, not as the listing last saw them. Resource Explorer (and
+ * the tagging API) lag by minutes: seen 22 Nov 2026, a terminated server stayed on the map, a new one called "demo"
+ * didn't appear, and a bucket and a table an agent built took minutes to show. The poller reads them every poll
+ * (DescribeInstances, ListTables + DescribeTable, ListBuckets), so: drop what's on its way out, add what the listing
+ * hasn't caught up with (first, so the frame's item cap never cuts it), and name servers from their Name tag. A listed
+ * item the poller doesn't show is dropped only when that service was read in full this poll (ok and under the cap), so
+ * a denied or failed read never empties the map. Items the poller doesn't cover (other Regions' servers and tables)
+ * are left as listed.
  */
-const reconcileInstances = (items: InventoryItem[], snapshot: WorldSnapshot, region: string): InventoryItem[] => {
-  const instances = snapshot.resources.filter((r) => r.kind === 'instance');
-  const byId = new Map(instances.map((r) => [r.id, r]));
-  const complete = snapshot.services.ec2 === 'ok' && instances.length < MAX_PER_SERVICE;
-  const isHomeInstance = (i: InventoryItem) => i.type === CFN_TYPE['ec2:instance'] && (i.region ?? region) === region;
-  const listed = new Set(items.filter(isHomeInstance).map(idOf));
-  const kept = items.flatMap((i) => {
-    if (!isHomeInstance(i)) return [i];
-    const r = byId.get(idOf(i));
-    if (!r) return complete ? [] : [i];
-    if (GONE.has(r.state)) return [];
-    return [{ ...i, name: r.name.slice(0, NAME_MAX), managedByGame: i.managedByGame || r.managedByGame }];
-  });
-  const added = instances
-    .filter((r) => !GONE.has(r.state) && !listed.has(r.id))
-    .map((r) => ({ ...item(`arn:${partitionOf(region)}:ec2:${region}:${snapshot.accountId}:instance/${r.id}`, r.managedByGame, region), name: r.name.slice(0, NAME_MAX) }));
-  return [...added, ...kept];
+const reconcileLive = (items: InventoryItem[], snapshot: WorldSnapshot, region: string): InventoryItem[] => {
+  let out = items;
+  const added: InventoryItem[] = [];
+  for (const k of LIVE) {
+    const live = snapshot.resources.filter((r) => r.kind === k.kind);
+    const byId = new Map(live.map((r) => [r.id, r]));
+    const complete = snapshot.services[k.service] === 'ok' && live.length < MAX_PER_SERVICE;
+    const mine = (i: InventoryItem) => i.type === k.type && k.covers(i, region);
+    const listed = new Set(out.filter(mine).map(idOf));
+    out = out.flatMap((i) => {
+      if (!mine(i)) return [i];
+      const r = byId.get(idOf(i));
+      if (!r) return complete ? [] : [i];
+      if (k.gone.has(r.state)) return [];
+      return [{ ...i, name: r.name.slice(0, NAME_MAX), managedByGame: i.managedByGame || r.managedByGame }];
+    });
+    for (const r of live) {
+      if (k.gone.has(r.state) || listed.has(r.id)) continue;
+      added.push({ ...item(k.arn(r, region, snapshot.accountId), r.managedByGame, k.where(r, region)), name: r.name.slice(0, NAME_MAX) });
+    }
+  }
+  return [...added, ...out];
 };
 
 /**
- * Zonal placement and data links from the poller's snapshot: the home Region's servers as EC2 says they are now
- * (reconcileInstances), instance and DB AZs, DynamoDB global table replicas (Region to Region) and RDS Multi-AZ standbys
+ * Zonal placement and data links from the poller's snapshot: servers, tables and buckets as the poller reads them now
+ * (reconcileLive), instance and DB AZs, DynamoDB global table replicas (Region to Region) and RDS Multi-AZ standbys
  * (AZ to AZ).
  */
 export const enrich = (inv: Inventory, snapshot: WorldSnapshot | undefined, region: string): { items: InventoryItem[]; links: DataLink[] } => {
@@ -175,7 +226,7 @@ export const enrich = (inv: Inventory, snapshot: WorldSnapshot | undefined, regi
     if (typeof az === 'string' && az) azById.set(r.id, az);
   }
   // By the ARN's id, not the item's name: a server is now named from its Name tag.
-  const items = reconcileInstances(inv.items, snapshot, region).map((i) => {
+  const items = reconcileLive(inv.items, snapshot, region).map((i) => {
     const az = azById.get(idOf(i));
     return az && (i.region ?? region) === region ? { ...i, az } : i;
   });

@@ -37,3 +37,10 @@ export const dollars = (n: number, currency = 'USD') => {
 
 /** ["$0.23 a day est.", "$6.90 a month est."]. */
 export const costLines = (c: CostView, currency = 'USD'): [string, string] => [`${dollars(c.perDay, currency)} a day est.`, `${dollars(c.perMonth, currency)} a month est.`];
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+/** "2026-11" → "November 2026" (seen 22 Nov 2026: "So far in 2026-11: $0.00" read like $2,026,110). */
+export const monthName = (month: string) => {
+  const [y, m] = month.split('-').map(Number);
+  return y && m && MONTHS[m - 1] ? `${MONTHS[m - 1]} ${y}` : month;
+};

@@ -190,4 +190,13 @@ describe('a second opinion on writes (judge = Jev) only tightens', () => {
     await service.submit('terminate_instance', { instanceId: mine.id }, { approve, intent: 'knock it down' });
     expect(judge).toHaveBeenCalledWith({ action: { type: 'terminate_instance', instanceId: mine.id }, summary: `Permanently terminate EC2 instance ${mine.id}`, destructive: true, intent: 'knock it down' });
   });
+
+  // Seen 22 Nov 2026: the audit line for a new bucket said aws-city-<account>-photos-1.
+  it('a bucket’s audit line hashes the real bucket name (the account filled in), never the placeholder or the name', async () => {
+    const audit = vi.fn();
+    const service = createActionService({ clients: {} as AwsClients, poller: pollerFor(snapshot([])), region: 'us-west-2', audit, accountKey: () => '047463438585' });
+    await service.submit('create_bucket', { suffix: 'photos-1' }, { approve: async () => false });
+    expect(audit.mock.calls[0]![0]).toMatchObject({ action: 'create_bucket', target: targetHash('aws-city-047463438585-photos-1'), outcome: 'rejected' });
+    expect(JSON.stringify(audit.mock.calls)).not.toMatch(/047463438585|photos-1|<account>/);
+  });
 });

@@ -333,6 +333,8 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
       /** Polls in a row on which STS refused the role, and when the first of them was (BROKEN_AFTER: what breaks the link). */
       let refusedPolls = 0;
       let firstRefusedAt = 0;
+      /** The feed's lessons already said to this player (each once per session, not on every change). */
+      const lessonsSaid = new Set<string>();
       const poller = createPoller({
         clients: aws.clients,
         accountId: aws.accountId,
@@ -352,7 +354,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
           }
           refusedPolls = 0;
           const events = diffSnapshots(prev, next);
-          for (const event of events) broadcast(feedEvents(event));
+          for (const event of events) broadcast(feedEvents(event, lessonsSaid));
           if (!care) return;
           broadcast(care.update(next));
           // A server appeared, went or changed state (an agent's write re-polls at once and after 4 s): the map follows

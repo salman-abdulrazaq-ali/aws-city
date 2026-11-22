@@ -108,9 +108,10 @@ Client-internal, not on the wire: `storage.local` keeps `progress.parked` (a sig
 - `city.inventory` also carries `homeRegion`, `regions {code: count}` and `links[]` (`{id, serviceId, from{region,az?},
   to{region,az?}, kind: replication|standby|traffic, twoWay?, label}`); items carry `region?` and `az?`. With a Resource
   Explorer aggregator index in the home Region the list spans every Region; otherwise only the home Region.
-  The home Region's servers follow DescribeInstances (the poller's snapshot), not the listing, which lags by minutes: a
-  server shutting down or terminated is left out, one the listing hasn't caught up with is added, and each is named from
-  its Name tag. A poll that creates, removes or changes a server sends `city.inventory` again (no extra AWS call).
+  Servers, tables and buckets follow the poller's snapshot (DescribeInstances, DescribeTable, ListBuckets), not the
+  listing, which lags by minutes: what's on its way out is left out, what the listing hasn't caught up with is added,
+  and servers are named from their Name tag. A poll that creates, removes or changes one sends `city.inventory` again
+  (no extra AWS call).
   Each link drives through the city of either Region it touches as a data carrier (replication → tanker, standby →
   standby van, traffic → request car), tappable to see what it carries and its list price per GB.
 - `city.finding {finding}`: a Well-Architected finding opened or resolved, `{id, ruleId, serviceId, districtId, citizenId,

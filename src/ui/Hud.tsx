@@ -266,6 +266,7 @@ function MoreMenu({ layout }: { layout: Layout }) {
   const setPref = useCity((s) => s.setPref);
   const setTourOpen = useCity((s) => s.setTourOpen);
   const inDemo = useCity((s) => s.backendKind) === 'mock' && isDemo();
+  const signedIn = useCity((s) => s.backendKind !== 'mock' && s.backendStatus !== 'signed-out');
   const locked = useLocked();
   const simple = useCity((s) => isSimple(s.prefs));
   const box = useRef<HTMLDivElement>(null);
