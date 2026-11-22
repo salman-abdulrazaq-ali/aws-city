@@ -165,7 +165,19 @@ const collectDynamo: Collector = async (clients) => {
   // the game's own (city-*) first so a crowded account never hides them; the rest aren't shown.
   const described = [...names.filter((n) => n.startsWith(TABLE_PREFIX)), ...names.filter((n) => !n.startsWith(TABLE_PREFIX))].slice(0, MAX_PER_SERVICE);
 
-  return mapLimit(described, TABLE_CONCURRENCY, async (name): Promise<Resource> => {
+  // A table can be listed and then not be found a moment later (just created, or just deleted): skip it this poll
+  // rather than fail the whole DynamoDB read (seen 22 Nov 2026: three "poll failed" lines right after a create).
+  const tables = await mapLimit(described, TABLE_CONCURRENCY, async (name): Promise<Resource | undefined> => {
+    try {
+      return await describeTable(name);
+    } catch (err) {
+      if ((err as Error).name === 'ResourceNotFoundException') return undefined;
+      throw err;
+    }
+  });
+  return tables.filter((t): t is Resource => !!t);
+
+  async function describeTable(name: string): Promise<Resource> {
     const { Table } = await dynamodb.send(new DescribeTableCommand({ TableName: name }));
     // Ownership needs the game's tag, not just the name: someone else's "city-*" table stays read-only.
     let tagged = false;
@@ -198,7 +210,7 @@ const collectDynamo: Collector = async (clients) => {
         replicas: (Table?.Replicas ?? []).map((r) => r.RegionName).filter(Boolean).join(',') || null,
       },
     };
-  });
+  }
 };
 
 const collectS3: Collector = async (clients, accountId) => {

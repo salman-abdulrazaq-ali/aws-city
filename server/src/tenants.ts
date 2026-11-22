@@ -184,6 +184,8 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         return { orchestrator: createOrchestrator({ llm, runner, snapshot, uploads: deps.uploads, owner: sub, walkMs: deps.walkMs, knowledge: deps.knowledge, actions: runnerDeps.actions }), snapshot, linked: false, region, bill, flow };
       }
       let care: CityCare | undefined;
+      /** The feed's lessons already said to this player (each once per session, not on every change). */
+      const lessonsSaid = new Set<string>();
       const poller = createPoller({
         clients: aws.clients,
         accountId: aws.accountId,
@@ -191,7 +193,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         intervalMs: deps.config.pollIntervalMs,
         onSnapshot(prev, next) {
           const events = diffSnapshots(prev, next);
-          for (const event of events) broadcast(feedEvents(event));
+          for (const event of events) broadcast(feedEvents(event, lessonsSaid));
           if (!care) return;
           broadcast(care.update(next));
           // A server appeared, went or changed state (an agent's write re-polls at once and after 4 s): the map follows

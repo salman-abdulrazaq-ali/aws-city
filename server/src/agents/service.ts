@@ -120,7 +120,8 @@ export const createActionService = (deps: {
       const outcome = await write(action, opts.approve);
       deps.audit?.({
         action: action.type,
-        target: actionTarget(action),
+        // A bucket's suffix becomes its real name (seen 22 Nov 2026: the audit line said aws-city-<account>-photos-1).
+        target: actionTarget(action).replace('<account>', accountKey()),
         outcome: outcome.status === 'denied' && outcome.reason === REJECTED_REASON ? 'rejected' : (outcome.status as 'done' | 'failed' | 'denied'),
       });
       return outcome;

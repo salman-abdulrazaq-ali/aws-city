@@ -168,6 +168,27 @@ describe('server speaks the frontend contract', () => {
     for (const e of feed) if (e.type === 'agent.message') expect(ids.has(e.from)).toBe(true);
     expect(feed.at(-1)).toMatchObject({ type: 'agent.message', from: 'concierge', text: expect.stringContaining('1 EC2 instance') });
   });
+
+  // Seen 22 Nov 2026: every console change repeated "An EC2 instance is a virtual computer…".
+  it('each lesson is said once per session, then just the change', () => {
+    const said = new Set<string>();
+    const text = (e: Parameters<typeof feedEvents>[0]) => (feedEvents(e, said)[0] as { text: string }).text;
+    expect(text({ type: 'created', resource: instance('i-1', 'pending') })).toMatch(/virtual computer/);
+    expect(text({ type: 'created', resource: instance('i-2', 'pending') })).toBe('New in your account: instance "i-2".');
+    expect(text({ type: 'stateChanged', resource: instance('i-1', 'running'), from: 'pending', to: 'running' })).toMatch(/billing by the second/);
+    expect(text({ type: 'stateChanged', resource: instance('i-2', 'running'), from: 'pending', to: 'running' })).toBe('"i-2" went pending → running.');
+    // Without a session, each message keeps its lesson.
+    expect((feedEvents({ type: 'created', resource: instance('i-3', 'pending') })[0] as { text: string }).text).toMatch(/virtual computer/);
+  });
+
+  // Seen 22 Nov 2026: asked in chat to delete a server made in the console, Eddie said he couldn't see it.
+  it('chat answers know chat can’t change AWS, and that the city only changes what it built', async () => {
+    const { orchestrator, calls, emit } = setup([]);
+    await orchestrator.ask({ requestId: 'r9', districtId: 'compute', question: 'Delete test-console', context: {} }, emit);
+    const system = JSON.stringify(calls.at(-1)?.system ?? '');
+    expect(system).toContain("This chat can't change AWS");
+    expect(system).toContain('The city only changes what it built');
+  });
 });
 
 describe('a plain request goes straight to its agent’s action: the card in seconds, no model call before it', () => {
@@ -208,12 +229,21 @@ describe('a plain request goes straight to its agent’s action: the card in sec
     expect(events).toContainEqual(expect.objectContaining({ type: 'task.step', index: 1, status: 'done' }));
     const done = events.findIndex((e) => e.type === 'task.done');
     expect(events[done]).toMatchObject({ ok: true, result: expect.stringContaining('Created bucket'), xp: [{ serviceId: 's3', amount: 20 }] });
-    // The agent's explanation comes after the task is done (one tool-less call).
-    expect(events.slice(done)).toContainEqual(expect.objectContaining({ type: 'agent.message', from: 's3', text: 'A bucket keeps files. Try uploading one.' }));
+    // The agent's explanation comes after the task is done (one tool-less call), on its own.
+    await vi.waitFor(() => expect(events.slice(done)).toContainEqual(expect.objectContaining({ type: 'agent.message', from: 's3', text: 'A bucket keeps files. Try uploading one.' })));
     expect(llm.stream).toHaveBeenCalledTimes(1);
     // Every working state is followed by idle for the same agent.
     const states = events.filter((e) => e.type === 'agent.state' && e.agentId === 's3');
     expect(states.at(-1)).toMatchObject({ state: 'idle' });
+  });
+
+  // Seen 22 Nov 2026: the card said done, but the slot (two a socket) stayed held ~30 s by the explanation's model call,
+  // so the next request got "Two tasks are already running".
+  it('the task ends at task.done: the explanation after it never holds the task open', async () => {
+    const { orchestrator, events, emit, approvals, llm } = withApprovals();
+    (llm.stream as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise(() => {})); // a model that never answers
+    await orchestrator.submitTask({ taskId: 'd9', prompt: 'Create a bucket called holiday-123', context: {} }, emit, approvals);
+    expect(events.find((e) => e.type === 'task.done')).toMatchObject({ taskId: 'd9', ok: true });
   });
 
   it('the player says no: nothing changes, the step says why, the task is not ok, no explanation', async () => {

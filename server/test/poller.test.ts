@@ -54,6 +54,22 @@ describe('poller caps', () => {
     expect(calls.filter((c) => c === 'DescribeTableCommand')).toHaveLength(200);
   });
 
+  // Seen 22 Nov 2026: a table listed and then not yet found failed the whole DynamoDB read three polls running.
+  it('a table that is listed but not found a moment later is skipped, and DynamoDB still reads ok', async () => {
+    const { clients } = fakeClients((cmd, input) => {
+      if (cmd === 'ListTablesCommand') return { TableNames: ['city-new', 'city-old'] };
+      if (cmd === 'DescribeTableCommand') {
+        if (input.TableName === 'city-new') throw Object.assign(new Error('Requested resource not found'), { name: 'ResourceNotFoundException' });
+        return { Table: { TableName: input.TableName, TableStatus: 'ACTIVE' } };
+      }
+      return undefined;
+    });
+    const poller = createPoller({ clients, accountId: '123456789012', region: 'us-west-2', intervalMs: 60_000, onSnapshot: () => {} });
+    const snap = await poller.refresh();
+    expect(snap.services.dynamodb).toBe('ok');
+    expect(snap.resources.filter((r) => r.kind === 'table').map((r) => r.id)).toEqual(['city-old']);
+  });
+
   it('caches a denied setting read as unknown instead of re-reading it every poll', async () => {
     const denied = () => Object.assign(new Error('denied'), { name: 'AccessDeniedException' });
     const { clients, calls } = fakeClients((cmd, input) => {
