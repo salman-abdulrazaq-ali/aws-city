@@ -103,6 +103,22 @@ export function agentOffer(serviceId: string): { prompt: string; story: string }
   return { prompt: def.prompt, story: `${firstName(p.agentName)} can ${def.will} in ${p.place}, and you can watch every step.` };
 }
 
+/**
+ * The framing's last words: "Watch Sally walk there." while she walks, then that she's at work once she's arrived (seen
+ * 21 Nov 2026: "walk there" stayed up the whole time a slow model thought).
+ */
+export function watchLine(task: Pick<TaskView, 'steps'>, who: string): string {
+  return task.steps[0]?.status === 'done' ? `${who} is there and on it.` : `Watch ${who} walk there.`;
+}
+
+/** The agent's model call is running: say so, since a small model can take most of a minute. */
+export function thinkingLine(agent: { state: string; service?: string; detail?: string } | undefined, who: string): string | undefined {
+  return agent?.state === 'working' && agent.detail?.startsWith('InvokeModel') ? `💭 ${who} is thinking… this can take up to a minute.` : undefined;
+}
+
+/** A failed task's reason, without the server's "Task failed: " lead. */
+export const failedReason = (message: string) => message.replace(/^Task failed:\s*/, '').trim();
+
 /** Where a task is: before it starts (framing), while it runs (live), or finished (result). */
 export type TaskPhase = 'framing' | 'live' | 'result' | 'failed';
 export function taskPhase(task: Pick<TaskView, 'status' | 'steps'>): TaskPhase {

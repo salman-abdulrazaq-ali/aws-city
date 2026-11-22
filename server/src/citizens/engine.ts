@@ -5,7 +5,7 @@ import { docsBlock } from '../knowledge/mcp.js';
 import { type ActionName, AWS_API, actionsForAgent, READ_ONLY } from '../agents/actions.js';
 import type { Llm } from '../agents/llm.js';
 import { agentSystemPrompt } from '../agents/personas.js';
-import { type AgentRunner, MAX_TOOL_CALLS_PER_TURN, snapshotForModel, type TurnHooks, type TurnResult } from '../agents/runner.js';
+import { type AgentRunner, cityFor, MAX_TOOL_CALLS_PER_TURN, type TurnHooks, type TurnResult } from '../agents/runner.js';
 import type { ActionService } from '../agents/service.js';
 import type { WorldSnapshot } from '../state/model.js';
 import { serviceById } from '../world.js';
@@ -105,7 +105,7 @@ export const createStrandsRunner = (deps: {
     const subject = citizenById(agentId)?.name ?? serviceById(agentId)?.name ?? agentId;
     const citizen = isCitizen(agentId);
     // Citizens explain one finding (it comes in the prompt); they don't need the whole account in their context.
-    const [snapshot, docs] = await Promise.all([citizen ? undefined : deps.snapshot(), deps.knowledge?.search(`${subject} ${playerText}`, 3) ?? []]);
+    const [snapshot, docs] = await Promise.all([citizen ? undefined : deps.snapshot(), deps.knowledge?.search(`${subject} ${playerText}`, deps.llm.small ? 1 : 3) ?? []]);
     const ctx = { hooks, toolCalls: [], sources: docs.map(({ title, url }) => ({ title, url })), started: 0 };
     turns.set(agentId, ctx);
     // The player's socket closed: stop this turn (only this one: turns for an agent run one at a time).
@@ -113,7 +113,7 @@ export const createStrandsRunner = (deps: {
     hooks.signal?.addEventListener('abort', cancel, { once: true });
     try {
       if (hooks.signal?.aborted) return { agentId, reply: '', toolCalls: [], refused: false, sources: [] };
-      const city = snapshot ? `<city_snapshot>${snapshotForModel(snapshot)}</city_snapshot>\n\n` : '';
+      const city = snapshot ? `<city_snapshot>${cityFor(deps.llm, snapshot)}</city_snapshot>\n\n` : '';
       const result = await agent.invoke(`${docsBlock(docs)}${city}Player: ${playerText}`, {
         limits: { turns: MAX_TURNS, totalTokens: isCitizen(agentId) ? CITIZEN_TOKENS.total : AGENT_TOKENS.total },
       });

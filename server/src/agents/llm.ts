@@ -64,6 +64,12 @@ export const createLlm = (config: Config) => {
      * AWS_CITY_LOCAL_VISION, and with a local fallback the screenshot is left out too, so either model can answer.
      */
     sees: !(local || config.localFallback) || config.localModel.vision,
+    /**
+     * A small model on CPU (the local provider: Ollama on this computer or the city's Fargate service). Reading the
+     * prompt is most of its time (~27 tokens a second on Graviton), so routes give it a short city summary and one
+     * docs page instead of the full snapshot and three (seen 21 Nov 2026: 40-60 s a chat answer).
+     */
+    small: local,
     /** The Bedrock client itself, for the Strands citizens (same InvokeModel route, same credentials). */
     client: client as unknown as Anthropic,
     /** No limits here; `metered` replaces this with the kill switch and quotas. */

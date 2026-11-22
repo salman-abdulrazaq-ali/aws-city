@@ -203,3 +203,15 @@
   color: var(--muted);
   font-weight: 600;
 }
+/* A question waiting for the answer before it (src/ui/ChatPanel.tsx): sent one by one, never dropped. */
+.bubble.user.queued {
+  opacity: 0.75;
+}
+.bubble-next,
+.bubble-wait {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+.bubble-wait {
+  display: block;
+}

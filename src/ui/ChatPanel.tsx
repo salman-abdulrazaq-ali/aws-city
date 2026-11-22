@@ -9,10 +9,15 @@ import { districtStyle, offlineReason } from './logic';
 import { Portrait } from './Portrait';
 
 const EMPTY: never[] = [];
+const NONE: string[] = [];
 
 /** Q&A with a district's agents inside their HQ. */
 export function ChatPanel({ districtId }: { districtId: string }) {
   const msgs = useCity((s) => s.chats[districtId] ?? EMPTY);
+  const queued = useCity((s) => s.chatQueue[districtId] ?? NONE);
+  // One question at a time: the next waits for this answer (seen 21 Nov 2026: extra questions got "Still answering…"
+  // and were never answered).
+  const busy = msgs.some((m) => m.pending);
   const focus = useCity((s) => s.focus);
   const offline = useCity((s) => offlineReason(s.backendKind, s.backendStatus));
   const [text, setText] = useState('');
@@ -28,11 +33,18 @@ export function ChatPanel({ districtId }: { districtId: string }) {
   const suggestions = [...new Set([`What is ${a} for?`, `When should I use ${b}?`, a !== c ? `${a} vs ${c}?` : `How do I start with ${a}?`])];
 
   const send = (q = text) => {
-    if (offline) return;
+    if (offline || !q.trim()) return;
     feel.send();
-    askDistrict(districtId, q);
+    if (busy) useCity.getState().queueChat(districtId, q.trim());
+    else askDistrict(districtId, q);
     setText('');
   };
+  // An answer finished (or failed): the next queued question goes.
+  useEffect(() => {
+    if (busy || offline || !queued.length) return;
+    const next = useCity.getState().takeQueuedChat(districtId);
+    if (next) askDistrict(districtId, next);
+  }, [busy, offline, queued.length, districtId]);
 
   return (
     <div className="chat" style={districtStyle(d.color)}>
@@ -57,8 +69,9 @@ export function ChatPanel({ districtId }: { districtId: string }) {
             <div key={m.id} className="chat-row">
               <Portrait id={m.agentId ?? 'concierge'} size={28} />
               <div className="bubble agent">
-                <b className="bubble-who">{agentName(m.agentId ?? '')}</b>
+                <b className="bubble-who">{m.agentId ? agentName(m.agentId) : d.name}</b>
                 {m.text}
+                {m.pending && !m.text && <span className="bubble-wait">Thinking… this can take up to a minute.</span>}
                 {m.pending && (
                   <span className="typing-dots" aria-label="typing">
                     <i />
@@ -78,6 +91,12 @@ export function ChatPanel({ districtId }: { districtId: string }) {
             </div>
           ),
         )}
+        {/* Asked while an answer was coming: shown in order, sent one by one. */}
+        {queued.map((q, i) => (
+          <div key={`q-${i}`} className="bubble user queued">
+            {q} <span className="bubble-next">· next</span>
+          </div>
+        ))}
         <div ref={end} />
       </div>
       {offline && <p className="muted offline-note">{offline}</p>}
