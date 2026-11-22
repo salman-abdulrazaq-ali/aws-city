@@ -14,14 +14,57 @@ const ITEMS_PER_EVENT = 300;
 
 const MAP = arnServices.map as Record<string, string>;
 
-/** arn:partition:service:region:account:resource → the landmark it belongs to, or null (a "?" lot). */
+/**
+ * Services whose ARNs carry no resource-type segment: the resource part is the name itself
+ * (arn:aws:s3:::bucket, arn:aws:sqs:region:account:queue, arn:aws:sns:region:account:topic[:subscription]).
+ */
+const UNTYPED: Partial<Record<string, (resource: string) => string>> = {
+  s3: (r) => (r.includes('/') ? 'object' : 'bucket'),
+  sqs: () => 'queue',
+  sns: (r) => (r.includes(':') ? 'subscription' : 'topic'),
+};
+
+/**
+ * The CloudFormation type names the city's props are keyed by (shared/resource-props.json, src/world/resources.ts), for
+ * the ARN types that have a prop. Seen 21 Nov 2026: items went out as `ec2:instance` (and S3 buckets as `s3:<name>`), so
+ * a real account's server, bucket and table all landed in the district sheds instead of on their islands and lots.
+ */
+export const CFN_TYPE: Record<string, string> = {
+  'ec2:instance': 'AWS::EC2::Instance',
+  'ec2:volume': 'AWS::EC2::Volume',
+  'ec2:vpc': 'AWS::EC2::VPC',
+  'ec2:subnet': 'AWS::EC2::Subnet',
+  'ec2:security-group': 'AWS::EC2::SecurityGroup',
+  'rds:db': 'AWS::RDS::DBInstance',
+  'elasticache:cluster': 'AWS::ElastiCache::CacheCluster',
+  's3:bucket': 'AWS::S3::Bucket',
+  'lambda:function': 'AWS::Lambda::Function',
+  'dynamodb:table': 'AWS::DynamoDB::Table',
+  'sqs:queue': 'AWS::SQS::Queue',
+  'ecs:service': 'AWS::ECS::Service',
+  'ecs:cluster': 'AWS::ECS::Cluster',
+  'elasticfilesystem:file-system': 'AWS::EFS::FileSystem',
+  'apigateway:restapis': 'AWS::ApiGateway::RestApi',
+  'apigateway:apis': 'AWS::ApiGatewayV2::Api',
+  'cognito-idp:userpool': 'AWS::Cognito::UserPool',
+  'kms:key': 'AWS::KMS::Key',
+  'iam:role': 'AWS::IAM::Role',
+  'route53:hostedzone': 'AWS::Route53::HostedZone',
+  'cloudfront:distribution': 'AWS::CloudFront::Distribution',
+};
+
+/** arn:partition:service:region:account:resource → the landmark it belongs to (or null: a "?" lot), its type and name. */
 export const serviceForArn = (arn: string): { serviceId: string | null; type: string; name: string } => {
   const [, , service = '', , , ...rest] = arn.split(':');
   const resource = rest.join(':');
-  const type = resource.split(/[:/]/)[0] ?? '';
-  const name = resource.split(/[:/]/).filter(Boolean).at(-1) ?? resource;
-  const serviceId = MAP[`${service}:${type}`] ?? MAP[service] ?? null;
-  return { serviceId: serviceId && serviceById(serviceId) ? serviceId : null, type: type ? `${service}:${type}` : service, name };
+  const parts = resource.split(/[:/]/).filter(Boolean);
+  const untyped = UNTYPED[service];
+  const raw = untyped ? untyped(resource) : (parts[0] ?? '');
+  // "type/a/b" names its resource last (instance/i-…, table/x, role/path/x); "type:name[:qualifier]" second (db:x, function:x:1).
+  const name = untyped ? (parts[0] ?? resource) : resource.includes(':') && !resource.includes('/') ? (parts[1] ?? parts[0] ?? resource) : (parts.at(-1) ?? resource);
+  const key = raw ? `${service}:${raw}` : service;
+  const serviceId = MAP[key] ?? MAP[service] ?? null;
+  return { serviceId: serviceId && serviceById(serviceId) ? serviceId : null, type: CFN_TYPE[key] ?? key, name };
 };
 
 /** The Region in an ARN (empty for global services like IAM or S3 bucket ARNs). */
