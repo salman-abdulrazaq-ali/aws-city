@@ -1,0 +1,112 @@
+/* "My AWS, live" (src/ui/AccountMap.tsx): the linked account as one map. Columns side by side where there's room (the
+   full tab), stacked in the 400 px side panel. */
+.account-map {
+  max-width: 980px;
+  width: min(980px, calc(100vw - 24px));
+}
+.map-switches {
+  display: grid;
+  gap: var(--s-2);
+  margin: var(--s-2) 0 var(--s-3);
+}
+.map-total {
+  margin: 0;
+}
+.map-tiers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--s-3);
+  margin: var(--s-2) 0 var(--s-3);
+}
+.map-tier {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
+  padding: var(--s-2);
+}
+.map-tier h4 {
+  margin: 0 0 var(--s-2);
+}
+.map-tier ul,
+.map-zone ul,
+.map-links ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.map-node + .map-node {
+  margin-top: var(--s-2);
+}
+.map-node-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  padding: var(--s-1) var(--s-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--panel-hi);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.map-node.busy .map-node-head {
+  border-color: var(--good);
+}
+.map-node-name {
+  flex: 1;
+  font-weight: 700;
+}
+.map-node-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft); /* --muted is ~4:1 on --panel-hi; axe wants 4.5 */
+}
+.map-node-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-3);
+  margin: var(--s-1) var(--s-2) 0;
+  font-size: 0.9em;
+  color: var(--muted);
+}
+.map-node-meta .live {
+  color: var(--good-ink);
+}
+.map-items {
+  margin: var(--s-1) 0 0 var(--s-3) !important;
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+.map-zone-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--s-2);
+}
+.map-zone {
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-sm);
+  padding: var(--s-2);
+  overflow-wrap: anywhere;
+}
+.map-zone.empty {
+  border-style: dotted; /* not opacity: it would take the muted text under 4.5:1 */
+}
+.map-links,
+.map-zones {
+  margin: var(--s-3) 0;
+}
+.map-note {
+  margin-top: var(--s-3);
+  border-top: 1px solid var(--line);
+  padding-top: var(--s-2);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .map-node.busy .map-node-head {
+    animation: map-pulse 2.4s ease-in-out infinite;
+  }
+}
+@keyframes map-pulse {
+  50% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 35%, transparent);
+  }
+}

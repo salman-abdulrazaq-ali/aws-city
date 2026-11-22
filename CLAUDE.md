@@ -617,6 +617,14 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   (`snapshotSummary`: what the city built, by id; the rest counted) and one docs page instead of the full snapshot and
   three: reading the prompt is most of its time (~27 tokens a second). Proof: `npx vitest run tests/progress-chat.test.tsx`,
   `cd server && npx vitest run test/runner.test.ts test/contract.test.ts -t "summary|small CPU"`.
+- **"My AWS, live": the linked account as one map** (`src/ui/AccountMap.tsx`, pure `src/world/accountMap.ts`; Deploy's
+  account card and ⋯, linked only). Built from what the server already sends (`city.inventory`, `city.bill`,
+  `city.flow`): services in columns the way a request travels (`tierOf`: network & front door, compute and messaging,
+  data, security & operations, other), each with its count, this month's cost and live rate, tap for its resources;
+  servers and databases in their lettered Zone; the only lines are the data links AWS reports (replication, standby).
+  Which resource talks to which isn't read yet (it needs read-only player-role permissions: API Gateway integrations,
+  Lambda event sources, load-balancer targets, CloudFront origins), and the map says so rather than guessing. Proof:
+  `npx vitest run tests/account-map.test.tsx`, `npm run smoke` (`18b-my-aws-map`, axe).
 - **City Clients: side jobs for real kinds of business** (`shared/clients.json`, `src/world/clients.ts`, `src/ui/clients/`).
   18 businesses: wave 1 (Amazon Air hub, bank, stadium, hospital, shop, school) and wave 2 (streaming studio, game studio,
   news site, port, energy utility, factory, farm co-op, car maker, phone network, town council, hotel, charity), three

@@ -381,10 +381,15 @@ export function DeployPanel() {
       <div className="card">
         <h3>Your AWS account</h3>
         {account.linked ? (
-          <p className="linked">
-            <span className="linked-badge">✓ Linked</span> <b>{account.accountId}</b> · {account.region}
-            {account.message ? <span className="muted"> · {account.message}</span> : null}
-          </p>
+          <>
+            <p className="linked">
+              <span className="linked-badge">✓ Linked</span> <b>{account.accountId}</b> · {account.region}
+              {account.message ? <span className="muted"> · {account.message}</span> : null}
+            </p>
+            <button className="btn tiny" onClick={() => useCity.getState().openAccountMap(true)} title="Your account as one map: what runs where, data that moves, live traffic and this month's cost">
+              🗺️ My AWS, live
+            </button>
+          </>
         ) : (
           <>
             {account.mfaRequired && canSetUpMfa() && <MfaSetup />}
