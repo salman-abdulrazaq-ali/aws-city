@@ -645,7 +645,14 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   day × the month's days, both marked est. There's no list-price estimate: the client doesn't know a server's size or
   whether it's running. Each box is a real button (arrow keys move, `nextSlot`) labelled with its name and figures. Proof:
   `npx vitest run tests/account-map.test.tsx tests/account-diagram.test.ts`, `npm run smoke` (`18b-my-aws-map`,
-  `18c-my-aws-diagram`, `18e-my-aws-diagram-panel`, axe, still dots under reduced motion).
+  `18c-my-aws-diagram`, `18e-my-aws-diagram-panel`, axe, still dots under reduced motion). A third view, **How AWS City
+  runs** (`shared/city-architecture.json`, `src/world/cityArchitecture.ts`), draws the city's own hosted parts the same
+  way (blue lines, in request order, from `infra/lib`); its only prices are Fargate's, worked out from the task sizes and
+  `FARGATE_ARM_PRICE` (servers $1.09 a day, the AI $8.72 a day while on), the rest is pay per use, and the idle total is
+  the README's own estimate; the file holds no dollar figure of its own. It describes the published defaults, never the
+  private `aws-city.config.json`. Proof: `cd infra && npx vitest run test/city-architecture.test.ts` (the sizes match the
+  synthesized task definitions, `CPU_MODEL`, `cpuAiHourly()` and prod's `minTasks`), `npx vitest run
+  tests/city-architecture.test.ts tests/content.test.ts`, `npm run smoke` (`18d-city-architecture`).
 - **City Clients: side jobs for real kinds of business** (`shared/clients.json`, `src/world/clients.ts`, `src/ui/clients/`).
   18 businesses: wave 1 (Amazon Air hub, bank, stadium, hospital, shop, school) and wave 2 (streaming studio, game studio,
   news site, port, energy utility, factory, farm co-op, car maker, phone network, town council, hotel, charity), three

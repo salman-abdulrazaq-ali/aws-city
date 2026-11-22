@@ -7,6 +7,7 @@ import { CARRIERS } from '@/world/carriers';
 import { COMPARISONS } from '@/world/comparisons';
 import { CITIZEN_LEVELS, CITIZENS, WA_RULES } from '@/world/citizens';
 import { ALL_TERMS, GLOSSARY, serviceTerms, splitTerms, type GlossaryEntry, type TermToken } from '@/world/glossary';
+import { CITY_ARCH } from '@/world/cityArchitecture';
 import { PLACES } from '@/world/places';
 import { SERVICES } from '@/world/taxonomy';
 import { workshopById } from '@/world/workshops';
@@ -300,6 +301,9 @@ describe('plain language', () => {
     ...COMPARISONS.flatMap((c) => [[`${c.id} title`, c.title], [`${c.id} simple`, c.simple], ...c.options.map((o) => [`${c.id} ${o.serviceId}`, o.pick])] as [string, string][]),
     // A tapped data carrier's card.
     ...Object.entries(CARRIERS).flatMap(([k, c]) => [[`carrier ${k} name`, c.name], [`carrier ${k} simple`, c.simple], [`carrier ${k} more`, c.more]] as [string, string][]),
+    // My AWS → How AWS City runs: each part's name and plain line.
+    ...CITY_ARCH.components.flatMap((c) => [[`city part ${c.id} name`, c.name], [`city part ${c.id} simple`, c.simple], [`city part ${c.id} optional`, c.optional ?? '']] as [string, string][]),
+    ...CITY_ARCH.columns.map((c) => [`city column ${c.id}`, c.label] as [string, string]),
   ];
   /** Acronym-like words: AZ, IMDSv2, DLQs, S3. */
   const ACRONYM = /\b[A-Z][A-Z0-9]{1,}[a-z0-9]*\b/g;
