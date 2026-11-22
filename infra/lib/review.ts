@@ -28,6 +28,8 @@ export interface ReviewAnswers {
   novaLiteOnly?: boolean;
   /** The AI on the city's own Fargate service (EnvConfig.aiCpu): the model's name and its on-demand cost a day. */
   aiCpu?: { spot: boolean; primary?: boolean; model: string; daily: number };
+  /** Which code this deploys (`codeRow`, infra/lib/code-state.ts): "main @ d349c21 (up to date with GitHub)". */
+  code?: string;
 }
 
 /** Big free email providers. Their addresses make a poor SES "from" address: mail sent as them is often filtered. */
@@ -58,6 +60,7 @@ export const cloudFrontNote = (region: string) =>
 /** The answers, as label/value rows. */
 export const reviewRows = (a: ReviewAnswers): [string, string][] => [
   ['Environment', a.envName === 'staging' ? 'staging (a test copy)' : 'prod (the one players use)'],
+  ...(a.code ? ([['Code', a.code]] as [string, string][]) : []),
   ['AI models', a.modelChoice === 'nova' ? (a.novaLiteOnly ? 'Amazon Nova Lite (no Pro quota yet)' : 'Amazon Nova') : 'Claude'],
   ['AI at first', a.aiEnabled ? 'on' : 'off until Bedrock answers (run setup again to switch it on)'],
   ...(a.aiRegion && a.aiRegion !== a.region ? ([['AI runs in', `${a.aiRegion} (only the agents' questions; data stays in ${a.region})`]] as [string, string][]) : []),

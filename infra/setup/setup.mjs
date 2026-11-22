@@ -34,6 +34,7 @@ const CONFIG = `${ROOT}aws-city.config.json`;
 const { CPU_MODEL, FARGATE_ARM_PRICE, NOVA_MODELS, SUPPORTED_REGIONS, cpuAiHourly, geoFor, modelsForChoice, unsupportedRegionMessage } = await import(new URL('../lib/models.ts', import.meta.url));
 // The review screen's text (pure, tested in test/review.test.ts).
 const { cloudFrontNote, isFreeMail, plannedActions, reviewRows, reviewText } = await import(new URL('../lib/review.ts', import.meta.url));
+const { codeProblem, codeRow } = await import(new URL('../lib/code-state.ts', import.meta.url));
 const { progressLine } = await import(new URL('../lib/deploy-progress.ts', import.meta.url));
 const GOOGLE_SECRET = 'aws-city/google-oauth';
 
@@ -121,6 +122,47 @@ if (profile) process.env.AWS_PROFILE = profile;
 // Staging first (a test copy; docs/self-hosting.md), prod one arrow away.
 const envName = opt('--env') ?? (await ask('select', { message: 'Which environment?', options: [{ value: 'staging', label: 'staging', hint: 'a test copy: start here' }, { value: 'prod', label: 'prod', hint: 'the real one players use' }], initialValue: saved.lastEnv ?? 'staging' }, saved.lastEnv));
 const prev = saved[envName] ?? {};
+
+// Which code this deploys (infra/lib/code-state.ts). Seen 21 Nov 2026: a checkout 6 commits behind GitHub's main
+// deployed the city without two merged fixes. Asked now, before the other questions; offline, the last fetch is used.
+const git = (...argv) => spawnSync('git', argv, { cwd: ROOT, encoding: 'utf8', timeout: 20_000 });
+const readCode = () => {
+  if (git('rev-parse', '--is-inside-work-tree').stdout?.trim() !== 'true') return undefined; // a downloaded zip
+  git('fetch', '--quiet', 'origin', 'main');
+  const behind = git('rev-list', '--count', 'HEAD..origin/main');
+  return {
+    branch: git('rev-parse', '--abbrev-ref', 'HEAD').stdout.trim(),
+    sha: git('rev-parse', '--short', 'HEAD').stdout.trim(),
+    behind: behind.status === 0 ? Number(behind.stdout.trim()) || 0 : 0,
+    dirty: git('status', '--porcelain', '--untracked-files=no').stdout.trim().length > 0,
+  };
+};
+const code = readCode();
+const codeIssue = codeProblem(envName, code);
+if (codeIssue && !DRY) {
+  p.log.warn(codeIssue);
+  if (YES) {
+    if (!flag('--any-commit')) bye(`${codeIssue} Update it (git pull), or pass --any-commit to deploy this copy anyway.`);
+  } else {
+    const onMain = code.branch === 'main';
+    const choice = await ask('select', {
+      message: 'Which code should this deploy?',
+      options: [
+        ...(onMain ? [{ value: 'update', label: 'Update to GitHub’s main first (git pull)', hint: 'then run setup again' }] : []),
+        { value: 'anyway', label: 'Deploy this copy anyway', hint: onMain ? 'older code' : `the branch ${code.branch}` },
+        { value: 'stop', label: 'Stop', hint: onMain ? '' : 'git switch main && git pull, then run setup again' },
+      ],
+      initialValue: onMain ? 'update' : 'stop',
+    });
+    if (choice === 'stop') bye();
+    if (choice === 'update') {
+      const pulled = spawnSync('git', ['pull', '--ff-only', 'origin', 'main'], { cwd: ROOT, stdio: 'inherit' });
+      if (pulled.status !== 0) bye('git pull didn’t finish (local changes, or another branch?). Sort that out, then run setup again.');
+      p.outro('Updated to GitHub’s main. Run npm run setup again, so setup itself is the new one too.');
+      process.exit(0);
+    }
+  }
+} else if (codeIssue) p.log.warn(`${codeIssue} (a dry run deploys nothing)`);
 
 // The agents' models (infra/lib/models.ts): Amazon Nova, on demand in the Region and run on Strands Agents' Bedrock model,
 // or Claude through a geo inference profile. A saved answer from before this question existed (--yes) keeps Claude.
@@ -517,7 +559,7 @@ for (;;) {
   deleteSes = (prev.sesIdentitiesCreated ?? []).filter((e) => e !== A.sesFromEmail && !otherEnvSes.includes(e));
   const regions = [...new Set([region, ...(A.domainName ? [] : ['us-east-1'])])];
   const bootstrap = offline ? [] : (await Promise.all(regions.map(async (r) => ((await cdkReady(r)) ? undefined : r)))).filter(Boolean);
-  const review = { envName, modelChoice, region, aiEnabled, aiRegion, novaLiteOnly, ...A, firefox: Boolean(A.firefoxAddonId), aiCpu: aiCpu && { ...aiCpu, model: CPU_MODEL.name, daily: cpuAiHourly() * 24 } };
+  const review = { envName, modelChoice, region, aiEnabled, aiRegion, novaLiteOnly, ...A, firefox: Boolean(A.firefoxAddonId), aiCpu: aiCpu && { ...aiCpu, model: CPU_MODEL.name, daily: cpuAiHourly() * 24 }, ...(code ? { code: codeRow(code) } : {}) };
   const actions = plannedActions(review, { account, storeGoogleSecret: Boolean(A.googleSecret), verifySes: Boolean(A.sesFromEmail) && sesStatus === undefined, deleteSes, bootstrap });
   if (YES) break;
   p.note(reviewText(reviewRows(review), actions), 'Check your answers');

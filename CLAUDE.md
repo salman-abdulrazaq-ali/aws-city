@@ -89,7 +89,11 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   then one review screen (`infra/lib/review.ts`: every answer, every AWS change in order, the us-east-1 note for
   CloudFront's WAF) offers Deploy / Change an answer (the questions again, pre-filled) / Cancel, and only then writes. SES
   in its sandbox and free-mail senders are named before the SES question; an SES identity an earlier run created
-  (`sesIdentitiesCreated`) that nothing uses is offered for removal. Proof: `npm run setup -- --dry-run` (changes nothing in AWS), `cd infra && npm test`,
+  (`sesIdentitiesCreated`) that nothing uses is offered for removal. Right after the environment, setup checks which code
+  it would deploy (`codeProblem`, `infra/lib/code-state.ts`: a `git fetch`, then main behind GitHub's main, or prod off
+  main) and offers Update now (`git pull --ff-only`, then run setup again) / Deploy this copy anyway / Stop; `--yes` stops
+  unless `--any-commit`; the review shows "Code: main @ <sha>". A checkout 6 commits behind deployed the city without two
+  merged fixes on 21 Nov 2026. Proof: `npm run setup -- --dry-run` (changes nothing in AWS), `cd infra && npm test` (`test/code-state.test.ts`),
   `npx vitest run tests/launcher.test.ts`; every link in the guide opens (checked when it changes).
 - **AWS's public status and news reach every player, read once by the server** (`server/src/news/`, contract v2.6 `aws.health`/`aws.news`).
   The sources are the public Health Dashboard JSON (UTF-16 with a BOM), with the status RSS as fallback, and What's New. Hosts are
@@ -389,8 +393,11 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   global services (`shared/region-facts.json` `global`) stay in `Progress.landmarks` and stand in every city. Knowledge
   (cards, quests, puzzles, citizens, streak) follows the player. Old saves migrate into the city being built. Selectors
   take the Region (`isDiscovered(p, id, region)`); without one they mean "anywhere". Your real resources stand where they
-  live (`src/world/resources.ts`, `shared/resource-props.json`): servers on their AZ's island, buckets on the lake.
-  Proof: `npx vitest run tests/cities.test.ts tests/resources.test.ts`, `cd server && npx vitest run test/progress.test.ts`.
+  live (`src/world/resources.ts`, `shared/resource-props.json`): servers on their AZ's island, buckets on the lake. The
+  server names each item's type the way the props are keyed (`CFN_TYPE` in `server/src/state/inventory.ts`: ARN types →
+  CloudFormation names; S3, SQS and SNS ARNs have no type segment, `UNTYPED`); before 21 Nov 2026 every real item went
+  out as `ec2:instance`-style types and stood in a shed. Proof: `npx vitest run tests/cities.test.ts tests/resources.test.ts`,
+  `cd server && npx vitest run test/progress.test.ts test/care.test.ts -t "type names"`.
 - **Plain language.** Player-facing text goes through `<Plain>` (`src/ui/Term.tsx`): every glossary term and service
   name can be tapped for its definition. Every acronym a player reads is a glossary term, a service name or on the allow-list.
   Simple words first: every flashcard has `simple` (≤ 110 chars), every puzzle `simpleWhy`, every service `simple` (≤ 90);

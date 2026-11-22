@@ -9,7 +9,8 @@ import { diffFindings, findingId, findingsFor } from '../src/agents/findings.js'
 import type { AgentRunner } from '../src/agents/runner.js';
 import type { AwsClients } from '../src/aws.js';
 import { createApprovals } from '../src/contract/approvals.js';
-import { enrich, GEO_RETRY_MS, inventoryEvent, readGeo, readInventory, serviceForArn } from '../src/state/inventory.js';
+import resourceProps from '../../shared/resource-props.json' with { type: 'json' };
+import { CFN_TYPE, enrich, GEO_RETRY_MS, inventoryEvent, readGeo, readInventory, serviceForArn } from '../src/state/inventory.js';
 import type { Resource } from '../src/state/model.js';
 import { LockLostError } from '../src/store/types.js';
 import type { CityFinding, Progress, ServerEvent } from '../src/world.js';
@@ -91,10 +92,26 @@ describe('inventory: the account mirrored as city buildings', () => {
   });
 
   it('maps ARNs to landmarks, and unknown types to a "?" lot', () => {
-    expect(serviceForArn('arn:aws:ec2:us-west-2:1:volume/vol-1')).toMatchObject({ serviceId: 'ebs', type: 'ec2:volume' });
+    expect(serviceForArn('arn:aws:ec2:us-west-2:1:volume/vol-1')).toMatchObject({ serviceId: 'ebs', type: 'AWS::EC2::Volume' });
     expect(serviceForArn('arn:aws:rds:us-west-2:1:cluster:shop')).toMatchObject({ serviceId: 'aurora', name: 'shop' });
     expect(serviceForArn('arn:aws:sns:us-west-2:1:alerts')).toMatchObject({ serviceId: 'sqs' });
     expect(serviceForArn('arn:aws:states:us-west-2:1:stateMachine:flow')).toMatchObject({ serviceId: null });
+  });
+
+  it('a real account’s resources get the type names the city’s props use (seen 21 Nov: all of them landed in sheds)', () => {
+    expect(serviceForArn('arn:aws:ec2:us-west-2:047463438585:instance/i-03e06cc3ce2a69cfe')).toEqual({ serviceId: 'ec2', type: 'AWS::EC2::Instance', name: 'i-03e06cc3ce2a69cfe' });
+    expect(serviceForArn('arn:aws:s3:::aws-city-047463438585-holiday-123')).toEqual({ serviceId: 's3', type: 'AWS::S3::Bucket', name: 'aws-city-047463438585-holiday-123' });
+    expect(serviceForArn('arn:aws:dynamodb:us-west-2:047463438585:table/city-scores')).toEqual({ serviceId: 'dynamodb', type: 'AWS::DynamoDB::Table', name: 'city-scores' });
+    expect(serviceForArn('arn:aws:lambda:us-west-2:1:function:resize:3')).toMatchObject({ type: 'AWS::Lambda::Function', name: 'resize' });
+    expect(serviceForArn('arn:aws:rds:us-west-2:1:db:orders')).toMatchObject({ type: 'AWS::RDS::DBInstance', name: 'orders' });
+    expect(serviceForArn('arn:aws:sqs:us-west-2:1:jobs')).toMatchObject({ type: 'AWS::SQS::Queue', name: 'jobs' });
+    expect(serviceForArn('arn:aws:apigateway:us-west-2::/restapis/a1b2c3')).toMatchObject({ type: 'AWS::ApiGateway::RestApi', name: 'a1b2c3' });
+    expect(serviceForArn('arn:aws:apigateway:us-west-2::/apis/h1')).toMatchObject({ type: 'AWS::ApiGatewayV2::Api', name: 'h1' });
+    expect(serviceForArn('arn:aws:iam::1:role/service-role/runner')).toMatchObject({ type: 'AWS::IAM::Role', name: 'runner' });
+    // A type with no prop keeps its ARN form (it stands in its district's shed).
+    expect(serviceForArn('arn:aws:sns:us-west-2:1:alerts')).toMatchObject({ type: 'sns:topic', name: 'alerts' });
+    // Every type the server names has a prop in the city (shared/resource-props.json), so none of them falls into a shed.
+    for (const t of Object.values(CFN_TYPE)) expect(resourceProps.props, t).toHaveProperty([t]);
   });
 
   it('uses Resource Explorer when there is an index (complete), else the tagging API (partial)', async () => {
