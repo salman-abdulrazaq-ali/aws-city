@@ -652,10 +652,14 @@ When a change touches a decision, update its entry and run its Proof.
   cards", "Solve: Static site") and naming the tab it opens when the label doesn't ("opens Learn"); then the order board
   (3 open jobs, "Go → <station>"), Ready to upgrade, today's goals as a ring and chips, and an end-of-shift card once the
   day's own goals are done (`shiftSummary`: ⭐ by building from the device-local `shift` log, 🪙 from `Progress.wallet.log`,
-  the streak, "Come back tomorrow: N cards will be ready"). Everything else is folded under More to do. Quest steps'
+  the streak, "Come back tomorrow: N cards will be ready"). A chosen certification shows on the shift as a progress bar
+  (`CertGoal`: role=progressbar, "Cloud Practitioner: 3 of 5 areas ready" and the areas missing). Everything else is
+  folded under More to do. Quest steps'
   buttons say what they do (`stepButton`: "Walk there", "Open cards (Learn)", "Solve it (Learn)", "Approve it in Deploy"),
-  never a bare "Go"; each step done toasts a ✓ and bumps its building (`questStep` on the bus). Proof:
-  `npx vitest run tests/next.test.ts tests/ui.test.tsx`, `npm run smoke` (one primary button on the shift).
+  never a bare "Go"; each step done toasts a ✓ and bumps its building (`questStep` on the bus). The first screen says
+  what AWS is in one line (`WorldIntro`); First Brick needs a building put up somewhere (`anyBuilt` in
+  `src/state/badges.ts`); the news ticker doesn't rotate on its own under reduced motion (its button still steps). Proof:
+  `npx vitest run tests/next.test.ts tests/ui.test.tsx tests/onboarding-fixes.test.tsx`, `npm run smoke` (one primary button on the shift).
 - **Learning has a daily rhythm and a goal.** The shift shows Today (a few cards, a puzzle, a fix: only areas that are open;
   `todayGoals` in `src/state/progress.ts`; the day's set is fixed at its first look, `settleToday`, and areas that open
   later are bonus goals that don't move "2/3 done"; "Fix something" is a day goal only while an open finding's fix gate

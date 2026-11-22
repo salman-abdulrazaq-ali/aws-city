@@ -17,7 +17,7 @@ export function WorldIntro() {
     <div className="world-intro" role="region" aria-label="Where to start">
       <Portrait id="concierge" size={32} />
       <p>
-        <b>Connie:</b> Every glowing dot is a place AWS runs. Pick one to build your city there!
+        <b>Connie:</b> AWS is Amazon’s cloud: the computers that run much of the internet. Build a city and learn how it works. Every glowing dot is a place AWS runs. Pick one to build your city there!
       </p>
       <button className="btn primary" onClick={() => enterRegion(REGIONS.cityRegion)}>
         Start in {CITY_REGION.city}

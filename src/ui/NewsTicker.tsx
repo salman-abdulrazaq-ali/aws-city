@@ -34,6 +34,8 @@ export function tickerItems(incidents: AwsIncident[], news: AwsNewsItem[], now =
   return [...incident(here), ...incident(active), ...incident(resolved), ...fresh.map((item) => ({ kind: 'news' as const, item })), ...incident(longRunning)];
 }
 
+const prefersReducedMotion = () => typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 /**
  * One slim line over the city: AWS's own status (Health Dashboard) and launches (What's New). Tapping an incident
  * opens its card; tapping a launch opens the announcement on aws.amazon.com. It pauses while hovered or focused.
@@ -49,7 +51,8 @@ export function NewsTicker() {
   const n = items.length;
 
   useEffect(() => {
-    if (n < 2 || paused) return;
+    // Reduced motion: no auto-rotation; the player steps through with the next button.
+    if (n < 2 || paused || prefersReducedMotion()) return;
     const t = setInterval(() => !document.hidden && setAt((a) => a + 1), ROTATE_MS);
     return () => clearInterval(t);
   }, [n, paused]);

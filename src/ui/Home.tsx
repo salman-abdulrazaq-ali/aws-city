@@ -73,6 +73,7 @@ export function Home({ openTab, places }: { openTab: OpenTab; places?: ReactNode
       {!offer && <ConnectCard openTab={openTab} />}
       <Shift openTab={openTab} care={care} openCare={openCare} />
       <RunningTask />
+      <CertGoal />
       <details ref={more} className="more-fold">
         <summary className="label">More to do</summary>
         <MoreToDo openTab={openTab} care={care} careFold={careFold} openCare={openCare} />
@@ -468,17 +469,48 @@ function RunningTask() {
 
 // ── More to do ─────────────────────────────────────────────────────────────────
 
+/**
+ * The certification the player chose in Golden Jacket Hall, as a bar: how many of its areas are ready, and what each
+ * missing one still needs. On the shift (Everything), not folded away; Simple hides it with the other extras.
+ */
+export function CertGoal() {
+  const progress = useCity((s) => s.progress);
+  const certGoal = useCity((s) => s.prefs.certGoal);
+  const cert = CERTS.certifications.find((c) => c.id === certGoal);
+  if (!cert) return null;
+  const steps = certProgress(progress, cert);
+  const ready = steps.filter((x) => x.done).length;
+  const name = cert.name.replace(/^AWS Certified /, '');
+  const label = `${name}: ${ready} of ${steps.length} areas ready`;
+  return (
+    <section className="today-goal-cert" aria-label="Your certification goal">
+      <p>
+        🎯 <b>{label}</b>
+        {ready === steps.length && ' · trophy lit! 🏆'}
+      </p>
+      <div className="workshop-progress" role="progressbar" aria-valuemin={0} aria-valuemax={steps.length} aria-valuenow={ready} aria-valuetext={label} aria-label={`${name} progress`}>
+        <i style={{ width: `${(ready / Math.max(1, steps.length)) * 100}%` }} />
+      </div>
+      {ready < steps.length && (
+        <p className="muted small">
+          {steps
+            .filter((x) => !x.done)
+            .map((x) => `${districtById(x.districtId)?.name}: ${TIER_NAMES[x.tier]} → ${TIER_NAMES[x.need]}`)
+            .join(' · ')}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function MoreToDo({ openTab, care, careFold, openCare }: { openTab: OpenTab; care: boolean; careFold: RefObject<HTMLDetailsElement | null>; openCare: () => void }) {
   const asked = useCity((s) => s.taskOrder.length > 0);
   const latest = useLatestTask();
   const progress = useCity((s) => s.progress);
   const region = useCity((s) => s.cityRegion);
-  const certGoal = useCity((s) => s.prefs.certGoal);
   const r = REQUESTS[0];
   const weekly = weeklyChallenge();
   const weeklyPlace = placeFor(weekly.serviceId);
-  const cert = CERTS.certifications.find((c) => c.id === certGoal);
-  const steps = cert ? certProgress(progress, cert) : [];
   const done = QUESTS.filter((q) => progress.quests?.[q.id]?.status === 'done').length;
   const today = useTodayGoals(care);
   const bonus = today.goals.filter((g) => g.bonus);
@@ -493,14 +525,6 @@ function MoreToDo({ openTab, care, careFold, openCare }: { openTab: OpenTab; car
         </button>
       )}
       <LaunchCard />
-      {cert && (
-        <p className="today-goal-cert">
-          🎯 <b>{cert.name.replace(/^AWS Certified /, '')}</b>:{' '}
-          {steps.every((x) => x.done)
-            ? 'trophy lit! 🏆'
-            : steps.map((x) => `${districtById(x.districtId)?.name} ${x.done ? '✅' : `${TIER_NAMES[x.tier]} → ${TIER_NAMES[x.need]}`}`).join(' · ')}
-        </p>
-      )}
       {care && <CityHealth />}
       {care && (
         <details ref={careFold} className="care-fold">

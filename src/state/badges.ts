@@ -11,7 +11,7 @@ import { foundIn, TOKENS_PER_CITY } from '@/world/tokens';
 import { builtCities } from './cities';
 import { PUZZLE_PASS } from './ladder';
 import { levelOf } from './mastery';
-import { tierOf } from './selectors';
+import { isDiscovered, tierOf } from './selectors';
 
 export interface Badge {
   id: string;
@@ -29,12 +29,17 @@ function bestLevel(p: Progress) {
   for (const r of regions) for (const s of SERVICES) best = Math.max(best, levelOf(p, s.id, r));
   return best;
 }
-const anyTier = (p: Progress, tier: number) => SERVICES.some((s) => tierOf(p, s.id) >= tier);
+/** A building was actually put up (discovered) in any city: levelOf is 0 for an empty lot, so it can't tell. */
+const anyBuilt = (p: Progress) => {
+  const regions: (string | undefined)[] = [undefined, ...Object.keys(p.cities ?? {})];
+  return regions.some((r) => SERVICES.some((s) => isDiscovered(p, s.id, r)));
+};
+const anyTier =(p: Progress, tier: number) => SERVICES.some((s) => tierOf(p, s.id) >= tier);
 const games = [...new Set(PLACES.flatMap((pl) => (pl.game ? [pl.game] : [])))];
 const workshops = (p: Progress) => Object.values(p.workshops ?? {});
 
 export const BADGES: Badge[] = [
-  { id: 'first-building', name: 'First Brick', icon: '🧱', how: 'Put up your first building.', earned: (p) => bestLevel(p) >= 0 },
+  { id: 'first-building', name: 'First Brick', icon: '🧱', how: 'Put up your first building.', earned: (p) => anyBuilt(p) },
   { id: 'practitioner', name: 'Practitioner', icon: '🔧', how: 'Grow a building to Practitioner.', earned: (p) => anyTier(p, 2) },
   { id: 'master', name: 'Master Builder', icon: '🏗️', how: 'Grow a building to Master.', earned: (p) => anyTier(p, 4) },
   { id: 'first-crown', name: 'First Crown', icon: '👑', how: 'Earn a crown on a Master building.', earned: (p) => bestLevel(p) >= 5 },
