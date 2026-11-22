@@ -164,6 +164,23 @@ describe('flashcard keys', () => {
     expect(container.querySelectorAll('.flash-face.back-face .flash-q button.term').length).toBeGreaterThan(0);
   });
 
+  it('the answer face is out of the accessibility tree until it’s revealed, and the question face once it is', () => {
+    const p = useCity.getState().progress;
+    useCity.setState({ progress: { ...p, landmarks: { s3: { discovered: true, xp: 0 } }, cards: {}, quests: {} }, selected: 's3', view: { name: 'city' } });
+    const { container } = render(<Flashcards />);
+    const front = container.querySelector('.flash-face.front')!;
+    const back = container.querySelector('.flash-face.back-face')!;
+    expect(back.getAttribute('aria-hidden')).toBe('true');
+    expect(back.hasAttribute('inert')).toBe(true);
+    expect(front.hasAttribute('aria-hidden')).toBe(false);
+    // The answer's words can't be found by a screen reader before the flip.
+    expect(screen.queryByRole('button', { name: /Answer shown/ })).toBeNull();
+    fireEvent.keyDown(window, { key: 'f' });
+    expect(front.getAttribute('aria-hidden')).toBe('true');
+    expect(back.hasAttribute('aria-hidden')).toBe(false);
+    expect(screen.getByRole('button', { name: /Answer shown/ })).toBeTruthy();
+  });
+
   it('"learned" counts cards known, not cards seen: a "Didn’t know" leaves it at 0', () => {
     const p = useCity.getState().progress;
     useCity.setState({ progress: { ...p, landmarks: { dynamodb: { discovered: true, xp: 0 } }, cards: {}, quests: {} }, selected: 'dynamodb', view: { name: 'city' } });
@@ -178,7 +195,7 @@ describe('flashcard keys', () => {
 });
 
 describe('the Build tab', () => {
-  it('prices sit behind "For AWS learners"; a new preview scrolls into view with focus on Approve', async () => {
+  it('prices sit behind "For AWS learners"; a new preview scrolls into view with focus on its heading, never Approve', async () => {
     const { DeployPanel } = await import('@/ui/DeployPanel');
     const scrolled = vi.fn();
     Element.prototype.scrollIntoView = scrolled;
@@ -187,8 +204,9 @@ describe('the Build tab', () => {
     for (const tpl of container.querySelectorAll('.tpl')) expect(tpl.querySelector('.for-learners')?.textContent).toMatch(/💰/);
     expect(scrolled).not.toHaveBeenCalled();
     act(() => useCity.getState().applyServerEvent({ type: 'deploy.preview', deployId: 'd1', templateId: 'static-site', stackName: 'aws-city-site', region: 'us-west-2', changes: [] }));
-    const approve = screen.getByRole('button', { name: /Approve & deploy/ });
-    expect(document.activeElement).toBe(approve);
+    // One stray Enter or Space must not approve it: the card's title takes the focus.
+    expect(document.activeElement).not.toBe(screen.getByRole('button', { name: /Approve & deploy/ }));
+    expect(document.activeElement).toBe(screen.getByText('aws-city-site'));
     expect(scrolled).toHaveBeenCalled();
     expect(useCity.getState().deployFocus).toBeUndefined(); // brought up once
   });
@@ -200,8 +218,8 @@ describe('the Build tab', () => {
     useCity.setState({ account: { linked: true, accountId: '047463438585', region: 'us-west-2' }, deploys: {} });
     // The card lands first (the player is in an HQ, or on Learn); the tab mounts afterwards.
     useCity.getState().applyServerEvent({ type: 'deploy.preview', deployId: 'a-1', taskId: 't1', templateId: 'create_bucket', stackName: 'Create S3 bucket with suffix "holiday-123"', region: 'us-west-2', accountId: '047463438585', changes: [{ action: 'Add', logicalId: 'aws-city-047463438585-holiday-123', resourceType: 'AWS::S3::Bucket' }] });
-    render(<DeployPanel />);
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: /Approve & deploy/ }));
+    const { container } = render(<DeployPanel />);
+    expect(document.activeElement).toBe(container.querySelector('.card.stack.preview .stack-title'));
     expect(scrolled).toHaveBeenCalled();
   });
 });

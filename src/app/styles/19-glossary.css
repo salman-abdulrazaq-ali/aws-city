@@ -58,6 +58,20 @@
   top: auto;
   bottom: calc(100% + var(--s-2));
 }
+/* In the top layer (Term.tsx, the popover API): fixed on screen where popPlace puts it, so no card, scroller or
+   transform around the term can clip it; at 150 % text a long definition scrolls inside the view. */
+.term-pop.layer {
+  position: fixed;
+  inset: auto;
+  top: 0;
+  left: 0;
+  margin: 0;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+}
+.term-pop.layer:not(:popover-open) {
+  display: none;
+}
 .term-name {
   color: var(--ink-hi);
   font-size: var(--fs-sm);

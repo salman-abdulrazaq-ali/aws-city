@@ -15,7 +15,11 @@ import { growthLine, growthOf } from '@/state/growth';
 import { onSceneEnd } from '../lifecycle';
 import { weeklyChallenge, WEEKLY_BONUS } from '@/state/events';
 import { bus } from '@/state/bus';
+import { announce } from '@/state/announce';
 import { accuracyGate, gatedStars, gateLine, minAccuracy, PILL, scoreStep, VERDICT_MS } from './scoring';
+import { endCardKey } from './gameKeys';
+import { endLine, growthSaid, plainName, scoreLine, spoken, startLine } from './say';
+import { fitParent, playColumn } from './column';
 
 export { FEEDBACK } from './scoring';
 
@@ -37,6 +41,8 @@ export const PAL = {
 } as const;
 
 const BAR_H = 34;
+/** The end card's keys wait this long, so a key still pressed when the round ended doesn't start the next one. */
+const END_KEYS_CALM_MS = 800;
 
 /**
  * Shared chrome for mini-games: a title bar with score and timer chips, a hint strip, a draining timer
@@ -56,6 +62,11 @@ export abstract class MiniGame extends Phaser.Scene {
   /** How the end card names the floor: "Too many {wrongWord} — {accuracyWord} 40%, need 60%". */
   protected wrongWord = 'wrong calls';
   protected accuracyWord = 'accuracy';
+  /**
+   * The keys, in words, for a game whose title doesn't name them ("Press 1 to 4…"): the round's first spoken line
+   * (src/game/scenes/games/say.ts startLine) adds them after "how to play".
+   */
+  protected keysHelp = '';
   /** The hint strip's height: the "how to play" line wraps on a narrow panel. */
   private hintH = 22;
   protected over = false;
@@ -99,12 +110,7 @@ export abstract class MiniGame extends Phaser.Scene {
    * Backgrounds still fill the whole canvas; only what the player reads and taps lives in the column.
    */
   protected column(contentH = 0, maxW = 760) {
-    const { width: vw, height: vh } = this.scale;
-    const w = Math.min(vw, maxW);
-    const x = Math.round((vw - w) / 2);
-    const room = vh - this.top;
-    const y = this.top + Math.max(0, Math.round((room - contentH) * 0.4));
-    return { x, y, w, r: x + w, cx: Math.round(x + w / 2), h: Math.min(room, Math.max(contentH, 0) || room), bottom: vh };
+    return playColumn(this.scale.width, this.scale.height, this.top, contentH, maxW);
   }
 
   /** The hint strip's text style: wraps inside the view. */
@@ -119,6 +125,14 @@ export abstract class MiniGame extends Phaser.Scene {
 
   create() {
     syncClock(this);
+    // The side panel's stage grows to its full height for a game (01-layout.css view-game) a moment before Phaser's own
+    // size check (every 500 ms) notices: lay out at the size the parent has now, or the round is drawn in the city's
+    // short strip with blank canvas under it (src/game/scenes/games/column.ts).
+    fitParent(this.scale);
+    this.lines = [];
+    this.nextLines = [];
+    this.moved = 0;
+    this.endKeysAt = Infinity;
     this.score = 0;
     this.hits = 0;
     this.wrongs = 0;
@@ -137,6 +151,23 @@ export abstract class MiniGame extends Phaser.Scene {
       probe.destroy();
     } else this.hintH = 22;
     this.cameras.main.setBackgroundColor('#140d1f').setRoundPixels(true);
+    // Screen readers: the canvas is named for the game while it runs (the city's own label comes back after), and the
+    // round's goal and keys are spoken first, before the game's own first prompt (src/state/announce.ts).
+    const canvas = this.game.canvas as HTMLCanvasElement | undefined;
+    const cityLabel = canvas?.getAttribute('aria-label');
+    canvas?.setAttribute('aria-label', `${plainName(this.title)}: mini-game`);
+    onSceneEnd(this, () => cityLabel && canvas?.setAttribute('aria-label', cityLabel));
+    this.speak(startLine({ title: this.title, keys: this.keysHelp, seconds: this.duration, untimed: !!this.duration && this.untimed }));
+    this.input.keyboard?.on('keydown', (e: KeyboardEvent) => {
+      if (!this.over || e.repeat || this.time.now < this.endKeysAt || keysBelongToUi(document.activeElement, this.game.canvas)) return;
+      const k = endCardKey(e.key, expertOpen(this.serviceId));
+      if (!k) return;
+      e.preventDefault();
+      this.endKeysAt = Infinity;
+      if (k === 'leave') return this.leave();
+      setExpert(k === 'expert');
+      this.scene.restart();
+    });
     this.setup();
     this.chrome();
     if (this.duration && !this.untimed) this.timerEvt = this.time.addEvent({ delay: this.tickMs, loop: true, callback: () => --this.timeLeft <= 0 && this.finish() });
@@ -211,6 +242,49 @@ export abstract class MiniGame extends Phaser.Scene {
     });
   }
 
+  /** Lines said this frame, and lines about what comes next (said after the score). */
+  private lines: string[] = [];
+  private nextLines: string[] = [];
+  /** The player's own score change this frame (addScore with the 'player' cue). */
+  private moved = 0;
+  private speakQueued = false;
+  /** When the end card's keys start to work (Infinity: not yet, or already used). */
+  private endKeysAt = Infinity;
+
+  /**
+   * Says `text` to screen readers. Everything said in one frame (an answer's verdict, its score, the next prompt) goes
+   * out as one line, after the frame: the verdict, then "Score n.", then the `next` lines.
+   */
+  protected speak(text: string, next = false) {
+    (next ? this.nextLines : this.lines).push(spoken(text));
+    this.speakSoon();
+  }
+
+  private speakSoon() {
+    if (this.speakQueued) return;
+    this.speakQueued = true;
+    queueMicrotask(() => this.speakNow());
+  }
+
+  private speakNow() {
+    this.speakQueued = false;
+    const said = this.lines.splice(0);
+    const next = this.nextLines.splice(0);
+    const moved = this.moved;
+    this.moved = 0;
+    if (moved || (said.length && this.scoreSaidWith)) said.push(scoreLine(moved, this.score, said.length > 0));
+    this.scoreSaidWith = false;
+    announce([...said, ...next].join(' '));
+  }
+
+  /** A verdict was said this frame: say the score after it. */
+  private scoreSaidWith = false;
+
+  private leave() {
+    setExpert(false);
+    useCity.getState().setView({ name: 'city' });
+  }
+
   /**
    * Re-lay out by restarting, but never mid-round (a panel resize must not wipe the score and timer), and never once
    * the round is over: the end card (everything at depth 200 and up) moves to the new centre and keeps the result.
@@ -257,7 +331,13 @@ export abstract class MiniGame extends Phaser.Scene {
       if (comboStepUp(this.streak)) this.comboFloat();
     } else if (n < 0) this.breakStreak(cue === 'player');
     n = step.n;
+    const before = this.score;
     this.score = this.allowDebt ? this.score + n : Math.max(0, this.score + n);
+    // The player's own answers are spoken with the score (speakNow); timer outcomes only in the game's own words.
+    if (cue === 'player' && this.score !== before) {
+      this.moved += this.score - before;
+      this.speakSoon();
+    }
     if (n === 0 || cue === 'none') return;
     sfx(n > 0 ? 'correct' : 'wrong', cue === 'soft' ? { soft: true } : { own: true });
   }
@@ -333,6 +413,9 @@ export abstract class MiniGame extends Phaser.Scene {
     // Never cut at an edge.
     t.setX(Phaser.Math.Clamp(x, t.width / 2 + 6, w - t.width / 2 - 6));
     this.verdictText = t;
+    // Screen readers hear the verdict too, with the score after it.
+    this.scoreSaidWith = true;
+    this.speak(text);
     this.time.delayedCall(VERDICT_MS, () => {
       if (!t.active) return;
       if (reducedMotion()) t.destroy();
@@ -345,6 +428,8 @@ export abstract class MiniGame extends Phaser.Scene {
     if (this.over) return;
     this.over = true;
     this.timerEvt?.remove();
+    // What this frame said goes out before the result.
+    this.speakNow();
     const s = useCity.getState();
     const best = s.progress.games?.[this.gameId]?.best ?? 0;
     // The paid score never goes below 0, though Rush Hour's running total may (its debt).
@@ -368,6 +453,8 @@ export abstract class MiniGame extends Phaser.Scene {
     const coins = s.recordGame(this.gameId, gate.ok ? paid : 0, { timed: !relaxed() });
     // Past the day's full-pay rounds (and no new best) a round pays half: say so kindly, once, on the card.
     const halved = !newBest && roundsBefore >= FULL_ROUNDS_A_DAY;
+    /** The card's notes (half pay, why a round didn't count), also spoken. */
+    const notes: string[] = [];
     if (xp > 0) s.addXp(this.serviceId, xp);
     // a round played counts toward Today and the streak (src/state/progress.ts)
     if (paid > 0) s.noteLearning('games');
@@ -388,6 +475,7 @@ export abstract class MiniGame extends Phaser.Scene {
     // emoji draws as a grey ball on canvases without colour emoji.
     const bestNow = Math.max(best, gate.ok ? paid : 0);
     const bestText = bestNow > 0 || gate.ok ? `best ${bestNow}` : short ? `${RELAXED_MIN_CALLS} calls to set a best` : `pass at ${gate.need}% to set a best`;
+    const capNote = (str: string) => (notes.push(/[.!?]$/.test(str) ? str : `${str}.`), str);
     const score = text(y, `Score ${this.score}   ·   +${xp} ⭐${coins ? `  +${coins} coins` : ''}${weekly ? ' ⚡ weekly' : ''}   ·   ${bestText}`, 16, PAL.paperInk);
     items.push(score);
     y += score.height + 6;
@@ -396,9 +484,11 @@ export abstract class MiniGame extends Phaser.Scene {
       const noPay = !coins && roundsBefore >= FULL_ROUNDS_A_DAY + HALF_ROUNDS_A_DAY;
       const cap = text(
         y,
-        noPay
-          ? "That's all the stars and coins this game pays today. Full pay again tomorrow, or beat your best!"
-          : `Half stars and coins after ${FULL_ROUNDS_A_DAY} rounds a day. Full pay again tomorrow, or beat your best!`,
+        capNote(
+          noPay
+            ? "That's all the stars and coins this game pays today. Full pay again tomorrow, or beat your best!"
+            : `Half stars and coins after ${FULL_ROUNDS_A_DAY} rounds a day. Full pay again tomorrow, or beat your best!`,
+        ),
         13,
         '#6b7280',
       );
@@ -406,7 +496,7 @@ export abstract class MiniGame extends Phaser.Scene {
       y += cap.height + 6;
     }
     if (!gate.ok) {
-      const why = text(y, short ? `Make at least ${RELAXED_MIN_CALLS} calls before Done to score a round` : gateLine(gate, this.wrongWord, this.accuracyWord), 14, '#991b1b');
+      const why = text(y, capNote(short ? `Make at least ${RELAXED_MIN_CALLS} calls before Done to score a round` : gateLine(gate, this.wrongWord, this.accuracyWord)), 14, '#991b1b');
       items.push(why);
       y += why.height + 6;
     }
@@ -420,12 +510,13 @@ export abstract class MiniGame extends Phaser.Scene {
     y += 14;
     items.push(this.add.rectangle(0, y, cw - 40, 2, 0x000000, 0.12));
     y += 10;
-    const lesson = crisp(this.add.text(0, y, this.lesson(), { ...TXT(14, '#374151'), fontStyle: '600', align: 'center', wordWrap: { width: cw - 40 }, lineSpacing: 2 })).setOrigin(0.5, 0);
+    const lessonText = this.lesson();
+    const lesson = crisp(this.add.text(0, y, lessonText, { ...TXT(14, '#374151'), fontStyle: '600', align: 'center', wordWrap: { width: cw - 40 }, lineSpacing: 2 })).setOrigin(0.5, 0);
     items.push(lesson);
     y += lesson.height + 16;
     const by = y + 14;
     const ch = by + 30;
-    const leave = () => (setExpert(false), useCity.getState().setView({ name: 'city' }));
+    const leave = () => this.leave();
     const buttons: Phaser.GameObjects.Container[] = [];
     // The Expert round opens at building level 3: quicker, harder cards, half as many stars again.
     if (expertOpen(this.serviceId)) {
@@ -449,6 +540,10 @@ export abstract class MiniGame extends Phaser.Scene {
     for (const o of c.list as unknown as Phaser.GameObjects.Components.Transform[]) o.y -= ch / 2;
     this.endCard = { c, w: cw, h: ch };
     this.recentreEndCard();
+    // The card in words, and its keys (gameKeys.ts endCardKey), for screen readers: the buttons are drawn on the canvas.
+    const expertNext = expertOpen(this.serviceId);
+    announce(endLine({ newBest, score: this.score, stars: xp, coins, best: bestText, notes, growth: growthSaid(g), lesson: lessonText, expert: expertNext }));
+    this.endKeysAt = this.time.now + END_KEYS_CALM_MS;
     // A new best gets the fanfare; an ordinary round ends on a plain ding (the quest jingle means a finished quest).
     sfx(newBest ? 'levelup' : 'correct', { own: true });
   }

@@ -8,6 +8,21 @@ import { withCoins } from './icons';
 /** Clicks and keys inside a term never reach the card or row around it (a flashcard must not flip). */
 const stop = (e: SyntheticEvent) => e.stopPropagation();
 
+/** The popover API: the definition is drawn in the top layer, over every card, scroller and transform around it. */
+const topLayer = () => typeof HTMLElement !== 'undefined' && typeof HTMLElement.prototype.showPopover === 'function';
+
+/**
+ * Where the popover goes on screen (fixed, in CSS px): under its term, flipped above when it won't fit below, and
+ * kept `gutter` inside the view on every side; taller than the view, it starts at the top and scrolls (19-glossary.css).
+ */
+export function popPlace(term: { left: number; top: number; bottom: number }, pop: { width: number; height: number }, view: { width: number; height: number }, gap = 8, gutter = 8) {
+  const left = Math.max(gutter, Math.min(term.left, view.width - gutter - pop.width));
+  const below = term.bottom + gap;
+  const above = term.top - gap - pop.height;
+  const top = below + pop.height <= view.height - gutter ? below : above >= gutter ? above : Math.max(gutter, view.height - gutter - pop.height);
+  return { left: Math.round(left), top: Math.round(top) };
+}
+
 function TermButton({ text, entry }: { text: string; entry: GlossaryEntry }) {
   const [open, setOpen] = useState(false);
   const [place, setPlace] = useState<{ dx: number; up: boolean }>({ dx: 0, up: false });
@@ -31,9 +46,37 @@ function TermButton({ text, entry }: { text: string; entry: GlossaryEntry }) {
     return () => document.removeEventListener('pointerdown', onDown);
   }, [open]);
 
-  // Keep the popover inside the viewport (the side panel is 400 px wide): nudge sideways, flip above near the bottom.
+  // In the top layer (the popover API), nothing around the term can clip its definition (the To-do card, a scroller, a
+  // flipped flashcard): placed under the term, inside the view, and again when the page scrolls or resizes.
   useLayoutEffect(() => {
-    if (!open || !pop.current) return;
+    const el = pop.current;
+    if (!open || !el || !topLayer()) return;
+    try {
+      el.showPopover();
+    } catch {
+      // already shown
+    }
+    const place = () => {
+      const t = btn.current?.getBoundingClientRect();
+      if (!t) return;
+      const r = el.getBoundingClientRect();
+      const at = popPlace(t, r, { width: window.innerWidth, height: window.innerHeight });
+      el.style.left = `${at.left}px`;
+      el.style.top = `${at.top}px`;
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open]);
+
+  // Without the popover API: keep the popover inside the viewport (the side panel is 400 px wide): nudge sideways,
+  // flip above near the bottom.
+  useLayoutEffect(() => {
+    if (!open || !pop.current || topLayer()) return;
     const r = pop.current.getBoundingClientRect();
     const gutter = 8;
     const dx = r.left < gutter ? gutter - r.left : r.right > window.innerWidth - gutter ? window.innerWidth - gutter - r.right : 0;
@@ -71,8 +114,9 @@ function TermButton({ text, entry }: { text: string; entry: GlossaryEntry }) {
           id={id}
           role="dialog"
           aria-label={entry.term}
-          className={`term-pop ${place.up ? 'up' : ''}`}
-          style={{ transform: place.dx ? `translateX(${Math.round(place.dx)}px)` : undefined }}
+          popover={topLayer() ? 'manual' : undefined}
+          className={topLayer() ? 'term-pop layer' : `term-pop ${place.up ? 'up' : ''}`}
+          style={!topLayer() && place.dx ? { transform: `translateX(${Math.round(place.dx)}px)` } : undefined}
         >
           <b className="term-name">{entry.term}</b>
           <span className="term-short">{entry.short}</span>

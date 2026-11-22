@@ -166,7 +166,9 @@ export function Flashcards() {
           {/* Each face is a flip button laid under its text, so the answer's term buttons are never nested in a button. */}
           <div className={`flash ${flipped ? 'back' : ''}`}>
             <div className="flash-inner">
-              <div className="flash-face front" inert={flipped}>
+              {/* The face not showing is out of reach and out of the accessibility tree: the answer isn't read before
+                  it's revealed (inert alone still left it in the tree for some screen readers). */}
+              <div className="flash-face front" inert={flipped} aria-hidden={flipped || undefined}>
                 <button ref={(b) => void (faceHit.current.front = b)} className="flash-hit" onClick={flip} aria-label={`Question: ${card.q}. Press to reveal the answer`} />
                 <span className="flash-meta">
                   <AwsIcon serviceId={serviceId!} size={16} /> {placeFor(serviceId!)?.place} · {TIER_NAMES[card.tier]}
@@ -179,7 +181,7 @@ export function Flashcards() {
                 </span>
                 <span className="flash-hint">tap or press F to reveal</span>
               </div>
-              <div className="flash-face back-face" inert={!flipped}>
+              <div className="flash-face back-face" inert={!flipped} aria-hidden={!flipped || undefined}>
                 <button ref={(b) => void (faceHit.current.back = b)} className="flash-hit" onClick={flip} aria-label="Answer shown. Press to see the question" />
                 <span className="flash-meta">
                   <Portrait id={serviceId!} size={20} /> {placeFor(serviceId!)?.agentName}

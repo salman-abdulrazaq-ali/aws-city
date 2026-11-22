@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import type { AwsNewsItem, Progress, ServerEvent } from '@/backend/contract';
 import { bus } from '@/state/bus';
+import { announce, stepLine } from '@/state/announce';
 import { agentName, isDiscovered, openFindings, severityRank, taskRunning, tierOf, useCity, type Inventory } from '@/state/store';
 import { bubbleText, failedBubble } from '@/state/watch';
 import { dueFor } from '@/state/srs';
@@ -1150,8 +1151,8 @@ export class CityScene extends Phaser.Scene {
     this.flyTo(id);
     this.highlight(id);
     useCity.getState().select(id);
-    const place = placeFor(id);
-    bus.emit('announce', { text: `${place?.place ?? serviceById(id)?.name ?? id}. ${place?.simple ?? ''} ${order.indexOf(id) + 1} of ${order.length}.`.trim() });
+    // Its sign's name, never the raw id; quick presses replace the line still waiting, so the newest is always heard.
+    announce(stepLine(id, this.landmarks.get(id)?.spec.label, order.indexOf(id) + 1, order.length), { replace: true });
   }
 
   /** Keys belong to the UI unless nothing (body) or the game itself has focus: tabs, menus and the tour use arrows too. */

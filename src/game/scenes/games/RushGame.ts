@@ -45,6 +45,7 @@ export class RushGame extends MiniGame {
     // The running total shows its debt (an idle morning can go below 0); the paid score never does, and a finished day pays 1 ⭐.
     this.allowDebt = true;
     this.minStars = 1;
+    this.keysHelp = 'Press + or the up arrow to add a server, − or the down arrow to turn one off.';
   }
 
   protected setup() {
@@ -132,6 +133,7 @@ export class RushGame extends MiniGame {
     if (!addServer(this.s)) return (this.miss(), this.floater(this.geo.mid, this.geo.by - 32, 'the factory is full', FEEDBACK.wrong));
     sfx('pop', { own: true });
     this.draw();
+    this.speak(`Servers ${serverCount(this.s)} of ${RUSH.maxServers}. Line ${this.s.queue}.`);
   }
 
   private remove() {
@@ -139,6 +141,7 @@ export class RushGame extends MiniGame {
     if (!removeServer(this.s)) return (this.miss(), this.floater(this.geo.mid, this.geo.by - 32, 'keep one server on', FEEDBACK.wrong));
     sfx('whoosh', { own: true });
     this.draw();
+    this.speak(`Servers ${serverCount(this.s)} of ${RUSH.maxServers}. Line ${this.s.queue}.`);
   }
 
   /** One second of the day. */
@@ -159,15 +162,20 @@ export class RushGame extends MiniGame {
       const p = PHASES.find((x) => x.id === phase)!;
       this.phaseText.setText(p.label);
       this.floater(mid, (top + groundY) / 2, p.label, '#fde047');
+      this.speak(`${p.label}. Line ${this.s.queue}, servers ${serverCount(this.s)}.`);
       sfx('pop', { soft: true });
     }
     if (r.long && !this.wasLong) {
       this.floater(lx, this.geo.labels + 90, 'Line too long! Tap +', FEEDBACK.wrong);
+      this.speak(`The line is too long: ${this.s.queue} waiting. Press + to add a server.`);
       sfx('wrong', { soft: true });
     }
     if (r.lost) this.floater(lx, this.geo.labels + 110, `${r.lost} gave up and left`, FEEDBACK.wrong);
     const idle = r.idle >= 2;
-    if (idle && !this.wasIdle) this.floater((fx + this.geo.right) / 2, groundY - 60, '💤 idle servers still cost money', FEEDBACK.note);
+    if (idle && !this.wasIdle) {
+      this.floater((fx + this.geo.right) / 2, groundY - 60, '💤 idle servers still cost money', FEEDBACK.note);
+      this.speak(`${r.idle} servers sit idle, and idle servers still cost money. Press − to turn one off.`);
+    }
     this.wasLong = r.long;
     this.wasIdle = idle;
     this.draw(r.served);

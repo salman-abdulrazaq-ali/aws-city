@@ -5,6 +5,7 @@ import { reducedMotion } from '../../motion';
 import { crisp } from '../../SpeechBubble';
 import { FEEDBACK, MiniGame, pace, PAL, TXT } from './MiniGame';
 import { POINTS } from './scoring';
+import { sortKeysLine } from './say';
 import { drain, isHot, label, newSortStats, nextParcel, send, shelfFor, SHELVES, SORT, SORT_LESSON, sortPoints, sortStars, sortVerdict, spawnMs, type Parcel, type SortStats } from './sorting';
 
 interface Box {
@@ -43,6 +44,7 @@ export class SortGame extends MiniGame {
   constructor() {
     super('game:dynamodb', 'dynamodb', 'dynamodb', '📦 DynamoDB Sorting Office — send each parcel to the shelf with its key');
     this.duration = SORT.seconds;
+    this.keysHelp = sortKeysLine();
   }
 
   protected setup() {
@@ -136,6 +138,7 @@ export class SortGame extends MiniGame {
       this.stats.dropped++;
       this.addScore(-2, 'soft');
       this.floater(this.geo.right - 60, this.geo.beltY + 30, 'a parcel fell off!', FEEDBACK.wrong);
+      this.speak(`A parcel fell off the belt. Score ${this.score}.`);
       return;
     }
     const p = nextParcel(this.t, this.stats.spread);
@@ -149,7 +152,11 @@ export class SortGame extends MiniGame {
     const { frontX, step, beltY } = this.geo;
     this.belt.forEach((b, i) => {
       const x = frontX + i * step;
-      if (i === 0 && b.front === undefined) b.front = this.time.now;
+      if (i === 0 && b.front === undefined) {
+        b.front = this.time.now;
+        // Screen readers: the parcel to sort now, after the last answer's verdict and score.
+        this.speak(`Parcel ${label(b.p)}.`, true);
+      }
       b.t.setScale(i === 0 ? 1.15 : 0.9).setDepth(i === 0 ? 20 : 10);
       if (reducedMotion()) b.t.setPosition(x, beltY);
       else this.tweens.add({ targets: b.t, x, y: beltY, duration: 180, ease: 'Stepped', easeParams: [4] });
@@ -179,6 +186,7 @@ export class SortGame extends MiniGame {
       if (!this.stats.spread && this.spreadBtn && !this.tipShown) {
         this.tipShown = true;
         this.hint.setText('One shelf has all the 🍎. Tap 🔀 to spread the keys (or press S)').setColor('#fde047');
+        this.speak('One shelf has all the 🍎. Press S to spread the keys.');
       }
       return;
     }
@@ -204,6 +212,7 @@ export class SortGame extends MiniGame {
     const hot = SORT.hotKey;
     this.shelves.forEach((s, i) => s.keys.setText(`${SHELVES[i].join(' ')}\n${hot}${i + 1}`));
     this.hint.setText(`Now ${hot} gets a number: ${hot}1 goes on shelf 1, ${hot}2 on shelf 2…`).setColor('#fde047');
+    this.speak(`Keys spread out. Now ${hot} gets a number: ${hot}1 goes on shelf 1, ${hot}2 on shelf 2, and so on.`);
     this.floater(this.scale.width / 2, this.geo.shelfTop - 40, 'Keys spread out!', '#fde047');
     sfx('correct', { own: true });
   }
@@ -224,6 +233,7 @@ export class SortGame extends MiniGame {
       if (!this.stats.spread) {
         this.hint.setText('');
         this.spreadBtn = this.pxButton(w / 2, this.geo.hintY, `🔀 Spread the ${SORT.hotKey} keys`, () => this.spread(), 0x6fe3a3, PAL.paperInk);
+        this.speak(`So many ${SORT.hotKey}! Their shelf will get too busy. Press S to spread the ${SORT.hotKey} keys.`);
       }
       sfx('pop', { soft: true });
     }

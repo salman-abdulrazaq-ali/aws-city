@@ -29,6 +29,11 @@
   --line-strong: #9ca3af;
   --accent-line: rgba(240, 166, 58, 0.85);
 }
+/* …and the flashcards' small print near the paper's ink (≥ 7:1 on both paper colours). */
+:root[data-contrast='high'] .flash-face {
+  --paper-meta: #5c1d06;
+  --paper-hint: #2b2118;
+}
 :root[data-contrast='high'] :focus-visible {
   outline: 3px solid var(--gold);
   outline-offset: 2px;

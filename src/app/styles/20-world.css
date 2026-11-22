@@ -233,7 +233,9 @@
 .stage:has(.map-credit) .world-btn {
   bottom: calc(var(--s-3) + 14px);
 }
-.menu-credit {
+.menu-credit,
+.menu button.menu-credit {
+  min-height: 24px;
   padding: var(--s-1, 4px) var(--s-3);
   font-size: var(--fs-xs);
   color: var(--muted);

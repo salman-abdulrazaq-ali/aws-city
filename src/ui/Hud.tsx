@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
   canDeleteAccount,
   canDownloadData,
@@ -7,6 +7,7 @@ import {
   downloadMyData,
   openFullCity,
   openLeaderboard,
+  openOsmCopyright,
   openPrivacyPolicy,
   privacyPolicyUrl,
   reconnect,
@@ -29,7 +30,6 @@ import { connectionLabel, DEMO_KEY, GAME_NAMES, isDemo, readPref, setDemo, syncL
 import { Coin, Icon } from './icons';
 import { RankChip } from './Collection';
 import { openEverything, useLocked } from './useLadder';
-import { OsmCredit } from './Minimap';
 import { BuildToggle } from './BuildDrawer';
 import { isSimple, shows } from '@/state/simple';
 import { useTodo } from './today';
@@ -199,44 +199,49 @@ function AccountItems({ run, askDelete }: { run: (fn: () => void) => () => void;
   const linked = useCity((s) => s.account.linked);
   return (
     <>
-      <div className="menu-label" role="presentation">
-        Account
+      <div role="group" aria-label="Account">
+        <div className="menu-label" aria-hidden="true">
+          Account
+        </div>
+        {status === 'signed-out' ? (
+          canSignIn() && (
+            <button role="menuitem" onClick={run(signIn)}>
+              Sign in
+            </button>
+          )
+        ) : (
+          <>
+            <button role="menuitem" title="Its card is in the Deploy tab" onClick={run(() => openAccountCard())}>
+              {linked ? '🔗 Your AWS account' : '🔗 Connect your AWS account'}
+            </button>
+            {canDownloadData() && (
+              <button role="menuitem" title="Everything the server keeps about you, as a file on this device" onClick={run(() => void downloadMyData())}>
+                Download my data
+              </button>
+            )}
+            <button role="menuitem" onClick={run(signOut)}>
+              Sign out
+            </button>
+            {canDeleteAccount() && (
+              <button role="menuitem" onClick={run(askDelete)}>
+                Delete my account…
+              </button>
+            )}
+          </>
+        )}
+        {privacyPolicyUrl() && (
+          <button role="menuitem" title="Opens in a new tab" onClick={run(openPrivacyPolicy)}>
+            Privacy policy ↗
+          </button>
+        )}
       </div>
-      {status === 'signed-out' ? (
-        canSignIn() && (
-          <button role="menuitem" onClick={run(signIn)}>
-            Sign in
-          </button>
-        )
-      ) : (
-        <>
-          <button role="menuitem" title="Its card is in the Deploy tab" onClick={run(() => openAccountCard())}>
-            {linked ? '🔗 Your AWS account' : '🔗 Connect your AWS account'}
-          </button>
-          {canDownloadData() && (
-            <button role="menuitem" title="Everything the server keeps about you, as a file on this device" onClick={run(() => void downloadMyData())}>
-              Download my data
-            </button>
-          )}
-          <button role="menuitem" onClick={run(signOut)}>
-            Sign out
-          </button>
-          {canDeleteAccount() && (
-            <button role="menuitem" onClick={run(askDelete)}>
-              Delete my account…
-            </button>
-          )}
-        </>
-      )}
-      {privacyPolicyUrl() && (
-        <button role="menuitem" title="Opens in a new tab" onClick={run(openPrivacyPolicy)}>
-          Privacy policy ↗
-        </button>
-      )}
       <hr />
     </>
   );
 }
+
+/** The ⋯ menu's items in order (checkbox items too), for its arrow keys. */
+const menuItems = (menu: HTMLElement | null) => [...(menu?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? [])];
 
 /** Everything that isn't needed every minute, in one flat list: sound, chatter, peek, tour, full city, the Lookout. */
 function MoreMenu({ layout }: { layout: Layout }) {
@@ -264,10 +269,59 @@ function MoreMenu({ layout }: { layout: Layout }) {
   const locked = useLocked();
   const simple = useCity((s) => isSimple(s.prefs));
   const box = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  /** Where focus goes when the menu opens: its first item (ArrowDown, a click, Enter) or its last (ArrowUp). */
+  const startAt = useRef<'first' | 'last'>('first');
+  const items = () => menuItems(list.current);
+  // Opening moves focus into the menu, so the arrow keys move through it (and never reach the city).
+  useEffect(() => {
+    if (!open) return;
+    const all = menuItems(list.current);
+    (startAt.current === 'last' ? all[all.length - 1] : all[0])?.focus();
+    startAt.current = 'first';
+  }, [open]);
+  /** Escape: the menu closes and focus goes back to ⋯. */
+  const closeToButton = () => {
+    setOpen(false);
+    trigger.current?.focus();
+  };
+  // Arrows, Home and End move between the items; Escape closes. Handled here, the keys go no further (the city and the
+  // game listen on the window).
+  const onMenuKey = (e: ReactKeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      return closeToButton();
+    }
+    const all = items();
+    const at = all.indexOf(document.activeElement as HTMLElement);
+    const to = e.key === 'ArrowDown' ? (at + 1) % all.length : e.key === 'ArrowUp' ? (at <= 0 ? all.length - 1 : at - 1) : e.key === 'Home' ? 0 : e.key === 'End' ? all.length - 1 : undefined;
+    if (to === undefined) return;
+    e.preventDefault();
+    e.stopPropagation();
+    all[to]?.focus();
+  };
+  // ArrowDown / ArrowUp on ⋯ open the menu at its first / last item (or move into it when it's open).
+  const onButtonKey = (e: ReactKeyboardEvent) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (open) {
+      const all = items();
+      return void (e.key === 'ArrowUp' ? all[all.length - 1] : all[0])?.focus();
+    }
+    startAt.current = e.key === 'ArrowUp' ? 'last' : 'first';
+    setOpen(true);
+  };
   useEffect(() => {
     if (!open) return;
     const away = (e: Event) => box.current && !box.current.contains(e.target as Node) && setOpen(false);
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setOpen(false);
+      trigger.current?.focus();
+    };
     document.addEventListener('pointerdown', away);
     document.addEventListener('keydown', esc);
     return () => {
@@ -282,11 +336,20 @@ function MoreMenu({ layout }: { layout: Layout }) {
   return (
     <>
       <div className="more" ref={box}>
-        <button className="btn icon ghost" aria-haspopup="menu" aria-expanded={open} aria-label="More" title="More" onClick={() => setOpen((o) => !o)}>
+        <button
+          ref={trigger}
+          className="btn icon ghost"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-label="More"
+          title="More"
+          onClick={() => setOpen((o) => !o)}
+          onKeyDown={onButtonKey}
+        >
           <Icon name="more" />
         </button>
         {open && (
-          <div className="menu" role="menu">
+          <div className="menu" role="menu" aria-label="More" ref={list} tabIndex={-1} onKeyDown={onMenuKey}>
             {hosted && <AccountItems run={run} askDelete={() => setConfirmDelete(true)} />}
             <button
               role="menuitemcheckbox"
@@ -308,67 +371,69 @@ function MoreMenu({ layout }: { layout: Layout }) {
               <span className={`switch ${mapDetails ? 'on' : ''}`} aria-hidden="true" />
             </button>
             <hr />
-            <div className="menu-label" role="presentation">
-              Accessibility
-            </div>
-            <button
-              role="menuitem"
-              aria-label={`Text size: ${textSize}%. Choose to make it bigger.`}
-              onClick={() => setPref('textSize', textSize === 100 ? 125 : textSize === 125 ? 150 : undefined)}
-            >
-              <span>Text size</span>
-              <span className="menu-value">{textSize}%</span>
-            </button>
-            <button role="menuitemcheckbox" aria-checked={contrast} onClick={() => setPref('contrast', contrast ? undefined : true)}>
-              <span>High contrast</span>
-              <span className={`switch ${contrast ? 'on' : ''}`} aria-hidden="true" />
-            </button>
-            <button role="menuitemcheckbox" aria-checked={easyFont} onClick={() => setPref('easyFont', easyFont ? undefined : true)}>
-              <span>Easy-read font</span>
-              <span className={`switch ${easyFont ? 'on' : ''}`} aria-hidden="true" />
-            </button>
-            <button
-              role="menuitemcheckbox"
-              aria-checked={relaxed}
-              title="Rounds end when you press Done, and everything moves slower"
-              onClick={() => setPref('relaxed', relaxed ? undefined : true)}
-            >
-              <span>Games without a clock</span>
-              <span className={`switch ${relaxed ? 'on' : ''}`} aria-hidden="true" />
-            </button>
-            <button role="menuitemcheckbox" aria-checked={captions} title="A short caption for each sound" onClick={() => setPref('captions', captions ? undefined : true)}>
-              <span>Sound captions</span>
-              <span className={`switch ${captions ? 'on' : ''}`} aria-hidden="true" />
-            </button>
-            <button
-              role="menuitemcheckbox"
-              aria-checked={builder}
-              title="Every area open, and the deeper “For AWS learners” text shown first"
-              onClick={() => {
-                setPref('builder', builder ? undefined : true);
-                if (!builder) openEverything();
-              }}
-            >
-              <span>I already build on AWS</span>
-              <span className={`switch ${builder ? 'on' : ''}`} aria-hidden="true" />
-            </button>
-            {/* Simple mode (the default) ↔ Everything: one switch, and "Show everything" also opens every locked area. */}
-            {simple ? (
+            <div role="group" aria-label="Accessibility">
+              <div className="menu-label" aria-hidden="true">
+                Accessibility
+              </div>
+              {/* Its name is what it shows ("Text size 125%", WCAG 2.5.3: label in name); what a press does is its title. */}
               <button
                 role="menuitem"
-                title="Show every extra (rank, City Lights, season road, Codex, news, the Drawing board…) and open every tab and panel now"
-                onClick={run(() => {
-                  setPref('simple', false);
-                  if (locked.length > 0) openEverything();
-                })}
+                title={textSize === 150 ? 'Back to 100%' : `Make the text bigger: ${textSize === 100 ? 125 : 150}%`}
+                onClick={() => setPref('textSize', textSize === 100 ? 125 : textSize === 125 ? 150 : undefined)}
               >
-                Show everything
+                <span>Text size</span> <span className="menu-value">{textSize}%</span>
               </button>
-            ) : (
-              <button role="menuitem" title="Back to a plain To-do list: the extras hide (nothing you earned is lost)" onClick={run(() => setPref('simple', undefined))}>
-                Keep it simple
+              <button role="menuitemcheckbox" aria-checked={contrast} onClick={() => setPref('contrast', contrast ? undefined : true)}>
+                <span>High contrast</span>
+                <span className={`switch ${contrast ? 'on' : ''}`} aria-hidden="true" />
               </button>
-            )}
+              <button role="menuitemcheckbox" aria-checked={easyFont} onClick={() => setPref('easyFont', easyFont ? undefined : true)}>
+                <span>Easy-read font</span>
+                <span className={`switch ${easyFont ? 'on' : ''}`} aria-hidden="true" />
+              </button>
+              <button
+                role="menuitemcheckbox"
+                aria-checked={relaxed}
+                title="Rounds end when you press Done, and everything moves slower"
+                onClick={() => setPref('relaxed', relaxed ? undefined : true)}
+              >
+                <span>Games without a clock</span>
+                <span className={`switch ${relaxed ? 'on' : ''}`} aria-hidden="true" />
+              </button>
+              <button role="menuitemcheckbox" aria-checked={captions} title="A short caption for each sound" onClick={() => setPref('captions', captions ? undefined : true)}>
+                <span>Sound captions</span>
+                <span className={`switch ${captions ? 'on' : ''}`} aria-hidden="true" />
+              </button>
+              <button
+                role="menuitemcheckbox"
+                aria-checked={builder}
+                title="Every area open, and the deeper “For AWS learners” text shown first"
+                onClick={() => {
+                  setPref('builder', builder ? undefined : true);
+                  if (!builder) openEverything();
+                }}
+              >
+                <span>I already build on AWS</span>
+                <span className={`switch ${builder ? 'on' : ''}`} aria-hidden="true" />
+              </button>
+              {/* Simple mode (the default) ↔ Everything: one switch, and "Show everything" also opens every locked area. */}
+              {simple ? (
+                <button
+                  role="menuitem"
+                  title="Show every extra (rank, City Lights, season road, Codex, news, the Drawing board…) and open every tab and panel now"
+                  onClick={run(() => {
+                    setPref('simple', false);
+                    if (locked.length > 0) openEverything();
+                  })}
+                >
+                  Show everything
+                </button>
+              ) : (
+                <button role="menuitem" title="Back to a plain To-do list: the extras hide (nothing you earned is lost)" onClick={run(() => setPref('simple', undefined))}>
+                  Keep it simple
+                </button>
+              )}
+            </div>
             <hr />
             <button role="menuitem" onClick={run(() => useCity.getState().openCollection(true))}>
               🏙️ My City: everything you've earned
@@ -407,11 +472,14 @@ function MoreMenu({ layout }: { layout: Layout }) {
               </button>
             )}
             <hr />
-            <div className="menu-label" role="presentation">
-              Credits
-            </div>
-            <div className="menu-credit" role="presentation">
-              Street maps: <OsmCredit /> (ODbL 1.0)
+            {/* The street maps' credit is an item too (a menu holds only items): it opens the OpenStreetMap copyright page. */}
+            <div role="group" aria-label="Credits">
+              <div className="menu-label" aria-hidden="true">
+                Credits
+              </div>
+              <button role="menuitem" className="menu-credit" title="Opens openstreetmap.org/copyright in a new tab" onClick={run(() => openOsmCopyright())}>
+                Street maps: © OpenStreetMap contributors (ODbL 1.0) ↗
+              </button>
             </div>
           </div>
         )}
