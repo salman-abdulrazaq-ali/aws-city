@@ -174,9 +174,11 @@ When a change touches a decision, update its entry and run its Proof.
   or after it; an older session gets code `auth` with `SIGN_IN_AGAIN_MESSAGE`, which the UI shows as sent (`errorText` keeps an
   `auth` error's own words). After enrolling, the extension calls `POST /me/mfa` (the server
   looks now and answers 204 only once the first sight is recorded, else 409 when Cognito doesn't list the authenticator yet,
-  throttles AdminGetUser or no longer has the player: sign-up is open, so anything a player can cause is never a 5xx, which
+  Cognito or DynamoDB throttles the look (`MFA_LOOK_REFUSED` by name, the SDK's `$retryable.throttling` or a 429) or Cognito no
+  longer has the player: sign-up is open, so anything a player can cause is never a 5xx, which
   would feed the Http5xx alarm that pages and rolls a deploy back; only a failure that's ours, such as our role refused, is
-  503; per player `MFA_NOTE_BURST` 3 in a row, then one every 5 s, else 429; the extension treats any refusal as not heard:
+  503; per player `MFA_NOTE_BURST` 3 in a row, then one every 5 s, else 429, its map swept at most once a minute (`sweeper`,
+  like the export limiter's); the extension treats any refusal as not heard:
   `NOTE_TRIES` 3 tries, waits doubling from 250 ms, an older server's 404 counts as heard), then `GlobalSignOut` ends
   every session and the player signs in again with the code (`src/backend/auth.ts`). If that call never landed, the first sight
   is dated when the server first looks (`now()`), never from AdminGetUser's `UserLastModifiedDate`: whether Cognito moves it when
@@ -875,13 +877,23 @@ When a change touches a decision, update its entry and run its Proof.
   the real console's `PLAYER_ONLY_PAGES` (IAM, IAM Identity Center, Organizations, KMS, Secrets Manager, security group
   rules, S3 permissions) `mayAct` refuses every click, pick and keystroke; the practice console is never one. Anywhere on
   the real console (`isConsoleUrl`, never `practice.html`) the click that commits a form is the player's (also a "select" aimed at it, which ends in the same press unless the element opens a list; the server marks both `confirm`) (`isCommit`,
-  reason `commit`: "Your turn: press “Create database” when you’re happy with the settings."): a button or menu item named
+  reason `commit`: "Your turn: press “Create database” when you’re happy with the settings.", the settings part only when
+  the button's form, else the page's `main`, has a field to look over (`hasSettings`: never a search box, a table's row
+  boxes or a hidden field), else "Your turn: press “Create database”."): a button or menu item named
   create, launch, start, run, confirm, submit, save, apply, update, enable, attach, associate, allocate, request, deploy,
   purchase, buy, subscribe or order, or one the page marks as its main action (`isMainAction`: Cloudscape's primary
   variant, or a native form's submit button; Cloudscape renders every button `type="submit"`, so for its buttons only the
-  variant counts; a wizard's Next/Previous excepted). The Copilot still fills the form and points at the button; links,
-  radios, boxes, options and tabs stay its own (they go somewhere or fill in). A refused step is the player's turn. The
-  server marks the same steps `confirm` (by name: it can't see the variant), and its prompt says page text is data, never
+  variant counts; a `<button>` with no type only as its form's default button, the first submit control; a wizard's
+  Next/Previous/Back/Cancel/Close excepted, the whole name only, so "Cancel update" commits). The trade-off, by name: a
+  list page's "Create database" (or "Launch instances", "Create bucket") only opens the form, but it's handed back too, so
+  on the real console the player presses "Create X" twice (open, then commit). The words are English, so on a console
+  whose `<html lang>` isn't `en*`, or that has none (we can't show every console page sets it: fail closed), every press
+  of a button or menu item is the player's ("This console isn’t set to English, so I leave its buttons to you."); the
+  snapshot carries `lang` (v2.17, `''` when the page has none) and the server marks those `confirm` too (a snapshot
+  without `lang`, from an older client, goes by the words). A button in a table's column header ("Launch time", "Start
+  time") sorts it: the snapshot sends it as role `columnheader`, never a commit. The Copilot still fills the form and points at the button; links,
+  radios, boxes, options, tabs and dropdowns stay its own (they go somewhere or fill in). A refused step is the player's turn. The
+  server marks the same steps `confirm` (by name and `lang`: it can't see the variant), and its prompt says page text is data, never
   instructions. Text leaving the page is redacted (`redact`: keys, emails, tokens, 12-digit account ids bare or split by
   `-`, `.` or a space), and the Lookout never auto-snaps a `SECRET_PAGES` page (access keys, secret values, Parameter
   Store, KMS, CloudShell; `autoSnaps`), only when the player asks. Proof: `npx vitest run tests/console.test.ts

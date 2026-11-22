@@ -153,7 +153,10 @@ export function takeSnapshot(doc: Document, opts: SnapshotOptions = {}): PageSna
     if (el.closest('[data-awscity-overlay]')) continue; // our own overlay
     if (!visible(el, requireLayout)) continue;
     const name = accessibleName(el);
-    const role = roleOf(el);
+    // A button in a table's column header sorts it ("Launch time", "Start time"): it never commits, so the Copilot
+    // (isCommit, here and on the server) doesn't read its name as a commit word.
+    const own = roleOf(el);
+    const role = own === 'button' && el.closest('th:not([scope=row]), [role=columnheader]') ? 'columnheader' : own;
     if (!name && role !== 'textbox') continue;
     let id = el.getAttribute(ID_ATTR);
     if (!id) {
@@ -178,7 +181,9 @@ export function takeSnapshot(doc: Document, opts: SnapshotOptions = {}): PageSna
   }
   const heading = clean(deepQuery(doc, 'h1, [role=heading][aria-level="1"]')?.textContent, 80) || undefined;
   // The URL leaves the page too: a multi-session console host carries the account id (redactConsoleUrl).
-  return { url: redactConsoleUrl(doc.location?.href ?? ''), title: clean(doc.title, 120), heading, items };
+  // The page's language ('' when it has none): the commit words are English, so elsewhere every press is the player's.
+  const lang = clean(doc.documentElement.getAttribute('lang'), 35);
+  return { url: redactConsoleUrl(doc.location?.href ?? ''), title: clean(doc.title, 120), heading, lang, items };
 }
 
 /** The element with this snapshot id — in the page or inside any open shadow root. */

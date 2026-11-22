@@ -1011,6 +1011,8 @@ describe('hosted server: Cognito players and tenants', () => {
       if (token === 'jwt-gus') return { sub: 'gus' };
       // POST /me/mfa's per-player limit: only its own test calls it as this player.
       if (token === 'jwt-hana') return { sub: 'hana' };
+      // …and its 409/503 test: one fresh player per case, so no burst is shared with another test.
+      if (token.startsWith('jwt-mfa-')) return { sub: token.slice('jwt-'.length) };
       // A token that expires the moment the socket opens.
       if (token === 'jwt-dave') return { sub: 'dave', exp: Math.floor(Date.now() / 1000) };
       throw new Error('bad');
@@ -1208,18 +1210,27 @@ describe('hosted server: Cognito players and tenants', () => {
     const enrol = await post('jwt-carol');
     expect(enrol.status).toBe(409);
     expect(await enrol.json()).toEqual({ error: expect.stringMatching(/authenticator/) });
-    // Cognito throttling the look, or a player who's gone: not the server's fault either.
-    for (const name of ['TooManyRequestsException', 'ThrottlingException', 'UserNotFoundException']) {
-      mfaReady.mockRejectedValueOnce(Object.assign(new Error('refused'), { name }));
-      expect((await post('jwt-alice')).status, name).toBe(409);
+    // Cognito or DynamoDB (the MFA store) throttling the look, or a player who's gone: not the server's fault either.
+    const refusals: [string, object][] = [
+      ['TooManyRequestsException', {}],
+      ['ThrottlingException', {}],
+      ['UserNotFoundException', {}],
+      ['ProvisionedThroughputExceededException', {}],
+      ['RequestLimitExceeded', {}],
+      ['SomeThrottle', { $retryable: { throttling: true } }], // the SDK's own flag, whatever the name
+      ['SomeLimit', { $metadata: { httpStatusCode: 429 } }],
+    ];
+    for (const [name, extra] of refusals) {
+      mfaReady.mockRejectedValueOnce(Object.assign(new Error('refused'), { name }, extra));
+      expect((await post(`jwt-mfa-${name}`)).status, name).toBe(409);
     }
     // A failure that's ours (our task role refused, a bug) is still a 5xx.
     mfaReady.mockRejectedValueOnce(Object.assign(new Error('AdminGetUser failed'), { name: 'AccessDeniedException' }));
-    const failed = await post('jwt-bob');
+    const failed = await post('jwt-mfa-ours');
     expect(failed.status).toBe(503);
     expect(await failed.json()).toEqual({ error: expect.stringMatching(/authenticator/) });
     mfaReady.mockResolvedValueOnce('reauth'); // recorded; this session just predates it
-    expect((await post('jwt-bob')).status).toBe(204);
+    expect((await post('jwt-mfa-ours')).status).toBe(204);
   });
 
   it('POST /me/mfa is limited per player: the extension’s three tries go through, then 429 with a plain message and no Cognito call', async () => {

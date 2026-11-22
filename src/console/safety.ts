@@ -4,7 +4,7 @@
 import type { SnapshotItem } from './types';
 
 import { byIdFrom } from './dom';
-import { isCommit, isConsoleUrl, isRisky, playerOnlyPage } from './risk';
+import { isCommit, isConsoleUrl, isEnglishPage, isRisky, playerOnlyPage } from './risk';
 
 export { isConsoleUrl, isRisky };
 
@@ -83,15 +83,33 @@ const DANGER_CLASS = /\b(danger|destructive|delete)\b/i;
 /** Cloudscape's primary button (`awsui_variant-primary_<hash>`), or the older AWS UI's (`awsui-button-variant-primary`). */
 const PRIMARY_CLASS = /\bawsui[_-](button-)?variant-primary/i;
 
+const isSubmit = (e: Element): e is HTMLButtonElement | HTMLInputElement =>
+  (e instanceof HTMLButtonElement || e instanceof HTMLInputElement) && (e.type === 'submit' || e.type === 'image');
+
 /**
  * The page marks this control (or the button it sits in) as the form's main action: the primary variant, or a native
  * form's submit button. Cloudscape renders nearly every button `type="submit"` (its formAction defaults to submit), so
- * for its buttons only the variant counts.
+ * for its buttons only the variant counts. A `<button>` with no type is a submit button too, often by accident, so it
+ * counts only as the form's default button (its first submit control, what Enter presses).
  */
 export function isMainAction(el: Element): boolean {
   if ([el, ...controlsAround(el)].some((c) => PRIMARY_CLASS.test(c.getAttribute('class') ?? ''))) return true;
-  const submit = (el instanceof HTMLButtonElement || el instanceof HTMLInputElement) && el.type === 'submit' && !!el.form;
-  return submit && !/\bawsui/.test(el.getAttribute('class') ?? '');
+  if (!isSubmit(el) || !el.form || /\bawsui/.test(el.getAttribute('class') ?? '')) return false;
+  return /^(submit|image)$/i.test(el.getAttribute('type') ?? '') || [...el.form.elements].find(isSubmit) === el;
+}
+
+/** What a player looks over before committing: a field, never a search, a table's row boxes or a hidden one. */
+const FIELD = 'input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=image]), select, textarea, [role=radio], [role=checkbox], [role=switch], [role=combobox], [role=textbox], [aria-haspopup=listbox]';
+const NOT_A_SETTING = '[type=search], [role=searchbox], [role=search], table, [role=table], [role=grid], [role=treegrid], [hidden], [aria-hidden=true]';
+
+/**
+ * Whether the commit button has settings to look over: a field in its form, else in the page's main region. A list
+ * page's "Create database" only opens the form (its filter and row boxes aren't settings), so "happy with the
+ * settings" would be wrong there.
+ */
+function hasSettings(el: Element): boolean {
+  const scope = el.closest('form') ?? el.ownerDocument.querySelector('main, [role=main]') ?? el.ownerDocument.body;
+  return [...scope.querySelectorAll(FIELD)].some((f) => !f.closest(NOT_A_SETTING));
 }
 
 /**
@@ -139,9 +157,17 @@ export function mayAct(item: SnapshotItem | undefined, action: string, el?: Elem
   if ((action === 'click' || action === 'select' || action === 'type') && (isRisky(item.name, item.context) || isRisky(value ?? ''))) {
     return { ok: false, reason: 'risky', message: `“${item.name}” can change or cost something important — your turn to click it.` };
   }
-  // On the real console the press that commits a form (creates, launches, saves…) is the player's (isCommit). A
-  // "select" on anything that isn't a dropdown ends in the same press (act.ts choose → press), so it counts too.
-  if ((action === 'click' || (action === 'select' && !!el && !opensAList(el))) && isCommit(url, item.role, item.name, !!el && isMainAction(el)))
-    return { ok: false, reason: 'commit', message: `Your turn: press “${item.name}” when you’re happy with the settings.` };
+  // On the real console the press that commits a form (creates, launches, saves…) is the player's (isCommit), and on a
+  // console that isn't in English (or doesn't say) every press of a button is. A "select" on anything that isn't a
+  // dropdown ends in the same press (act.ts choose → press), so it counts too.
+  const lang = el?.ownerDocument.documentElement.getAttribute('lang') ?? '';
+  if ((action === 'click' || (action === 'select' && !!el && !opensAList(el))) && isCommit(url, item.role, item.name, !!el && isMainAction(el), lang)) {
+    const message = !isEnglishPage(lang)
+      ? `Your turn: press “${item.name}”. This console isn’t set to English, so I leave its buttons to you.`
+      : el && hasSettings(el)
+        ? `Your turn: press “${item.name}” when you’re happy with the settings.`
+        : `Your turn: press “${item.name}”.`;
+    return { ok: false, reason: 'commit', message };
+  }
   return { ok: true };
 }

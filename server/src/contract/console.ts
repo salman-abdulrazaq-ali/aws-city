@@ -15,6 +15,8 @@ export const Snapshot = z
     url: z.string().max(2048),
     title: z.string().max(200),
     heading: z.string().max(120).optional(),
+    /** v2.17: the page's `<html lang>` ('' when it has none); not English means every button press is the learner's. */
+    lang: z.string().max(35).optional(),
     items: z
       .array(
         z.object({
@@ -221,8 +223,9 @@ export const createConsoleCopilot = (deps: { llm: Llm; now?: () => number; /** S
     if (acts && step.target && (isRisky(step.target.name, item ? `${item.name} ${item.context ?? ''}` : '') || playerOnlyPage(snapshot.url))) step.risk = 'confirm';
     // …and so is picking a risky option or typing a risky value (e.g. a custom select's "Disable …").
     if ((step.action === 'select' || step.action === 'type') && isRisky(step.value ?? '')) step.risk = 'confirm';
-    // …and so is the real console's commit button (isCommit; by the page's own name for that id, or the model's).
-    if ((step.action === 'click' || step.action === 'select') && step.target && [step.target.name, item?.name].some((n) => n !== undefined && isCommit(snapshot.url, item?.role ?? 'button', n))) step.risk = 'confirm';
+    // …and so is the real console's commit button (isCommit; by the page's own name for that id, or the model's), and on
+    // a console that isn't in English (the snapshot's lang) every button press.
+    if ((step.action === 'click' || step.action === 'select') && step.target && [step.target.name, item?.name].some((n) => n !== undefined && isCommit(snapshot.url, item?.role ?? 'button', n, false, snapshot.lang))) step.risk = 'confirm';
     const index = t.index++;
     t.history.push(`${index + 1}. ${step.action} ${step.target?.name ?? ''}${step.target?.id ? ` [${step.target.id}]` : ''} — ${step.say}`);
     emit({ type: 'console.step', taskId, index, agentId: t.agentId, ...step });

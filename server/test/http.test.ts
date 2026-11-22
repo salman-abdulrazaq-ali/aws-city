@@ -7,7 +7,7 @@ import type { Approvals } from '../src/contract/approvals.js';
 import type { Orchestrator } from '../src/contract/orchestrator.js';
 import { createProgressStore } from '../src/contract/progress.js';
 import { createUploadStore } from '../src/contract/uploads.js';
-import { createHttpServer, DELETED_CHECK_MS, health, MIN_CLIENT_CONTRACT, rateLimiter, versionRefusal } from '../src/http.js';
+import { createHttpServer, DELETED_CHECK_MS, health, MIN_CLIENT_CONTRACT, rateLimiter, sweeper, versionRefusal } from '../src/http.js';
 import type { Poller } from '../src/state/poller.js';
 import type { Tenant } from '../src/tenants.js';
 import { CONTRACT_HEADER, CONTRACT_VERSION, type ServerEvent } from '../src/world.js';
@@ -319,6 +319,20 @@ describe('per-socket frame rate', () => {
     expect([ok(), ok(), ok(), ok()]).toEqual([true, true, true, false]);
     t = 500;
     expect([ok(), ok()]).toEqual([true, false]);
+  });
+
+  it('a per-player limiter map is swept at most once a minute, never scanned on every request', () => {
+    const map = new Map(Array.from({ length: 1500 }, (_, i) => [`p${i}`, i < 1000 ? 0 : 50_000] as const));
+    const stale = vi.fn((at: number, now: number) => now - at >= 60_000);
+    const sweep = sweeper(map, stale);
+    sweep(60_000);
+    expect(stale).toHaveBeenCalledTimes(1500);
+    expect(map.size).toBe(500); // the stale ones went
+    stale.mockClear();
+    for (let t = 60_001; t < 120_000; t += 1_000) sweep(t); // a busy minute: no scans
+    expect(stale).not.toHaveBeenCalled();
+    sweep(120_000);
+    expect(stale).toHaveBeenCalledTimes(500);
   });
 });
 

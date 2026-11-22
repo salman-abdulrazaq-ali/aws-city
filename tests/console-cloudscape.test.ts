@@ -334,6 +334,7 @@ describe('the real console’s commit buttons are the player’s (Cloudscape mar
 
   it('refuses the primary Create button and a commit in a menu; the form, the select, the section, Actions, Cancel and Next stay the Copilot’s', () => {
     document.body.innerHTML = PAGE;
+    document.documentElement.lang = 'en';
     const real = act(REAL);
     expect(real('Create NAT gateway')).toEqual({ ok: false, reason: 'commit', message: 'Your turn: press “Create NAT gateway” when you’re happy with the settings.' });
     expect(real('Start instance')).toMatchObject({ ok: false, reason: 'commit' });
@@ -347,5 +348,19 @@ describe('the real console’s commit buttons are the player’s (Cloudscape mar
     // The practice console stays automatic, commit buttons included.
     const practice = act(PRACTICE);
     for (const n of ['Create NAT gateway', 'Start instance', 'Next']) expect(practice(n), n).toEqual({ ok: true });
+  });
+
+  it('on a console in another language every button and menu item press is the player’s; the select, the section and the fields stay the Copilot’s', () => {
+    document.body.innerHTML = PAGE;
+    document.documentElement.lang = 'de';
+    const real = act(REAL);
+    for (const n of ['Create NAT gateway', 'Actions', 'Start instance', 'Connect', 'Cancel', 'Next']) expect(real(n), n).toMatchObject({ ok: false, reason: 'commit' });
+    expect(real('Connect', 'select', 'x')).toMatchObject({ ok: false, reason: 'commit' });
+    for (const n of ['Subnet', 'Additional settings']) expect(real(n), n).toEqual({ ok: true });
+    expect(real('Subnet', 'select', 'x')).not.toMatchObject({ reason: 'commit' });
+    expect(real('Name - optional', 'type', 'aws-city-nat')).toEqual({ ok: true });
+    const practice = act(PRACTICE);
+    for (const n of ['Create NAT gateway', 'Actions', 'Next']) expect(practice(n), n).toEqual({ ok: true });
+    document.documentElement.lang = 'en';
   });
 });

@@ -219,6 +219,36 @@ describe('Console Copilot — hardening (deterministic, whatever the model says)
     expect(await first(practice, click('c', 'Create database'))).toMatchObject({ risk: 'safe' });
   });
 
+  it('on a console that isn’t in English (or doesn’t say), every button or menu item press goes back to the learner', async () => {
+    const de = {
+      url: 'https://eu-central-1.console.aws.amazon.com/ec2/home?region=eu-central-1#Instances:',
+      title: 'Instanzen',
+      lang: 'de-DE',
+      items: [
+        { id: 'm', role: 'menuitem', name: 'Instanz starten' },
+        { id: 'w', role: 'button', name: 'Weiter' },
+        { id: 'r', role: 'radio', name: 'Produktion' },
+        { id: 'k', role: 'link', name: 'Volumes' },
+        { id: 'n', role: 'textbox', name: 'Name' },
+        { id: 'h', role: 'columnheader', name: 'Startzeit' },
+      ],
+    };
+    const click = (id: string, name: string) => ({ action: 'click', target: { id, name }, say: 'Pressing it', risk: 'safe' });
+    for (const page of [de, { ...de, lang: 'ja' }, { ...de, lang: '' }]) {
+      expect(await first(page, click('m', 'Instanz starten')), page.lang).toMatchObject({ risk: 'confirm' });
+      expect(await first(page, click('w', 'Weiter')), page.lang).toMatchObject({ risk: 'confirm' });
+      expect(await first(page, { action: 'select', target: { id: 'm', name: 'Instanz starten' }, value: 'x', say: 'Choosing it', risk: 'safe' }), page.lang).toMatchObject({ risk: 'confirm' });
+      // Filling the form, going somewhere and sorting a table stay the Copilot's.
+      for (const [id, name] of [['r', 'Produktion'], ['k', 'Volumes'], ['h', 'Startzeit']]) expect(await first(page, click(id, name)), `${page.lang} ${name}`).toMatchObject({ risk: 'safe' });
+      expect(await first(page, { action: 'type', target: { id: 'n', name: 'Name' }, value: 'aws-city-web', say: 'Naming it', risk: 'safe' })).toMatchObject({ risk: 'safe' });
+    }
+    // In English the words decide again (a wizard's Next moves on), and a client from before v2.17 (no lang) keeps that rule.
+    const { lang: _, ...older } = de;
+    for (const page of [{ ...de, lang: 'en-GB' }, older]) expect(await first(page, click('w', 'Weiter'))).toMatchObject({ risk: 'safe' });
+    // The practice console stays automatic.
+    expect(await first({ ...de, url: 'chrome-extension://abcdefghijklmnop/practice.html#/ec2' }, click('m', 'Instanz starten'))).toMatchObject({ risk: 'safe' });
+  });
+
   it('hands back every click, pick and keystroke on a player-only page, but lets it point', async () => {
     const iam = { ...page, url: 'https://us-east-1.console.aws.amazon.com/iam/home#/roles' };
     expect(await first(iam, { action: 'click', target: { id: 'd', name: 'Create bucket' }, say: 'Creating', risk: 'safe' })).toMatchObject({ risk: 'confirm' });

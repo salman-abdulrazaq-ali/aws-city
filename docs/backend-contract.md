@@ -176,7 +176,7 @@ Both backends follow it. The server never sends it for background polling.
 Agents act in the player's live, logged-in AWS console, one visible step at a time, and teach the *why* for each step.
 
 **Flow:**
-1. **The content script** (`src/entrypoints/console.content.ts`) sends a snapshot of the page's interactive elements. It includes id, role, accessible name, section and state. It sends labels only; it never reads secret fields.
+1. **The content script** (`src/entrypoints/console.content.ts`) sends a snapshot of the page's interactive elements. It includes id, role, accessible name, section and state, and (v2.17) the page's language as `lang` (its `<html lang>`, `''` when it has none). It sends labels only; it never reads secret fields. A button in a table's column header (a sort control) is sent with role `columnheader`.
 2. The runtime sends `console.start {taskId, goal, context, snapshot}`.
 3. The backend answers with `console.step {taskId, index, agentId, action, target{id,name}, value?, say, why, risk}`. The `action` is one of `click`, `type`, `select`, `point` or `done`.
 4. The page shows the step: an orange highlight plus the agent's bubble with what and why. It then performs the step and replies with `console.observe {taskId, index, ok, note?, snapshot}`.
@@ -186,7 +186,7 @@ Agents act in the player's live, logged-in AWS console, one visible step at a ti
 **Safety** (`src/console/safety.ts`, which runs in the page no matter what the backend says):
 - Risky controls are never clicked by the agent. The page turns them into a green "your turn" highlight that waits for the player's click. The server also sets `risk:'confirm'` on them.
   - Risky means: delete, terminate, remove, empty, public access, IAM admin or access keys, billing, account settings, sign-out.
-- On the real console, the button that commits a form is the player's to press (`isCommit` in `src/console/risk.ts`): one named create, launch, start, save, apply, … or the page's primary or submit button. The agent fills the form and points at it. The server sets `risk:'confirm'` on those steps by name. The practice console stays automatic.
+- On the real console, the button that commits a form is the player's to press (`isCommit` in `src/console/risk.ts`): one named create, launch, start, save, apply, … or the page's primary or submit button. The words are English, so when the snapshot's `lang` isn't `en*` (or is `''`), every button or menu item press is the player's. The agent fills the form and points at it. The server sets `risk:'confirm'` on those steps by name and `lang` (a snapshot without `lang`, from an older client, goes by the words alone). The practice console stays automatic.
 - Nothing is typed into secret fields.
 - It runs only on `https://*.console.aws.amazon.com`, never on sign-in pages, and only during a Copilot task the player started.
 - There's a limit of 25 steps, and it stops after 3 failures.

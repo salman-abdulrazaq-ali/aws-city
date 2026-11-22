@@ -25,6 +25,7 @@ const S3_PAGE = `
 
 beforeEach(() => {
   document.body.innerHTML = S3_PAGE;
+  document.documentElement.lang = 'en'; // the console in English (the commit rule fails closed otherwise)
 });
 
 describe('console snapshot', () => {
@@ -372,10 +373,28 @@ describe('Copilot hardening: the real console’s commit button is the player’
     expect(isCommit(REAL, 'button', 'Continue', true)).toBe(true); // marked as the main action, whatever its name
     for (const n of ['Next', 'Previous', 'Cancel', 'Add new tag', 'Choose file', 'Startup script', 'Instance type', 'Recreate']) expect(isCommit(REAL, 'button', n), n).toBe(false);
     expect(isCommit(REAL, 'button', 'Next', true)).toBe(false); // a wizard's Next moves on, it commits nothing
+    for (const n of ['Previous', 'Back', 'Cancel', 'Close', 'cancel']) expect(isCommit(REAL, 'button', n, true), n).toBe(false);
+    // Only the whole name moves through a wizard: a main action that starts with one of those words still commits.
+    for (const n of ['Cancel update', 'Back up now', 'Close account request', 'Next-gen setup']) expect(isCommit(REAL, 'button', n, true), n).toBe(true);
     // Filling the form and going somewhere are never commits: a radio, a box, an option, a tab, a link.
     for (const role of ['radio', 'checkbox', 'option', 'tab', 'link', 'textbox']) expect(isCommit(REAL, role, 'Create new security group', true), role).toBe(false);
     for (const url of [PRACTICE, 'http://localhost/', 'https://console.aws.amazon.com.evil.example/rds/home', '', undefined])
       expect(isCommit(url, 'button', 'Create database', true), String(url)).toBe(false);
+  });
+
+  it('isCommit: on a console that isn’t in English (or doesn’t say), every button or menu item press is a commit', () => {
+    for (const lang of ['de-DE', 'fr', 'ja', 'zh-CN', 'pt-BR', '', ' ']) {
+      for (const [role, n] of [['menuitem', 'Instanz starten'], ['button', 'Lancer l’instance'], ['button', 'Next'], ['button', 'Weiter']])
+        expect(isCommit(REAL, role, n, false, lang), `${lang} ${n}`).toBe(true);
+      for (const role of ['radio', 'checkbox', 'option', 'tab', 'link', 'textbox', 'combobox', 'columnheader']) expect(isCommit(REAL, role, 'Weiter', false, lang), `${lang} ${role}`).toBe(false);
+      expect(isCommit(PRACTICE, 'button', 'Weiter', false, lang), `${lang} practice`).toBe(false);
+    }
+    // English (any region) and an unknown language (a snapshot from before v2.17) go by the words.
+    for (const lang of ['en', 'en-US', 'EN-gb', undefined]) {
+      expect(isCommit(REAL, 'button', 'Next', false, lang), String(lang)).toBe(false);
+      expect(isCommit(REAL, 'button', 'Create database', false, lang), String(lang)).toBe(true);
+    }
+    expect(isCommit(REAL, 'button', 'Next', false, 'eng')).toBe(true); // not an English tag
   });
 
   it('mayAct hands the commit click back with a kind “your turn”, and still fills the form and moves around', () => {
@@ -407,5 +426,71 @@ describe('Copilot hardening: the real console’s commit button is the player’
     // A wizard's primary Next, a Cloudscape button that's type=submit by default, and a submit button outside any form commit nothing.
     for (const n of ['Next', 'Add new tag', 'Refresh']) expect(act(n), n).toEqual({ ok: true });
     for (const n of ['Continue', 'Go', 'Proceed', 'OK']) expect(at(PRACTICE)(n), n).toEqual({ ok: true });
+  });
+
+  it('a <button> with no type is the main action only as its form’s default button (the first submit control), not every button in the form', () => {
+    document.body.innerHTML = `
+      <form action="/y"><label>Name <input name="n" /></label><button>Proceed</button><button>Add filter</button><button>Show details</button>
+        <button type="submit">Go on</button></form>`;
+    const act = at(REAL);
+    expect(act('Proceed')).toMatchObject({ ok: false, reason: 'commit' });
+    expect(act('Go on')).toMatchObject({ ok: false, reason: 'commit' }); // an explicit submit still counts
+    for (const n of ['Add filter', 'Show details']) expect(act(n), n).toEqual({ ok: true });
+  });
+
+  it('says “happy with the settings” only where there are settings: a list page’s “Create database” just opens the form', () => {
+    // A list page: a search box (a property filter), a table's row boxes, no form fields.
+    document.body.innerHTML = `
+      <header><input type="search" aria-label="Search the console" /></header>
+      <main><h1>Databases</h1>
+        <input type="search" role="combobox" aria-label="Filter databases" />
+        <table><tbody><tr><td><input type="radio" name="row" aria-label="Select aws-city-db" /></td><td>aws-city-db</td></tr></tbody></table>
+        <button type="button">Create database</button></main>`;
+    expect(at(REAL)('Create database')).toEqual({ ok: false, reason: 'commit', message: 'Your turn: press “Create database”.' });
+    // The form itself: its fields are settings (in the button's form, else the main region; hidden ones don't count).
+    document.body.innerHTML = `<main><h1>Create database</h1><div hidden><input aria-label="Old" /></div>${RDS_PAGE}</main>`;
+    expect(at(REAL)('Create database')).toEqual({ ok: false, reason: 'commit', message: 'Your turn: press “Create database” when you’re happy with the settings.' });
+    document.body.innerHTML = `<main><input aria-label="Elsewhere" /><form action="/z"><input type="hidden" name="t" /><button type="submit">Confirm</button></form></main>`;
+    expect(at(REAL)('Confirm')).toEqual({ ok: false, reason: 'commit', message: 'Your turn: press “Confirm”.' });
+  });
+
+  it('on a console that isn’t in English (or doesn’t say), every button press is the player’s; filling the form stays the Copilot’s', () => {
+    document.body.innerHTML = RDS_PAGE;
+    for (const lang of ['de-DE', 'ja', null]) {
+      if (lang === null) document.documentElement.removeAttribute('lang');
+      else document.documentElement.lang = lang;
+      const act = at(REAL);
+      expect(act('Cancel'), String(lang)).toEqual({ ok: false, reason: 'commit', message: 'Your turn: press “Cancel”. This console isn’t set to English, so I leave its buttons to you.' });
+      expect(act('Cancel', 'select', 'x'), String(lang)).toMatchObject({ ok: false, reason: 'commit' });
+      for (const n of ['Production', 'Create new security group', 'Tags', 'Databases']) expect(act(n), `${lang} ${n}`).toEqual({ ok: true });
+      expect(act('DB instance identifier', 'type', 'aws-city-db')).toEqual({ ok: true });
+      // The practice console stays automatic.
+      expect(at(PRACTICE)('Cancel')).toEqual({ ok: true });
+      expect(at(PRACTICE)('Create database')).toEqual({ ok: true });
+    }
+  });
+
+  it('a sortable column header (“Launch time”, “Start time”) sorts the table: never a commit, whatever the language', () => {
+    document.body.innerHTML = `
+      <table><thead><tr>
+        <th scope="col"><div role="button" tabindex="0">Launch time</div></th><th><button type="button">Start time</button></th>
+      </tr></thead><tbody><tr><th scope="row"><button type="button">Start instance</button></th></tr></tbody></table>
+      <div role="table"><div role="row"><div role="columnheader"><span role="button" tabindex="0">Request ID</span></div></div></div>`;
+    const items = takeSnapshot(document, { requireLayout: false }).items;
+    for (const n of ['Launch time', 'Start time', 'Request ID']) expect(items.find((i) => i.name === n), n).toMatchObject({ role: 'columnheader' });
+    for (const lang of ['en', 'de']) {
+      document.documentElement.lang = lang;
+      const act = at(REAL);
+      for (const n of ['Launch time', 'Start time', 'Request ID']) expect(act(n), `${lang} ${n}`).toEqual({ ok: true });
+      // A row header's button is no column header.
+      expect(act('Start instance'), lang).toMatchObject({ ok: false, reason: 'commit' });
+    }
+  });
+
+  it('the snapshot carries the page’s language for the server’s mark (“” when the page has none)', () => {
+    document.documentElement.lang = 'fr-FR';
+    expect(takeSnapshot(document, { requireLayout: false }).lang).toBe('fr-FR');
+    document.documentElement.removeAttribute('lang');
+    expect(takeSnapshot(document, { requireLayout: false }).lang).toBe('');
   });
 });

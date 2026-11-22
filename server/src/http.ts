@@ -42,8 +42,12 @@ const EXPORT_EVERY_MS = 60_000;
  */
 const MFA_NOTE_BURST = 3;
 const MFA_NOTE_EVERY_MS = 5_000;
-/** AdminGetUser failing for a reason that isn't the server's: Cognito throttling us (anyone can script the call), or a player who's gone. */
-const MFA_LOOK_REFUSED = new Set(['TooManyRequestsException', 'ThrottlingException', 'UserNotFoundException']);
+/**
+ * The look failing for a reason that isn't the server's: Cognito (AdminGetUser) or DynamoDB (the MFA store's since/forget)
+ * throttling us, since anyone can script the call, or a player who's gone. The SDK's own throttling flag
+ * (`$retryable.throttling`) and a 429 count too; DynamoDB's throttles carry neither, hence their names.
+ */
+const MFA_LOOK_REFUSED = new Set(['TooManyRequestsException', 'ThrottlingException', 'ProvisionedThroughputExceededException', 'RequestLimitExceeded', 'UserNotFoundException']);
 /** Tokens are checked at connect; long-lived sockets are closed so the client reconnects with a fresh one. */
 const MAX_CONNECTION_MS = 8 * 60 * 60_000;
 /**
@@ -91,6 +95,19 @@ export const rateLimiter = (burst: number, perSecond: number, now = () => Date.n
     if (tokens < 1) return false;
     tokens--;
     return true;
+  };
+};
+
+/**
+ * A per-player limiter map's cleanup: drops the entries `stale` says are done, at most once per `everyMs` (like
+ * accounts/mfa.ts), so a busy server never scans the whole map on every request.
+ */
+export const sweeper = <V>(map: Map<string, V>, stale: (v: V, now: number) => boolean, everyMs = 60_000) => {
+  let next = 0;
+  return (now: number) => {
+    if (now < next) return;
+    next = now + everyMs;
+    for (const [key, v] of map) if (stale(v, now)) map.delete(key);
   };
 };
 
@@ -255,8 +272,10 @@ export const createHttpServer = (deps: Deps) => {
   const gone = new Map<string, number>();
   /** When each player last downloaded their data (GET /me/export, EXPORT_EVERY_MS apart). */
   const exported = new Map<string, number>();
+  const sweepExported = sweeper(exported, (at, now) => now - at >= EXPORT_EVERY_MS);
   /** POST /me/mfa per player: a token bucket and when it was last used (a bucket left alone that long is full again). */
   const mfaNotes = new Map<string, { allow: () => boolean; at: number }>();
+  const sweepMfaNotes = sweeper(mfaNotes, (n, now) => now - n.at >= MFA_NOTE_BURST * MFA_NOTE_EVERY_MS);
   /** Whether this player deleted their account recently (a yes is remembered here, a no is asked again). */
   const isDeleted = async (sub: string) => {
     if (!deleted) return false;
@@ -370,7 +389,7 @@ export const createHttpServer = (deps: Deps) => {
     if (route === 'GET /me/export') {
       const now = Date.now();
       if (now - (exported.get(principal.sub) ?? -Infinity) < EXPORT_EVERY_MS) throw new HttpError(429, 'You downloaded your data a moment ago. Try again in a minute.');
-      if (exported.size > 1000) for (const [sub, at] of exported) if (now - at >= EXPORT_EVERY_MS) exported.delete(sub);
+      sweepExported(now);
       exported.set(principal.sub, now);
       const body = JSON.stringify(await hub.data(principal).exportMe(), null, 2);
       res.writeHead(200, { 'content-type': 'application/json', 'content-disposition': 'attachment; filename="aws-city-my-data.json"', 'cache-control': 'no-store' });
@@ -386,13 +405,13 @@ export const createHttpServer = (deps: Deps) => {
     }
     // The extension just turned an authenticator on, before it signs every session out: look now, so the sign-in
     // that follows counts as after it (accounts/mfa.ts). 204 only once the first sight is recorded ('ok' or 'reauth'). An
-    // authenticator Cognito doesn't show yet ('enrol'), Cognito throttling the look or a player who's gone is 409: anyone
+    // authenticator Cognito doesn't show yet ('enrol'), Cognito or DynamoDB throttling the look (MFA_LOOK_REFUSED) or a player who's gone is 409: anyone
     // can send that, so it's never a 5xx (those page and roll a deploy back: the Http5xx alarm). Only a failure that's
     // ours is 503. Either way the extension tries again and, if it never lands, tells the player they may have to sign
     // in twice. Past MFA_NOTE_BURST in a row, one every MFA_NOTE_EVERY_MS per player, else 429.
     if (route === 'POST /me/mfa') {
       const now = Date.now();
-      if (mfaNotes.size > 1000) for (const [sub, n] of mfaNotes) if (now - n.at >= MFA_NOTE_BURST * MFA_NOTE_EVERY_MS) mfaNotes.delete(sub);
+      sweepMfaNotes(now);
       const note = mfaNotes.get(principal.sub) ?? { allow: rateLimiter(MFA_NOTE_BURST, 1000 / MFA_NOTE_EVERY_MS), at: now };
       note.at = now;
       mfaNotes.set(principal.sub, note);
@@ -400,8 +419,8 @@ export const createHttpServer = (deps: Deps) => {
       let ours = false;
       const seen = mfaReady
         ? await mfaReady(principal).catch((err) => {
-            const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
-            ours = !MFA_LOOK_REFUSED.has(e?.name ?? '') && e?.$metadata?.httpStatusCode !== 429;
+            const e = err as { name?: string; $metadata?: { httpStatusCode?: number }; $retryable?: { throttling?: boolean } };
+            ours = !MFA_LOOK_REFUSED.has(e?.name ?? '') && e?.$metadata?.httpStatusCode !== 429 && !e?.$retryable?.throttling;
             log.warn('mfa look failed', { who: who(principal.sub), err: e?.name });
             return undefined;
           })

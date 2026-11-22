@@ -65,6 +65,11 @@ export interface PageSnapshot {
   url: string;
   title: string;
   heading?: string;
+  /**
+   * v2.17: the page's `<html lang>`, `''` when it has none. The commit rule (`isCommit`) knows only English words, so on
+   * the real console anything but `en*` makes every button press the player's. Absent from older clients.
+   */
+  lang?: string;
   items: SnapshotItem[];
 }
 

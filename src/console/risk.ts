@@ -42,20 +42,30 @@ export function isConsoleUrl(raw: string): boolean {
  * them ("Create database" on Production, "Launch instance" with a big type, "Create NAT gateway").
  */
 const COMMIT = /^(create|launch|start|run|confirm|submit|save|apply|update|enable|attach|associate|allocate|request|deploy|purchase|buy|subscribe|order)\b/i;
-/** Moving through a wizard commits nothing, even on its primary button. */
-const STEP_ONLY = /^(next|previous|back|cancel|close)\b/i;
+/** Moving through a wizard commits nothing, even on its primary button: the whole name only ("Cancel update" commits). */
+const STEP_ONLY = /^(next|previous|back|cancel|close)$/i;
 /** What a commit is pressed on: a button or a menu item (a link only goes somewhere; a box, radio, option or tab fills the form). */
 const PRESSED = new Set(['button', 'menuitem']);
 
 /**
+ * Whether the console page is in English (`<html lang>` en, en-US…), the only language COMMIT knows. Anything else,
+ * including no lang at all (we can't show every console page sets it), fails closed.
+ */
+export const isEnglishPage = (lang: string) => /^en(-|$)/i.test(lang.trim());
+
+/**
  * Whether a click on this control commits a form on the REAL console (`isConsoleUrl`; never the practice console): a
  * button or menu item whose accessible name starts with a commit word, or that the page marks as the form's main action
- * (`primary`: Cloudscape's primary variant or a native form's submit button, which only the page can see; a wizard's
- * Next/Previous excepted). The Copilot acts with the console user's own rights, outside the player role's caps, so that
- * press is always the player's: it fills the form and points at the button. The server applies the same rule by name.
+ * (`primary`: Cloudscape's primary variant or a native form's default submit button, which only the page can see; a
+ * wizard's Next/Previous excepted). The commit words are English, so on a page whose `lang` isn't (`isEnglishPage`;
+ * `''` when the page has none) every press of a button or menu item is the player's. `lang` undefined means not known
+ * (a snapshot from before v2.17): the words alone decide. The Copilot acts with the console user's own rights, outside
+ * the player role's caps, so that press is always the player's: it fills the form and points at the button. The server
+ * applies the same rule by name and the snapshot's `lang`.
  */
-export function isCommit(url: string | undefined, role: string, name: string, primary = false): boolean {
+export function isCommit(url: string | undefined, role: string, name: string, primary = false, lang?: string): boolean {
   if (!url || !isConsoleUrl(url) || !PRESSED.has(role)) return false;
+  if (lang !== undefined && !isEnglishPage(lang)) return true;
   const n = name.trim();
   return COMMIT.test(n) || (primary && !STEP_ONLY.test(n));
 }
