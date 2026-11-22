@@ -205,6 +205,8 @@ describe('Console Copilot — hardening (deterministic, whatever the model says)
     const click = (id: string, name: string) => ({ action: 'click', target: { id, name }, say: 'Pressing it', risk: 'safe' });
     for (const [id, name] of [['c', 'Create database'], ['l', 'Launch instance'], ['g', 'Create NAT gateway'], ['s', 'Start instance'], ['v', 'Save changes']])
       expect(await first(rds, click(id, name)), name).toMatchObject({ risk: 'confirm' });
+    // A "select" aimed at a commit button ends in the same press: confirm too.
+    expect(await first(rds, { action: 'select', target: { id: 'c', name: 'Create database' }, value: 'x', say: 'Choosing it', risk: 'safe' })).toMatchObject({ risk: 'confirm' });
     // The page's own name for that id decides, however the model names it.
     expect(await first(rds, click('c', 'Next'))).toMatchObject({ risk: 'confirm' });
     // Filling the form, a wizard's Next, a link and pointing at the button stay the Copilot's.

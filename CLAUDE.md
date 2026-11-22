@@ -874,7 +874,7 @@ When a change touches a decision, update its entry and run its Proof.
   acknowledge" boxes, `0.0.0.0/0`, `::/0`, Anywhere-IPv4/6, All traffic, other accounts, trust policies, Create role. On
   the real console's `PLAYER_ONLY_PAGES` (IAM, IAM Identity Center, Organizations, KMS, Secrets Manager, security group
   rules, S3 permissions) `mayAct` refuses every click, pick and keystroke; the practice console is never one. Anywhere on
-  the real console (`isConsoleUrl`, never `practice.html`) the click that commits a form is the player's (`isCommit`,
+  the real console (`isConsoleUrl`, never `practice.html`) the click that commits a form is the player's (also a "select" aimed at it, which ends in the same press unless the element opens a list; the server marks both `confirm`) (`isCommit`,
   reason `commit`: "Your turn: press “Create database” when you’re happy with the settings."): a button or menu item named
   create, launch, start, run, confirm, submit, save, apply, update, enable, attach, associate, allocate, request, deploy,
   purchase, buy, subscribe or order, or one the page marks as its main action (`isMainAction`: Cloudscape's primary

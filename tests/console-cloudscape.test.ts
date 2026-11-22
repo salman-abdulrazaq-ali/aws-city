@@ -337,6 +337,11 @@ describe('the real console’s commit buttons are the player’s (Cloudscape mar
     const real = act(REAL);
     expect(real('Create NAT gateway')).toEqual({ ok: false, reason: 'commit', message: 'Your turn: press “Create NAT gateway” when you’re happy with the settings.' });
     expect(real('Start instance')).toMatchObject({ ok: false, reason: 'commit' });
+    // Asked as a "select", a commit button or menu item is still pressed in the end: still the player's.
+    expect(real('Create NAT gateway', 'select', 'x')).toMatchObject({ ok: false, reason: 'commit' });
+    expect(real('Start instance', 'select', 'x')).toMatchObject({ ok: false, reason: 'commit' });
+    // A real dropdown's pick never presses a commit button: still the Copilot's.
+    expect(real('Subnet', 'select', 'x')).not.toMatchObject({ reason: 'commit' });
     for (const n of ['Subnet', 'Additional settings', 'Actions', 'Connect', 'Cancel', 'Next']) expect(real(n), n).toEqual({ ok: true });
     expect(real('Name - optional', 'type', 'aws-city-nat')).toEqual({ ok: true });
     // The practice console stays automatic, commit buttons included.

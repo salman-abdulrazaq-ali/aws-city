@@ -385,8 +385,11 @@ describe('Copilot hardening: the real console’s commit button is the player’
     expect(v).toEqual({ ok: false, reason: 'commit', message: 'Your turn: press “Create database” when you’re happy with the settings.' });
     for (const n of ['Production', 'Create new security group', 'Tags', 'Databases', 'Cancel']) expect(act(n), n).toEqual({ ok: true });
     expect(act('DB instance identifier', 'type', 'aws-city-db')).toEqual({ ok: true });
+    // A "select" aimed at the button ends in the same press (choose → press), so it's the player's too.
+    expect(act('Create database', 'select', 'x')).toMatchObject({ ok: false, reason: 'commit' });
     // The practice console stays automatic.
     expect(at(PRACTICE)('Create database')).toEqual({ ok: true });
+    expect(at(PRACTICE)('Create database', 'select', 'x')).toEqual({ ok: true });
   });
 
   it('the page’s main action is the player’s whatever it says: a primary button, or a native form’s submit button', () => {

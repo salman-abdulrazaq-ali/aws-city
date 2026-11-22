@@ -107,6 +107,9 @@ export function mayChoose(option: Element, fieldName = ''): Verdict {
   return { ok: true };
 }
 
+/** A native <select> or a dropdown that opens a list (act.ts isCustomSelect): picking there never presses a button. */
+const opensAList = (el: Element) => el instanceof HTMLSelectElement || el.getAttribute('aria-haspopup') === 'listbox' || el.getAttribute('role') === 'combobox';
+
 /**
  * Decide whether the agent may act on this element itself. `url` is the page's (the element's document by default):
  * on the real console's player-only pages (`PLAYER_ONLY_PAGES`) every click, pick and keystroke is the player's.
@@ -136,8 +139,9 @@ export function mayAct(item: SnapshotItem | undefined, action: string, el?: Elem
   if ((action === 'click' || action === 'select' || action === 'type') && (isRisky(item.name, item.context) || isRisky(value ?? ''))) {
     return { ok: false, reason: 'risky', message: `“${item.name}” can change or cost something important — your turn to click it.` };
   }
-  // On the real console the press that commits a form (creates, launches, saves…) is the player's (isCommit).
-  if (action === 'click' && isCommit(url, item.role, item.name, !!el && isMainAction(el)))
+  // On the real console the press that commits a form (creates, launches, saves…) is the player's (isCommit). A
+  // "select" on anything that isn't a dropdown ends in the same press (act.ts choose → press), so it counts too.
+  if ((action === 'click' || (action === 'select' && !!el && !opensAList(el))) && isCommit(url, item.role, item.name, !!el && isMainAction(el)))
     return { ok: false, reason: 'commit', message: `Your turn: press “${item.name}” when you’re happy with the settings.` };
   return { ok: true };
 }

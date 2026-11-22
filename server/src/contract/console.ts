@@ -222,7 +222,7 @@ export const createConsoleCopilot = (deps: { llm: Llm; now?: () => number; /** S
     // …and so is picking a risky option or typing a risky value (e.g. a custom select's "Disable …").
     if ((step.action === 'select' || step.action === 'type') && isRisky(step.value ?? '')) step.risk = 'confirm';
     // …and so is the real console's commit button (isCommit; by the page's own name for that id, or the model's).
-    if (step.action === 'click' && step.target && [step.target.name, item?.name].some((n) => n !== undefined && isCommit(snapshot.url, item?.role ?? 'button', n))) step.risk = 'confirm';
+    if ((step.action === 'click' || step.action === 'select') && step.target && [step.target.name, item?.name].some((n) => n !== undefined && isCommit(snapshot.url, item?.role ?? 'button', n))) step.risk = 'confirm';
     const index = t.index++;
     t.history.push(`${index + 1}. ${step.action} ${step.target?.name ?? ''}${step.target?.id ? ` [${step.target.id}]` : ''} — ${step.say}`);
     emit({ type: 'console.step', taskId, index, agentId: t.agentId, ...step });
