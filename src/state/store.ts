@@ -18,6 +18,7 @@ import { REGIONS } from '@/world/culture';
 import { citizenById, PILLAR_LABEL } from '@/world/citizens';
 import { bus } from './bus';
 import { doneLine } from './builds';
+import { failedReason } from './watch';
 import { growthLine, growthOf } from './growth';
 import { newsOpen } from './ladder';
 import { builtCities, landmarkOf, migrateCities, withLandmark } from './cities';
@@ -376,6 +377,11 @@ export interface CityState {
   taskOrder: string[];
   feed: FeedItem[];
   chats: Record<string, ChatMsg[]>;
+  /** Questions asked in an HQ while its last answer is still coming: sent one by one, never dropped. */
+  chatQueue: Record<string, string[]>;
+  queueChat(districtId: string, question: string): void;
+  /** The next queued question for this HQ (removed from the queue), if any. */
+  takeQueuedChat(districtId: string): string | undefined;
   toasts: Toast[];
   view: View;
   /** The Region whose city you're in (each Region is its own city; the world map picks one). */
@@ -714,6 +720,7 @@ export const useCity = create<CityState>()((set, get) => ({
   taskOrder: [],
   feed: [],
   chats: {},
+  chatQueue: {},
   toasts: [],
   // First time: the world map, to pick a Region. After that: straight back into your last Region's city.
   view: loadPrefs().region ? { name: 'city' } : { name: 'world' },
@@ -1123,9 +1130,18 @@ export const useCity = create<CityState>()((set, get) => ({
       }
       case 'agent.state': {
         set({ agents: { ...s.agents, [e.agentId]: { state: e.state, service: e.service, detail: e.detail } } });
-        // An API name (service:Action) while one of the player's tasks runs on this agent: that task made the call.
-        const own = e.state === 'working' && e.detail && /^[a-z0-9-]+:[A-Za-z]+$/.test(e.detail) ? Object.values(s.tasks).find((t) => t.status === 'running' && t.agentId === e.agentId) : undefined;
-        if (own && !own.calls?.includes(e.detail!)) set({ tasks: { ...get().tasks, [own.taskId]: { ...own, calls: [...(own.calls ?? []), e.detail!] } } });
+        // An API name while one of the player's tasks runs on this agent: that task made the call. The demo sends
+        // "s3:CreateBucket"; the server sends service "s3" and "CreateBucket — <what>" (its model calls aren't AWS calls).
+        const api =
+          e.state !== 'working' || !e.detail
+            ? undefined
+            : /^[a-z0-9-]+:[A-Za-z]+$/.test(e.detail)
+              ? e.detail
+              : e.service && e.service !== 'bedrock' && /^([A-Z][A-Za-z]+) — /.exec(e.detail)
+                ? `${e.service}:${/^([A-Z][A-Za-z]+) — /.exec(e.detail)![1]}`
+                : undefined;
+        const own = api ? Object.values(s.tasks).find((t) => t.status === 'running' && t.agentId === e.agentId) : undefined;
+        if (own && api && !own.calls?.includes(api)) set({ tasks: { ...get().tasks, [own.taskId]: { ...own, calls: [...(own.calls ?? []), api] } } });
         if (e.state === 'working' && e.detail) s.log({ kind: 'state', from: e.agentId, text: e.detail, ambient: !taskRunning(s) });
         break;
       }
@@ -1195,7 +1211,7 @@ export const useCity = create<CityState>()((set, get) => ({
         const id = `a-${e.requestId}`;
         const i = list.findIndex((m) => m.id === id);
         if (i === -1) list.push({ id, role: 'agent', agentId: e.agentId, text: e.delta, pending: !e.done });
-        else list[i] = { ...list[i], text: list[i].text + e.delta, pending: !e.done };
+        else list[i] = { ...list[i], agentId: e.agentId, text: list[i].text + e.delta, pending: !e.done };
         set({ chats: { ...s.chats, [e.districtId]: list.slice(-CHAT_MAX) } });
         // An answer pays its building for the first few questions a day, so chatting isn't a star tap.
         // Both caps count only answers that would pay: a building's own first few, then the city-wide day's total.
@@ -1329,7 +1345,11 @@ export const useCity = create<CityState>()((set, get) => ({
         const text = errorText(e);
         s.log({ kind: 'system', text: `⚠️ ${text}` });
         s.toast('⚠️', text, 'error');
-        if (e.taskId && s.tasks[e.taskId]) set({ tasks: { ...s.tasks, [e.taskId]: { ...s.tasks[e.taskId], status: 'failed' } } });
+        // A task that failed says why on its card, and the step it was on stops as failed (never left "running").
+        if (e.taskId && s.tasks[e.taskId]) {
+          const t = s.tasks[e.taskId];
+          set({ tasks: { ...s.tasks, [e.taskId]: { ...t, status: 'failed', result: failedReason(text), steps: t.steps.map((st) => (st.status === 'running' ? { ...st, status: 'failed' as const } : st)) } } });
+        }
         // Show it in the HQ chat it belongs to (by requestId), else in the HQ the player is standing in.
         const chats = get().chats;
         const byRequest = e.requestId ? Object.keys(chats).find((d) => chats[d].some((m) => m.id === `u-${e.requestId}`)) : undefined;
@@ -1356,7 +1376,15 @@ export const useCity = create<CityState>()((set, get) => ({
 
   addUserChat: (districtId, requestId, text) => {
     const s = get();
-    set({ chats: { ...s.chats, [districtId]: [...(s.chats[districtId] ?? []), { id: `u-${requestId}`, role: 'user' as const, text }].slice(-CHAT_MAX) } });
+    // The answer's bubble shows at once, thinking, so a slow model never looks like nothing happened.
+    const asked = [{ id: `u-${requestId}`, role: 'user' as const, text }, { id: `a-${requestId}`, role: 'agent' as const, text: '', pending: true }];
+    set({ chats: { ...s.chats, [districtId]: [...(s.chats[districtId] ?? []), ...asked].slice(-CHAT_MAX) } });
+  },
+  queueChat: (districtId, question) => set((s) => ({ chatQueue: { ...s.chatQueue, [districtId]: [...(s.chatQueue[districtId] ?? []), question].slice(-5) } })),
+  takeQueuedChat: (districtId) => {
+    const [next, ...rest] = get().chatQueue[districtId] ?? [];
+    if (next !== undefined) set((s) => ({ chatQueue: { ...s.chatQueue, [districtId]: rest } }));
+    return next;
   },
 
   log: (item) => set((s) => ({ feed: [...s.feed, { ...item, id: nextId++, at: Date.now() }].slice(-FEED_MAX) })),

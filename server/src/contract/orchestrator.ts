@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { Llm } from '../agents/llm.js';
 import { pick, say } from '../agents/once.js';
 import { agentSystemPrompt, CONCIERGE_PROMPT, lookoutPrompt } from '../agents/personas.js';
-import { type AgentRunner, snapshotForModel, type ToolCallReport, toolReport } from '../agents/runner.js';
+import { type AgentRunner, cityFor, type ToolCallReport, toolReport } from '../agents/runner.js';
 import { type ActionName, AWS_API, ownerOf, READ_ONLY } from '../agents/actions.js';
 import { type Command, parseCommand } from '../agents/commands.js';
 import type { ActionService, ApprovalRequest } from '../agents/service.js';
@@ -155,7 +155,7 @@ export const createOrchestrator = (deps: {
 
   const plan = async (cmd: Omit<TaskSubmit, 'action'>) => {
     const snapshot = await deps.snapshot();
-    const request = `<city_snapshot>${snapshotForModel(snapshot)}</city_snapshot>\n${describeContext(cmd.context)}\n\nPlayer request: ${cmd.prompt}`;
+    const request = `<city_snapshot>${cityFor(deps.llm, snapshot)}</city_snapshot>\n${describeContext(cmd.context)}\n\nPlayer request: ${cmd.prompt}`;
     const parsed =
       deps.llm.family === 'converse'
         ? // Amazon Nova (Converse) on Strands Agents: one tool call that records the plan.
@@ -353,9 +353,9 @@ export const createOrchestrator = (deps: {
     emit({ type: 'agent.state', agentId, state: 'working', service: 'bedrock', detail: 'Answering your question' });
     let sent = false;
     try {
-      const [snapshot, docs] = await Promise.all([deps.snapshot(), deps.knowledge?.search(`${svc.name} ${cmd.question}`, 3) ?? []]);
+      const [snapshot, docs] = await Promise.all([deps.snapshot(), deps.knowledge?.search(`${svc.name} ${cmd.question}`, deps.llm.small ? 1 : 3) ?? []]);
       const system = `${agentSystemPrompt(agentId)}\n\nYou are answering a question at ${district.hq}. Reply in plain text (no markdown headings), under 120 words.`;
-      const question = `${docsBlock(docs)}<city_snapshot>${snapshotForModel(snapshot)}</city_snapshot>\n${describeContext(cmd.context)}\n\nQuestion: ${cmd.question}`;
+      const question = `${docsBlock(docs)}<city_snapshot>${cityFor(deps.llm, snapshot)}</city_snapshot>\n${describeContext(cmd.context)}\n\nQuestion: ${cmd.question}`;
       const onText = (delta: string) => {
         sent = true;
         emit({ type: 'chat.answer', requestId, districtId, agentId, delta, done: false });

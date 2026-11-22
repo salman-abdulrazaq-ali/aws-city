@@ -64,6 +64,29 @@ export const SNAPSHOT_MAX_NAME = 64;
 export const SNAPSHOT_MAX_CHARS = 8_000;
 const clip = (v: string | undefined, n: number) => (v !== undefined && v.length > n ? `${v.slice(0, n - 1)}…` : v);
 
+/**
+ * The city in a few lines, for a small CPU model (`llm.small`): what the game built, by id, kind, name and state (an
+ * agent still needs an instance id to stop it), then a count of everything else per kind. Names are clipped and the
+ * whole is JSON-escaped like the full snapshot, so it can't close its data wrapper.
+ */
+export const SUMMARY_MAX_BUILT = 20;
+export const snapshotSummary = (s: WorldSnapshot) => {
+  const built = s.resources.filter((r) => r.managedByGame);
+  const others: Record<string, number> = {};
+  for (const r of s.resources) if (!r.managedByGame) others[r.kind] = (others[r.kind] ?? 0) + 1;
+  return escapeTags(
+    JSON.stringify({
+      region: s.region,
+      builtByTheCity: built.slice(0, SUMMARY_MAX_BUILT).map((r) => ({ id: clip(r.id, 64), kind: r.kind, name: clip(r.name, 40), state: r.state })),
+      ...(built.length > SUMMARY_MAX_BUILT ? { moreBuilt: built.length - SUMMARY_MAX_BUILT } : {}),
+      otherResources: others,
+    }),
+  );
+};
+
+/** The city as a model reads it: the full snapshot, or the short summary for a small CPU model. */
+export const cityFor = (llm: { small?: boolean }, s: WorldSnapshot) => (llm.small ? snapshotSummary(s) : snapshotForModel(s));
+
 export const snapshotForModel = (s: WorldSnapshot) => {
   const all = [...s.resources].sort((a, b) => Number(b.managedByGame) - Number(a.managedByGame));
   const render = (n: number) =>

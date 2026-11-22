@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import type { AwsNewsItem, Progress, ServerEvent } from '@/backend/contract';
 import { bus } from '@/state/bus';
 import { agentName, isDiscovered, openFindings, severityRank, taskRunning, tierOf, useCity, type Inventory } from '@/state/store';
+import { failedReason } from '@/state/watch';
 import { dueFor } from '@/state/srs';
 import { citizenLevel, levelName } from '@/state/citizens';
 import { CITIZENS, citizenById } from '@/world/citizens';
@@ -1940,7 +1941,9 @@ export class CityScene extends Phaser.Scene {
         const a = t && this.agents.get(t.agentId);
         if (!t || !a) return;
         this.tasks.delete(e.taskId!);
-        a.say('Something went wrong…', { tone: 'alert', caption: 'Task stopped' });
+        // The server's reason, short (seen 21 Nov 2026: a timeout and a refusal both read "Something went wrong").
+        const why = failedReason(e.message);
+        a.say(why ? (why.length > 90 ? `${why.slice(0, 89)}…` : why) : 'Something went wrong…', { tone: 'alert', caption: 'Task stopped' });
         a.setDetail(undefined);
         a.setWorking(false);
         a.pin(false);

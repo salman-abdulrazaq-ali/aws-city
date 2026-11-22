@@ -21,6 +21,8 @@ import { CLOSE_CODES, type ServerEvent } from './world.js';
 const JSON_LIMIT = 64 * 1024;
 const MAX_TASKS_PER_SOCKET = 2;
 const MAX_REQUESTS_PER_SOCKET = 3;
+/** Fixes waiting for their approval, per socket (one per finding anyway: city care holds the rest). */
+const MAX_FIXES_PER_SOCKET = 3;
 /** v2.11: presence beats closer together than this are ignored (the client beats every 30 s). */
 const BEAT_MIN_MS = 20_000;
 const HEARTBEAT_MS = 25_000;
@@ -445,6 +447,7 @@ export const createHttpServer = (deps: Deps) => {
     log.info('socket open', { who: who(principal.sub), connId });
     let tasks = 0;
     let requests = 0;
+    let fixes = 0;
     /** v2.11: when this socket last beat (presence.beat answers at most every BEAT_MIN_MS). */
     let lastBeat = 0;
     let lastRenew = 0;
@@ -514,7 +517,7 @@ export const createHttpServer = (deps: Deps) => {
         : setTimeout(() => {
             const hardStop = Date.now() + EXPIRED_GRACE_MS;
             const check = () => {
-              if ((tasks === 0 && requests === 0 && approvals.size === 0) || Date.now() >= hardStop) return ws.close(CLOSE.reauth, 'Session refresh');
+              if ((tasks === 0 && requests === 0 && fixes === 0 && approvals.size === 0) || Date.now() >= hardStop) return ws.close(CLOSE.reauth, 'Session refresh');
               expiryCheck = setTimeout(check, IDLE_CHECK_MS);
               expiryCheck.unref?.();
             };
@@ -599,15 +602,18 @@ export const createHttpServer = (deps: Deps) => {
         const care = tenant.care();
         if (!care) return emit({ type: 'error', requestId: cmd.requestId, code: 'unlinked', message: 'Connect your AWS account first, so the citizens can look after it.' });
         if (cmd.action === 'finding.undo') return care.undo(cmd.findingId, emit);
-        // An explanation is a Bedrock call and a fix may wait minutes for approval: both count as requests on this socket.
-        if (requests >= MAX_REQUESTS_PER_SOCKET) return emit({ type: 'error', message: 'Still working on your last request. Try again in a moment.', requestId: cmd.requestId });
-        requests++;
+        // An explanation is a model call: it counts as a request on this socket. A fix may wait minutes for its approval, so
+        // it has its own slots: a card left open must never block the HQ chat (seen 21 Nov: "Still answering…", unanswered).
+        const fix = cmd.action === 'finding.fix';
+        if (fix ? fixes >= MAX_FIXES_PER_SOCKET : requests >= MAX_REQUESTS_PER_SOCKET) return emit({ type: 'error', message: 'Still working on your last request. Try again in a moment.', requestId: cmd.requestId });
+        if (fix) fixes++;
+        else requests++;
         const failed = (err: unknown) => emit({ type: 'error', requestId: cmd.requestId, message: publicError('city care failed', err) });
         const job =
           cmd.action === 'finding.explain'
             ? care.explain(cmd.findingId, emit)
             : stepUp().then((why) => (why === 'ok' ? care.fix(cmd.requestId, cmd.findingId, emit, approvals) : refuse(why, cmd.requestId)));
-        void track(Promise.resolve(job).catch(failed)).finally(() => requests--);
+        void track(Promise.resolve(job).catch(failed)).finally(() => (fix ? fixes-- : requests--));
         return;
       }
       if (cmd.action === 'presence.beat' || cmd.action === 'score.submit' || cmd.action === 'leaderboard.get') {

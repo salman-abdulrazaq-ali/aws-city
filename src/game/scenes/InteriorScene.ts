@@ -240,9 +240,10 @@ export class InteriorScene extends Phaser.Scene {
         if (e.districtId !== this.districtId) return;
         const text = (this.answers.get(e.requestId) ?? '') + e.delta;
         this.answers.set(e.requestId, text);
-        if (e.done) {
+        // The answer is in the chat panel: the agent only points to it (seen 21 Nov 2026: shown twice, it read as two answers).
+        if (e.done && text.trim()) {
           const a = this.agents.get(e.agentId) ?? this.agents.values().next().value;
-          a?.say(text.length > 160 ? text.slice(0, 157) + '…' : text, { holdMs: 7000 });
+          a?.say('Answered in the chat ↓', { holdMs: 4000 });
         }
         break;
       }

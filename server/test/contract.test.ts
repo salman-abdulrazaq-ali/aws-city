@@ -121,6 +121,17 @@ describe('server speaks the frontend contract', () => {
     expect(events.filter((e) => e.type === 'agent.state').at(-1)).toMatchObject({ agentId: 'concierge', state: 'idle' });
   });
 
+  it('a small CPU model answers from the short city summary and one docs page (it reads ~27 tokens a second)', async () => {
+    const { llm, calls } = fakeLlm([]);
+    (llm as { small?: boolean }).small = true;
+    const search = vi.fn(async () => [{ title: 'EFS', url: 'https://docs.aws.amazon.com/efs/', text: 'Elastic file storage.' }]);
+    const runner = createAgentRunner({ llm, actions: fakeActions(), snapshot: emptySnapshot });
+    const orchestrator = createOrchestrator({ llm, runner, snapshot: emptySnapshot, uploads: createUploadStore('http://127.0.0.1:8787'), walkMs: 0, paceMs: 0, knowledge: { search } as never });
+    await orchestrator.ask({ requestId: 'r9', districtId: 'storage', question: 'When should I use EFS?', context: {} }, () => undefined);
+    expect(search).toHaveBeenCalledWith(expect.any(String), 1);
+    expect(JSON.stringify(calls.at(-1))).toContain('builtByTheCity');
+  });
+
   it('chat.ask streams chat.answer chunks ending with done=true', async () => {
     const { orchestrator, events, emit } = setup([]);
     await orchestrator.ask({ requestId: 'r1', districtId: 'storage', question: 'When should I use EFS?', context: {} }, emit);

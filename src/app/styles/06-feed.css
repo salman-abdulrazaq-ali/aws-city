@@ -217,6 +217,11 @@ code.api {
   color: var(--ink);
   font-weight: 600;
 }
+/* The agent's model call is running (src/state/watch.ts thinkingLine). */
+.watch-thinking {
+  margin: var(--s-2) 0 0;
+  color: var(--muted);
+}
 .task-approve {
   display: flex;
   flex-wrap: wrap;

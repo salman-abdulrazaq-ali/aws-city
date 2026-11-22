@@ -595,9 +595,21 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   Approve in Deploy → (`openDeployAt`, leaving an HQ first), elsewhere a toast opens it, and Deploy brings the card up with
   focus on Approve (`deployFocus`). "My builds" is one card per resource for the agents' changes (`arrangeBuilds`,
   `src/state/builds.ts`: a launch joins its server's later cards by `deploy.status.outputs.ResourceId`; status words fit
-  the action; Tear down only while it exists, sent as a plain request). Proof: `cd server && npx vitest run
+  the action; Tear down only while it exists, sent as a plain request). The card says where the task is: "Watch Sally
+  walk there", then "Sally is there and on it" once she's arrived (`watchLine`), "💭 thinking… up to a minute" while her
+  model call runs (`thinkingLine`, from `agent.state`), and a failed task its reason (`failedReason`) with ↻ Try again;
+  the city's bubble says the reason too, and "Real AWS calls" lists the hosted server's calls (`s3:CreateBucket` from
+  service + "CreateBucket — …", never its model calls). Proof: `cd server && npx vitest run
   test/contract.test.ts test/commands.test.ts test/service.test.ts test/approvals.test.ts test/care.test.ts`; `npx vitest
-  run tests/approval-target.test.tsx tests/builds.test.ts tests/approve-flow.test.tsx tests/ui.test.tsx`.
+  run tests/approval-target.test.tsx tests/builds.test.ts tests/approve-flow.test.tsx tests/ui.test.tsx tests/progress-chat.test.tsx`.
+- **HQ chat answers every question, one at a time** (`src/ui/ChatPanel.tsx`). The answer's bubble shows at once,
+  thinking (`addUserChat`); a question asked while one is answering waits in `chatQueue` ("· next") and goes when the
+  answer ends, never dropped; the agent in the HQ only points to the chat ("Answered in the chat ↓", not the answer a
+  second time). A fix waiting for its approval has its own slots (`MAX_FIXES_PER_SOCKET`, `server/src/http.ts`), so it
+  never blocks the chat's three. A small CPU model (`llm.small`: the local provider) reads a short city summary
+  (`snapshotSummary`: what the city built, by id; the rest counted) and one docs page instead of the full snapshot and
+  three: reading the prompt is most of its time (~27 tokens a second). Proof: `npx vitest run tests/progress-chat.test.tsx`,
+  `cd server && npx vitest run test/runner.test.ts test/contract.test.ts -t "summary|small CPU"`.
 - **City Clients: side jobs for real kinds of business** (`shared/clients.json`, `src/world/clients.ts`, `src/ui/clients/`).
   18 businesses: wave 1 (Amazon Air hub, bank, stadium, hospital, shop, school) and wave 2 (streaming studio, game studio,
   news site, port, energy utility, factory, farm co-op, car maker, phone network, town council, hotel, charity), three
