@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CognitoAuth } from '@/backend/auth';
+import { fakeBrowser } from 'wxt/testing/fake-browser';
+import { CognitoAuth } from '@/backend/auth';
 import { bearerSubprotocols, CLOSE_CODES, compareContract, CONTRACT_HEADER, CONTRACT_VERSION, parseContract, type ClientCommand, type ServerEvent } from '@/backend/contract';
 import { GUARDED_EQUIV, isPracticeDeploy, ServerBackend, subOf } from '@/backend/ServerBackend';
 
@@ -196,6 +197,29 @@ describe('ServerBackend connection status', () => {
     expect(await backend.confirmTotp('123456')).toEqual({ signInTwice: true });
     status = 404;
     expect(await backend.confirmTotp('123456')).toEqual({ signInTwice: false });
+  });
+
+  it('a POST /me/mfa that is refused (409 not seen yet, 429 too many, 503) is tried three times, then reported as sign in twice', async () => {
+    const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+    for (const [status, posts, signInTwice] of [
+      [409, 3, true],
+      [429, 3, true],
+      [503, 3, true],
+      [204, 1, false],
+    ] as const) {
+      fakeBrowser.reset();
+      await fakeBrowser.storage.session.set({ 'auth.tokens': { accessToken: 'a1', expiresAt: Date.now() + 3_600_000 } });
+      let noted = 0;
+      vi.stubGlobal('fetch', async (url: URL | string, init: RequestInit) => {
+        if (new URL(url).pathname === '/me/mfa') return (noted++, new Response(status === 204 ? null : JSON.stringify({ error: 'x' }), { status }));
+        // The user pool API (cognito-idp): the code matches, TOTP goes on, every session ends.
+        const op = (init.headers as Record<string, string>)['x-amz-target'];
+        return json(op?.endsWith('VerifySoftwareToken') ? { Status: 'SUCCESS' } : {});
+      });
+      const backend = new ServerBackend({ wsUrl: 'wss://x/ws', apiUrl: 'https://x', auth: new CognitoAuth({ domain: 'https://city.auth.us-west-2.amazoncognito.com', clientId: 'c' }) });
+      expect(await backend.confirmTotp('123456'), String(status)).toEqual({ signInTwice });
+      expect(noted, String(status)).toBe(posts);
+    }
   });
 
   it('a 401 from GET /progress is "unknown", never "no progress"', async () => {

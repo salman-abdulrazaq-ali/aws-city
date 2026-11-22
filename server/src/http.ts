@@ -36,6 +36,14 @@ const ACCOUNT_COOLDOWN_MS = 5_000;
 const LINK_THEN_VERIFY_MS = 2 * 60_000;
 /** GET /me/export reads every row the player has: once a minute per player. */
 const EXPORT_EVERY_MS = 60_000;
+/**
+ * POST /me/mfa asks Cognito (AdminGetUser) each time: the extension's three tries (NOTE_TRIES in src/backend/auth.ts) in
+ * a burst, then one every 5 s per player.
+ */
+const MFA_NOTE_BURST = 3;
+const MFA_NOTE_EVERY_MS = 5_000;
+/** AdminGetUser failing for a reason that isn't the server's: Cognito throttling us (anyone can script the call), or a player who's gone. */
+const MFA_LOOK_REFUSED = new Set(['TooManyRequestsException', 'ThrottlingException', 'UserNotFoundException']);
 /** Tokens are checked at connect; long-lived sockets are closed so the client reconnects with a fresh one. */
 const MAX_CONNECTION_MS = 8 * 60 * 60_000;
 /**
@@ -247,6 +255,8 @@ export const createHttpServer = (deps: Deps) => {
   const gone = new Map<string, number>();
   /** When each player last downloaded their data (GET /me/export, EXPORT_EVERY_MS apart). */
   const exported = new Map<string, number>();
+  /** POST /me/mfa per player: a token bucket and when it was last used (a bucket left alone that long is full again). */
+  const mfaNotes = new Map<string, { allow: () => boolean; at: number }>();
   /** Whether this player deleted their account recently (a yes is remembered here, a no is asked again). */
   const isDeleted = async (sub: string) => {
     if (!deleted) return false;
@@ -375,13 +385,29 @@ export const createHttpServer = (deps: Deps) => {
       return send(res, 204);
     }
     // The extension just turned an authenticator on, before it signs every session out: look now, so the sign-in
-    // that follows counts as after it (accounts/mfa.ts). 204 only once the first sight is recorded ('ok' or 'reauth'); an
-    // authenticator Cognito doesn't show yet ('enrol') or a failed look is 503, so the extension tries again and, if it
-    // never lands, tells the player they may have to sign in twice.
+    // that follows counts as after it (accounts/mfa.ts). 204 only once the first sight is recorded ('ok' or 'reauth'). An
+    // authenticator Cognito doesn't show yet ('enrol'), Cognito throttling the look or a player who's gone is 409: anyone
+    // can send that, so it's never a 5xx (those page and roll a deploy back: the Http5xx alarm). Only a failure that's
+    // ours is 503. Either way the extension tries again and, if it never lands, tells the player they may have to sign
+    // in twice. Past MFA_NOTE_BURST in a row, one every MFA_NOTE_EVERY_MS per player, else 429.
     if (route === 'POST /me/mfa') {
-      const seen = mfaReady ? await mfaReady(principal).catch((err) => (log.warn('mfa look failed', { who: who(principal.sub), err: (err as Error).name }), undefined)) : 'ok';
-      if (seen !== 'ok' && seen !== 'reauth') throw new HttpError(503, 'The city couldn’t see your authenticator yet. Try again in a moment.');
-      return send(res, 204);
+      const now = Date.now();
+      if (mfaNotes.size > 1000) for (const [sub, n] of mfaNotes) if (now - n.at >= MFA_NOTE_BURST * MFA_NOTE_EVERY_MS) mfaNotes.delete(sub);
+      const note = mfaNotes.get(principal.sub) ?? { allow: rateLimiter(MFA_NOTE_BURST, 1000 / MFA_NOTE_EVERY_MS), at: now };
+      note.at = now;
+      mfaNotes.set(principal.sub, note);
+      if (!note.allow()) throw new HttpError(429, 'You asked a moment ago. Try again in a few seconds.');
+      let ours = false;
+      const seen = mfaReady
+        ? await mfaReady(principal).catch((err) => {
+            const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+            ours = !MFA_LOOK_REFUSED.has(e?.name ?? '') && e?.$metadata?.httpStatusCode !== 429;
+            log.warn('mfa look failed', { who: who(principal.sub), err: e?.name });
+            return undefined;
+          })
+        : 'ok';
+      if (seen === 'ok' || seen === 'reauth') return send(res, 204);
+      throw new HttpError(ours ? 503 : 409, 'The city couldn’t see your authenticator yet. Try again in a moment.');
     }
     // Debug view of what the state layer sees (local server only).
     if (route === 'GET /snapshot' && config.authMode === 'token') return send(res, 200, (await withTenant(principal, (t) => t.snapshot())) ?? null);

@@ -306,3 +306,41 @@ describe('risk checks can’t be dodged by nesting or long text', () => {
     expect(mayAct({ id: 'x', role: 'button', name: 'Standard' }, 'click', tile)).toMatchObject({ ok: false, reason: 'risky' });
   });
 });
+
+describe('the real console’s commit buttons are the player’s (Cloudscape markup)', () => {
+  const REAL = 'https://us-west-2.console.aws.amazon.com/vpcconsole/home?region=us-west-2#CreateNatGateway:';
+  const PRACTICE = 'chrome-extension://abcdefghijklmnop/practice.html#/vpc/create-nat';
+  // A Cloudscape Form (its actions: Cancel as a link button, the primary commit), a form field, a select, an expandable
+  // section, a ButtonDropdown's open menu and a wizard's primary Next. Every Cloudscape button is type="submit" by default.
+  const PAGE = `
+    <div class="awsui_root_1i0s3"><h1>Create NAT gateway</h1>
+      <div class="awsui_form-field_1"><label class="awsui_label_1">Name - optional</label><input type="text" class="awsui_input_2" /></div>
+      <div class="awsui_form-field_1"><label id="sn">Subnet</label><button type="button" aria-haspopup="listbox" aria-labelledby="sn">Select a subnet</button></div>
+      <div class="awsui_expandable-section-header_2" tabindex="0">Additional settings</div>
+      <button type="submit" class="awsui_button_vjswe_1 awsui_variant-normal_vjswe_4">Actions</button>
+      <ul role="menu"><li role="menuitem"><span>Start instance</span></li><li role="menuitem"><span>Connect</span></li></ul>
+      <div class="awsui_actions_1i0s3">
+        <button type="submit" class="awsui_button_vjswe_1 awsui_variant-link_vjswe_3">Cancel</button>
+        <button type="submit" class="awsui_button_vjswe_1 awsui_variant-primary_vjswe_2"><span class="awsui_content_vjswe_5">Create NAT gateway</span></button>
+        <button type="submit" class="awsui_button_vjswe_1 awsui_variant-primary_vjswe_2">Next</button>
+      </div></div>`;
+  const act = (url: string) => {
+    const items = snap().items;
+    return (name: string, action = 'click', value?: string) => {
+      const item = items.find((i) => i.name === name)!;
+      return mayAct(item, action, findExact(document, item)!, value, url);
+    };
+  };
+
+  it('refuses the primary Create button and a commit in a menu; the form, the select, the section, Actions, Cancel and Next stay the Copilot’s', () => {
+    document.body.innerHTML = PAGE;
+    const real = act(REAL);
+    expect(real('Create NAT gateway')).toEqual({ ok: false, reason: 'commit', message: 'Your turn: press “Create NAT gateway” when you’re happy with the settings.' });
+    expect(real('Start instance')).toMatchObject({ ok: false, reason: 'commit' });
+    for (const n of ['Subnet', 'Additional settings', 'Actions', 'Connect', 'Cancel', 'Next']) expect(real(n), n).toEqual({ ok: true });
+    expect(real('Name - optional', 'type', 'aws-city-nat')).toEqual({ ok: true });
+    // The practice console stays automatic, commit buttons included.
+    const practice = act(PRACTICE);
+    for (const n of ['Create NAT gateway', 'Start instance', 'Next']) expect(practice(n), n).toEqual({ ok: true });
+  });
+});

@@ -37,6 +37,29 @@ export function isConsoleUrl(raw: string): boolean {
   }
 }
 
+/**
+ * The first word of a form's commit control: the press that makes, starts or changes something, a billable create among
+ * them ("Create database" on Production, "Launch instance" with a big type, "Create NAT gateway").
+ */
+const COMMIT = /^(create|launch|start|run|confirm|submit|save|apply|update|enable|attach|associate|allocate|request|deploy|purchase|buy|subscribe|order)\b/i;
+/** Moving through a wizard commits nothing, even on its primary button. */
+const STEP_ONLY = /^(next|previous|back|cancel|close)\b/i;
+/** What a commit is pressed on: a button or a menu item (a link only goes somewhere; a box, radio, option or tab fills the form). */
+const PRESSED = new Set(['button', 'menuitem']);
+
+/**
+ * Whether a click on this control commits a form on the REAL console (`isConsoleUrl`; never the practice console): a
+ * button or menu item whose accessible name starts with a commit word, or that the page marks as the form's main action
+ * (`primary`: Cloudscape's primary variant or a native form's submit button, which only the page can see; a wizard's
+ * Next/Previous excepted). The Copilot acts with the console user's own rights, outside the player role's caps, so that
+ * press is always the player's: it fills the form and points at the button. The server applies the same rule by name.
+ */
+export function isCommit(url: string | undefined, role: string, name: string, primary = false): boolean {
+  if (!url || !isConsoleUrl(url) || !PRESSED.has(role)) return false;
+  const n = name.trim();
+  return COMMIT.test(n) || (primary && !STEP_ONLY.test(n));
+}
+
 /** A console page, matched on its lower-cased path + query + hash (`/iam/home#/roles`). */
 export interface ConsolePage {
   id: string;

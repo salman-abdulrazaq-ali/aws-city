@@ -1009,6 +1009,8 @@ describe('hosted server: Cognito players and tenants', () => {
       // (the server frees its slot a moment later) can't take a slot.
       if (token === 'jwt-erin') return { sub: 'erin' };
       if (token === 'jwt-gus') return { sub: 'gus' };
+      // POST /me/mfa's per-player limit: only its own test calls it as this player.
+      if (token === 'jwt-hana') return { sub: 'hana' };
       // A token that expires the moment the socket opens.
       if (token === 'jwt-dave') return { sub: 'dave', exp: Math.floor(Date.now() / 1000) };
       throw new Error('bad');
@@ -1199,15 +1201,37 @@ describe('hosted server: Cognito players and tenants', () => {
     expect((await fetch(`http://127.0.0.1:${port}/me/mfa`, { method: 'POST', headers: { origin: EXT } })).status).toBe(401);
   });
 
-  it('POST /me/mfa answers 204 only once the first sight is recorded: Cognito not showing the authenticator yet, or failing, is 503 (the extension tries again)', async () => {
+  it('POST /me/mfa answers 204 only once the first sight is recorded; what any player can cause is a 409, never a 5xx (the extension tries again)', async () => {
     const post = (jwt: string) => fetch(`http://127.0.0.1:${port}/me/mfa`, { method: 'POST', headers: { authorization: `Bearer ${jwt}`, origin: EXT } });
-    expect((await post('jwt-carol')).status).toBe(503); // 'enrol': AdminGetUser doesn't list SOFTWARE_TOKEN_MFA yet
-    mfaReady.mockRejectedValueOnce(new Error('AdminGetUser failed'));
+    // 'enrol': AdminGetUser doesn't list SOFTWARE_TOKEN_MFA yet. Sign-up is open, so a script can send this all day: a
+    // 5xx would feed the Http5xx alarm that pages and rolls a deploy back.
+    const enrol = await post('jwt-carol');
+    expect(enrol.status).toBe(409);
+    expect(await enrol.json()).toEqual({ error: expect.stringMatching(/authenticator/) });
+    // Cognito throttling the look, or a player who's gone: not the server's fault either.
+    for (const name of ['TooManyRequestsException', 'ThrottlingException', 'UserNotFoundException']) {
+      mfaReady.mockRejectedValueOnce(Object.assign(new Error('refused'), { name }));
+      expect((await post('jwt-alice')).status, name).toBe(409);
+    }
+    // A failure that's ours (our task role refused, a bug) is still a 5xx.
+    mfaReady.mockRejectedValueOnce(Object.assign(new Error('AdminGetUser failed'), { name: 'AccessDeniedException' }));
     const failed = await post('jwt-bob');
     expect(failed.status).toBe(503);
     expect(await failed.json()).toEqual({ error: expect.stringMatching(/authenticator/) });
     mfaReady.mockResolvedValueOnce('reauth'); // recorded; this session just predates it
     expect((await post('jwt-bob')).status).toBe(204);
+  });
+
+  it('POST /me/mfa is limited per player: the extension’s three tries go through, then 429 with a plain message and no Cognito call', async () => {
+    const post = (jwt: string) => fetch(`http://127.0.0.1:${port}/me/mfa`, { method: 'POST', headers: { authorization: `Bearer ${jwt}`, origin: EXT } });
+    mfaReady.mockClear();
+    for (let i = 0; i < 3; i++) expect((await post('jwt-hana')).status, `try ${i + 1}`).toBe(204);
+    const limited = await post('jwt-hana');
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: 'You asked a moment ago. Try again in a few seconds.' });
+    expect(mfaReady).toHaveBeenCalledTimes(3);
+    // Another player isn't held back.
+    expect((await post('jwt-gus')).status).toBe(204);
   });
 
   it('linking an AWS account needs MFA first', async () => {

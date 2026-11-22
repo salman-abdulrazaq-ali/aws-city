@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
 import { choose, findExact, findTarget, typeInto } from '@/console/act';
-import { isSecretPage, PLAYER_ONLY_PAGES, playerOnlyPage, redact, redactConsoleUrl, SECRET_PAGES } from '@/console/risk';
-import { isConsoleUrl, isRisky, mayAct } from '@/console/safety';
+import { isCommit, isSecretPage, PLAYER_ONLY_PAGES, playerOnlyPage, redact, redactConsoleUrl, SECRET_PAGES } from '@/console/risk';
+import { isConsoleUrl, isMainAction, isRisky, mayAct } from '@/console/safety';
 import { takeSnapshot } from '@/console/snapshot';
 
 const S3_PAGE = `
@@ -291,7 +291,10 @@ describe('Copilot hardening: player-only pages', () => {
       const v = mayAct(item(n), action, el(n), value, kms);
       expect(v, n).toMatchObject({ ok: false, reason: 'player-only' });
       expect(v.ok ? '' : v.message, n).toBe('On AWS KMS pages, changes are yours to make, so this one is your turn. I’ll point and explain.');
-      expect(mayAct(item(n), action, el(n), value, 'https://us-west-2.console.aws.amazon.com/s3/bucket/create'), n).toEqual({ ok: true });
+      // Elsewhere on the real console the Copilot fills the form; the press that commits it is the player's (below).
+      expect(mayAct(item(n), action, el(n), value, 'https://us-west-2.console.aws.amazon.com/s3/bucket/create'), n).toEqual(
+        action === 'click' ? expect.objectContaining({ ok: false, reason: 'commit' }) : { ok: true },
+      );
       expect(mayAct(item(n), action, el(n), value, 'chrome-extension://abcdefghijklmnop/practice.html#/s3/create'), n).toEqual({ ok: true });
     }
     // with no url given, it is the element's own page (jsdom's localhost here: not the console)
@@ -339,5 +342,67 @@ describe('Copilot hardening: redaction and secret pages', () => {
       undefined,
     ])
       expect(isSecretPage(u), u).toBe(false);
+  });
+});
+
+describe('Copilot hardening: the real console’s commit button is the player’s', () => {
+  const REAL = 'https://us-east-1.console.aws.amazon.com/rds/home?region=us-east-1#launch-dbinstance:';
+  const PRACTICE = 'chrome-extension://abcdefghijklmnop/practice.html#/rds/create';
+  const RDS_PAGE = `
+    <h1>Create database</h1>
+    <fieldset><legend>Templates</legend>
+      <label><input type="radio" name="t" /> Production</label><label><input type="radio" name="t" checked /> Free tier</label></fieldset>
+    <label for="db">DB instance identifier</label><input id="db" type="text" />
+    <fieldset><legend>Connectivity</legend><label><input type="radio" name="sg" checked /> Create new security group</label></fieldset>
+    <div role="tablist"><button type="button" role="tab">Tags</button></div>
+    <a href="https://us-east-1.console.aws.amazon.com/rds/home#databases:">Databases</a>
+    <button type="button">Cancel</button>
+    <button type="button">Create database</button>`;
+  const at = (url: string) => {
+    const items = takeSnapshot(document, { requireLayout: false }).items;
+    const item = (n: string) => items.find((i) => i.name === n)!;
+    return (n: string, action = 'click', value?: string) => mayAct(item(n), action, findExact(document, item(n))!, value, url);
+  };
+
+  it('isCommit: a button or menu item named for a commit, or the form’s main action, on the real console only', () => {
+    for (const n of ['Create database', 'Launch instance', 'Create NAT gateway', 'Start instance', 'Run task', 'Confirm', 'Submit', 'Save changes', 'Apply',
+      'Update stack', 'Enable', 'Attach volume', 'Associate', 'Allocate Elastic IP address', 'Request certificate', 'Deploy', 'Purchase', 'Buy', 'Subscribe', 'Order'])
+      expect(isCommit(REAL, 'button', n), n).toBe(true);
+    expect(isCommit(REAL, 'menuitem', 'Start instance')).toBe(true);
+    expect(isCommit(REAL, 'button', 'Continue', true)).toBe(true); // marked as the main action, whatever its name
+    for (const n of ['Next', 'Previous', 'Cancel', 'Add new tag', 'Choose file', 'Startup script', 'Instance type', 'Recreate']) expect(isCommit(REAL, 'button', n), n).toBe(false);
+    expect(isCommit(REAL, 'button', 'Next', true)).toBe(false); // a wizard's Next moves on, it commits nothing
+    // Filling the form and going somewhere are never commits: a radio, a box, an option, a tab, a link.
+    for (const role of ['radio', 'checkbox', 'option', 'tab', 'link', 'textbox']) expect(isCommit(REAL, role, 'Create new security group', true), role).toBe(false);
+    for (const url of [PRACTICE, 'http://localhost/', 'https://console.aws.amazon.com.evil.example/rds/home', '', undefined])
+      expect(isCommit(url, 'button', 'Create database', true), String(url)).toBe(false);
+  });
+
+  it('mayAct hands the commit click back with a kind “your turn”, and still fills the form and moves around', () => {
+    document.body.innerHTML = RDS_PAGE;
+    const act = at(REAL);
+    const v = act('Create database');
+    expect(v).toEqual({ ok: false, reason: 'commit', message: 'Your turn: press “Create database” when you’re happy with the settings.' });
+    for (const n of ['Production', 'Create new security group', 'Tags', 'Databases', 'Cancel']) expect(act(n), n).toEqual({ ok: true });
+    expect(act('DB instance identifier', 'type', 'aws-city-db')).toEqual({ ok: true });
+    // The practice console stays automatic.
+    expect(at(PRACTICE)('Create database')).toEqual({ ok: true });
+  });
+
+  it('the page’s main action is the player’s whatever it says: a primary button, or a native form’s submit button', () => {
+    document.body.innerHTML = `
+      <button type="submit" class="awsui_button_vjswe_1 awsui_variant-primary_vjswe_2"><span id="go">Continue</span></button>
+      <button type="submit" class="awsui-button awsui-button-variant-primary">Go</button>
+      <form action="/x"><button>Proceed</button><input type="submit" value="OK" aria-label="OK" /></form>
+      <button type="submit" class="awsui_button_vjswe_1 awsui_variant-primary_vjswe_2">Next</button>
+      <form><button type="submit" class="awsui_button_vjswe_1 awsui_variant-normal_vjswe_3">Add new tag</button></form>
+      <button type="submit">Refresh</button>`;
+    const act = at(REAL);
+    for (const n of ['Continue', 'Go', 'Proceed', 'OK']) expect(act(n), n).toMatchObject({ ok: false, reason: 'commit' });
+    // A click on what's inside the primary button is a click on it.
+    expect(isMainAction(document.getElementById('go')!)).toBe(true);
+    // A wizard's primary Next, a Cloudscape button that's type=submit by default, and a submit button outside any form commit nothing.
+    for (const n of ['Next', 'Add new tag', 'Refresh']) expect(act(n), n).toEqual({ ok: true });
+    for (const n of ['Continue', 'Go', 'Proceed', 'OK']) expect(at(PRACTICE)(n), n).toEqual({ ok: true });
   });
 });

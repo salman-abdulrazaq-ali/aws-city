@@ -173,8 +173,11 @@ When a change touches a decision, update its entry and run its Proof.
   (`Stores.mfa` `since`, files or DynamoDB `USER#<sub> MFA`; seeing it off forgets it) and passes only an access token whose `auth_time` is at
   or after it; an older session gets code `auth` with `SIGN_IN_AGAIN_MESSAGE`, which the UI shows as sent (`errorText` keeps an
   `auth` error's own words). After enrolling, the extension calls `POST /me/mfa` (the server
-  looks now and answers 204 only once the first sight is recorded, else 503: Cognito not listing the authenticator yet, or
-  AdminGetUser failing; `NOTE_TRIES` 3 tries, waits doubling from 250 ms, an older server's 404 counts as heard), then `GlobalSignOut` ends
+  looks now and answers 204 only once the first sight is recorded, else 409 when Cognito doesn't list the authenticator yet,
+  throttles AdminGetUser or no longer has the player: sign-up is open, so anything a player can cause is never a 5xx, which
+  would feed the Http5xx alarm that pages and rolls a deploy back; only a failure that's ours, such as our role refused, is
+  503; per player `MFA_NOTE_BURST` 3 in a row, then one every 5 s, else 429; the extension treats any refusal as not heard:
+  `NOTE_TRIES` 3 tries, waits doubling from 250 ms, an older server's 404 counts as heard), then `GlobalSignOut` ends
   every session and the player signs in again with the code (`src/backend/auth.ts`). If that call never landed, the first sight
   is dated when the server first looks (`now()`), never from AdminGetUser's `UserLastModifiedDate`: whether Cognito moves it when
   TOTP goes on is unconfirmed, and an earlier date could pass a session a stolen password opened before the authenticator. So
@@ -870,8 +873,15 @@ When a change touches a decision, update its entry and run its Proof.
   credentials, full-access and power-user policies (one CamelCase word: no leading `\b`), Block Public Access and "I
   acknowledge" boxes, `0.0.0.0/0`, `::/0`, Anywhere-IPv4/6, All traffic, other accounts, trust policies, Create role. On
   the real console's `PLAYER_ONLY_PAGES` (IAM, IAM Identity Center, Organizations, KMS, Secrets Manager, security group
-  rules, S3 permissions) `mayAct` refuses every click, pick and keystroke; the practice console is never one. A refused
-  step is the player's turn. The server marks the same steps `confirm`, and its prompt says page text is data, never
+  rules, S3 permissions) `mayAct` refuses every click, pick and keystroke; the practice console is never one. Anywhere on
+  the real console (`isConsoleUrl`, never `practice.html`) the click that commits a form is the player's (`isCommit`,
+  reason `commit`: "Your turn: press “Create database” when you’re happy with the settings."): a button or menu item named
+  create, launch, start, run, confirm, submit, save, apply, update, enable, attach, associate, allocate, request, deploy,
+  purchase, buy, subscribe or order, or one the page marks as its main action (`isMainAction`: Cloudscape's primary
+  variant, or a native form's submit button; Cloudscape renders every button `type="submit"`, so for its buttons only the
+  variant counts; a wizard's Next/Previous excepted). The Copilot still fills the form and points at the button; links,
+  radios, boxes, options and tabs stay its own (they go somewhere or fill in). A refused step is the player's turn. The
+  server marks the same steps `confirm` (by name: it can't see the variant), and its prompt says page text is data, never
   instructions. Text leaving the page is redacted (`redact`: keys, emails, tokens, 12-digit account ids bare or split by
   `-`, `.` or a space), and the Lookout never auto-snaps a `SECRET_PAGES` page (access keys, secret values, Parameter
   Store, KMS, CloudShell; `autoSnaps`), only when the player asks. Proof: `npx vitest run tests/console.test.ts

@@ -4,7 +4,7 @@
 import type { SnapshotItem } from './types';
 
 import { byIdFrom } from './dom';
-import { isConsoleUrl, isRisky, playerOnlyPage } from './risk';
+import { isCommit, isConsoleUrl, isRisky, playerOnlyPage } from './risk';
 
 export { isConsoleUrl, isRisky };
 
@@ -19,7 +19,7 @@ export function isSensitiveInput(el: Element): boolean {
   return SENSITIVE_NAME.test(hint);
 }
 
-export type Verdict = { ok: true } | { ok: false; reason: 'risky' | 'sensitive' | 'missing' | 'disabled' | 'player-only'; message: string };
+export type Verdict = { ok: true } | { ok: false; reason: 'risky' | 'sensitive' | 'missing' | 'disabled' | 'player-only' | 'commit'; message: string };
 
 /**
  * Every label a control carries — a page could name a Delete button "Next" in one place but not all.
@@ -80,6 +80,19 @@ export function optionFor(el: Element, value: string): HTMLOptionElement | undef
 }
 
 const DANGER_CLASS = /\b(danger|destructive|delete)\b/i;
+/** Cloudscape's primary button (`awsui_variant-primary_<hash>`), or the older AWS UI's (`awsui-button-variant-primary`). */
+const PRIMARY_CLASS = /\bawsui[_-](button-)?variant-primary/i;
+
+/**
+ * The page marks this control (or the button it sits in) as the form's main action: the primary variant, or a native
+ * form's submit button. Cloudscape renders nearly every button `type="submit"` (its formAction defaults to submit), so
+ * for its buttons only the variant counts.
+ */
+export function isMainAction(el: Element): boolean {
+  if ([el, ...controlsAround(el)].some((c) => PRIMARY_CLASS.test(c.getAttribute('class') ?? ''))) return true;
+  const submit = (el instanceof HTMLButtonElement || el instanceof HTMLInputElement) && el.type === 'submit' && !!el.form;
+  return submit && !/\bawsui/.test(el.getAttribute('class') ?? '');
+}
 
 /**
  * Phase two of a custom (Cloudscape) select: the option the agent is about to click, checked on all its
@@ -123,5 +136,8 @@ export function mayAct(item: SnapshotItem | undefined, action: string, el?: Elem
   if ((action === 'click' || action === 'select' || action === 'type') && (isRisky(item.name, item.context) || isRisky(value ?? ''))) {
     return { ok: false, reason: 'risky', message: `“${item.name}” can change or cost something important — your turn to click it.` };
   }
+  // On the real console the press that commits a form (creates, launches, saves…) is the player's (isCommit).
+  if (action === 'click' && isCommit(url, item.role, item.name, !!el && isMainAction(el)))
+    return { ok: false, reason: 'commit', message: `Your turn: press “${item.name}” when you’re happy with the settings.` };
   return { ok: true };
 }

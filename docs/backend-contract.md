@@ -62,7 +62,7 @@ A client needs a server of its version or newer, so deploy the server first; the
 | `presence.beat` | `region, rank?` | v2.11: the player is in this city now (on connect, on arriving, every 30 s while a tab is visible). |
 | `score.submit` | `board, score` | v2.11: a best for a weekly leaderboard (a game id or `mayors:<region>`). |
 | `leaderboard.get` | `board` | v2.11: this week's top of a board. |
-| `progress.get/put`, `screenshot.presign`, `quest.start` | | On `aws`/`hosted`, handled over REST (`/progress`, `/screenshots`) or locally by `ServerBackend`. `DELETE /me` removes everything stored for the player. Hosted: `POST /me/mfa` right after the player turns TOTP on records when MFA started, so the step-up accepts the next sign-in: 204 once it's recorded, 503 when Cognito doesn't show the authenticator yet or can't be asked (the client tries again). |
+| `progress.get/put`, `screenshot.presign`, `quest.start` | | On `aws`/`hosted`, handled over REST (`/progress`, `/screenshots`) or locally by `ServerBackend`. `DELETE /me` removes everything stored for the player. Hosted: `POST /me/mfa` right after the player turns TOTP on records when MFA started, so the step-up accepts the next sign-in: 204 once it's recorded; 409 when Cognito doesn't show the authenticator yet, throttles the look or no longer has the player (never a 5xx: anyone can send it); 503 only when the failure is the server's own; 429 past 3 in a row, then one every 5 s per player. The client tries again on any refusal. |
 
 Client-internal, not on the wire: `storage.local` keeps `progress.parked` (a signed-out player's unsynced progress, tagged with the player's id, their Cognito `sub`, and only ever restored to that same player), and the optional `AgentBackend.playerId()` (hosted only; absent on local/mock) exists just to tag it. It is not a security check: the server authorizes every request by the JWT.
 
@@ -186,6 +186,7 @@ Agents act in the player's live, logged-in AWS console, one visible step at a ti
 **Safety** (`src/console/safety.ts`, which runs in the page no matter what the backend says):
 - Risky controls are never clicked by the agent. The page turns them into a green "your turn" highlight that waits for the player's click. The server also sets `risk:'confirm'` on them.
   - Risky means: delete, terminate, remove, empty, public access, IAM admin or access keys, billing, account settings, sign-out.
+- On the real console, the button that commits a form is the player's to press (`isCommit` in `src/console/risk.ts`): one named create, launch, start, save, apply, … or the page's primary or submit button. The agent fills the form and points at it. The server sets `risk:'confirm'` on those steps by name. The practice console stays automatic.
 - Nothing is typed into secret fields.
 - It runs only on `https://*.console.aws.amazon.com`, never on sign-in pages, and only during a Copilot task the player started.
 - There's a limit of 25 steps, and it stops after 3 failures.
