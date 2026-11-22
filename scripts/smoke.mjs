@@ -332,7 +332,28 @@ await wait(400);
 if (!(await page.locator('.account-map .map-node').count())) errors.push('my aws map: no services on the map of the practice account');
 await shot('18b-my-aws-map');
 await audit('my aws map');
+// The Diagram (src/ui/ArchDiagram.tsx): the services drawn, dots moving, each one's cost a day and a month (est., from
+// the bill) and a legend saying which lines are real. With the bill and live traffic on, as a player would.
+await city(() => (window.awsCity.setBill(true), window.awsCity.setFlow(true)));
+await wait(1200);
+await page.locator('.account-map .seg button', { hasText: 'Diagram' }).click();
+await wait(800);
+if ((await page.locator('.account-map .arch-hit button').count()) < 3) errors.push('my aws diagram: fewer than three services drawn');
+if (!(await page.locator('.account-map .arch-link.typical').count())) errors.push('my aws diagram: no typical (dashed) link between the practice account’s services');
+if (!(await page.locator('.account-map .arch-link.real').count())) errors.push('my aws diagram: no real link (the practice account has a standby and replicas)');
+if (!(await page.locator('.account-map', { hasText: 'a day est.' }).count())) errors.push('my aws diagram: no cost a day (est.) with the bill on');
+if (!(await page.locator('.account-map animateMotion').count())) errors.push('my aws diagram: no moving dots');
+await shot('18c-my-aws-diagram');
+await audit('my aws diagram');
+// Reduced motion: the dots sit still.
+await page.emulateMedia({ reducedMotion: 'reduce' });
+await page.locator('.account-map .seg button', { hasText: 'Services' }).click();
+await page.locator('.account-map .seg button', { hasText: 'Diagram' }).click();
+await wait(300);
+if (await page.locator('.account-map animateMotion').count()) errors.push('my aws diagram: dots move under reduced motion');
+await page.emulateMedia({ reducedMotion: null });
 await page.getByRole('button', { name: 'Close the map' }).click();
+await city(() => (window.awsCity.setBill(false), window.awsCity.setFlow(false)));
 await wait(200);
 
 // City care: teach Noor to Fixer (as 20 flashcards would), open the city-built table's finding, and approve its fix in the card.
@@ -796,6 +817,24 @@ await wait(500);
 await panel.screenshot({ path: `${out}/11-sidepanel.png` });
 console.log('📸 11-sidepanel');
 await audit('side panel', panel);
+// My AWS → Diagram in the 400 px panel: top to bottom, nothing wider than the panel.
+await panel.evaluate(() => window.awsCity.useCity.getState().openAccountMap(true));
+await wait(400);
+if (await panel.locator('.account-map .seg button', { hasText: 'Diagram' }).count()) {
+  await panel.locator('.account-map .seg button', { hasText: 'Diagram' }).click();
+  await wait(600);
+  if (!(await panel.locator('.account-map .arch-tb').count())) errors.push('my aws diagram (panel): not laid out top to bottom');
+  const wide = await panel.evaluate(() => {
+    const el = document.querySelector('.account-map');
+    return el ? el.scrollWidth > el.clientWidth + 1 : false;
+  });
+  if (wide) errors.push('my aws diagram (panel): wider than the panel');
+  await panel.screenshot({ path: `${out}/18e-my-aws-diagram-panel.png` });
+  console.log('📸 18e-my-aws-diagram-panel');
+  await audit('my aws diagram (panel)', panel);
+} else errors.push('my aws diagram (panel): no Diagram view');
+await panel.evaluate(() => window.awsCity.useCity.getState().openAccountMap(false));
+await wait(200);
 await panel.locator('.tabs button[title="Learn"]').click();
 await panel.locator('.seg button[data-sub="build"]').click();
 await wait(400);

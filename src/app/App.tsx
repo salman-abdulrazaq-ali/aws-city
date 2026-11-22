@@ -370,7 +370,7 @@ export function App({ layout }: { layout: Layout }) {
         <ClientTask />
         <ClientDone />
         <Collection />
-        <AccountMap />
+        <AccountMap layout={layout} />
         <CoinFly />
         <Leaderboard />
         <LaunchDay />
