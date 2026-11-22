@@ -3,7 +3,7 @@
 import Phaser from 'phaser';
 
 /** An anchor this close outside the view (world px) is pulled in to the view's edge; one further off stays put. */
-export const EDGE_REACH = 160;
+const EDGE_REACH = 160;
 
 export interface Pt {
   x: number;

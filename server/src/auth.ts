@@ -12,8 +12,9 @@ export interface Principal {
   /** When the token proving this expires (epoch ms); the socket must not outlive it for long. */
   expiresAt?: number;
   /**
-   * When the player signed in for this session (epoch ms, the access token's auth_time; a refresh keeps it). MFA
-   * step-up passes only for a session that started after the authenticator was turned on (accounts/mfa.ts).
+   * When the player signed in for this session (epoch ms, Cognito's auth_time; a refresh keeps it). MFA step-up passes
+   * only for a session that started after the authenticator was turned on (accounts/mfa.ts), and the reauth window
+   * demands a recent sign-in: a stolen refresh token can't link an account or approve a write.
    */
   authTime?: number;
 }
@@ -24,7 +25,7 @@ export type Authenticate = (req: IncomingMessage, url: URL) => Promise<Principal
 /** The browser WebSocket API can't set headers, so the JWT rides in Sec-WebSocket-Protocol (see bearerSubprotocols in the contract). */
 export const BEARER_PROTOCOL = 'base64UrlBearerAuthorization';
 
-export const bearerFromProtocols = (header: string | undefined): string | undefined => {
+const bearerFromProtocols = (header: string | undefined): string | undefined => {
   for (const p of (header ?? '').split(',').map((s) => s.trim())) {
     if (p.startsWith(`${BEARER_PROTOCOL}.`)) {
       try {
@@ -44,10 +45,10 @@ const safeEqual = (a: string, b: string) => {
 };
 
 /**
- * Local server: only a caller with the token. An Origin header never authenticates on its own: the dev extension's
- * id is public (scripts/extension-id.mjs) and any local program can send that header. Origin stays a browser check
- * (http.ts `guard`: a web page can't reach us). The launcher mints a fresh token each run and builds it into the
- * extension (WXT_AWS_TOKEN, scripts/launcher/live-run.mjs).
+ * Local server: only a caller with the token. An Origin header never authenticates on its own: browsers stop web pages
+ * forging it, but any other program on the computer can send any Origin, and the dev extension's id is public
+ * (scripts/extension-id.mjs, extension.pubkey). Origin stays a browser check on top (http.ts `guard`: a web page can't
+ * reach us). Every local build carries the token the launcher gives it (WXT_AWS_TOKEN, scripts/launcher/live-run.mjs).
  */
 export const tokenAuth = (config: Config): Authenticate => async (req) => {
   // Never from the query string: URLs end up in logs and history.

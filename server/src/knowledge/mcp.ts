@@ -7,7 +7,7 @@ import { log } from '../log.js';
  * https://knowledge-mcp.global.api.aws). Only the documentation tools below are ever called: never the
  * managed AWS MCP Server, whose `aws___run_script` can call any AWS API.
  */
-export const KNOWLEDGE_URL = 'https://knowledge-mcp.global.api.aws';
+const KNOWLEDGE_URL = 'https://knowledge-mcp.global.api.aws';
 export const ALLOWED_TOOLS = new Set(['aws___search_documentation', 'aws___read_documentation', 'aws___retrieve_skill']);
 
 export interface DocHit {
@@ -143,9 +143,6 @@ export const createKnowledge = (
     },
   };
 };
-
-/** No docs (tests, or KNOWLEDGE=off). */
-export const noKnowledge: Knowledge = { search: async () => [] };
 
 /** How docs are shown to the model: data, never instructions. */
 export const docsBlock = (hits: DocHit[]) =>

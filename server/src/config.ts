@@ -10,6 +10,11 @@ import { DEFAULT_JEV_MODEL, DEFAULT_JEV_THRESHOLDS, type JevConfig, RISK_LEVELS 
 export interface Config {
   awsProfile: string;
   region: string;
+  /**
+   * Where Bedrock is called (AWS_CITY_BEDROCK_REGION; default: `region`). A new account's Bedrock can be held at 0
+   * tokens a day in one Region and not another: the AI can run there while data and sign-in stay in `region`.
+   */
+  bedrockRegion: string;
   host: string;
   port: number;
   /**
@@ -25,6 +30,27 @@ export interface Config {
   fallbackModel: string;
   /** Cheaper model for chat answers and page classification. */
   lightModel: string;
+  /**
+   * Where the agents' model runs (AWS_CITY_MODEL_PROVIDER): `bedrock` (default), or `local`, a model on this computer
+   * behind an OpenAI-compatible server (Ollama), for when Bedrock is held or there's no network. Local mode only.
+   */
+  modelProvider: 'bedrock' | 'local';
+  /**
+   * The model on this computer (AWS_CITY_LOCAL_URL, loopback only; AWS_CITY_LOCAL_MODEL; AWS_CITY_LOCAL_VISION when it
+   * reads images), for `local` and `localFallback`.
+   */
+  localModel: { url: string; model: string; vision: boolean };
+  /**
+   * Bedrock first, then the model on this computer when a Bedrock call fails (AWS_CITY_LOCAL_FALLBACK=true): a held
+   * account's 0 tokens a day, throttling, no network. Strands Agents' ModelRouter. Amazon Nova only, local mode only.
+   */
+  localFallback: boolean;
+  /**
+   * Hosted: the private DNS namespace of the city's own AI service in its VPC (AWS_CITY_PRIVATE_DOMAIN, set by
+   * infra/lib/service-stack.ts when EnvConfig.aiCpu is on, a `.internal` name). The only place a hosted server may reach a
+   * model of its own: players' questions never leave our AWS account.
+   */
+  privateDomain?: string;
   /** Landmark agents' engine (citizens always run on Strands): classic = the tool loop in agents/runner.ts. */
   agentEngine: 'classic' | 'strands';
   /**
@@ -54,8 +80,6 @@ export interface Config {
   playerRolePrefix: string;
   /** SSM parameter: "false" turns every model call off (manual kill switch). */
   killSwitchParam?: string;
-  /** Hosted: players must turn on MFA before linking an AWS account (REQUIRE_MFA_FOR_LINK, default on). */
-  requireMfaForLink: boolean;
   dailyModelCalls: number;
   globalDailyModelCalls: number;
   maxSocketsPerUser: number;
@@ -67,7 +91,7 @@ export interface Config {
 const list = (v?: string) => (v ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
 /** The only wildcards allowed: a whole scheme, for browsers whose extension origins are random per install. */
-export const ORIGIN_WILDCARDS = ['moz-extension://*', 'safari-web-extension://*'] as const;
+const ORIGIN_WILDCARDS = ['moz-extension://*', 'safari-web-extension://*'] as const;
 const EXTENSION_SCHEMES = ['chrome-extension://', 'moz-extension://', 'safari-web-extension://'];
 
 /** Does `origin` match one allowed entry (exact, or a scheme wildcard)? Empty `allowed` = any extension origin. */
@@ -76,6 +100,35 @@ export const originMatches = (origin: string, allowed: readonly string[]) => {
   return allowed.some((a) => (a.endsWith('://*') ? origin.startsWith(a.slice(0, -1)) && /^[\w-]+:\/\/[^/]+$/.test(origin) : a === origin));
 };
 const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost']);
+
+/** Ollama's OpenAI-compatible endpoint, and a model with tool calling that fits a 16 GB laptop. */
+export const DEFAULT_LOCAL_URL = 'http://127.0.0.1:11434/v1';
+export const DEFAULT_LOCAL_MODEL = 'qwen3:8b';
+
+/** A private DNS namespace for the city's own services: lowercase labels ending in `.internal`. */
+const PRIVATE_DOMAIN_RE = /^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+internal$/;
+
+/** http(s) to `<service>.<domain>` (one label), with no credentials in the address: the city's own AI service. */
+export const isPrivateServiceUrl = (value: string, domain: string | undefined) => {
+  if (!domain || !PRIVATE_DOMAIN_RE.test(domain)) return false;
+  try {
+    const u = new URL(value);
+    const host = u.hostname.toLowerCase();
+    return (u.protocol === 'http:' || u.protocol === 'https:') && host.endsWith(`.${domain}`) && /^[a-z0-9-]+$/.test(host.slice(0, -domain.length - 1)) && !u.username && !u.password;
+  } catch {
+    return false;
+  }
+};
+
+/** http(s) on this computer only: the local model never becomes a way to send players' questions elsewhere. */
+export const isLoopbackUrl = (value: string) => {
+  try {
+    const u = new URL(value);
+    return (u.protocol === 'http:' || u.protocol === 'https:') && LOOPBACK.has(u.hostname.replace(/^\[|\]$/g, '')) && !u.username && !u.password;
+  } catch {
+    return false;
+  }
+};
 
 export class ConfigError extends Error {}
 
@@ -120,9 +173,11 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
   const port = positiveInt('PORT', env.PORT, 8787, 0);
   const hosted = env.AWS_CITY_MODE === 'hosted';
   const host = env.HOST ?? '127.0.0.1';
+  const region = env.AWS_CITY_REGION ?? env.AWS_REGION ?? 'us-west-2';
   const cfg: Config = {
     awsProfile: env.AWS_CITY_PROFILE ?? 'workshop',
-    region: env.AWS_CITY_REGION ?? env.AWS_REGION ?? 'us-west-2',
+    region,
+    bedrockRegion: env.AWS_CITY_BEDROCK_REGION || region,
     host,
     port,
     extensionOrigins: list(env.EXTENSION_ORIGIN),
@@ -134,6 +189,15 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
     model: env.AWS_CITY_MODEL ?? 'us.anthropic.claude-opus-5-5',
     fallbackModel: env.AWS_CITY_FALLBACK_MODEL ?? 'us.anthropic.claude-sonnet-5-5',
     lightModel: env.AWS_CITY_LIGHT_MODEL ?? env.AWS_CITY_FALLBACK_MODEL ?? 'us.anthropic.claude-sonnet-5-5',
+    modelProvider: oneOf('AWS_CITY_MODEL_PROVIDER', env.AWS_CITY_MODEL_PROVIDER, ['bedrock', 'local'], 'bedrock'),
+    localModel: {
+      url: env.AWS_CITY_LOCAL_URL || DEFAULT_LOCAL_URL,
+      model: env.AWS_CITY_LOCAL_MODEL || DEFAULT_LOCAL_MODEL,
+      // Most small local models read text only: the Lookout then reads the page's address and title (AWS_CITY_LOCAL_VISION=true for a vision model).
+      vision: oneOf('AWS_CITY_LOCAL_VISION', env.AWS_CITY_LOCAL_VISION, ['true', 'false'], 'false') === 'true',
+    },
+    localFallback: oneOf('AWS_CITY_LOCAL_FALLBACK', env.AWS_CITY_LOCAL_FALLBACK, ['true', 'false'], 'false') === 'true',
+    privateDomain: env.AWS_CITY_PRIVATE_DOMAIN || undefined,
     // Strands Agents for every agent turn (landmark agents too); 'classic' keeps the hand-written loop as a fallback.
     agentEngine: oneOf('AWS_CITY_AGENT_ENGINE', env.AWS_CITY_AGENT_ENGINE, ['classic', 'strands'], 'strands'),
     allowFixes: oneOf('AWS_CITY_ALLOW_FIXES', env.AWS_CITY_ALLOW_FIXES, ['true', 'false'], hosted ? 'true' : 'false') === 'true',
@@ -153,7 +217,6 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
     taskRoleName: env.TASK_ROLE_NAME ?? 'AWSCityTaskRole-prod',
     playerRolePrefix: env.PLAYER_ROLE_PREFIX ?? 'AWSCityPlayerRole',
     killSwitchParam: env.KILL_SWITCH_PARAM,
-    requireMfaForLink: oneOf('REQUIRE_MFA_FOR_LINK', env.REQUIRE_MFA_FOR_LINK, ['true', 'false'], 'true') === 'true',
     dailyModelCalls: positiveInt('DAILY_MODEL_CALLS', env.DAILY_MODEL_CALLS, 100, 0),
     globalDailyModelCalls: positiveInt('GLOBAL_DAILY_MODEL_CALLS', env.GLOBAL_DAILY_MODEL_CALLS, 20_000, 0),
     maxSocketsPerUser: positiveInt('MAX_SOCKETS_PER_USER', env.MAX_SOCKETS_PER_USER, 4),
@@ -187,6 +250,18 @@ export const validate = (c: Config) => {
     need(c.selfAccountId && c.playerRoleTemplateUrl, 'AWS_MODE=assume-role needs SELF_ACCOUNT_ID and PLAYER_ROLE_TEMPLATE_URL');
   }
   if (!LOOPBACK.has(c.host)) need(c.publicHosts.length, `HOST=${c.host} needs PUBLIC_HOSTS (accepted Host headers)`);
+  // A model of our own: on this computer in local mode (the one player at it), or hosted, the city's own AI service in
+  // its VPC (a private name). Never anywhere else: players' questions don't leave this computer or our AWS account.
+  if (c.modelProvider === 'local' || c.localFallback) {
+    if (c.authMode === 'token') need(isLoopbackUrl(c.localModel.url), `AWS_CITY_LOCAL_URL=${c.localModel.url} must be an http(s) address on this computer (127.0.0.1, ::1 or localhost)`);
+    else
+      need(
+        isPrivateServiceUrl(c.localModel.url, c.privateDomain),
+        `Hosted, AWS_CITY_LOCAL_URL must be the city's own AI service in its VPC: http://<name>.<AWS_CITY_PRIVATE_DOMAIN> (a .internal name), not ${c.localModel.url}`,
+      );
+  }
+  // The same test as familyOf (agents/llm.ts): Claude's routes don't all run on Strands, so its fallback stays its own.
+  if (c.localFallback) need(c.modelProvider === 'bedrock' && !/(^|\.)anthropic\./.test(c.model), 'AWS_CITY_LOCAL_FALLBACK works with Amazon Nova on Bedrock (Claude keeps its own fallback)');
   for (const o of c.extensionOrigins)
     need(!o.includes('*') || (ORIGIN_WILDCARDS as readonly string[]).includes(o), `EXTENSION_ORIGIN ${o}: wildcards only as ${ORIGIN_WILDCARDS.join(' or ')}`);
   if (c.jev) {

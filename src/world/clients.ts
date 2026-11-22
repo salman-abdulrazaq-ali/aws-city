@@ -19,7 +19,7 @@ import type { CityPlan } from './plan';
 
 export type ClientTaskType = 'wire' | 'run' | 'choose' | 'click' | 'fix' | 'explain' | 'station';
 
-export interface ClientSource {
+interface ClientSource {
   kind: string;
   title: string;
   url: string;
@@ -51,7 +51,7 @@ export interface WireJob {
   simpleWhy: string;
   reference: { title: string; url: string };
 }
-export interface RunJob {
+interface RunJob {
   body: string;
   cli: string;
   output: string;
@@ -67,7 +67,7 @@ export interface ClickJob {
   flow: string;
   goal: string;
 }
-export interface FixSetting {
+interface FixSetting {
   id: string;
   label: string;
   /** What it's set to now. */
@@ -160,7 +160,7 @@ export function levelCount(p: Progress, b: Business, lv = currentLevel(p, b)) {
   return { done: lv ? lv.tasks.filter((t) => done.has(t.id)).length : 0, of: lv?.tasks.length ?? 0 };
 }
 
-export const taskDone = (p: Progress, taskId: string) => !!taskById(taskId) && (p.clients?.[taskById(taskId)!.client.id]?.done ?? []).includes(taskId);
+const taskDone = (p: Progress, taskId: string) => !!taskById(taskId) && (p.clients?.[taskById(taskId)!.client.id]?.done ?? []).includes(taskId);
 
 /**
  * The services a task needs that aren't put up in this city yet (the task says "Put up <X> first"). A starter job needs
@@ -246,7 +246,7 @@ export const LOT_CLIENTS = CLIENTS.filter((b) => b.id !== 'airport').map((b) => 
 const key = (x: number, y: number) => `${x},${y}`;
 
 /** Wave 1 is the first six businesses in shared/clients.json (the airport hub to the school); the rest are wave 2. */
-export const WAVE1 = 6;
+const WAVE1 = 6;
 export const waveOf = (clientId: string) => (CLIENTS.findIndex((b) => b.id === clientId) < WAVE1 ? 1 : 2);
 
 /**
@@ -271,7 +271,7 @@ const hoodLotMap = (plan: CityPlan) => {
 /** The lots inside the core, in LOT_CLIENTS order (a business with no room inside is left out: it goes to the ring). */
 export const hoodLots = (plan: CityPlan): Rect[] => LOT_CLIENTS.flatMap((id) => hoodLotMap(plan).get(id) ?? []);
 /** A business's lot inside the core, if it has one. */
-export const hoodLotOf = (plan: CityPlan, clientId: string): Rect | undefined => hoodLotMap(plan).get(clientId);
+const hoodLotOf = (plan: CityPlan, clientId: string): Rect | undefined => hoodLotMap(plan).get(clientId);
 
 const DISTRICT_PLOTS = new Set(['square', 'campus', 'day1']);
 
@@ -380,13 +380,6 @@ export function clientSites(plan: CityPlan, land: { airport?: Rect; clientLots?:
   });
   return out;
 }
-
-/** The tiles a business's lot covers (infill and decor leave them; walkers go round). */
-export const siteTiles = (r: Rect) => {
-  const out = new Set<string>();
-  for (let j = r.y; j < r.y + r.h; j++) for (let i = r.x; i < r.x + r.w; i++) out.add(key(i, j));
-  return out;
-};
 
 /** The sprite a business shows at a level (0 = the empty lot, 1..3 as it grows). */
 export const clientSprite = (b: Pick<Business, 'art'>, level: number) => `${b.art}:${Math.max(0, Math.min(MAX_CLIENT_LEVEL, level))}`;

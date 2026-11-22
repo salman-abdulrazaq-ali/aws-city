@@ -28,9 +28,11 @@ export const ACTION_SCHEMAS = {
     .strict()
     .describe('Demolish a library: delete a DynamoDB table built by the game, with all its items. The player must approve.'),
   create_bucket: z
-    .object({ suffix: z.string().regex(/^[a-z0-9-]{3,20}$/, '3-20 lowercase letters, digits or -') })
+    // aws-city-<12-digit account>- is 22 characters and S3 allows 63, so the player's part may be up to 40 (ending in a
+    // letter or digit, as S3 requires). The message names the rule as AWS City's naming, not AWS's.
+    .object({ suffix: z.string().regex(/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/, "AWS City names buckets aws-city-<account>-<name>: the name part must be 3-40 lowercase letters, digits or hyphens, starting and ending with a letter or digit") })
     .strict()
-    .describe('Build a warehouse: create an S3 bucket named aws-city-<account>-<suffix>.'),
+    .describe('Build a warehouse: create an S3 bucket named aws-city-<account>-<suffix>. suffix: 3-40 lowercase letters, digits or hyphens.'),
   delete_bucket: z
     .object({ name: z.string().startsWith('aws-city-') })
     .strict()
@@ -51,7 +53,7 @@ export type Action = { [K in ActionName]: { type: K } & z.infer<(typeof ACTION_S
 export const DESTRUCTIVE: ReadonlySet<ActionName> = new Set(['terminate_instance', 'delete_table', 'delete_bucket']);
 export const READ_ONLY: ReadonlySet<ActionName> = new Set(['describe_resource', 'review_architecture']);
 
-export const isActionName = (name: string): name is ActionName => Object.hasOwn(ACTION_SCHEMAS, name);
+const isActionName = (name: string): name is ActionName => Object.hasOwn(ACTION_SCHEMAS, name);
 
 export type ParseResult = { ok: true; action: Action } | { ok: false; error: string };
 
@@ -65,8 +67,12 @@ export const parseAction = (name: unknown, input: unknown): ParseResult => {
   return { ok: true, action: { type: name, ...parsed.data } as Action };
 };
 
+/** What an action changes, as one label: a name, an instance id or a bucket's suffix. */
+export const actionTarget = (a: Action): string =>
+  'name' in a ? a.name : 'instanceId' in a ? a.instanceId : 'suffix' in a ? `aws-city-<account>-${a.suffix}` : 'id' in a ? a.id : a.type;
+
 /** Which city agent (taxonomy service id) may use each action, and which AWS service it calls. */
-export const ACTION_SERVICE: Record<ActionName, string | null> = {
+const ACTION_SERVICE: Record<ActionName, string | null> = {
   launch_instance: 'ec2',
   stop_instance: 'ec2',
   start_instance: 'ec2',
@@ -92,6 +98,9 @@ export const AWS_API: Record<ActionName, string> = {
   describe_resource: 'city:DescribeResource',
   review_architecture: 'wellarchitected:Review',
 };
+
+/** The city agent (service id) whose job an action is: a plain request for it goes to that agent. Read-only actions: none. */
+export const ownerOf = (name: ActionName): string | null => ACTION_SERVICE[name];
 
 /** Actions an agent may use: its own service's actions plus read-only ones (least privilege per agent). */
 export const actionsForAgent = (agentId: string): ActionName[] =>

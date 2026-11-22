@@ -331,6 +331,9 @@
 /* "Show the CloudFormation" (src/ui/TemplateView.tsx). */
 .template-view summary {
   cursor: pointer;
+  min-height: 24px; /* WCAG 2.2 target size */
+  padding-block: 3px;
+  box-sizing: border-box;
   color: var(--info);
   margin-top: 4px;
 }

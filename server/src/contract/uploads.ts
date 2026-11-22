@@ -29,7 +29,7 @@ export interface UploadStore {
 }
 
 /** Stable, non-reversible folder name for a player (never the raw Cognito sub). */
-export const ownerFolder = (sub: string) => (sub === 'local' ? 'local' : createHash('sha256').update(sub).digest('hex').slice(0, 24));
+const ownerFolder = (sub: string) => (sub === 'local' ? 'local' : createHash('sha256').update(sub).digest('hex').slice(0, 24));
 
 const ownedBy = (key: string, owner: string) => key.startsWith(`screenshots/${ownerFolder(owner)}/`);
 const extFor = (t: ImageType) => (t === 'image/png' ? 'png' : 'jpg');

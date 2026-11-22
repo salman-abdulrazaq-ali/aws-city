@@ -43,7 +43,7 @@ export const demoItems = (): InventoryItem[] =>
  * links to other Regions (the global table and S3 replication): the world map draws no arcs and no tankers drive out
  * for anything the player hasn't connected yet. Links inside the Region (Multi-AZ standby, load balancer) always show.
  */
-export function demoInventory(now = new Date(), { crossRegion = true, without }: { crossRegion?: boolean; /** v2.17: ARNs taken down (resource.remove). */ without?: ReadonlySet<string> } = {}): CityInventoryEvent {
+export function demoInventory(now = new Date(), { crossRegion = true, without }: { crossRegion?: boolean; /** v2.19: ARNs taken down (resource.remove). */ without?: ReadonlySet<string> } = {}): CityInventoryEvent {
   const items = demoItems().filter((it) => !without?.has(it.arn));
   const counts: Record<string, number> = {};
   const regions: Record<string, number> = {};

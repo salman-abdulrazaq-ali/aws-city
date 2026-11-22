@@ -13,11 +13,12 @@ const PRODUCTS = map.products as Record<string, string[]>;
 /** Whole phrases only: 'Amazon Q' must not match 'Amazon Quick'. */
 const TITLES = Object.entries(map.titles as Record<string, string[]>).map(([id, phrases]) => [id, phrases.map((p) => new RegExp(`(^|[^A-Za-z0-9])${p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^A-Za-z0-9])`))] as const);
 
-export const MAX_INCIDENTS = 12;
-export const MAX_LOG = 6;
+const MAX_INCIDENTS = 12;
+const MAX_LOG = 6;
 export const MAX_LOG_CHARS = 1200;
-export const MAX_SERVICE_NAMES = 12;
-export const MAX_NEWS = 15;
+const MAX_SERVICE_NAMES = 12;
+/** The newest launches kept. re:Invent week brings dozens a day, so a busy day still fits. */
+export const MAX_NEWS = 60;
 
 const known = (ids: string[] | undefined) => (ids ?? []).filter((id) => serviceById(id));
 const uniq = <T>(xs: T[]) => [...new Set(xs)];
@@ -58,7 +59,7 @@ export const zonePrefix = (region: string) => {
 };
 
 /** Zone IDs (e.g. mes1-az2, use1-az4) named in the text; with a Region, only that Region's own zones. */
-export const azIdsIn = (text: string, region?: string) => {
+const azIdsIn = (text: string, region?: string) => {
   const prefix = region && zonePrefix(region);
   return uniq(text.match(/\b[a-z]{2,5}\d{1,2}-az\d{1,2}\b/g) ?? []).filter((id) => !prefix || id.startsWith(`${prefix}-`)).sort();
 };
@@ -199,7 +200,7 @@ export const parseWhatsNew = (xml: string): AwsNewsItem[] => {
 };
 
 /** Frames are at most 64 KB: older incidents keep only their latest update, then the oldest are dropped. */
-export const FRAME_BUDGET = 48_000;
+const FRAME_BUDGET = 48_000;
 export const fitFrame = (incidents: AwsIncident[], budget = FRAME_BUDGET): AwsIncident[] => {
   const size = (xs: AwsIncident[]) => JSON.stringify(xs).length;
   let out = incidents;

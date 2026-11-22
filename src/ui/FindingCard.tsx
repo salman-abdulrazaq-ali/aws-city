@@ -1,11 +1,12 @@
 import { ruleById } from '@/world/citizens';
 import { WaReview } from './WaReview';
-import { CostNote } from './DeployPanel';
+import { ChangeTarget, CostNote } from './DeployPanel';
 import { useEffect, useRef, useState } from 'react';
 import { decideDeploy, explainFinding, fixFinding, openDocs, wasExplained } from '@/app/runtime';
 import { bus } from '@/state/bus';
 import { CITIZEN_XP, citizenLevel, citizenXp, FIX_LEVEL, fixGate, LEVEL_XP, levelName } from '@/state/citizens';
 import { isDiscovered, openFindings, severityRank, useCity, type DeployView, type FindingView } from '@/state/store';
+import { ReauthPrompt } from './ReauthPrompt';
 import { citizenById, citizenRole, PILLAR_LABEL, type CitizenDef } from '@/world/citizens';
 import { placeFor } from '@/world/places';
 import { cardsFor, PUZZLES } from '@/world/content';
@@ -19,7 +20,7 @@ import { useDialog } from './useDialog';
 import { FixesOn } from './Account';
 
 /** Severity in the player's words: how soon to look, not a risk score. */
-export const SEVERITY_TEXT: Record<FindingView['severity'], string> = { high: 'Urgent', medium: 'Soon', low: 'Later' };
+const SEVERITY_TEXT: Record<FindingView['severity'], string> = { high: 'Urgent', medium: 'Soon', low: 'Later' };
 
 function Severity({ s }: { s: FindingView['severity'] }) {
   return (
@@ -114,7 +115,7 @@ function Approve({ d, offline, preview }: { d: DeployView; offline?: string; pre
   const [typed, setTyped] = useState('');
   const [sent, setSent] = useState(false);
   // An approval refused for MFA stays pending on the server: once the step-up card shows, let them press it again.
-  const mfaRequired = useCity((s) => s.account.mfaRequired);
+  const mfaRequired = useCity((s) => s.account.mfaRequired || s.account.reauthRequired);
   useEffect(() => {
     if (mfaRequired) setSent(false);
   }, [mfaRequired]);
@@ -124,6 +125,7 @@ function Approve({ d, offline, preview }: { d: DeployView; offline?: string; pre
   return (
     <div className="finding-preview">
       <b>Check this change</b>
+      <ChangeTarget d={d} />
       {preview && (
         <p>
           <Plain text={preview} />
@@ -164,6 +166,7 @@ function Approve({ d, offline, preview }: { d: DeployView; offline?: string; pre
           <input id={`confirm-${d.deployId}`} value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" spellCheck={false} placeholder={d.confirmText} />
         </div>
       )}
+      <ReauthPrompt />
       <div className="finding-actions">
         <button
           className="btn"
@@ -211,7 +214,7 @@ export function FindingCard({ openTab }: { openTab: Go }) {
   const deploy = useCity((s) => (id ? Object.values(s.deploys).findLast((d) => d.findingId === id) : undefined));
   const close = useCity((s) => s.openFinding);
   const offline = useCity((s) => offlineReason(s.backendKind, s.backendStatus));
-  // v2.17: the linked role doesn't allow fixes (AllowFixes off): said up front, never after an approve and MFA.
+  // v2.19: the linked role doesn't allow fixes (AllowFixes off): said up front, never after an approve and MFA.
   const fixesOff = useCity((s) => s.account.linked && s.account.fixes === false);
   const accountRegion = useCity((s) => s.account.region);
   const hosted = useCity((s) => s.hosted);

@@ -6,26 +6,70 @@ import { type AwsClients, classifyAwsError } from '../aws.js';
 import { log } from '../log.js';
 import { serviceById, type AzInfo, type CityInventoryEvent, type DataLink, type InventoryItem } from '../world.js';
 import { GAME_TAG, type WorldSnapshot } from './model.js';
+import { MAX_PER_SERVICE } from './poller.js';
 
 /** The city mirrors a learner's account, not a fleet: the listing stops here. */
 export const MAX_ITEMS = 1000;
 /** Items per city.inventory frame (the rest are counted, not listed), so a frame stays well under 64 KB. */
-export const ITEMS_PER_EVENT = 300;
+const ITEMS_PER_EVENT = 300;
 
 const MAP = arnServices.map as Record<string, string>;
 
-/** arn:partition:service:region:account:resource → the landmark it belongs to, or null (a "?" lot). */
+/**
+ * Services whose ARNs carry no resource-type segment: the resource part is the name itself
+ * (arn:aws:s3:::bucket, arn:aws:sqs:region:account:queue, arn:aws:sns:region:account:topic[:subscription]).
+ */
+const UNTYPED: Partial<Record<string, (resource: string) => string>> = {
+  s3: (r) => (r.includes('/') ? 'object' : 'bucket'),
+  sqs: () => 'queue',
+  sns: (r) => (r.includes(':') ? 'subscription' : 'topic'),
+};
+
+/**
+ * The CloudFormation type names the city's props are keyed by (shared/resource-props.json, src/world/resources.ts), for
+ * the ARN types that have a prop. Seen 21 Nov 2026: items went out as `ec2:instance` (and S3 buckets as `s3:<name>`), so
+ * a real account's server, bucket and table all landed in the district sheds instead of on their islands and lots.
+ */
+export const CFN_TYPE: Record<string, string> = {
+  'ec2:instance': 'AWS::EC2::Instance',
+  'ec2:volume': 'AWS::EC2::Volume',
+  'ec2:vpc': 'AWS::EC2::VPC',
+  'ec2:subnet': 'AWS::EC2::Subnet',
+  'ec2:security-group': 'AWS::EC2::SecurityGroup',
+  'rds:db': 'AWS::RDS::DBInstance',
+  'elasticache:cluster': 'AWS::ElastiCache::CacheCluster',
+  's3:bucket': 'AWS::S3::Bucket',
+  'lambda:function': 'AWS::Lambda::Function',
+  'dynamodb:table': 'AWS::DynamoDB::Table',
+  'sqs:queue': 'AWS::SQS::Queue',
+  'ecs:service': 'AWS::ECS::Service',
+  'ecs:cluster': 'AWS::ECS::Cluster',
+  'elasticfilesystem:file-system': 'AWS::EFS::FileSystem',
+  'apigateway:restapis': 'AWS::ApiGateway::RestApi',
+  'apigateway:apis': 'AWS::ApiGatewayV2::Api',
+  'cognito-idp:userpool': 'AWS::Cognito::UserPool',
+  'kms:key': 'AWS::KMS::Key',
+  'iam:role': 'AWS::IAM::Role',
+  'route53:hostedzone': 'AWS::Route53::HostedZone',
+  'cloudfront:distribution': 'AWS::CloudFront::Distribution',
+};
+
+/** arn:partition:service:region:account:resource → the landmark it belongs to (or null: a "?" lot), its type and name. */
 export const serviceForArn = (arn: string): { serviceId: string | null; type: string; name: string } => {
   const [, , service = '', , , ...rest] = arn.split(':');
   const resource = rest.join(':');
-  const type = resource.split(/[:/]/)[0] ?? '';
-  const name = resource.split(/[:/]/).filter(Boolean).at(-1) ?? resource;
-  const serviceId = MAP[`${service}:${type}`] ?? MAP[service] ?? null;
-  return { serviceId: serviceId && serviceById(serviceId) ? serviceId : null, type: type ? `${service}:${type}` : service, name };
+  const parts = resource.split(/[:/]/).filter(Boolean);
+  const untyped = UNTYPED[service];
+  const raw = untyped ? untyped(resource) : (parts[0] ?? '');
+  // "type/a/b" names its resource last (instance/i-…, table/x, role/path/x); "type:name[:qualifier]" second (db:x, function:x:1).
+  const name = untyped ? (parts[0] ?? resource) : resource.includes(':') && !resource.includes('/') ? (parts[1] ?? parts[0] ?? resource) : (parts.at(-1) ?? resource);
+  const key = raw ? `${service}:${raw}` : service;
+  const serviceId = MAP[key] ?? MAP[service] ?? null;
+  return { serviceId: serviceId && serviceById(serviceId) ? serviceId : null, type: CFN_TYPE[key] ?? key, name };
 };
 
 /** The Region in an ARN (empty for global services like IAM or S3 bucket ARNs). */
-export const regionOfArn = (arn: string) => arn.split(':')[3] ?? '';
+const regionOfArn = (arn: string) => arn.split(':')[3] ?? '';
 
 const item = (arn: string, managedByGame: boolean, region?: string): InventoryItem => {
   const { serviceId, type, name } = serviceForArn(arn);
@@ -83,19 +127,56 @@ export const readInventory = async (clients: AwsClients, region: string): Promis
   }
 };
 
+/** DescribeInstances keeps a terminated server for about an hour; the city shows it gone at once. */
+const GONE = new Set(['shutting-down', 'terminated']);
+/** The same cap the model's snapshot puts on names: a Name tag is the player's own text. */
+const NAME_MAX = 64;
+const partitionOf = (region: string) => (region.startsWith('cn-') ? 'aws-cn' : region.startsWith('us-gov-') ? 'aws-us-gov' : 'aws');
+/** The id at the end of an ARN (an instance's i-…), whatever name the item shows. */
+const idOf = (i: InventoryItem) => serviceForArn(i.arn).name;
+
 /**
- * Zonal placement and data links from the poller's snapshot: instance and DB AZs, DynamoDB global table replicas
- * (Region to Region) and RDS Multi-AZ standbys (AZ to AZ).
+ * The home Region's servers as EC2 says they are now, not as the listing last saw them. Resource Explorer (and the
+ * tagging API) lag by minutes: seen 22 Nov 2026, a terminated server stayed on the map and a new one called "demo"
+ * didn't appear. The poller reads every instance with DescribeInstances each poll, so: drop servers that are shutting
+ * down or gone, add ones the listing hasn't caught up with (first, so the frame's item cap never cuts them), and name
+ * each from its Name tag. A listed server EC2 doesn't show is dropped only when EC2 was read in full this poll (ok and
+ * under the cap), so a denied or failed read never empties the map. Other Regions are left as listed.
+ */
+const reconcileInstances = (items: InventoryItem[], snapshot: WorldSnapshot, region: string): InventoryItem[] => {
+  const instances = snapshot.resources.filter((r) => r.kind === 'instance');
+  const byId = new Map(instances.map((r) => [r.id, r]));
+  const complete = snapshot.services.ec2 === 'ok' && instances.length < MAX_PER_SERVICE;
+  const isHomeInstance = (i: InventoryItem) => i.type === CFN_TYPE['ec2:instance'] && (i.region ?? region) === region;
+  const listed = new Set(items.filter(isHomeInstance).map(idOf));
+  const kept = items.flatMap((i) => {
+    if (!isHomeInstance(i)) return [i];
+    const r = byId.get(idOf(i));
+    if (!r) return complete ? [] : [i];
+    if (GONE.has(r.state)) return [];
+    return [{ ...i, name: r.name.slice(0, NAME_MAX), managedByGame: i.managedByGame || r.managedByGame }];
+  });
+  const added = instances
+    .filter((r) => !GONE.has(r.state) && !listed.has(r.id))
+    .map((r) => ({ ...item(`arn:${partitionOf(region)}:ec2:${region}:${snapshot.accountId}:instance/${r.id}`, r.managedByGame, region), name: r.name.slice(0, NAME_MAX) }));
+  return [...added, ...kept];
+};
+
+/**
+ * Zonal placement and data links from the poller's snapshot: the home Region's servers as EC2 says they are now
+ * (reconcileInstances), instance and DB AZs, DynamoDB global table replicas (Region to Region) and RDS Multi-AZ standbys
+ * (AZ to AZ).
  */
 export const enrich = (inv: Inventory, snapshot: WorldSnapshot | undefined, region: string): { items: InventoryItem[]; links: DataLink[] } => {
   if (!snapshot) return { items: inv.items, links: [] };
-  const azByArnTail = new Map<string, string>();
+  const azById = new Map<string, string>();
   for (const r of snapshot.resources) {
     const az = r.meta.availabilityZone;
-    if (typeof az === 'string' && az) azByArnTail.set(r.id, az);
+    if (typeof az === 'string' && az) azById.set(r.id, az);
   }
-  const items = inv.items.map((i) => {
-    const az = azByArnTail.get(i.name);
+  // By the ARN's id, not the item's name: a server is now named from its Name tag.
+  const items = reconcileInstances(inv.items, snapshot, region).map((i) => {
+    const az = azById.get(idOf(i));
     return az && (i.region ?? region) === region ? { ...i, az } : i;
   });
   const links: DataLink[] = [];
@@ -115,11 +196,11 @@ export const enrich = (inv: Inventory, snapshot: WorldSnapshot | undefined, regi
 // ── v2.5: the account's real map: AZ name → AZ ID per Region, and which Regions are turned on ──
 
 /** AZ maps and Region opt-ins rarely change: read each once a day. */
-export const GEO_TTL_MS = 24 * 60 * 60_000;
+const GEO_TTL_MS = 24 * 60 * 60_000;
 /** A Region we couldn't read (no permission, not opted in) is tried again after an hour, not every refresh. */
 export const GEO_RETRY_MS = 60 * 60_000;
 /** A learner's account, not a fleet: AZ maps for at most this many Regions per refresh. */
-export const MAX_ZONE_REGIONS = 40;
+const MAX_ZONE_REGIONS = 40;
 
 type Cached<T> = { value: T | undefined; at: number; ttl: number };
 const geoCache = new WeakMap<AwsClients, Map<string, Cached<unknown>>>();
@@ -144,7 +225,7 @@ const cachedGeo = async <T>(clients: AwsClients, key: string, read: () => Promis
 };
 
 /** One Region's Availability Zones (not Local or Wavelength Zones), sorted by name. */
-export const readZones = (clients: AwsClients, region: string, now = Date.now()): Promise<AzInfo[] | undefined> =>
+const readZones = (clients: AwsClients, region: string, now = Date.now()): Promise<AzInfo[] | undefined> =>
   cachedGeo(
     clients,
     `zones:${region}`,
@@ -158,7 +239,7 @@ export const readZones = (clients: AwsClients, region: string, now = Date.now())
   );
 
 /** Every Region the account knows about, and whether it's turned on (from the home Region). */
-export const readRegionStatus = (clients: AwsClients, now = Date.now()): Promise<CityInventoryEvent['regionStatus']> =>
+const readRegionStatus = (clients: AwsClients, now = Date.now()): Promise<CityInventoryEvent['regionStatus']> =>
   cachedGeo(
     clients,
     'regions',

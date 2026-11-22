@@ -5,7 +5,7 @@ import { docsBlock } from '../knowledge/mcp.js';
 import { type ActionName, AWS_API, actionsForAgent, READ_ONLY } from '../agents/actions.js';
 import type { Llm } from '../agents/llm.js';
 import { agentSystemPrompt } from '../agents/personas.js';
-import { type AgentRunner, MAX_TOOL_CALLS_PER_TURN, snapshotForModel, type TurnHooks, type TurnResult } from '../agents/runner.js';
+import { type AgentRunner, cityFor, MAX_TOOL_CALLS_PER_TURN, type TurnHooks, type TurnResult } from '../agents/runner.js';
 import type { ActionService } from '../agents/service.js';
 import type { WorldSnapshot } from '../state/model.js';
 import { serviceById } from '../world.js';
@@ -15,14 +15,14 @@ import { actionTools, docsTool, type TurnContext } from './tools.js';
 
 /** Model turns per invocation (a model call plus the tools it asked for): the tool budget, the call that's told the
  *  budget is used up, and one to summarise. */
-export const MAX_TURNS = MAX_TOOL_CALLS_PER_TURN + 2;
-export const OUT_OF_STEPS = "I ran out of steps for this one. Ask me again and I'll carry on.";
+const MAX_TURNS = MAX_TOOL_CALLS_PER_TURN + 2;
+const OUT_OF_STEPS = "I ran out of steps for this one. Ask me again and I'll carry on.";
 /**
  * Token budgets per invocation (input + output, summed over its model calls). Citizens explain one finding at a time
  * with no memory, so theirs is small; landmark agents keep a conversation.
  */
-export const CITIZEN_TOKENS = { maxTokens: 2000, total: 40_000 };
-export const AGENT_TOKENS = { maxTokens: 16000, total: 200_000 };
+const CITIZEN_TOKENS = { maxTokens: 2000, total: 40_000 };
+const AGENT_TOKENS = { maxTokens: 16000, total: 200_000 };
 export const TOOL_BUDGET_MESSAGE = 'Tool budget for this turn is used up. Summarise for the player instead.';
 
 /**
@@ -49,7 +49,12 @@ export const createStrandsRunner = (deps: {
   const queues = new Map<string, Promise<unknown>>();
   /** The citizen Agent running right now (for cancel), by citizen id. */
   const live = new Map<string, Agent>();
-  const client = deps.client ?? deps.llm.client;
+  /** Citizens explain briefly; landmark agents work through a task. Claude gets `effort` (Converse models ignore it). */
+  const modelFor = (citizen: boolean) => {
+    const opts = citizen ? { maxTokens: CITIZEN_TOKENS.maxTokens, effort: 'low' as const } : { maxTokens: AGENT_TOKENS.maxTokens, effort: 'high' as const };
+    // A test's stub Anthropic client; otherwise the configured family (Claude, or Amazon Nova through Converse).
+    return deps.client ? new MeteredAnthropicModel({ client: deps.client, modelId: deps.llm.model, ...opts }, deps.llm.gate, deps.llm.refund) : deps.llm.strands(opts);
+  };
 
   const toolNames = (agentId: string): ActionName[] => (isCitizen(agentId) ? [...READ_ONLY] : actionsForAgent(agentId));
 
@@ -58,7 +63,6 @@ export const createStrandsRunner = (deps: {
     // context (no growing input tokens). Landmark agents keep their conversation.
     const existing = isCitizen(agentId) ? undefined : agents.get(agentId);
     if (existing) return existing;
-    if (!client) throw new Error('No model client for the Strands runner');
     const citizen = citizenById(agentId);
     const tools = [
       ...actionTools(toolNames(agentId), { actions: deps.actions, turn: () => turns.get(agentId) }),
@@ -67,11 +71,7 @@ export const createStrandsRunner = (deps: {
     const agent = new Agent({
       id: agentId.replace(/[^a-zA-Z0-9_-]/g, '-'),
       name: citizen?.name ?? agentId,
-      model: new MeteredAnthropicModel(
-        citizen ? { client, modelId: deps.llm.model, maxTokens: CITIZEN_TOKENS.maxTokens, effort: 'low' } : { client, modelId: deps.llm.model, maxTokens: AGENT_TOKENS.maxTokens, effort: 'high' },
-        deps.llm.gate,
-        deps.llm.refund,
-      ),
+      model: modelFor(!!citizen),
       tools,
       systemPrompt: citizen ? citizenSystemPrompt(citizen) : agentSystemPrompt(agentId),
       printer: false,
@@ -105,7 +105,7 @@ export const createStrandsRunner = (deps: {
     const subject = citizenById(agentId)?.name ?? serviceById(agentId)?.name ?? agentId;
     const citizen = isCitizen(agentId);
     // Citizens explain one finding (it comes in the prompt); they don't need the whole account in their context.
-    const [snapshot, docs] = await Promise.all([citizen ? undefined : deps.snapshot(), deps.knowledge?.search(`${subject} ${playerText}`, 3) ?? []]);
+    const [snapshot, docs] = await Promise.all([citizen ? undefined : deps.snapshot(), deps.knowledge?.search(`${subject} ${playerText}`, deps.llm.small ? 1 : 3) ?? []]);
     const ctx = { hooks, toolCalls: [], sources: docs.map(({ title, url }) => ({ title, url })), started: 0 };
     turns.set(agentId, ctx);
     // The player's socket closed: stop this turn (only this one: turns for an agent run one at a time).
@@ -113,7 +113,7 @@ export const createStrandsRunner = (deps: {
     hooks.signal?.addEventListener('abort', cancel, { once: true });
     try {
       if (hooks.signal?.aborted) return { agentId, reply: '', toolCalls: [], refused: false, sources: [] };
-      const city = snapshot ? `<city_snapshot>${snapshotForModel(snapshot)}</city_snapshot>\n\n` : '';
+      const city = snapshot ? `<city_snapshot>${cityFor(deps.llm, snapshot)}</city_snapshot>\n\n` : '';
       const result = await agent.invoke(`${docsBlock(docs)}${city}Player: ${playerText}`, {
         limits: { turns: MAX_TURNS, totalTokens: isCitizen(agentId) ? CITIZEN_TOKENS.total : AGENT_TOKENS.total },
       });

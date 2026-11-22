@@ -26,6 +26,16 @@ export const memoryMfa = (): MfaStore => {
 };
 
 /**
+ * How recent a sign-in must be to link an AWS account, approve a write or apply a fix. "MFA is on" alone isn't enough:
+ * a refresh token lasts 30 days and refreshing keeps the original auth_time, so someone holding a stolen token could
+ * otherwise approve without ever entering a code. A fresh sign-in asks for the password and the authenticator code.
+ */
+export const STEP_UP_MAX_AGE_MS = 30 * 60_000;
+export const REAUTH_MESSAGE = 'For your safety, sign in again to confirm this. It’s been a while since you entered your password and code.';
+/** Signed in within STEP_UP_MAX_AGE_MS. No auth_time (an unexpected token) counts as not recent. */
+export const recentSignIn = (p: Principal, now = Date.now()) => p.authTime !== undefined && now - p.authTime <= STEP_UP_MAX_AGE_MS && p.authTime <= now + 60_000;
+
+/**
  * Step-up for linking an AWS account and for every write to it (hosted): agents can change that account, so the
  * player must have TOTP MFA on, and this session must have signed in after it was turned on. "Enrolled now" alone
  * isn't enough: a session that signed in with only a (perhaps stolen) password before the authenticator existed would
@@ -78,5 +88,3 @@ export const createMfaCheck = (deps: {
     return verdict(p, since);
   };
 };
-
-export type MfaCheck = ReturnType<typeof createMfaCheck>;

@@ -20,6 +20,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as servicediscovery from 'aws-cdk-lib/aws-servicediscovery';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as subs from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
@@ -28,7 +29,7 @@ import { ack, nagAccount } from './nag.js';
 import { logWaf, visibility, wafRules } from './waf.js';
 import type { Construct } from 'constructs';
 import { type EnvConfig, extensionOrigins, playerRolePrefix, taskRoleName } from './config.js';
-import { foundationModel } from './models.js';
+import { bedrockResources, bedrockWildcards, CPU_MODEL } from './models.js';
 
 export interface ServiceDeps {
   /** CloudFront-scope WAF from EdgeStack (us-east-1), used when there's no custom domain. */
@@ -57,6 +58,8 @@ export class ServiceStack extends Stack {
     // Players pick any region for their own account, so tasks need internet egress: public subnets with
     // a public IP (no NAT cost) and a security group that only accepts the load balancer.
     const vpc = new ec2.Vpc(this, 'Vpc', {
+      // The default security group allows nothing (nothing uses it; Security Hub EC2.2).
+      restrictDefaultSecurityGroup: true,
       // Explicit AZs: no account lookup needed at synth time (CI synthesises without credentials).
       availabilityZones: [`${env.region}a`, `${env.region}b`],
       natGateways: 0,
@@ -77,8 +80,11 @@ export class ServiceStack extends Stack {
     const cluster = new ecs.Cluster(this, 'Cluster', { vpc, containerInsightsV2: ecs.ContainerInsights.ENABLED });
 
     this.killSwitch = new ssm.StringParameter(this, 'AiEnabled', {
-      parameterName: `/aws-city/${env.name}/ai-enabled`,
-      stringValue: 'true',
+      // Not "/aws-city/…": SSM reserves parameter names that start with "aws" or "ssm" (any case), and refuses them at
+      // deploy ("No access to reserved parameter name"). "cloud-city" is the name the Cognito domain uses for the same reason.
+      parameterName: `/cloud-city/${env.name}/ai-enabled`,
+      // Off when the account's Bedrock wasn't ready at deploy time (the setup wizard asks); setup turns it on again.
+      stringValue: env.aiEnabled === false ? 'false' : 'true',
       description: 'Set to "false" to switch every AI call off within ~30 s (manual kill switch).',
     });
 
@@ -90,16 +96,16 @@ export class ServiceStack extends Stack {
     });
     this.taskRole.applyRemovalPolicy(RemovalPolicy.RETAIN);
 
-    const models = [env.models.main, env.models.light];
+    const models = [...new Set([env.models.main, env.models.light])];
+    // The AI can run in another Region than the stack (EnvConfig.aiRegion): the grant follows it.
+    const aiRegion = env.aiRegion || this.region;
     this.taskRole.addToPolicy(
       new iam.PolicyStatement({
         sid: 'Bedrock',
+        // InvokeModel (Claude) and Converse (Amazon Nova) use the same two actions. A geo inference profile (us./eu./au./
+        // in., lib/models.ts) routes to its foundation model in that geography's Regions; Nova is on demand, in this one.
         actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
-        resources: [
-          ...models.map((m) => `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/${m}`),
-          // A geo inference profile (us./eu./au./in., lib/models.ts) routes to the foundation model in that geography's Regions.
-          ...models.map((m) => `arn:aws:bedrock:*::foundation-model/${foundationModel(m)}*`),
-        ],
+        resources: bedrockResources(aiRegion, this.account, models),
       }),
     );
     this.taskRole.addToPolicy(
@@ -181,6 +187,8 @@ export class ServiceStack extends Stack {
           cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
           // Forwards Host, Origin, Authorization and the Sec-WebSocket-* headers (the JWT rides in one).
           originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+          // AWS's managed security headers on every response: HSTS, nosniff, frame and referrer rules (no CORS change).
+          responseHeadersPolicy: cloudfront.ResponseHeadersPolicy.SECURITY_HEADERS,
         },
         httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
         priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
@@ -210,7 +218,8 @@ export class ServiceStack extends Stack {
       ignoreMode: IgnoreMode.DOCKER,
       exclude: ['**', '!server/**', 'server/node_modules', 'server/dist', 'server/.data', 'server/test', '!src/backend/contract.ts', '!src/console/risk.ts', '!src/console/types.ts', '!src/world/**', '!shared/**'],
     });
-    (image.repository as ecr.Repository).addLifecycleRule({ description: 'Keep the last 10 server images', maxImageCount: 10 });
+    // Three are enough to roll back to; older ones (e.g. before the distroless base) carry fixed CVEs that nobody runs.
+    (image.repository as ecr.Repository).addLifecycleRule({ description: 'Keep the last 3 server images', maxImageCount: 3 });
     // The construct's shared (singleton) CodeBuild project and trigger Lambda: acknowledged on those constructs only.
     for (const helper of this.node.children.filter((c) => /^(ContainerImageBuild|DeployTimeBuildCustomResourceHandler)/.test(c.node.id))) {
       const project = helper.node.tryFindChild('Resource') as CfnResource | undefined;
@@ -238,9 +247,12 @@ export class ServiceStack extends Stack {
       logging: ecs.LogDrivers.awsLogs({ logGroup, streamPrefix: 'server' }),
       stopTimeout: Duration.seconds(120), // SIGTERM → drain (http.drain) → SIGKILL
       readonlyRootFilesystem: true,
+      // The distroless image's nonroot user (server/Dockerfile), stated here too so ECS never runs it as root (ECS.20).
+      user: '65532:65532',
       environment: {
         AWS_CITY_MODE: 'hosted',
         AWS_CITY_REGION: this.region,
+        AWS_CITY_BEDROCK_REGION: aiRegion,
         PUBLIC_HOSTS: publicHost,
         PUBLIC_URL: `https://${publicHost}`,
         EXTENSION_ORIGIN: origins.join(',') || 'chrome-extension://not-configured',
@@ -287,6 +299,78 @@ export class ServiceStack extends Stack {
     service.targetGroup.configureHealthCheck({ path: '/health', healthyHttpCodes: '200', interval: Duration.seconds(15), healthyThresholdCount: 2 });
     service.targetGroup.setAttribute('deregistration_delay.timeout_seconds', '110');
     service.loadBalancer.setAttribute('routing.http.drop_invalid_header_fields.enabled', 'true');
+
+    // ── The city's AI on AWS without Bedrock (EnvConfig.aiCpu) ───────────────────────────────────────────────────────
+    // An open model served by Ollama on its own private Fargate service (Graviton, CPU): reachable only from the server's
+    // security group, by a private DNS name, never through the load balancer. The server's Strands ModelRouter tries
+    // Bedrock first and this model next (Claude, whose routes don't all run on Strands, uses it alone).
+    if (env.aiCpu) {
+      const namespace = `awscity-${env.name}.internal`;
+      cluster.addDefaultCloudMapNamespace({ name: namespace, type: servicediscovery.NamespaceType.DNS_PRIVATE, vpc, useForServiceConnect: false });
+      cluster.enableFargateCapacityProviders();
+      const aiImage = new ContainerImageBuild(this, 'AiImage', {
+        directory: fileURLToPath(new URL('../ai-image', import.meta.url)),
+        platform: ecrAssets.Platform.LINUX_ARM64,
+      });
+      (aiImage.repository as ecr.Repository).addLifecycleRule({ description: 'Keep the last 3 AI images (about 4 GB each)', maxImageCount: 3 });
+      const aiLogs = new logs.LogGroup(this, 'AiLogs', { retention: logs.RetentionDays.ONE_MONTH, removalPolicy: RemovalPolicy.DESTROY });
+      // No task role: the model server calls no AWS API (the execution role only pulls the image and writes logs).
+      const aiTask = new ecs.FargateTaskDefinition(this, 'AiTask', {
+        cpu: CPU_MODEL.cpu,
+        memoryLimitMiB: CPU_MODEL.memoryMiB,
+        // Room for the unpacked image (Ollama + the 2.5 GB model); Fargate's default is 20 GiB.
+        ephemeralStorageGiB: 30,
+        runtimePlatform: { cpuArchitecture: ecs.CpuArchitecture.ARM64, operatingSystemFamily: ecs.OperatingSystemFamily.LINUX },
+      });
+      // Locked down: not root, a read-only root filesystem (only /tmp writable), every Linux capability dropped. Ollama's
+      // pull/create/delete endpoints then can't change the model even if something inside the VPC reached them.
+      aiTask.addVolume({ name: 'tmp' });
+      const aiLinux = new ecs.LinuxParameters(this, 'AiLinux', { initProcessEnabled: true });
+      aiLinux.dropCapabilities(ecs.Capability.ALL);
+      const aiContainer = aiTask.addContainer('ai', {
+        image: aiImage.toEcsDockerImageCode(),
+        logging: ecs.LogDrivers.awsLogs({ logGroup: aiLogs, streamPrefix: 'ai' }),
+        portMappings: [{ containerPort: 11434 }],
+        user: '65534:65534',
+        readonlyRootFilesystem: true,
+        linuxParameters: aiLinux,
+        healthCheck: { command: ['CMD', '/bin/ollama', 'list'], interval: Duration.seconds(30), timeout: Duration.seconds(10), retries: 3, startPeriod: Duration.seconds(60) },
+      });
+      aiContainer.addMountPoints({ containerPath: '/tmp', sourceVolume: 'tmp', readOnly: false });
+      // Its own group: in, only the city server on 11434 (below); out, only HTTPS, which pulling its image from ECR (and
+      // S3 for the layers) and writing logs need. The model server itself calls nobody (OLLAMA_NO_CLOUD, Dockerfile), and
+      // DNS to the VPC resolver isn't filtered by security groups.
+      const aiSg = new ec2.SecurityGroup(this, 'AiSecurityGroup', { vpc, description: 'AWS City AI model server', allowAllOutbound: false });
+      aiSg.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), 'HTTPS only: ECR image pull and CloudWatch Logs');
+      const ai = new ecs.FargateService(this, 'AiService', {
+        cluster,
+        taskDefinition: aiTask,
+        securityGroups: [aiSg],
+        // No desiredCount: CloudFormation starts it at 1 and later deploys leave the count alone, so `npm run ai -- off`
+        // (desired count 0, no deploy) sticks until `npm run ai -- on`.
+        capacityProviderStrategies: [{ capacityProvider: env.aiCpu.spot ? 'FARGATE_SPOT' : 'FARGATE', weight: 1 }],
+        // A public address only to pull its image (this VPC has no NAT); its security group lets only the server in.
+        assignPublicIp: true,
+        vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+        cloudMapOptions: { name: 'ai', dnsRecordType: servicediscovery.DnsRecordType.A, dnsTtl: Duration.seconds(10) },
+        circuitBreaker: { rollback: true },
+        minHealthyPercent: 100,
+        maxHealthyPercent: 200,
+      });
+      ai.connections.allowFrom(service.service, ec2.Port.tcp(11434), 'The city server asks the AI');
+      const claude = /(^|\.)anthropic\./.test(env.models.main);
+      // server/src/config.ts: a hosted server may reach a model of its own only at a name in this private namespace.
+      container.addEnvironment('AWS_CITY_PRIVATE_DOMAIN', namespace);
+      container.addEnvironment('AWS_CITY_LOCAL_URL', `http://ai.${namespace}:11434/v1`);
+      container.addEnvironment('AWS_CITY_LOCAL_MODEL', CPU_MODEL.id);
+      // Bedrock held (setup's `primary`) or Claude: this model alone. Otherwise behind Nova, as Strands ModelRouter's backup.
+      // (Behind a held Bedrock every answer cost two calls: the failed Bedrock try, then this, each counted on the quota.)
+      if (claude || env.aiCpu.primary) container.addEnvironment('AWS_CITY_MODEL_PROVIDER', 'local');
+      else container.addEnvironment('AWS_CITY_LOCAL_FALLBACK', 'true');
+      ack(aiTask, [{ id: 'AwsSolutions-IAM5[Resource::*]', reason: 'ecr:GetAuthorizationToken (pulling the AI image) does not support resource-level permissions.' }]);
+      new CfnOutput(this, 'AiCluster', { value: cluster.clusterName, description: 'npm run ai -- on|off|status' });
+      new CfnOutput(this, 'AiServiceName', { value: ai.serviceName, description: 'npm run ai -- on|off|status' });
+    }
     const albLogs = new s3.Bucket(this, 'AlbLogs', {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED, // ALB log delivery requires SSE-S3
@@ -329,7 +413,10 @@ export class ServiceStack extends Stack {
     // A fixed name: the service lists this alarm for deploy rollback, and a generated name would make the service
     // depend on an alarm that depends on the service's own load balancer (a deploy-time cycle; the ECS module warns).
     const deploy5xxName = `aws-city-${env.name}-http5xx`;
-    alarm('Http5xx', service.loadBalancer.metrics.httpCodeTarget(elbv2.HttpCodeTarget.TARGET_5XX_COUNT, { period: Duration.minutes(5) }), 20, 3, deploy5xxName);
+    // One-minute periods: ECS works out how long to keep watching a finished deploy from this alarm's settings ("based on
+    // the alarm configuration", ECS deployment alarms docs), and 3 × 5 minutes held every deploy open ~16 minutes after
+    // the new servers were already live. 3 × 1 minute at 5 errors a minute is the same rate as 20 in 5 minutes.
+    alarm('Http5xx', service.loadBalancer.metrics.httpCodeTarget(elbv2.HttpCodeTarget.TARGET_5XX_COUNT, { period: Duration.minutes(1) }), 5, 3, deploy5xxName);
     alarm('Unhealthy', service.targetGroup.metrics.unhealthyHostCount({ period: Duration.minutes(1) }), 1, 5);
     const app = (name: string) => new cloudwatch.Metric({ namespace: 'AWSCity', metricName: name, statistic: 'Sum', period: Duration.minutes(5) });
     alarm('QuotaRejections', app('QuotaRejected'), 200);
@@ -389,7 +476,7 @@ export class ServiceStack extends Stack {
     const IAM5 = 'AwsSolutions-IAM5';
     ack(this.taskRole, [
       { id: `${IAM5}[Resource::arn:aws:iam::*:role/${playerRolePrefix(env)}-*]`, reason: "Player roles live in every player's own account; our own account is excluded by an aws:ResourceAccount condition." },
-      ...models.map((m) => ({ id: `${IAM5}[Resource::arn:aws:bedrock:*::foundation-model/${foundationModel(m)}*]`, reason: "The geo inference profile routes to this model in several of its geography's Regions." })),
+      ...bedrockWildcards(models).map((arn) => ({ id: `${IAM5}[Resource::${arn}]`, reason: "The geo inference profile routes to this model in several of its geography's Regions." })),
       { id: `${IAM5}[Resource::AWSCity-${env.name}-Data:ExportsOutputFnGetAttScreenshotsA7A7D8A0Arn0675524A/screenshots/*]`, reason: 'Objects under the screenshots/ prefix only (one folder per player).' },
       // TableV2.grantReadWriteData on a customer-managed key: the wildcards are action families, on that one key.
       { id: `${IAM5}[Action::kms:ReEncrypt*]`, reason: 'Table data-key operations on the single table key (CDK grantReadWriteData).' },

@@ -12,8 +12,8 @@ import { cityPlanFor, isRealMap } from '@/world/plan';
 import { DISTRICTS, servicesIn, type DistrictId } from '@/world/taxonomy';
 
 /** Minimap size, CSS px (the map's diamond is 2:1). */
-export const MINI_W = 168;
-export const MINI_H = 92;
+const MINI_W = 168;
+const MINI_H = 92;
 /** How often the camera box follows the camera. */
 const TICK_MS = 200;
 

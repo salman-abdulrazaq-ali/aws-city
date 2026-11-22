@@ -47,4 +47,23 @@ describe('per-socket approvals (contract v2 deploy.preview → deploy.approve)',
     expect(preview.confirmText).toBe('photos');
     a.cancelAll();
   });
+
+  it('v2.18: each card names the account and Region read when it is made (a re-link mid-socket shows the new ones)', () => {
+    const events: ServerEvent[] = [];
+    const where = { region: 'us-west-2', accountId: '047463438585' as string | undefined };
+    const a = createApprovals({ region: () => where.region, accountId: () => where.accountId });
+    void a.request('t1', req, (e) => events.push(e));
+    where.region = 'eu-west-2';
+    where.accountId = '111122223333';
+    void a.request('t2', req, (e) => events.push(e));
+    where.accountId = undefined;
+    void a.request('t3', req, (e) => events.push(e));
+    expect(events.map((e) => e.type === 'deploy.preview' && [e.accountId, e.region])).toEqual([
+      ['047463438585', 'us-west-2'],
+      ['111122223333', 'eu-west-2'],
+      [undefined, 'eu-west-2'],
+    ]);
+    expect(events[2]).not.toHaveProperty('accountId');
+    a.cancelAll();
+  });
 });

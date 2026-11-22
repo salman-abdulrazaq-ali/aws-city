@@ -14,7 +14,7 @@ export const FIRST_PASS_BONUS = 10;
 export const IMPROVE_XP = 4;
 export const TRY_XP = 2;
 
-export type RewardKind = 'first' | 'better' | 'try' | 'none';
+type RewardKind = 'first' | 'better' | 'try' | 'none';
 
 export interface PuzzleReward {
   kind: RewardKind;

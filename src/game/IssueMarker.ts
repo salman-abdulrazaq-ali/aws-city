@@ -8,11 +8,11 @@ import { crisp, TEXT_FONT } from './SpeechBubble';
 import { COLOR, CSS, FONT_SIZE } from './theme';
 
 /** Severity colours (the UI's --bad / --accent / --warn tokens). */
-export const SEVERITY_COLOR: Record<CityFinding['severity'], number> = { high: COLOR.bad, medium: COLOR.accent, low: COLOR.warn };
+const SEVERITY_COLOR: Record<CityFinding['severity'], number> = { high: COLOR.bad, medium: COLOR.accent, low: COLOR.warn };
 const RANK = { low: 0, medium: 1, high: 2 } as const;
 
 /** The worst severity among a landmark's open findings. */
-export const worstSeverity = (fs: Pick<CityFinding, 'severity'>[]) =>
+const worstSeverity = (fs: Pick<CityFinding, 'severity'>[]) =>
   fs.reduce<CityFinding['severity']>((w, f) => (RANK[f.severity] > RANK[w] ? f.severity : w), 'low');
 
 /**

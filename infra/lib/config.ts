@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import type { App } from 'aws-cdk-lib';
-import { modelsFor } from './models.js';
+import { type ModelChoice, modelsForChoice } from './models.js';
 
 /** Written by `npm run setup` (infra/setup/setup.mjs) at the repo root; gitignored, no secrets in it. */
-export const SETUP_FILE = new URL('../../aws-city.config.json', import.meta.url);
+const SETUP_FILE = new URL('../../aws-city.config.json', import.meta.url);
 export const readSetupFile = (): Record<string, unknown> => (existsSync(SETUP_FILE) ? JSON.parse(readFileSync(SETUP_FILE, 'utf8')) : {});
 
 /** Per-environment settings from cdk.json context ("staging" / "prod"). Empty strings = not set up yet. */
@@ -33,6 +33,28 @@ export interface EnvConfig {
   globalDailyModelCalls: number;
   minTasks: number;
   maxTasks: number;
+  /** The agents' models: Claude (geo profiles, the default) or Amazon Nova (on demand in the Region). The setup wizard asks. */
+  modelChoice?: ModelChoice;
+  /**
+   * The kill switch's value at deploy: false deploys the city with its AI off (the account's Bedrock isn't ready yet,
+   * e.g. a new account's hold). Absent = on. Re-running setup once Bedrock answers turns it back on.
+   */
+  aiEnabled?: boolean;
+  /**
+   * Where the server calls Bedrock (absent = `region`). A new account's Bedrock can be held at 0 tokens a day in its
+   * Region and not in another: the wizard finds one that answers and offers it. Data, sign-in and the server stay in
+   * `region`; only the agents' prompts are processed in `aiRegion`.
+   */
+  aiRegion?: string;
+  /** Amazon Nova with Lite in every slot: the AI Region has a Lite quota but none for Pro yet. */
+  novaLiteOnly?: boolean;
+  /**
+   * The city's AI on AWS without Bedrock: an open model (CPU_MODEL, lib/models.ts) served by Ollama on a private Fargate
+   * service (Graviton, 8 vCPU, 16 GB), behind Bedrock in the server's Strands ModelRouter. `spot`: Fargate Spot (cheaper;
+   * AWS can stop the task with two minutes' notice and ECS starts another). Absent = no AI service. The setup wizard asks.
+   */
+  /** `primary`: Bedrock is held, so the server asks only this model (one call and one quota count per answer). */
+  aiCpu?: { spot: boolean; primary?: boolean };
   models: { main: string; light: string };
   /**
    * Optional: TypeSafe's Jev as a second opinion on agents' writes (docs/jev.md). The key lives in Secrets Manager under
@@ -54,13 +76,16 @@ export const loadEnv = (app: App): EnvConfig => {
   // Cognito rejects prefix domains containing reserved words: fail at synth, not 10 minutes into a deploy.
   if (/aws|amazon|cognito/.test(raw.cognitoDomainPrefix ?? '')) throw new Error(`cognitoDomainPrefix "${raw.cognitoDomainPrefix}" can't contain aws, amazon or cognito`);
   const region = raw.region ?? process.env.CDK_DEFAULT_REGION ?? 'us-west-2';
+  const aiRegion = raw.aiRegion || region;
   return {
     ...raw,
     name,
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region,
-    // The inference-profile geo (us./eu./au./in.) follows the Region; a Region without one fails here, at synth.
-    models: modelsFor(region),
+    aiRegion,
+    // Claude: the inference-profile geo (us./eu./au./in.) follows the AI Region, and a Region without one fails here, at
+    // synth. Amazon Nova: on-demand ids, the same in every Region that offers them (the wizard checks it answers).
+    models: modelsForChoice(aiRegion, raw.modelChoice === 'nova' ? 'nova' : 'claude', { liteOnly: raw.novaLiteOnly }),
   };
 };
 

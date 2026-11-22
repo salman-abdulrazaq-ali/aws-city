@@ -152,6 +152,13 @@ export const metered = (
       throw modelError(err);
     }
   };
+  /** One call taken for a model call made outside create/stream (the Strands models). */
+  const gate = async () => void (await take());
+  const refund = async (err?: unknown) => {
+    if (!provenNotRun(err)) return;
+    const day = today(deps.now?.());
+    await giveBack({ day, fresh: wasNew(day) });
+  };
   /** Token use per call (EMF): what the bill is made of, and whether prompt caching is working. */
   const record = (msg: Anthropic.Message) => {
     const u = msg.usage;
@@ -163,15 +170,16 @@ export const metered = (
   };
   return {
     model: llm.model,
+    family: llm.family,
+    sees: llm.sees,
+    small: llm.small,
     client: llm.client,
     /** The same checks for model calls made outside create/stream (the Strands citizens' model). */
-    gate: async () => void (await take()),
-    /** Gives back one call taken by `gate` whose failure proves the model never ran (the Strands citizens' model, before any event). */
-    refund: async (err?: unknown) => {
-      if (!provenNotRun(err)) return;
-      const day = today(deps.now?.());
-      await giveBack({ day, fresh: wasNew(day) });
-    },
+    gate,
+    /** Gives back one call taken by `gate` whose failure proves the model never ran (the Strands models, before any event). */
+    refund,
+    /** Strands models for this family, every call through the gate above and a failure before any event offered to `refund`. */
+    strands: (opts) => llm.strands(opts, gate, refund),
     canFallBack: llm.canFallBack,
     async create(params, opts = {}) {
       const first = record(await call(await take(), () => llm.create(params, opts)));

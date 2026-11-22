@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { CognitoAuth } from '@/backend/auth';
+import { resetVault, vault } from '@/backend/vault';
 
 const DOMAIN = 'https://cloud-city.auth.us-west-2.amazoncognito.com';
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -9,7 +10,8 @@ describe('CognitoAuth', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
   beforeEach(async () => {
     fakeBrowser.reset();
-    await fakeBrowser.storage.local.set({ 'auth.refresh': 'r1' });
+    resetVault();
+    await vault.set('refresh', 'r1');
     fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
   });
@@ -19,10 +21,42 @@ describe('CognitoAuth', () => {
     const auth = new CognitoAuth({ domain: DOMAIN, clientId: 'c' });
     fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
     await expect(auth.token()).rejects.toThrow();
-    expect((await fakeBrowser.storage.local.get('auth.refresh'))['auth.refresh']).toBe('r1');
+    expect(await vault.get('refresh')).toBe('r1');
     fetchMock.mockResolvedValueOnce(json(400, { error: 'invalid_grant' }));
     expect(await auth.token()).toBeUndefined();
+    expect(await vault.get('refresh')).toBeUndefined();
+  });
+
+  it('the refresh token never sits where a content script can reach it, and one planted there is ignored', async () => {
+    const auth = new CognitoAuth({ domain: DOMAIN, clientId: 'c' });
+    fetchMock.mockResolvedValueOnce(json(200, { access_token: 'a1', expires_in: 3600, refresh_token: 'r2' }));
+    expect(await auth.token()).toBe('a1');
+    expect(await vault.get('refresh')).toBe('r2');
+    // storage.local (readable and writable by content scripts) only says "signed in".
+    expect(JSON.stringify(await fakeBrowser.storage.local.get(null))).not.toMatch(/r1|r2/);
+    // A compromised page plants its own token where old builds kept it: never read, and removed.
+    await auth.signOut();
+    await fakeBrowser.storage.local.set({ 'auth.refresh': 'attacker' });
+    expect(await auth.token()).toBeUndefined();
+    // Signing out revoked this device's real token (the vault's) at Cognito; the planted one was never sent anywhere.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]![0])).toBe(`${DOMAIN}/oauth2/revoke`);
+    expect(String((fetchMock.mock.calls[1]![1] as RequestInit).body)).toBe('token=r2&client_id=c');
+    expect(fetchMock.mock.calls.some(([, init]) => String((init as RequestInit | undefined)?.body ?? '').includes('attacker'))).toBe(false);
     expect((await fakeBrowser.storage.local.get('auth.refresh'))['auth.refresh']).toBeUndefined();
+  });
+
+  it('other surfaces hear sign-in and sign-out through the marker', async () => {
+    const auth = new CognitoAuth({ domain: DOMAIN, clientId: 'c' });
+    const heard: string[] = [];
+    const stop = auth.onChange((c) => heard.push(c));
+    await auth.signOut();
+    fetchMock.mockResolvedValueOnce(json(200, { access_token: 'a1', expires_in: 3600, refresh_token: 'r3' }));
+    await vault.set('refresh', 'r1');
+    await auth.token();
+    await auth.signOut();
+    await vi.waitFor(() => expect(heard).toEqual(['signed-in', 'signed-out']));
+    stop();
   });
 
   it('concurrent callers share one refresh', async () => {

@@ -19,7 +19,7 @@ in order, and you notice every word you don't understand.
   a player would. If you can't tell what to do next from the screen, that is a finding.
 
 ## Steps
-1. `git clone https://github.com/iloveclouduk/AWS-North-Hackathon.git` into the scratch dir. Time everything from here.
+1. `git clone https://github.com/salman-abdulrazaq-ali/aws-city.git` into the scratch dir. Time everything from here.
 2. Read README.md top to bottom as Sam. Follow the "quick path" for someone without a store install. Note every
    prerequisite you weren't told how to get, every unexplained term, every command that fails or needs a second try.
 3. Get the game running. `npm run open` / `npm start -- --demo` open a headed browser; if that can't work here, build

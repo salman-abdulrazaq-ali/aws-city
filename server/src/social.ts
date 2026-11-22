@@ -11,7 +11,7 @@ export interface Mayor {
   name: string;
   rank: string;
 }
-export interface BoardEntry {
+interface BoardEntry {
   name: string;
   score: number;
   you?: boolean;
@@ -32,13 +32,13 @@ export interface SocialStore {
 export const PRESENCE_MS = 90_000;
 export const BOARD_TTL_MS = 9 * 7 * 86_400_000;
 export const MAX_MAYORS = 12;
-export const BOARD_SIZE = 10;
+const BOARD_SIZE = 10;
 
 /** The salted hash a player is filed under (never their Cognito sub). */
 export const whoOf = (sub: string) => createHash('sha256').update(`aws-city-social:${sub}`).digest('hex').slice(0, 20);
 
 /** Boards: one per mini-game, and "Mayors of <Region>" (city rank points). */
-export const GAME_BOARDS = ['fishing', 'shield', 'route53', 'lambda', 'ec2', 'dynamodb', 'redteam', 'launch', 'queue', 'iamgate', 'edge'] as const;
+const GAME_BOARDS = ['fishing', 'shield', 'route53', 'lambda', 'ec2', 'dynamodb', 'redteam', 'launch', 'queue', 'iamgate', 'edge'] as const;
 export const isBoard = (b: string) => (GAME_BOARDS as readonly string[]).includes(b) || /^mayors:[a-z]{2}(-[a-z]+)+-\d$/.test(b);
 /** The most a real round (or a city) can score: anything above is clamped, so a forged score can't top a board by much. */
 export const maxScore = (board: string) => (board.startsWith('mayors:') ? 3_000 : 2_000);
@@ -109,9 +109,18 @@ export function memorySocial(now: () => number = Date.now): SocialStore {
   };
 }
 
-/** Presence answers are cached per Region for `ms` (each socket beats every 30 s; one Query serves them all). */
+/** Most board answers kept at once; past this the cache starts again (forgetting one only costs a read). */
+const MAX_CACHED_BOARDS = 5_000;
+
+/**
+ * Presence answers are cached per Region for `ms` (each socket beats every 30 s; one Query serves them all). Board
+ * answers are cached per player and board for `ms` too: a board read is up to 4 pages, and a socket may otherwise ask
+ * 10 times a second. A player's own submit clears theirs, so they see their new score at once.
+ */
 export function withPresenceCache(store: SocialStore, ms = 15_000, now: () => number = Date.now): SocialStore {
   const cache = new Map<string, { at: number; value: Promise<{ online: number; mayors: Mayor[] }> }>();
+  const boards = new Map<string, { at: number; value: Promise<BoardEntry[]> }>();
+  const boardKey = (board: string, week: string, sub: string, limit: number) => `${board}#${week}#${limit}#${whoOf(sub)}`;
   return {
     ...store,
     presence(region) {
@@ -121,6 +130,20 @@ export function withPresenceCache(store: SocialStore, ms = 15_000, now: () => nu
       cache.set(region, { at: now(), value });
       value.catch(() => cache.delete(region));
       return value;
+    },
+    top(board, week, sub, limit) {
+      const key = boardKey(board, week, sub, limit);
+      const hit = boards.get(key);
+      if (hit && now() - hit.at < ms) return hit.value;
+      if (boards.size >= MAX_CACHED_BOARDS) boards.clear();
+      const value = store.top(board, week, sub, limit);
+      boards.set(key, { at: now(), value });
+      value.catch(() => boards.delete(key));
+      return value;
+    },
+    async submit(board, week, sub, name, score) {
+      await store.submit(board, week, sub, name, score);
+      for (const key of boards.keys()) if (key.startsWith(`${board}#${week}#`) && key.endsWith(`#${whoOf(sub)}`)) boards.delete(key);
     },
   };
 }

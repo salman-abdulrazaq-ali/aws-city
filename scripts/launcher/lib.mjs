@@ -40,6 +40,23 @@ export const pickProfile = (profiles, env = process.env) => {
 };
 
 /**
+ * The Region a profile names in ~/.aws/config (`[profile x]`, or `[default]` for default), or undefined. Only that
+ * profile's own block counts: another profile's Region is never borrowed.
+ */
+export const profileRegion = (config = '', profile = 'default') => {
+  const header = profile === 'default' ? /^\s*\[(?:profile\s+)?default\]\s*$/ : new RegExp(`^\\s*\\[profile\\s+${profile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]\\s*$`);
+  let inside = false;
+  for (const line of config.split('\n')) {
+    if (/^\s*\[/.test(line)) inside = header.test(line);
+    else if (inside) {
+      const m = /^\s*region\s*=\s*([a-z0-9-]+)\s*$/.exec(line);
+      if (m) return m[1];
+    }
+  }
+  return undefined;
+};
+
+/**
  * Adds or replaces one profile in a credentials file's text, leaving every other profile untouched.
  * Keys are written as given; callers never log them.
  */
@@ -71,13 +88,65 @@ export const parsePastedKeys = (text) => {
   return accessKeyId && secretAccessKey ? { accessKeyId, secretAccessKey, sessionToken } : undefined;
 };
 
+const ACCOUNT_VERIFYING =
+  'Your AWS account is still being verified (new accounts: usually under 2 hours). Try again later; after 2 hours, write to aws-verification@amazon.com.';
+const PAID_PLAN =
+  'This model isn’t available on this account yet. On the AWS Free plan, paid Marketplace models (such as Claude) need the Paid plan: upgrade as the root user (Billing → Upgrade plan; your credits stay).';
+const CLAUDE_FORM ="Claude on Bedrock isn't enabled yet: in the Bedrock console, open the Model catalog, pick a Claude model and submit Anthropic's one-time use-case form.";
+// Service Quotas refuses a request at or below the default (30M tokens a minute for Opus 5.5), so a new account held
+// at 0 can't ask there: it waits for AWS to verify it, then asks AWS Support.
+const CLAUDE_QUOTA =
+  "Bedrock's AI models have no quota on this account right now. New accounts start at 0 until AWS verifies them: try again in a few hours. If it stays at 0, open an AWS Support case (Service limit increase → Amazon Bedrock).";
+
+/**
+ * The server's Claude models in local mode: the Region's inference-profile ids (`modelsFor` in infra/lib/models.ts, so
+ * eu-west-2 gets `eu.`), unless the player set their own in the environment.
+ */
+export const modelEnv = ({ main, light }, env = {}) => ({
+  AWS_CITY_MODEL: env.AWS_CITY_MODEL || main,
+  AWS_CITY_FALLBACK_MODEL: env.AWS_CITY_FALLBACK_MODEL || light,
+  AWS_CITY_LIGHT_MODEL: env.AWS_CITY_LIGHT_MODEL || env.AWS_CITY_FALLBACK_MODEL || light,
+});
+
+/**
+ * The model on this computer: Ollama's OpenAI-compatible endpoint (the server allows only loopback addresses) and a model
+ * with tool calling that fits a 16 GB laptop. The same defaults as server/src/config.ts.
+ */
+export const LOCAL_URL = 'http://127.0.0.1:11434/v1';
+export const DEFAULT_LOCAL_MODEL = 'qwen3:8b';
+/** An Ollama model name: letters, digits, . _ - / and one :tag (e.g. qwen3:8b, library/llama3.1:8b). */
+const LOCAL_MODEL_RE = /^[a-z0-9][\w./-]*(:[\w.-]+)?$/i;
+
+/** Is `model` among Ollama's models (`/v1/models` ids)? A name without a tag means its `:latest`. */
+export const hasLocalModel = (ids, model) => {
+  const full = (m) => (m.includes(':') ? m : `${m}:latest`);
+  return ids.some((id) => full(id) === full(model));
+};
+
+/**
+ * The server's env for the model on this computer (server/src/config.ts): all of it there (`local`), or behind Bedrock
+ * (`fallback`: Strands' ModelRouter tries Amazon Nova first). A player's own env wins, as in modelEnv.
+ */
+export const localEnv = ({ model, fallback = false }, env = {}) => ({
+  ...(fallback ? { AWS_CITY_LOCAL_FALLBACK: 'true' } : { AWS_CITY_MODEL_PROVIDER: 'local' }),
+  AWS_CITY_LOCAL_MODEL: env.AWS_CITY_LOCAL_MODEL || model,
+  AWS_CITY_LOCAL_URL: env.AWS_CITY_LOCAL_URL || LOCAL_URL,
+});
+
 /** Plain-language fixes for the errors people actually hit. */
 export const explainAwsError = (err) => {
   const name = err?.name ?? '';
   const msg = String(err?.message ?? err);
   if (/ExpiredToken|RequestExpired|token.*expired/i.test(name + msg)) return 'Those AWS keys have expired. Get fresh ones (Workshop Studio → "Get AWS CLI credentials") or sign in again.';
   if (/InvalidClientTokenId|SignatureDoesNotMatch|UnrecognizedClient/i.test(name + msg)) return "AWS didn't accept those keys. Check you copied all of them (including the session token for temporary keys).";
+  // An `aws login` (or SSO) session that ran out: the sign-in exists, it only needs renewing (credential-provider-login).
+  if (/session has expired|re-?authenticate|aws login|sso session.*expired/i.test(msg)) return 'Your AWS sign-in has expired. Sign in again (it opens your browser).';
   if (/could not load credentials|CredentialsProviderError|no credentials/i.test(name + msg)) return 'No AWS sign-in found yet.';
+  // A brand-new account: AWS verifies it first, then Claude needs Anthropic's one-time form, and the quota can start at 0.
+  if (/being verified|account.{0,40}verif/i.test(msg)) return ACCOUNT_VERIFYING;
+  if (/use[- ]case/i.test(msg)) return CLAUDE_FORM;
+  if (/not available for this account/i.test(msg)) return PAID_PLAN;
+  if (/Throttl|ServiceQuotaExceeded|too many (tokens|requests)|quota/i.test(name + msg)) return CLAUDE_QUOTA;
   if (/AccessDenied/i.test(name + msg)) return 'Signed in, but this account is not allowed to do that.';
   if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|timed? ?out/i.test(msg)) return "Couldn't reach AWS. Check your internet connection.";
   return msg.split('\n')[0].slice(0, 200);
@@ -161,14 +230,11 @@ export const localModels = (region) => {
 export const unsupportedRegionText = (region) =>
   `Claude on Bedrock isn't available through ${region} for AWS City. Pick one of these Regions instead: ${SUPPORTED_REGIONS.join(', ')}.`;
 
-/** What the server gets so it calls Claude through the Region's own inference profiles (server/src/config.ts reads these). */
-export const modelEnv = ({ main, light }) => ({ AWS_CITY_MODEL: main, AWS_CITY_LIGHT_MODEL: light, AWS_CITY_FALLBACK_MODEL: light });
-
 /** Where to turn Claude on: Bedrock has no Model access page in commercial Regions; this is AWS's guide to the steps. */
 export const BEDROCK_ACCESS_URL = 'https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html';
 
 /**
- * `npm start` flags → { help, mode?, browser?, intro?, rebuild?, profile?, region?, allowFixes?, error? }. Pure, so it's unit-tested.
+ * `npm start` flags → { help, mode?, browser?, intro?, rebuild?, profile?, region?, allowFixes?, model?, localFallback?, localModel?, error? }. Pure, so it's unit-tested.
  * `intro` is set only by --intro / --no-intro (the intro plays every run unless --no-intro).
  * `npm start --demo` (no `--`) never reaches argv: npm keeps it as npm_config_demo, so that's read too.
  */
@@ -212,9 +278,21 @@ export const parseArgs = (argv, env = {}) => {
       const v = value();
       if (!v || !REGION_RE.test(v)) return fail(`--region needs an AWS Region, e.g. --region us-west-2${v && !v.startsWith('-') ? ` ("${v}" isn't one)` : ''}`);
       out.region = v;
+    } else if (flag === '--model') {
+      const v = value()?.toLowerCase();
+      if (v !== 'claude' && v !== 'nova' && v !== 'local') return fail('--model needs claude, nova or local, e.g. --model nova');
+      out.model = v;
+    } else if (flag === '--local-fallback') out.localFallback = true;
+    else if (flag === '--local-model') {
+      const v = value();
+      if (!v || !LOCAL_MODEL_RE.test(v)) return fail('--local-model needs an Ollama model name, e.g. --local-model llama3.1:8b');
+      out.localModel = v;
     } else return fail(`Unknown option "${args[i]}".`);
   }
-  if ((out.profile || out.region || out.allowFixes) && out.mode === 'demo') return fail('--profile, --region and --allow-fixes are for real AWS (--live); the demo needs no AWS account.');
+  if ((out.profile || out.region || out.allowFixes || out.model || out.localFallback || out.localModel) && out.mode === 'demo')
+    return fail('--profile, --region, --allow-fixes, --model and the local model options are for real AWS (--live); the demo needs no AWS account.');
+  // Bedrock first, this computer next: behind Amazon Nova only (Claude keeps its own fallback; the server refuses it too).
+  if (out.localFallback && out.model && out.model !== 'nova') return fail('--local-fallback goes with --model nova (Bedrock first, the model on this computer when Bedrock is held)');
   return out;
 };
 
@@ -263,6 +341,11 @@ export const helpText = () =>
     '  --profile <name>     real AWS: the AWS profile to use (default: the one that worked last time)',
     '  --region <name>      real AWS: where Claude runs (default: last time, or us-west-2)',
     '  --allow-fixes        real AWS: the citizens may fix what they find (you approve each fix; AWS_CITY_ALLOW_FIXES=true)',
+    '  --model claude|nova|local',
+    '                       real AWS: the agents’ models: Claude or Amazon Nova on Bedrock, or local, a model on this',
+    '                       computer (Ollama; it offers to install it and download the model) (default: last time, or claude)',
+    `  --local-model <name> the Ollama model for local (default: ${DEFAULT_LOCAL_MODEL})`,
+    '  --local-fallback     with --model nova: Bedrock first, the model on this computer when Bedrock is held or offline',
     '  --rebuild            build the extension even if nothing changed since the last build',
     '  --no-intro           skip the 2 s title animation (any key skips it too)',
     '  -h, --help           show this help',
@@ -271,6 +354,7 @@ export const helpText = () =>
     '  npm start -- --demo --browser cft        straight to the demo, zero clicks',
     '  npm start -- --demo --browser chrome     the demo in Google Chrome (load it once from chrome://extensions)',
     '  npm start -- --live --browser firefox    real AWS in Firefox',
+    '  npm run live -- --model local            real AWS, the agents’ AI on this computer (when Bedrock is held)',
     '',
     'Without --browser it uses the browser you picked last time (or the AWS City browser).',
     'Once the city is open, the terminal is its remote: c city, p practice console, a AWS console, r reopen, q quit.',
@@ -285,6 +369,30 @@ export const helpText = () =>
 export const lockPid = (target) => {
   const m = /-(\d+)$/.exec(String(target ?? '').trim());
   return m ? Number(m[1]) : undefined;
+};
+
+// ── the live (hosted) city ───────────────────────────────────────────────────────────────────────
+// `npm run open:hosted` (and the end of `npm run setup`) opens the city your setup deployed, in Chrome for Testing: branded
+// Chrome ignores --load-extension, so only you can load an unpacked build there (chrome://extensions, once).
+
+/** Its own profile, so the demo's progress (.cache/chrome-profile) never mixes into a signed-in account. */
+export const HOSTED_PROFILE = '.cache/chrome-profile-hosted';
+
+/**
+ * Why the live city can't be opened, or undefined when it can. `envProduction` is .env.production (setup writes it with
+ * the server and sign-in addresses); `manifest` is the built .output/chrome-mv3/manifest.json, once built.
+ */
+export const hostedBuildProblem = ({ envProduction, manifest } = {}) => {
+  if (!envProduction || !/^WXT_AWS_API_URL=https:\/\/\S+$/m.test(envProduction))
+    return 'No live city to open yet: run  npm run setup  first (it deploys your city and writes .env.production).';
+  if (manifest === undefined) return undefined;
+  let key;
+  try {
+    key = JSON.parse(manifest).key;
+  } catch {
+    key = undefined;
+  }
+  return key ? undefined : '.output/chrome-mv3 has no fixed extension id, so sign-in would fail. Run  npx wxt build --mode production  and try again.';
 };
 
 /** The line scripts/open.mjs prints when the profile is already open (start.mjs reads it back). */

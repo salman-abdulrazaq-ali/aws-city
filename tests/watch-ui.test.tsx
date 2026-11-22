@@ -164,6 +164,14 @@ describe('the Drawing board', () => {
 });
 
 describe('My City, the progress hub', () => {
+  // The lights below were lit on 18–19 Oct: pin "today" to the next day, or a month later the freeze is (rightly)
+  // promised to a missed day and "1 freeze held" reads "No freezes held yet". Only Date is faked; timers stay real.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 20, 12));
+  });
+  afterEach(() => vi.useRealTimers());
+
   it('shows ⭐, 🪙, 💡 and crowns, then City Lights, the season road, City Hall and the Service Codex', () => {
     // The day after the fixture's last learning day: later, the missed days spend the held freeze (lightsView).
     vi.useFakeTimers({ toFake: ['Date'] });

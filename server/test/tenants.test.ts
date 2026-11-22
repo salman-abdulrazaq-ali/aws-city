@@ -1,3 +1,6 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AccountLinker } from '../src/accounts/link.js';
 import { type AwsClients, clientsFor, REFUSAL_WINDOW_MS } from '../src/aws.js';
@@ -7,7 +10,7 @@ import { createUploadStore } from '../src/contract/uploads.js';
 import { BROKEN_AFTER, emptyWorld } from '../src/tenants.js';
 import { localStores } from '../src/store/local.js';
 import { today } from '../src/store/types.js';
-import type { ServerEvent } from '../src/world.js';
+import { CONTRACT_VERSION, type ServerEvent } from '../src/world.js';
 import { fakeLlm, message, text, toolUse } from './fakes.js';
 import { table } from './fixtures.js';
 
@@ -105,6 +108,18 @@ describe('tenant account changes', () => {
     expect(running()).toBe(0);
   });
 
+  it('a profile turned private leaves the boards even when no city is open on this task (2+ tasks)', async () => {
+    const stores = localStores(join(mkdtempSync(join(tmpdir(), 'aws-city-private-')), 'progress.json'));
+    const forget = vi.spyOn(stores.social, 'forget');
+    const tenants = createTenants({ config: loadConfig({}), stores, uploads: createUploadStore('http://127.0.0.1:1'), llm: fakeLlm([]).llm, enabled: async () => true, awsFor: () => undefined, walkMs: 0 });
+    const data = tenants.data({ sub: 'goes-private' });
+    const progress = (pub: boolean) => ({ version: 1, landmarks: {}, updatedAt: new Date().toISOString(), profile: { public: pub, name: 'Ada Lovelace' } });
+    expect((await data.progress.put(progress(true))).ok).toBe(true);
+    expect(forget).not.toHaveBeenCalled();
+    expect((await data.progress.put(progress(false))).ok).toBe(true);
+    expect(forget).toHaveBeenCalledWith('goes-private');
+  });
+
   it('REST data for a player with no open city never assumes their role or polls AWS', async () => {
     const tenants = setup(async () => linked('111122223333'));
     expect(await tenants.data({ sub: 'u9' }).progress.get()).toBeNull();
@@ -139,7 +154,7 @@ describe('AWS public status for every player (v2.6)', () => {
   });
 });
 
-describe('the account lifecycle (v2.17)', () => {
+describe('the account lifecycle (v2.19)', () => {
   const ACCOUNT = '111122223333';
   const linkedRecord = { status: 'linked' as const, externalId: 'x'.repeat(32), region: 'us-west-2', roleArn: `arn:aws:iam::${ACCOUNT}:role/AWSCityPlayerRole-us-west-2`, accountId: ACCOUNT, roleVersion: 4, fixes: false };
   /** A hosted-like hub: a linker that hands out links and verifies, and awsFor that acts only for a linked record. */
@@ -317,7 +332,7 @@ describe('the account lifecycle (v2.17)', () => {
     await stores.social.beat('us-west-2', 'u2', { name: 'Brave Heron', rank: 'Town' });
     const out = await tenants.data({ sub: 'u1' }).exportMe();
     expect(out).toMatchObject({
-      contract: '2.17',
+      contract: CONTRACT_VERSION,
       progress: { profile: { name: 'Kind Otter' } },
       account: { status: 'linked', accountId: ACCOUNT, region: 'us-west-2', linkedAt: '2026-11-20T10:00:00.000Z', roleVersion: 4, fixes: false },
     });
@@ -330,7 +345,7 @@ describe('the account lifecycle (v2.17)', () => {
   });
 });
 
-describe('resource.remove (v2.17): no model, the ActionService, the gate and the player approval', () => {
+describe('resource.remove (v2.19): no model, the ActionService, the gate and the player approval', () => {
   const ACCOUNT = '123456789012';
   /** Real gated clients whose requests land in `sent` (signed, so past the gate), never the network. */
   const recording = () => {
@@ -422,7 +437,7 @@ describe('resource.remove (v2.17): no model, the ActionService, the gate and the
   });
 });
 
-describe('a disconnected or changed account changes nothing (v2.17)', () => {
+describe('a disconnected or changed account changes nothing (v2.19)', () => {
   const ACCOUNT = '123456789012';
   const record = { status: 'linked' as const, externalId: 'x'.repeat(32), region: 'us-west-2', roleArn: 'arn', accountId: ACCOUNT, roleVersion: 4, fixes: true };
   /** One server task's tenant hub: hosted-like (a linker for unlink and recheck), acting only for a linked record. */

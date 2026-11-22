@@ -1,4 +1,4 @@
-// A real AWS account as the player sees it (contract v2.17). Pure: no store, no I/O, so the Deploy tab, the To-do list,
+// A real AWS account as the player sees it (contract v2.19). Pure: no store, no I/O, so the Deploy tab, the To-do list,
 // ⋯ → Account and City care agree. Which Regions a link can use, whether a link is under way (the Deploy tab stays in
 // sight), the To-do row that offers one, the role update and "turn fixes on" steps, and the city's own builds that
 // "Take it down" can remove (resource.remove).
@@ -14,7 +14,7 @@ export interface AccountLike {
   region?: string;
   linkUrl?: string;
   mfaRequired?: boolean;
-  /** v2.17: the link is kept but its role can't be used any more (the server stopped reading the account). */
+  /** v2.19: the link is kept but its role can't be used any more (the server stopped reading the account). */
   broken?: boolean;
   roleVersion?: number;
   latestRoleVersion?: number;

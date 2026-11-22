@@ -23,7 +23,7 @@ export interface CharacterIndex {
   /** `crowd`: a 3/4-size copy of citizen `of` (art/characters/crowd_small.py), with its own `frame` size. */
   [id: string]: { role: 'player' | 'agent' | 'citizen' | 'crowd'; anims: string[]; frame?: [number, number]; of?: string };
 }
-export interface SpriteAnchor {
+interface SpriteAnchor {
   ax: number;
   ay: number;
   w: number;

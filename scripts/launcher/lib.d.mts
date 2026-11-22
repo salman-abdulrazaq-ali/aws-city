@@ -8,6 +8,15 @@ export declare const pickProfile: (profiles: string[], env?: Record<string, stri
 export declare const upsertProfile: (text: string, name: string, keys: { accessKeyId: string; secretAccessKey: string; sessionToken?: string }) => string;
 export declare const parsePastedKeys: (text: string) => { accessKeyId: string; secretAccessKey: string; sessionToken?: string } | undefined;
 export declare const explainAwsError: (err: unknown) => string;
+export declare const LOCAL_URL: string;
+export declare const DEFAULT_LOCAL_MODEL: string;
+export declare const hasLocalModel: (ids: string[], model: string) => boolean;
+export declare const localEnv: (o: { model: string; fallback?: boolean }, env?: Record<string, string | undefined>) => Record<string, string>;
+export declare const profileRegion: (config?: string, profile?: string) => string | undefined;
+export declare const modelEnv: (
+  models: { main: string; light: string },
+  env?: Record<string, string | undefined>,
+) => { AWS_CITY_MODEL: string; AWS_CITY_FALLBACK_MODEL: string; AWS_CITY_LIGHT_MODEL: string };
 export type BuildEvent = { step: number; of: number; label: string; name: string; done?: undefined } | { done: true; seconds: number };
 export declare const parseBuildProgress: (chunk: string | Buffer) => BuildEvent[];
 export declare const progressBar: (fraction: number, width?: number) => string;
@@ -15,11 +24,10 @@ export declare const elapsed: (ms: number) => string;
 export declare const parseDownloadProgress: (chunk: string | Buffer) => { fraction: number; total: string } | undefined;
 export declare const explainDownloadError: (output?: string) => string;
 export declare const browserFromArg: (value: unknown) => string | undefined;
-export interface LaunchArgs { help: boolean; intro?: boolean; rebuild?: boolean; mode?: 'demo' | 'live'; browser?: string; profile?: string; region?: string; allowFixes?: boolean; error?: string }
+export interface LaunchArgs { help: boolean; intro?: boolean; rebuild?: boolean; mode?: 'demo' | 'live'; browser?: string; profile?: string; region?: string; allowFixes?: boolean; model?: 'claude' | 'nova' | 'local'; localFallback?: boolean; localModel?: string; error?: string }
 export declare const REGION_RE: RegExp;
 export declare const localModels: (region: string) => { ok: true; main: string; light: string } | { ok: false; message: string };
 export declare const unsupportedRegionText: (region: string) => string;
-export declare const modelEnv: (models: { main: string; light: string }) => { AWS_CITY_MODEL: string; AWS_CITY_LIGHT_MODEL: string; AWS_CITY_FALLBACK_MODEL: string };
 export declare const BEDROCK_ACCESS_URL: string;
 export type StartPlan = { kind: 'go' | 'again'; mode: 'demo' | 'live'; browser: string } | { kind: 'ask'; browser?: string; mode?: undefined };
 export declare const startPlan: (args: LaunchArgs, prefs?: { mode?: string; browser?: string }, o?: { interactive?: boolean; installed?: string[] }) => StartPlan;
@@ -29,5 +37,7 @@ export declare const parseArgs: (argv: string[], env?: Record<string, string | u
 export declare const helpText: () => string;
 export declare const lockPid: (target: unknown) => number | undefined;
 export declare const ALREADY_OPEN: string;
+export declare const HOSTED_PROFILE: string;
+export declare const hostedBuildProblem: (files?: { envProduction?: string; manifest?: string }) => string | undefined;
 export declare const alreadyOpenPid: (output?: string) => number | undefined;
 export declare const meaningfulLines: (output?: string, max?: number) => string[];

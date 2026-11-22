@@ -17,21 +17,26 @@ import {
   signIn,
   signOut,
   startMfaSetup,
+  submitPrompt,
   teardownDeploy,
   unlinkAccount,
   verifyAccount,
 } from '@/app/runtime';
-import { connectsPlayer, defaultLinkRegion, gameBuilds, isLinkRegion, LINK_REGIONS, linkChecklist, regionName, removeTarget, roleUpdate } from '@/state/account';
+import { connectsPlayer, defaultLinkRegion, gameBuilds, isLinkRegion, LINK_REGIONS, regionName, removeTarget, roleUpdate } from '@/state/account';
+import { arrangeBuilds, statusWord } from '@/state/builds';
 import { useCity, type DeployView } from '@/state/store';
+import { ReauthPrompt } from './ReauthPrompt';
 import { GUARDED_BLUEPRINTS, isPracticeDeploy } from '@/backend/ServerBackend';
 import { TEMPLATES } from '@/world/content';
 import { serviceById } from '@/world/taxonomy';
 import { TemplateView } from './TemplateView';
-import { offered, perUnit, pricesFor } from '@/world/regions';
+import { offered, perUnit, pricesFor, regionInfo } from '@/world/regions';
 import { DeleteConfirm, FixesOn, RoleUpdate, StackLink } from './Account';
 import { useCopy } from './feedback';
 import { costLine, offlineReason } from './logic';
 import { usePending } from './usePending';
+import { useCanConnect } from './useLadder';
+import { QrCode } from './QrCode';
 import { ForLearners } from './Term';
 import { Plain } from './Term';
 
@@ -50,6 +55,19 @@ export function CostNote({ note, className = 'muted' }: { note: string; classNam
           <span className="muted small">In a real account: {note}</span>
         </ForLearners>
       )}
+    </div>
+  );
+}
+
+/** An account id as the AWS console shows it: 0474-6343-8585. */
+export const accountLabel = (id: string) => id.replace(/^(\d{4})(\d{4})(\d{4})$/, '$1-$2-$3');
+
+/** v2.18: exactly where an approval writes, so a player linked to two accounts can tell which one before approving. */
+export function ChangeTarget({ d }: { d: Pick<DeployView, 'accountId' | 'region'> }) {
+  if (!d.accountId) return null;
+  return (
+    <div className="muted change-target">
+      Changes AWS account <b>{accountLabel(d.accountId)}</b> · {d.region}
     </div>
   );
 }
@@ -76,7 +94,9 @@ function PendingButton({ pending, busyLabel, children, className = 'btn', disabl
   title?: string;
 }) {
   return (
-    <button ref={buttonRef} className={className} disabled={disabled || pending} aria-busy={pending} onClick={onClick} title={title}>
+    // type="button": inside the account-number form a default (submit) button ran verify twice per click (onClick and
+    // the form's submit). Enter in the form's one text field still submits it.
+    <button ref={buttonRef} type="button" className={className} disabled={disabled || pending} aria-busy={pending} onClick={onClick} title={title}>
       {pending ? (
         <>
           <span className="spinner" aria-hidden="true" /> {busyLabel}
@@ -87,6 +107,25 @@ function PendingButton({ pending, busyLabel, children, className = 'btn', disabl
     </button>
   );
 }
+
+/** The Region a setup link makes the role in (its console URL's ?region=), with its name: AWS City looks for it there. */
+export const linkRegion = (url?: string): { code: string; name: string } | undefined => {
+  try {
+    const code = url ? new URL(url).searchParams.get('region') : null;
+    return code ? { code, name: regionInfo(code)?.name ?? code } : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * What the player typed in step 3: the console shows an account id as 1234-5678-9012, and a number copied from a
+ * sentence brings its full stop, so dashes, spaces and trailing punctuation go. A role ARN is kept as typed.
+ */
+export const accountInput = (raw: string) => {
+  const t = raw.trim().replace(/[.,;:]+$/, '');
+  return /^[\d\s.-]+$/.test(t) ? t.replace(/\D/g, '') : t;
+};
 
 /** A numbered step: done (✓), current (lit) or still to come. `after`: what a done step still offers ("Change the Region"). */
 function Step({ n, state, title, children, after }: { n: number; state: 'done' | 'now' | 'todo'; title: string; children?: ReactNode; after?: ReactNode }) {
@@ -124,11 +163,11 @@ function MfaSetup({ replace = false }: { replace?: boolean }) {
   };
   return (
     <div className="card mfa">
-      <b>{replace ? '🔐 Replace your authenticator' : '🔐 Protect your account first'}</b>
+      <b>{replace ? '🔐 Replace your authenticator' : '🔐 First, protect your account'}</b>
       <p className="muted">
         {replace
           ? 'Add AWS City to your new app (or phone) with a new key. The old one stops working.'
-          : 'Agents can change your AWS account, so linking it, approving a change and applying a fix need an authenticator app (Google Authenticator, 1Password, Authy…).'}{' '}
+          : 'The city’s agents can change your AWS account, so connecting it, approving a change, applying a fix and taking something down need a code from an authenticator app on your phone. You set this up once.'}{' '}
         Then you sign in again with its code.
       </p>
       {!setup ? (
@@ -136,33 +175,46 @@ function MfaSetup({ replace = false }: { replace?: boolean }) {
           {replace ? 'Get a new key' : 'Set up an authenticator'}
         </PendingButton>
       ) : (
-        <>
-          <label className="field-hint" htmlFor="mfa-key">
-            1. In your app, add an account with this key (time-based)
-          </label>
-          <input id="mfa-key" readOnly value={setup.secret.replace(/(.{4})/g, '$1 ').trim()} onFocus={(e) => e.currentTarget.select()} spellCheck={false} />
-          <button className="btn" onClick={() => copy(setup.secret)}>
-            {copied ? 'Copied ✓' : 'Copy key'}
-          </button>
-          <label className="field-hint" htmlFor="mfa-code">
-            2. Type the 6-digit code it shows
-          </label>
-          <div className="row">
-            <input
-              id="mfa-code"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              maxLength={6}
-              placeholder="123456"
-              value={code}
-              onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
-              onKeyDown={(e) => e.key === 'Enter' && code.length === 6 && void run(confirm)}
-            />
-            <PendingButton className="btn primary" pending={busy} busyLabel="Checking…" disabled={code.length !== 6} onClick={() => void run(confirm)}>
-              Turn on
-            </PendingButton>
-          </div>
-        </>
+        <ol className="mfa-steps">
+          <li>
+            <b>Open an authenticator app on your phone</b>
+            <span className="muted">Google Authenticator, Microsoft Authenticator, Authy or 1Password. No app yet? Get one free from the App Store or Google Play.</span>
+          </li>
+          <li>
+            <b>Tap + and scan this code</b>
+            <QrCode text={setup.uri} label="QR code to add AWS City to your authenticator app" />
+            <details className="why">
+              <summary>Can’t scan it? Type a key instead</summary>
+              <label className="field-hint" htmlFor="mfa-key">
+                In the app, choose “Enter a setup key” (time-based) and type this key:
+              </label>
+              <input id="mfa-key" readOnly value={setup.secret.replace(/(.{4})/g, '$1 ').trim()} onFocus={(e) => e.currentTarget.select()} spellCheck={false} />
+              <button className="btn" onClick={() => copy(setup.secret)}>
+                {copied ? 'Copied ✓' : 'Copy key'}
+              </button>
+            </details>
+          </li>
+          <li>
+            <label htmlFor="mfa-code">
+              <b>Type the 6-digit code your app shows</b>
+            </label>
+            <div className="row">
+              <input
+                id="mfa-code"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                placeholder="123456"
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+                onKeyDown={(e) => e.key === 'Enter' && code.length === 6 && void run(confirm)}
+              />
+              <PendingButton className="btn primary" pending={busy} busyLabel="Checking…" disabled={code.length !== 6} onClick={() => void run(confirm)}>
+                Turn on
+              </PendingButton>
+            </div>
+          </li>
+        </ol>
       )}
     </div>
   );
@@ -206,17 +258,26 @@ export function DeployPanel() {
   const deployMap = useCity((s) => s.deploys);
   const deploys = Object.values(deployMap);
   const status = useCity((s) => s.backendStatus);
+  const connectNow = useCanConnect() && status !== 'signed-out';
   const kind = useCity((s) => s.backendKind);
   const hosted = useCity((s) => s.hosted);
   const inventory = useCity((s) => s.inventory);
   const offline = offlineReason(kind, status);
   const [role, setRole] = useState('');
+  /** Step 2 done: the player says the AWSCity stack is created, so step 3 (the account number) opens. */
+  const [stackMade, setStackMade] = useState(false);
+  const [linkCopied, copyLink] = useCopy();
+  const where = linkRegion(account.linkUrl);
   const findings = useCity((s) => s.findings);
   // Fixes are approved in their finding's card; here they're only a history, never next to Tear down.
   const stacks = deploys.filter((d) => !d.findingId);
+  // One card per resource for the agents' changes; waiting approvals first (src/state/builds.ts).
+  const cards = arrangeBuilds(stacks);
   const fixes = deploys.filter((d) => d.findingId && d.status !== 'preview' && d.status !== 'rejected');
   // What the city built in the account, from its inventory: it survives a reload (a session's stacks don't).
   const builds = useMemo(() => (account.linked ? gameBuilds(inventory) : []), [account.linked, inventory]);
+  /** Resource ids My builds' list offers Take it down for (an agent's card then shows no second removal button). */
+  const listed = new Set(builds.flatMap((b) => removeTarget(b.arn)?.id ?? []));
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmUnlink, setConfirmUnlink] = useState(false);
   /** The linking steps stay folded until the player asks for them (this whole tab is optional). */
@@ -224,8 +285,9 @@ export function DeployPanel() {
   /** The Region picked in step 1 (until then: the one asked for last, the linked one, else this city's). */
   const [picked, setPicked] = useState<string>();
   const region = picked ?? defaultLinkRegion(account, cityRegion);
-  /** The Region the setup link out now was made for (step 2's checklist names it). */
-  const linkRegion = account.linkRegion ?? region;
+  /** The Region the setup link out now was made for (step 2's checklist names it; else its URL's ?region=). */
+  const setupRegion = account.linkRegion ?? where?.code ?? region;
+  const setupRegionName = regionName(setupRegion);
   /** Who the setup link out now serves (step 2 says it, so a link meant for someone else is caught). */
   const linkFor = connectsPlayer(account.linkUrl);
   // Disconnect and "another Region" are for an account the player linked (the local server reads the developer's own).
@@ -235,6 +297,10 @@ export function DeployPanel() {
   const signingIn = useCity((s) => s.signingIn);
   const pending = usePending();
   const { clear } = pending;
+  /** The server asked for an authenticator first: its setup shows, and the linking steps wait until it's done. */
+  const mfaFirst = !!account.mfaRequired && canSetUpMfa();
+  // A new setup link (another Region, Allow small fixes, Link again) means a new stack: step 3 waits for it again.
+  useEffect(() => setStackMade(false), [account.linkUrl]);
 
   // Clear each pending button when the event it was waiting for lands.
   useEffect(() => clear('link'), [account.linkUrl, clear]);
@@ -262,26 +328,24 @@ export function DeployPanel() {
     }
   }, [deployMap, clear]);
 
-  // A new preview opens below the blueprints, off-screen in the panel: bring it up and put focus on Approve.
+  // A new approval (or the one "Approve in Deploy" named) is brought into view with focus on Approve, whether this tab
+  // was already open or just opened for it (the store's deployFocus waits for the card to render).
   const approveRefs = useRef(new Map<string, HTMLButtonElement>());
-  const seenPreviews = useRef<Set<string> | null>(null);
-  const previewIds = stacks.filter((d) => d.status === 'preview').map((d) => d.deployId);
-  const previewKey = previewIds.join(',');
+  const focusId = useCity((s) => s.deployFocus);
+  const previewKey = stacks
+    .filter((d) => d.status === 'preview')
+    .map((d) => d.deployId)
+    .join(',');
   useEffect(() => {
-    const ids = previewKey ? previewKey.split(',') : [];
-    const seen = seenPreviews.current;
-    seenPreviews.current = new Set(ids);
-    if (!seen) return; // the first render: previews already waiting aren't news
-    const fresh = ids.find((id) => !seen.has(id));
-    const btn = fresh && approveRefs.current.get(fresh);
-    if (btn) {
-      btn.closest('.card')?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
-      btn.focus({ preventScroll: true });
-    }
-  }, [previewKey]);
+    const btn = focusId ? approveRefs.current.get(focusId) : undefined;
+    if (!focusId || !btn) return;
+    btn.closest('.card')?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    btn.focus({ preventScroll: true });
+    useCity.getState().clearDeployFocus();
+  }, [focusId, previewKey]);
 
   const verify = () => {
-    const requestId = verifyAccount(role);
+    const requestId = verifyAccount(accountInput(role));
     if (requestId) pending.start('verify', requestId);
   };
   const getLink = (where: string, allowFixes: boolean) => pending.start('link', linkAccount(where, { allowFixes }));
@@ -292,7 +356,7 @@ export function DeployPanel() {
 
   /** The three linking steps (folded until the player asks; inside "How real accounts connect" in the demo). */
   const linkSteps =
-    !wantsLink && !account.linkUrl && !account.mfaRequired ? (
+    !wantsLink && !connectNow && !account.linkUrl && !account.mfaRequired ? (
       <button className="btn" onClick={() => useCity.getState().patchAccount({ wantsLink: true })}>
         Connect an AWS account
       </button>
@@ -301,7 +365,7 @@ export function DeployPanel() {
         <Step
           n={1}
           state={account.linkUrl ? 'done' : 'now'}
-          title={account.linkUrl ? `Get your setup link: ${regionName(linkRegion)}` : 'Pick a Region and get your setup link'}
+          title={account.linkUrl ? `Get your setup link: ${setupRegionName}` : 'Pick a Region and get your setup link'}
           after={
             account.linkUrl && (
               <button className="btn tiny ghost" onClick={restart}>
@@ -336,9 +400,9 @@ export function DeployPanel() {
             Get my setup link
           </PendingButton>
         </Step>
-        <Step n={2} state={account.linkUrl ? 'now' : 'todo'} title="Make a safe key for AWS City in your account">
+        <Step n={2} state={!account.linkUrl ? 'todo' : stackMade ? 'done' : 'now'} title="Create AWS City’s key in your AWS account">
           <p className="muted">
-            <Plain text="One click sets up an IAM role with CloudFormation. It's a key that only opens what the quests need." />
+            <Plain text="A CloudFormation stack makes an IAM role: a key that only opens what the quests need." />
           </p>
           <label className="check-row">
             <input
@@ -346,7 +410,7 @@ export function DeployPanel() {
               checked={!!account.allowFixes}
               disabled={pending.is('link') || !!offline}
               // The choice is part of the setup link (AllowFixes): a new link is made for it.
-              onChange={(e) => getLink(linkRegion, e.target.checked)}
+              onChange={(e) => getLink(setupRegion, e.target.checked)}
             />
             <span>Allow small fixes (you still approve each one)</span>
           </label>
@@ -356,17 +420,41 @@ export function DeployPanel() {
             </p>
           )}
           <b className="checklist-title">What the console will ask</b>
-          <ol className="account-steps link-checklist" aria-label="What the console will ask">
-            {linkChecklist(linkRegion).map((line) => (
-              <li key={line}>
-                <Plain text={line} />
-              </li>
-            ))}
+          <ol className="how account-steps link-checklist" aria-label="What the console will ask">
+            <li>
+              Click <b>Open CloudFormation</b> and sign in to <b>your own AWS account</b>, the one you want the city to look after. Check the
+              account at the top right before you click <b>Create stack</b>.
+            </li>
+            <li>
+              Keep the Region at the top right on <b>{where?.name ?? setupRegionName}</b> ({where?.code ?? setupRegion}). The role is made there, and that’s
+              where AWS City looks for it.
+            </li>
+            <li>Use a sign-in that may create IAM roles and CloudFormation stacks (workshop accounts can’t).</li>
+            <li>
+              At the bottom, tick <b>I acknowledge that AWS CloudFormation might create IAM resources with custom names</b>, then click <b>Create stack</b>.
+            </li>
+            <li>
+              Wait about a minute, until the stack says <b>CREATE_COMPLETE</b>. Then press <b>Done</b> here and <b>Verify</b> your account number.
+            </li>
           </ol>
-          <PendingButton className="btn primary" pending={pending.is('link')} busyLabel="Making your link…" onClick={() => openUrl(account.linkUrl!)}>
-            Open CloudFormation ↗
-          </PendingButton>
+          <div className="row">
+            <PendingButton className="btn primary" pending={pending.is('link')} busyLabel="Making your link…" onClick={() => openUrl(account.linkUrl!)}>
+              Open CloudFormation ↗
+            </PendingButton>
+            {/* Signed in to AWS in another browser (or a passkey that only works there): open the same link there. */}
+            <button className="btn" disabled={pending.is('link')} onClick={() => copyLink(account.linkUrl!)}>
+              {linkCopied ? 'Copied ✓' : 'Copy link'}
+            </button>
+            <button className="btn" onClick={() => setStackMade(true)}>
+              Done: it says CREATE_COMPLETE
+            </button>
+          </div>
+          <p className="muted">Signed in to AWS in another browser? Copy the link and open it there.</p>
           <p className="muted small">This link works for a day. After that, get a new one: the key you made keeps working.</p>
+          <p className="muted">
+            Hosting AWS City yourself? Use a different AWS account from the one it runs in. The city refuses that one, so it can never act inside the account
+            that holds everyone’s data.
+          </p>
           <details className="why">
             <summary>Details</summary>
             <div className="muted">
@@ -374,7 +462,8 @@ export function DeployPanel() {
             </div>
           </details>
         </Step>
-        <Step n={3} state={account.linkUrl ? 'now' : 'todo'} title="Tell us your account number (12 digits)">
+        <Step n={3} state={account.linkUrl && stackMade ? 'now' : 'todo'} title="Tell us your account number (12 digits)">
+          <p className="muted">In the AWS console, click your name at the top right: it’s the Account ID.</p>
           <form
             className="prompt-row"
             onSubmit={(e) => {
@@ -385,7 +474,7 @@ export function DeployPanel() {
             <input
               id="account-id"
               aria-label="AWS account ID or role ARN"
-              placeholder="123456789012"
+              placeholder="1234-5678-9012"
               value={role}
               onChange={(e) => setRole(e.target.value)}
               autoComplete="off"
@@ -453,7 +542,7 @@ export function DeployPanel() {
         <div className="card">
           <b>Sign in to your AWS City account</b>
           <p className="muted">Your progress and deploys are tied to your login.</p>
-          <PendingButton className="btn primary" pending={signingIn} busyLabel="Waiting for sign-in…" onClick={signIn}>
+          <PendingButton className="btn primary" pending={signingIn} busyLabel="Waiting for sign-in…" onClick={() => signIn()}>
             Sign in
           </PendingButton>
           {privacyPolicyUrl() && (
@@ -466,13 +555,15 @@ export function DeployPanel() {
       <div className="card account">
         <h3>Your AWS account</h3>
         {/* A linked player is asked too (approving a change, applying a fix): the setup shows whenever the server asks. */}
-        {account.mfaRequired && canSetUpMfa() && <MfaSetup />}
+        {mfaFirst && <MfaSetup />}
+        {/* A sign-in from the last 30 minutes is needed (reauth_required); a waiting approval's card says it there. */}
+        {!stacks.some((d) => d.status === 'preview') && <ReauthPrompt />}
         {/* This tab's link, verify or Disconnect the server refused (a failed verify, a link over a day old). */}
         {account.error && (
           <div className="field-error account-error" role="alert">
             ⚠️ {account.error}
             {((!account.linked && account.linkUrl) || wantsLink) && (
-              <PendingButton className="btn tiny" pending={pending.is('link')} busyLabel="Getting your link…" disabled={!!offline} onClick={() => getLink(linkRegion, !!account.allowFixes)}>
+              <PendingButton className="btn tiny" pending={pending.is('link')} busyLabel="Getting your link…" disabled={!!offline} onClick={() => getLink(setupRegion, !!account.allowFixes)}>
                 Get a new setup link
               </PendingButton>
             )}
@@ -489,6 +580,9 @@ export function DeployPanel() {
               )}
             </p>
             {account.message && <p className="muted">{account.message}</p>}
+            <button className="btn tiny" onClick={() => useCity.getState().openAccountMap(true)} title="Your account as one map: what runs where, data that moves, live traffic and this month's cost">
+              🗺️ My AWS, live
+            </button>
             {account.fixes !== undefined && (
               <p className="muted">
                 Small fixes: <b>{account.fixes ? 'on' : 'off'}</b>
@@ -513,7 +607,7 @@ export function DeployPanel() {
               </div>
             )}
             {unlinkConfirm}
-            {wantsLink && linkSteps}
+            {wantsLink && !mfaFirst && linkSteps}
           </>
         ) : account.broken ? (
           <>
@@ -543,7 +637,7 @@ export function DeployPanel() {
               )}
             </div>
             {unlinkConfirm}
-            {wantsLink && linkSteps}
+            {wantsLink && !mfaFirst && linkSteps}
           </>
         ) : (
           <>
@@ -597,7 +691,7 @@ export function DeployPanel() {
                   The role trusts AWS City only with a secret ExternalId. It can use only the quest services, in one Region, and everything it makes is tagged{' '}
                   <code>aws-city</code>. Delete the AWSCity stack to remove it at any time.
                 </details>
-                {linkSteps}
+                {!mfaFirst && linkSteps}
               </>
             )}
           </>
@@ -670,17 +764,21 @@ export function DeployPanel() {
           <p className="muted small">Taking something down asks for your OK first, like any change. Until then it may keep billing.</p>
         </>
       )}
-      {stacks.map((d) => {
+      {cards.map(({ d, group }) => {
         const deciding = pending.is(`decide:${d.deployId}`);
+        const history = group?.history.filter((h) => h.status === 'complete') ?? [];
         return (
-          <div key={d.deployId} className={`card stack ${d.status}`}>
-            <b>{d.stackName}</b>{' '}
+          <div key={group?.key ?? d.deployId} className={`card stack ${d.status}`}>
+            <b>{group?.title ?? d.stackName}</b>{' '}
             <span className="muted">
-              · {d.region} · {isPracticeDeploy(d.deployId) && d.status === 'complete' ? 'practice: nothing was created' : (STATUS_TEXT[d.status] ?? d.status)}
+              · {d.region} ·{' '}
+              {isPracticeDeploy(d.deployId) && d.status === 'complete' ? 'practice: nothing was created' : group ? statusWord(d) : (STATUS_TEXT[d.status] ?? d.status)}
             </span>
+            {group && history.length > 1 && <div className="muted small build-history">{history.map((h) => statusWord(h)).join(' → ')}</div>}
             {d.status === 'preview' && (
               <BuildPreview
                 d={d}
+                grouped={!!group}
                 offline={offline}
                 deciding={deciding}
                 buttonRef={(el) => {
@@ -710,8 +808,20 @@ export function DeployPanel() {
                 ))}
               </ul>
             )}
+            {/* An agent's change: Tear down asks for the removal in plain words, so its own card shows in seconds. Not when
+                My builds' list above already offers Take it down for the same resource (one removal button each). */}
+            {group?.teardown && d.status !== 'preview' && d.status !== 'creating' && !(d.resourceId && listed.has(d.resourceId)) && (
+              <button
+                className="btn warn"
+                disabled={!!offline}
+                title={offline ?? `Asks: “${group.teardown}”. You approve it like any change.`}
+                onClick={() => submitPrompt(group.teardown!)}
+              >
+                🧹 Tear down (remove it)
+              </button>
+            )}
             {/* A practice build made nothing in AWS: there's nothing to tear down. */}
-            {d.status === 'complete' && !isPracticeDeploy(d.deployId) && (
+            {!group && d.status === 'complete' && !isPracticeDeploy(d.deployId) && (
               <PendingButton
                 className="btn warn"
                 pending={pending.is(`teardown:${d.deployId}`)}
@@ -783,8 +893,10 @@ export function DeployPanel() {
  * A build's preview, approved here: what's added or removed, the server's own lines in words ("Safety check: …"), what
  * it costs, and the typed name when the server asks for one (the same rule as a fix's Approve in City care).
  */
-function BuildPreview({ d, offline, deciding, buttonRef, onDecide }: {
+function BuildPreview({ d, grouped, offline, deciding, buttonRef, onDecide }: {
   d: DeployView;
+  /** One resource's card (src/state/builds.ts): the approval's own words say what this change does. */
+  grouped: boolean;
   offline?: string;
   deciding: boolean;
   buttonRef: (el: HTMLButtonElement | null) => void;
@@ -797,6 +909,9 @@ function BuildPreview({ d, offline, deciding, buttonRef, onDecide }: {
   const removing = resources.length > 0 && resources.every((c) => c.action === 'Remove');
   return (
     <>
+      {/* What this approval changes, in words ("Permanently terminate EC2 instance i-…"). */}
+      {grouped && <div className="build-change">{d.stackName}</div>}
+      <ChangeTarget d={d} />
       <table className="changes">
         <tbody>
           {resources.map((c) => (
@@ -831,6 +946,7 @@ function BuildPreview({ d, offline, deciding, buttonRef, onDecide }: {
         </table>
       </ForLearners>
       {d.costNote && <CostNote note={d.costNote} />}
+      <ReauthPrompt />
       {d.confirmText && (
         <div className="confirm-type">
           <label className="field-hint" htmlFor={`confirm-${d.deployId}`}>

@@ -4,7 +4,7 @@ import { ack, nagAccount } from './nag.js';
 import type { Construct } from 'constructs';
 
 /** The CDK bootstrap qualifier (the default); its roles are named cdk-<qualifier>-<purpose>-<account>-<region>. */
-export const BOOTSTRAP_QUALIFIER = 'hnb659fds';
+const BOOTSTRAP_QUALIFIER = 'hnb659fds';
 
 /**
  * GitHub Actions → AWS without long-lived keys: an OIDC provider and a deploy role that only the

@@ -1,4 +1,4 @@
-// A real AWS account (contract v2.17): the pure rules in src/state/account.ts and how the store keeps account.status and
+// A real AWS account (contract v2.19): the pure rules in src/state/account.ts and how the store keeps account.status and
 // build previews. Only a reply to the player's own request is toasted; a welcome or a broken link updates the card quietly.
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { InventoryItem } from '@/backend/contract';
@@ -125,7 +125,7 @@ describe('the city’s own builds', () => {
   });
 });
 
-describe('the store and account.status (v2.17)', () => {
+describe('the store and account.status (v2.19)', () => {
   const s = () => useCity.getState();
   beforeEach(() => {
     s().resetSession();

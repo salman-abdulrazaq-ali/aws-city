@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
-import type { Progress, ServerEvent } from '@/backend/contract';
+import type { AwsNewsItem, Progress, ServerEvent } from '@/backend/contract';
 import { bus } from '@/state/bus';
 import { agentName, isDiscovered, openFindings, severityRank, taskRunning, tierOf, useCity, type Inventory } from '@/state/store';
+import { bubbleText, failedBubble } from '@/state/watch';
 import { dueFor } from '@/state/srs';
 import { citizenLevel, levelName } from '@/state/citizens';
 import { CITIZENS, citizenById } from '@/world/citizens';
@@ -119,11 +120,8 @@ const UNKNOWN_SIGN_DEPTH = 40_050;
 /** Lock and future-plot signs: above the cranes, lamps and trees standing on the plot (props are 10,000 + y). */
 const PLOT_SIGN_DEPTH = 40_040;
 
-/** The first sentence of a message, capped, for a speech bubble. */
-export const firstLine = (text: string, max = 90) => {
-  const first = text.split(/(?<=[.!?])\s|\s\(/)[0] ?? text;
-  return first.length > max ? `${first.slice(0, max - 1).trimEnd()}…` : first;
-};
+/** A message as one speech bubble: whole sentences while they fit, asides dropped (src/state/watch.ts bubbleText). */
+const firstLine = (text: string, max = 90) => bubbleText(text, max);
 
 const KEYS = { W: [0, -1], UP: [0, -1], S: [0, 1], DOWN: [0, 1], A: [-1, 0], LEFT: [-1, 0], D: [1, 0], RIGHT: [1, 0] } as const;
 type KeyName = keyof typeof KEYS | 'E' | 'OPEN_BRACKET' | 'CLOSED_BRACKET' | 'PLUS' | 'MINUS';
@@ -137,6 +135,9 @@ const TICKER_PX = 34;
 const TIER_BUBBLE_MS = 3500;
 /** A tier-up within this long of an XP gain at the same landmark is the one reward shown (no "+N ⭐" float too). */
 const REWARD_MERGE_MS = 500;
+/** AWS City Live: launch moments in one batch play this far apart, and at most this many (re:Invent week). */
+const LAUNCH_GAP_MS = 2200;
+const LAUNCH_MAX = 5;
 /** How often the scene re-reads the areas the player opened anyway (the ladder's `opened`, kept in localStorage). */
 const LADDER_POLL_MS = 1_000;
 /** How often the workers follow what's discovered (and the surface's cap). */
@@ -193,6 +194,9 @@ export class CityScene extends Phaser.Scene {
   private tipTurn = 0;
   /** Who is showing a level-up bubble now: one at a time, the rest go to the feed only (the store logs them). */
   private cheering?: Agent;
+  /** AWS City Live: when the current batch of launch moments ends, and how many it has played (onLaunch). */
+  private launchBatchEnds = 0;
+  private launchesInBatch = 0;
   private dayNight!: DayNight;
   /** v2.6: storms from AWS's Health Dashboard (the only weather that means something). */
   private weather?: Weather;
@@ -200,7 +204,7 @@ export class CityScene extends Phaser.Scene {
   private focusRing!: Phaser.GameObjects.Graphics;
   private focusedId?: string;
   private offs: (() => void)[] = [];
-  private tasks = new Map<string, { agentId: string; total: number }>();
+  private tasks = new Map<string, { agentId: string; total: number; handedOff: boolean }>();
   private dragging = false;
   /** scene time of the player's last pan, zoom, tap or handled key: the camera won't move on its own for a while after. */
   private lastInputAt = -Infinity;
@@ -1576,7 +1580,32 @@ export class CityScene extends Phaser.Scene {
         if (this.cheer(a, incident.drill ? 'Drill over: we kept running.' : 'AWS says we’re back to normal.', { tone: 'done', caption: 'AWS Health' })) a?.emote('jump', 1000);
         if (this.newsHeard()) this.ring(true);
       }),
+      bus.on('launch', ({ item }) => this.onLaunch(item)),
     );
+  }
+
+  /**
+   * AWS City Live: a What's New launch for a service standing in this city. Its building bumps, "🚀 New from AWS"
+   * floats up and its agent says what launched; a batch plays one building at a time (LAUNCH_GAP_MS), at most
+   * LAUNCH_MAX of them, and one chime. Asleep (a game, an HQ, the world map): the ticker and the toast carry it.
+   */
+  private onLaunch(item: AwsNewsItem) {
+    if (!this.sys.isActive()) return;
+    const id = item.serviceIds.find((x) => this.landmarks.has(x));
+    if (!id) return;
+    const now = this.time.now;
+    if (now >= this.launchBatchEnds) this.launchesInBatch = 0;
+    if (this.launchesInBatch >= LAUNCH_MAX) return;
+    const at = Math.max(now, this.launchBatchEnds);
+    this.launchBatchEnds = at + LAUNCH_GAP_MS;
+    if (this.launchesInBatch++ === 0 && this.newsHeard()) this.ring(true);
+    const title = item.title.length > 70 ? `${item.title.slice(0, 67)}…` : item.title;
+    this.time.delayedCall(at - now, () => {
+      if (!this.sys.isActive()) return;
+      if (!reducedMotion()) this.landmarks.get(id)?.celebrate();
+      this.floatText(id, '🚀 New from AWS');
+      this.cheer(this.agents.get(id), `AWS just launched: ${title}`, { tone: 'done', caption: 'AWS news' });
+    });
   }
 
   /**
@@ -1859,8 +1888,9 @@ export class CityScene extends Phaser.Scene {
     switch (e.type) {
       case 'task.plan': {
         const a = this.agents.get(e.agentId);
-        this.tasks.set(e.taskId, { agentId: e.agentId, total: e.steps.length });
-        this.agents.get('concierge')?.say(`${agentName(e.agentId)}, you're up!`, { caption: 'Dispatching' });
+        // "X, you're up!" waits for the first step that runs: a request refused at once never runs one, so the
+        // concierge's reason stays on screen (seen 22 Nov 2026: it was replaced, and an m5.large read as nothing happening).
+        this.tasks.set(e.taskId, { agentId: e.agentId, total: e.steps.length, handedOff: false });
         if (!a) return;
         a.pin(true);
         if (this.mayAutoPan()) this.follow(a);
@@ -1873,6 +1903,10 @@ export class CityScene extends Phaser.Scene {
         const t = this.tasks.get(e.taskId);
         const a = t && this.agents.get(t.agentId);
         if (!a || e.status === 'pending') return;
+        if (e.status === 'running' && !t.handedOff) {
+          t.handedOff = true;
+          this.agents.get('concierge')?.say(`${agentName(t.agentId)}, you're up!`, { caption: 'Dispatching' });
+        }
         if (e.status === 'running') a.say(e.text, { caption: `Step ${e.index + 1}/${t.total}`, tone: 'step', holdMs: 6000 });
         if (e.status === 'skipped') a.say(`⤼ ${e.text}`, { tone: 'done', holdMs: 2500 });
         if (e.status === 'failed') a.say(`✗ ${e.text}`, { tone: 'alert' });
@@ -1912,7 +1946,9 @@ export class CityScene extends Phaser.Scene {
         const a = t && this.agents.get(t.agentId);
         if (!t || !a) return;
         this.tasks.delete(e.taskId!);
-        a.say('Something went wrong…', { tone: 'alert', caption: 'Task stopped' });
+        // The server's reason, short (seen 21 Nov 2026: a timeout and a refusal both read "Something went wrong").
+        const why = bubbleText(e.message);
+        a.say(why || 'Something went wrong…', { tone: 'alert', caption: 'Task stopped' });
         a.setDetail(undefined);
         a.setWorking(false);
         a.pin(false);
@@ -1925,7 +1961,8 @@ export class CityScene extends Phaser.Scene {
         this.tasks.delete(e.taskId);
         if (!a) return;
         const xp = e.xp.reduce((n, x) => n + x.amount, 0);
-        a.say(e.ok ? `Done! ${stars(xp)}` : 'That didn’t work…', { tone: e.ok ? 'done' : 'alert', caption: 'Task complete' });
+        // A task that didn't work says why (the server's result), not only "That didn't work…".
+        a.say(e.ok ? `Done! ${stars(xp)}` : failedBubble(e.result), { tone: e.ok ? 'done' : 'alert', caption: 'Task complete' });
         a.pin(false);
         if (e.ok) {
           a.emote('jump', 1000);

@@ -7,7 +7,7 @@ import { type Resource, resourceKey } from '../state/model.js';
 import { type AccountLocks, type AccountRecord, type BillRecord, type BillStore, DELETED_TOMBSTONE_MS, type MfaStore, type ProgressStore, type QuotaStore, sameLink, type Stores } from './types.js';
 
 /** Progress as JSON files: progress.json for the local player, progress-<hash>.json for anyone else. */
-export const fileProgress = (file: string): ProgressStore & { fileFor(sub: string): string; forget(sub: string): void } => {
+const fileProgress = (file: string): ProgressStore & { fileFor(sub: string): string; forget(sub: string): void } => {
   const stores = new Map<string, ReturnType<typeof createProgressStore>>();
   const fileFor = (sub: string) => (sub === 'local' ? file : join(dirname(file), `progress-${createHash('sha256').update(sub).digest('hex').slice(0, 24)}.json`));
   const forSub = (sub: string) => {
@@ -22,11 +22,14 @@ export const fileProgress = (file: string): ProgressStore & { fileFor(sub: strin
 const playerFile = (progressFile: string, name: string) => (sub: string) =>
   join(dirname(progressFile), sub === 'local' ? `${name}.json` : `${name}-${createHash('sha256').update(sub).digest('hex').slice(0, 24)}.json`);
 
-/** Writes `value` as JSON through a temp file renamed over `file`, so a reader never sees half of it. */
+/**
+ * Writes `value` as JSON through a temp file renamed over `file`, so a reader never sees half of it. The temp file is
+ * new (`wx`: never one planted beforehand) and only ours to read (0600). Callers write one file at a time (serialQueue).
+ */
 const writeJson = async (file: string, value: unknown) => {
   await mkdir(dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmp, JSON.stringify(value));
+  await writeFile(tmp, JSON.stringify(value), { flag: 'wx', mode: 0o600 });
   await rename(tmp, file);
 };
 
@@ -52,7 +55,7 @@ export const fileBills = (progressFile: string): BillStore & { fileFor(sub: stri
     }
   };
   const write = (sub: string, record: BillRecord) => writeJson(fileFor(sub), record);
-  // Writes run one at a time, so saveRead's check and write can't interleave with a put.
+  // Writes run one at a time (one process), so saveRead's check and write can't interleave with a put.
   const serial = serialQueue();
   return {
     fileFor,

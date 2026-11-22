@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
 import { choose, findExact, findTarget, typeInto } from '@/console/act';
-import { isCommit, isSecretPage, PLAYER_ONLY_PAGES, playerOnlyPage, redact, redactConsoleUrl, SECRET_PAGES } from '@/console/risk';
+import { isCommit, isCommitWord, isRiskyValue, isSecretPage, PLAYER_ONLY_PAGES, playerOnlyPage, redact, redactConsoleUrl, SECRET_PAGES } from '@/console/risk';
 import { isConsoleUrl, isMainAction, isRisky, mayAct } from '@/console/safety';
 import { takeSnapshot } from '@/console/snapshot';
 
@@ -56,12 +56,32 @@ describe('safety', () => {
     for (const n of ['Create bucket', 'Next', 'Bucket name', 'Create table']) expect(isRisky(n), n).toBe(false);
   });
 
+  it('flags the labels a security review found missing: camelCase managed policies, opening access, other accounts', () => {
+    for (const n of ['IAMFullAccess', 'AmazonS3FullAccess', 'PowerUserAccess', 'Anywhere-IPv4', '0.0.0.0/0', '::/0', 'Another AWS account', 'Account ID', 'Trusted entity type', 'Share with', 'Make object public', 'Block public access'])
+      expect(isRisky(n), n).toBe(true);
+  });
+
+  it('commit controls are the player’s to press; filling and navigating are the agent’s', () => {
+    for (const n of ['Create bucket', 'Save rules', 'Launch instance', 'Add rule', 'Attach', 'Create role', 'Save changes', 'Apply', 'Update', 'Submit', 'Edit inbound rules'])
+      expect(isCommitWord(n), n).toBe(true);
+    for (const n of ['Next', 'Previous', 'Cancel', 'Bucket name', 'Instance type', 'Services', 'Learn more', 'Settings']) expect(isCommitWord(n), n).toBe(false);
+  });
+
+  it('values that open access or name an AWS account are the player’s to type', () => {
+    for (const v of ['0.0.0.0/0', '::/0', '*', ' * ', '1111 2222 3333', '1111-2222-3333', '111122223333', 'arn:aws:iam::111122223333:root'])
+      expect(isRiskyValue(v), v).toBe(true);
+    for (const v of ['aws-city-demo-1', 'city-web-ab12', '10.0.0.0/16', 't4g.micro', '30']) expect(isRiskyValue(v), v).toBe(false);
+  });
+
   it('mayAct refuses risky clicks and secret fields, allows safe ones', () => {
     const items = takeSnapshot(document, { requireLayout: false }).items;
     const by = (n: string) => items.find((i) => i.name === n);
     expect(mayAct(by('Delete bucket'), 'click')).toMatchObject({ ok: false, reason: 'risky' });
     expect(mayAct(by('Password'), 'type')).toMatchObject({ ok: false, reason: 'sensitive' });
-    expect(mayAct(by('Create bucket'), 'click')).toEqual({ ok: true });
+    // Create commits a change: the agent points at it and the player presses it.
+    expect(mayAct(by('Create bucket'), 'click')).toMatchObject({ ok: false, reason: 'commit' });
+    expect(mayAct(by('Bucket name'), 'type', undefined, '0.0.0.0/0')).toMatchObject({ ok: false, reason: 'risky' });
+    expect(mayAct(by('Bucket name'), 'type', undefined, 'aws-city-demo-1')).toEqual({ ok: true });
     expect(mayAct(undefined, 'click')).toMatchObject({ ok: false, reason: 'missing' });
   });
 
@@ -296,10 +316,15 @@ describe('Copilot hardening: player-only pages', () => {
       expect(mayAct(item(n), action, el(n), value, 'https://us-west-2.console.aws.amazon.com/s3/bucket/create'), n).toEqual(
         action === 'click' ? expect.objectContaining({ ok: false, reason: 'commit' }) : { ok: true },
       );
-      expect(mayAct(item(n), action, el(n), value, 'chrome-extension://abcdefghijklmnop/practice.html#/s3/create'), n).toEqual({ ok: true });
+      // On the practice console it fills the form too, and "Create bucket" (a commit word, a submit button) is still the
+      // player's to press: that rule holds on every page.
+      expect(mayAct(item(n), action, el(n), value, 'chrome-extension://abcdefghijklmnop/practice.html#/s3/create'), n).toEqual(
+        action === 'click' ? expect.objectContaining({ ok: false, reason: 'commit' }) : { ok: true },
+      );
     }
-    // with no url given, it is the element's own page (jsdom's localhost here: not the console)
-    expect(mayAct(item('Create bucket'), 'click', el('Create bucket'))).toEqual({ ok: true });
+    // with no url given, it is the element's own page (jsdom's localhost here: not the console, and not player-only)
+    expect(mayAct(item('Create bucket'), 'click', el('Create bucket'))).toMatchObject({ ok: false, reason: 'commit' });
+    expect(mayAct(item('Bucket name'), 'type', el('Bucket name'), 'aws-city-demo')).toEqual({ ok: true });
   });
 });
 
@@ -389,7 +414,7 @@ describe('Copilot hardening: the real console’s commit button is the player’
       for (const role of ['radio', 'checkbox', 'option', 'tab', 'link', 'textbox', 'combobox', 'columnheader']) expect(isCommit(REAL, role, 'Weiter', false, lang), `${lang} ${role}`).toBe(false);
       expect(isCommit(PRACTICE, 'button', 'Weiter', false, lang), `${lang} practice`).toBe(false);
     }
-    // English (any region) and an unknown language (a snapshot from before v2.17) go by the words.
+    // English (any region) and an unknown language (a snapshot from before v2.19) go by the words.
     for (const lang of ['en', 'en-US', 'EN-gb', undefined]) {
       expect(isCommit(REAL, 'button', 'Next', false, lang), String(lang)).toBe(false);
       expect(isCommit(REAL, 'button', 'Create database', false, lang), String(lang)).toBe(true);
@@ -406,9 +431,10 @@ describe('Copilot hardening: the real console’s commit button is the player’
     expect(act('DB instance identifier', 'type', 'aws-city-db')).toEqual({ ok: true });
     // A "select" aimed at the button ends in the same press (choose → press), so it's the player's too.
     expect(act('Create database', 'select', 'x')).toMatchObject({ ok: false, reason: 'commit' });
-    // The practice console stays automatic.
-    expect(at(PRACTICE)('Create database')).toEqual({ ok: true });
-    expect(at(PRACTICE)('Create database', 'select', 'x')).toEqual({ ok: true });
+    // On the practice console a commit word is still the player's to press (that rule holds on every page), the form stays the Copilot's.
+    expect(at(PRACTICE)('Create database')).toMatchObject({ ok: false, reason: 'commit' });
+    expect(at(PRACTICE)('Create database', 'select', 'x')).toMatchObject({ ok: false, reason: 'commit' });
+    for (const n of ['Production', 'Tags', 'Databases', 'Cancel']) expect(at(PRACTICE)(n), n).toEqual({ ok: true });
   });
 
   it('the page’s main action is the player’s whatever it says: a primary button, or a native form’s submit button', () => {
@@ -423,9 +449,22 @@ describe('Copilot hardening: the real console’s commit button is the player’
     for (const n of ['Continue', 'Go', 'Proceed', 'OK']) expect(act(n), n).toMatchObject({ ok: false, reason: 'commit' });
     // A click on what's inside the primary button is a click on it.
     expect(isMainAction(document.getElementById('go')!)).toBe(true);
-    // A wizard's primary Next, a Cloudscape button that's type=submit by default, and a submit button outside any form commit nothing.
-    for (const n of ['Next', 'Add new tag', 'Refresh']) expect(act(n), n).toEqual({ ok: true });
-    for (const n of ['Continue', 'Go', 'Proceed', 'OK']) expect(at(PRACTICE)(n), n).toEqual({ ok: true });
+    // A wizard's primary Next, a Cloudscape button that's type=submit by default, and a submit button outside any form
+    // aren't the page's main action…
+    for (const n of ['Next', 'Add new tag', 'Refresh']) {
+      const el = [...document.querySelectorAll('button')].find((b) => b.textContent === n)!;
+      expect(isCommit(REAL, 'button', n, isMainAction(el)), n).toBe(false);
+    }
+    // …but a submit control is the player's to press on every page (main's merged rule), and so is a commit word anywhere
+    // in a name ("Add new tag")…
+    for (const n of ['Add new tag', 'Refresh']) expect(act(n), n).toMatchObject({ ok: false, reason: 'commit' });
+    // …except that a Cloudscape button is type="submit" whatever it does, so that alone isn't a commit: a wizard's Next
+    // stays the Copilot's.
+    expect(act('Next')).toEqual({ ok: true });
+    // On the practice console a plain submit control is the player's too; a Cloudscape button with no commit word isn't
+    // (the main-action rule is the real console's).
+    for (const n of ['Proceed', 'OK']) expect(at(PRACTICE)(n), n).toMatchObject({ ok: false, reason: 'commit' });
+    for (const n of ['Continue', 'Go']) expect(at(PRACTICE)(n), n).toEqual({ ok: true });
   });
 
   it('a <button> with no type is the main action only as its form’s default button (the first submit control), not every button in the form', () => {
@@ -435,7 +474,10 @@ describe('Copilot hardening: the real console’s commit button is the player’
     const act = at(REAL);
     expect(act('Proceed')).toMatchObject({ ok: false, reason: 'commit' });
     expect(act('Go on')).toMatchObject({ ok: false, reason: 'commit' }); // an explicit submit still counts
-    for (const n of ['Add filter', 'Show details']) expect(act(n), n).toEqual({ ok: true });
+    const button = (n: string) => [...document.querySelectorAll('button')].find((b) => b.textContent === n)!;
+    for (const n of ['Add filter', 'Show details']) expect(isMainAction(button(n)), n).toBe(false);
+    // A <button> with no type inside a form submits it, so pressing one is still the player's (any submit control is).
+    for (const n of ['Add filter', 'Show details']) expect(act(n), n).toMatchObject({ ok: false, reason: 'commit' });
   });
 
   it('says “happy with the settings” only where there are settings: a list page’s “Create database” just opens the form', () => {
@@ -464,9 +506,10 @@ describe('Copilot hardening: the real console’s commit button is the player’
       expect(act('Cancel', 'select', 'x'), String(lang)).toMatchObject({ ok: false, reason: 'commit' });
       for (const n of ['Production', 'Create new security group', 'Tags', 'Databases']) expect(act(n), `${lang} ${n}`).toEqual({ ok: true });
       expect(act('DB instance identifier', 'type', 'aws-city-db')).toEqual({ ok: true });
-      // The practice console stays automatic.
+      // The practice console isn't the real console: its language changes nothing, and only the every-page rule (a
+      // commit word, a submit control) hands a press back.
       expect(at(PRACTICE)('Cancel')).toEqual({ ok: true });
-      expect(at(PRACTICE)('Create database')).toEqual({ ok: true });
+      expect(at(PRACTICE)('Create database')).toEqual({ ok: false, reason: 'commit', message: 'Your turn: press “Create database” when you’re happy with the settings.' });
     }
   });
 

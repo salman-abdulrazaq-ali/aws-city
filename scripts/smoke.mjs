@@ -170,6 +170,32 @@ await wait(300);
 if (!(await page.locator('.task.done .watch-teaches').count())) errors.push('Watch it done: the result card has no "What it teaches"');
 await shot('06-task-done');
 
+// A request refused at once (the hosted server's events for "Launch a server called big m5.large", replayed the way
+// runtime.ts delivers them): the card and the city's bubbles say why (seen 22 Nov 2026: it read as nothing happening).
+await city(() => {
+  const reason = 'The city only builds small servers: t4g.nano or t4g.micro (Graviton, a fraction of a cent an hour), not m5.large. Try "Launch a server called big".';
+  const s = window.awsCity.useCity.getState();
+  s.addTask('smoke-refused', 'Launch a server called big m5.large');
+  for (const e of [
+    { type: 'agent.message', from: 'concierge', to: 'user', text: reason },
+    { type: 'task.plan', taskId: 'smoke-refused', agentId: 'ec2', targetServiceId: 'ec2', steps: ['Check your request'] },
+    { type: 'task.step', taskId: 'smoke-refused', index: 0, text: `Check your request — ${reason}`, status: 'failed' },
+    { type: 'task.done', taskId: 'smoke-refused', ok: false, result: reason, xp: [] },
+  ]) {
+    window.awsCity.useCity.getState().applyServerEvent(e);
+    window.awsCity.bus.emit('server', e);
+  }
+});
+await wait(600);
+await page.evaluate(() => {
+  const card = [...document.querySelectorAll('.task.failed')].find((c) => c.textContent?.includes('m5.large'));
+  card?.closest('details')?.setAttribute('open', '');
+  card?.scrollIntoView({ block: 'center' });
+});
+await wait(300);
+if (!(await page.locator('.task.failed', { hasText: 'not m5.large' }).count())) errors.push('a refused request: the card does not say why ("not m5.large")');
+await shot('06b-task-refused');
+
 // level everything up a bit for a fuller city
 await city(() => {
   const s = window.awsCity.useCity.getState();
@@ -222,7 +248,18 @@ await wait(800);
 const seededTabs = await page.locator('.tabs button').evaluateAll((bs) => bs.map((b) => b.title));
 if (seededTabs.join() !== 'City,Learn,Jobs,Deploy') errors.push(`seeded progress: expected every tab, got ${seededTabs.join()}`);
 // Learning modes
-const clickTab = async (label) => page.locator(`.tabs button[title="${label}"]`).click();
+// The demo's city care pops a finding card (or a citizen's question) up on a timer, so one can land mid-run on top of
+// whatever the run clicks next, depending on how fast the machine is: close whatever popped up (Escape) first.
+const closePopups = async () => {
+  for (let i = 0; i < 3 && (await page.locator('.finding-scrim').count()); i++) {
+    await page.keyboard.press('Escape');
+    await wait(200);
+  }
+};
+const clickTab = async (label) => {
+  await closePopups();
+  await page.locator(`.tabs button[title="${label}"]`).click();
+};
 await clickTab('Learn');
 await wait(400);
 await page.locator('.flash').click().catch(() => {});
@@ -289,6 +326,44 @@ await shot('17-deploy-preview');
 await page.getByText('Approve & deploy').click();
 await wait(8000);
 await shot('18-deploy-done');
+// "My AWS, live": the linked account as one map (src/ui/AccountMap.tsx), opened from the account card.
+await page.getByRole('button', { name: '🗺️ My AWS, live' }).click();
+await wait(400);
+if (!(await page.locator('.account-map .map-node').count())) errors.push('my aws map: no services on the map of the practice account');
+await shot('18b-my-aws-map');
+await audit('my aws map');
+// The Diagram (src/ui/ArchDiagram.tsx): the services drawn, dots moving, each one's cost a day and a month (est., from
+// the bill) and a legend saying which lines are real. With the bill and live traffic on, as a player would.
+await city(() => (window.awsCity.setBill(true), window.awsCity.setFlow(true)));
+await wait(1200);
+await page.locator('.account-map .seg button', { hasText: 'Diagram' }).click();
+await wait(800);
+if ((await page.locator('.account-map .arch-hit button').count()) < 3) errors.push('my aws diagram: fewer than three services drawn');
+if (!(await page.locator('.account-map .arch-link.typical').count())) errors.push('my aws diagram: no typical (dashed) link between the practice account’s services');
+if (!(await page.locator('.account-map .arch-link.real').count())) errors.push('my aws diagram: no real link (the practice account has a standby and replicas)');
+if (!(await page.locator('.account-map', { hasText: 'a day est.' }).count())) errors.push('my aws diagram: no cost a day (est.) with the bill on');
+if (!(await page.locator('.account-map animateMotion').count())) errors.push('my aws diagram: no moving dots');
+await shot('18c-my-aws-diagram');
+await audit('my aws diagram');
+// How AWS City runs: the city's own parts and links, with the Fargate prices and the README's idle estimate.
+await page.locator('.account-map .seg button', { hasText: 'How AWS City runs' }).click();
+await wait(600);
+if ((await page.locator('.account-map .arch-hit button').count()) < 10) errors.push('how AWS City runs: fewer than ten parts drawn');
+if (!(await page.locator('.account-map .map-total', { hasText: '$60–85' }).count())) errors.push('how AWS City runs: no idle estimate');
+await shot('18d-city-architecture');
+await audit('how AWS City runs');
+await page.locator('.account-map .seg button', { hasText: 'Diagram' }).click();
+await wait(300);
+// Reduced motion: the dots sit still.
+await page.emulateMedia({ reducedMotion: 'reduce' });
+await page.locator('.account-map .seg button', { hasText: 'Services' }).click();
+await page.locator('.account-map .seg button', { hasText: 'Diagram' }).click();
+await wait(300);
+if (await page.locator('.account-map animateMotion').count()) errors.push('my aws diagram: dots move under reduced motion');
+await page.emulateMedia({ reducedMotion: null });
+await page.getByRole('button', { name: 'Close the map' }).click();
+await city(() => (window.awsCity.setBill(false), window.awsCity.setFlow(false)));
+await wait(200);
 
 // City care: teach Noor to Fixer (as 20 flashcards would), open the city-built table's finding, and approve its fix in the card.
 await city(() => window.awsCity.useCity.getState().awardCitizens([{ citizenId: 'citizen:reliability', amount: 20, reason: 'you reviewed 20 reliability flashcards' }]));
@@ -753,6 +828,24 @@ await wait(500);
 await panel.screenshot({ path: `${out}/11-sidepanel.png` });
 console.log('📸 11-sidepanel');
 await audit('side panel', panel);
+// My AWS → Diagram in the 400 px panel: top to bottom, nothing wider than the panel.
+await panel.evaluate(() => window.awsCity.useCity.getState().openAccountMap(true));
+await wait(400);
+if (await panel.locator('.account-map .seg button', { hasText: 'Diagram' }).count()) {
+  await panel.locator('.account-map .seg button', { hasText: 'Diagram' }).click();
+  await wait(600);
+  if (!(await panel.locator('.account-map .arch-tb').count())) errors.push('my aws diagram (panel): not laid out top to bottom');
+  const wide = await panel.evaluate(() => {
+    const el = document.querySelector('.account-map');
+    return el ? el.scrollWidth > el.clientWidth + 1 : false;
+  });
+  if (wide) errors.push('my aws diagram (panel): wider than the panel');
+  await panel.screenshot({ path: `${out}/18e-my-aws-diagram-panel.png` });
+  console.log('📸 18e-my-aws-diagram-panel');
+  await audit('my aws diagram (panel)', panel);
+} else errors.push('my aws diagram (panel): no Diagram view');
+await panel.evaluate(() => window.awsCity.useCity.getState().openAccountMap(false));
+await wait(200);
 await panel.locator('.tabs button[title="Learn"]').click();
 await panel.locator('.seg button[data-sub="build"]').click();
 await wait(400);
@@ -1071,6 +1164,7 @@ await panel.screenshot({ path: `${out}/12-lookout.png` });
   const openJob = async (t) => {
     await city((id) => window.awsCity.useCity.getState().openClients(id), 'bank');
     await wait(250);
+    await closePopups(); // seen in CI 21 Nov: a finding card landed on the bank's job list
     await page.getByRole('button', { name: `Go to the ${t.station} for “${t.title}”` }).click();
     const at = Date.now();
     while (Date.now() - at < 25_000 && (await city(() => window.awsCity.useCity.getState().clientTaskOpen)) !== t.id) await wait(250);
@@ -1132,15 +1226,12 @@ await panel.screenshot({ path: `${out}/12-lookout.png` });
       // The demo's Copilot works in the practice console (nothing there touches AWS); its run finishing does the job.
       await page.getByRole('button', { name: /Do it with the Copilot/ }).click();
       const at = Date.now();
-      // A step that bills (Create database) is handed to the player on the practice page: play the player and press it.
-      const CONFIRM = { rds: 'Create database', ec2: 'Launch instance', iam: 'Create role' }[t.click.flow];
-      let confirmed = false;
+      // Every step that commits a change (create, launch, save…) is handed to the player on the practice page, and the
+      // overlay marks the element it's waiting on: play the player and press it.
       while (Date.now() - at < 60_000 && !(await city((id) => (window.awsCity.useCity.getState().progress.clients?.bank?.done ?? []).includes(id), t.id))) {
         const tab = ctx.pages().find((p) => p.url().startsWith(`chrome-extension://${id}/practice`));
-        if (tab && CONFIRM && !confirmed && (await tab.locator('[data-awscity-overlay]').getByText('needs your OK').count().catch(() => 0))) {
-          await tab.getByRole('button', { name: CONFIRM, exact: true }).click().catch(() => {});
-          confirmed = true;
-        }
+        const turn = tab?.locator('[data-awscity-your-turn]');
+        if (turn && (await turn.count().catch(() => 0))) await turn.first().click().catch(() => {});
         await wait(500);
       }
       await page.bringToFront();
@@ -1336,6 +1427,54 @@ await panel.screenshot({ path: `${out}/12-lookout.png` });
   await winter.close();
   await city(() => window.awsCity.useCity.getState().enterRegion('us-west-2'));
   await wait(1500);
+}
+
+// ── AWS City Live (src/world/liveEvents.ts): the event banner and Events board (?date= previews a day), re:Invent
+// week, and a What's New launch landing on its building while the city is open ──
+{
+  const live = await ctx.newPage();
+  live.on('pageerror', (e) => errors.push(`events pageerror: ${e.message}`));
+  live.on('console', (m) => m.type() === 'error' && errors.push(`events console: ${m.text()}`));
+  await live.goto(`chrome-extension://${id}/city.html?date=2026-11-25`);
+  await wait(2500);
+  await live.evaluate(() => window.awsCity.useCity.getState().select(undefined));
+  // The City tab (the banner's home), whichever tab this profile last had open.
+  const cityTab = live.getByRole('tab', { name: /^City/ });
+  if (await cityTab.count()) await cityTab.first().click();
+  await wait(500);
+  const banner = live.locator('.event-banner');
+  if (!(await banner.count())) errors.push('events: no banner five days before re:Invent (?date=2026-11-25)');
+  else {
+    if (!/In 5 days · Las Vegas/.test((await banner.textContent()) ?? '')) errors.push(`events: banner says "${await banner.textContent()}"`);
+    await live.screenshot({ path: `${out}/86-events-banner.png` });
+    console.log('📸 86-events-banner');
+    await live.locator('.event-line').click();
+    await wait(300);
+    if (!(await live.locator('#event-board').isVisible())) errors.push('events: the Events board did not open');
+    await live.screenshot({ path: `${out}/86b-events-board.png` });
+    console.log('📸 86b-events-board');
+    await audit('events board', live);
+  }
+  await live.goto(`chrome-extension://${id}/city.html?date=2026-12-02`);
+  await wait(2500);
+  if (!(await live.locator('.event-banner.reinvent.live').count())) errors.push('events: re:Invent is not live on ?date=2026-12-02');
+  await live.screenshot({ path: `${out}/86c-reinvent-live.png` });
+  console.log('📸 86c-reinvent-live');
+  await live.close();
+
+  // A launch for S3 lands while the city is open: "New from AWS" (the toast) and S3 Lake's moment in the city.
+  await city(() => window.awsCity.bus.emit('flyTo', { id: 's3' }));
+  await wait(1500);
+  await city(() => {
+    const st = window.awsCity.useCity.getState();
+    const items = st.news?.items ?? [];
+    const launch = { id: 'smoke-launch', title: 'Amazon S3 adds a smoke-test launch', url: 'https://aws.amazon.com/about-aws/whats-new/', date: new Date().toISOString(), serviceIds: ['s3'] };
+    st.applyServerEvent({ type: 'aws.news', asOf: new Date().toISOString(), items });
+    st.applyServerEvent({ type: 'aws.news', asOf: new Date().toISOString(), items: [launch, ...items] });
+  });
+  await wait(1200);
+  if (!(await page.locator('.toast', { hasText: 'New from AWS' }).count())) errors.push('events: no "New from AWS" toast for a launch that landed');
+  await shot('86d-launch-s3');
 }
 
 console.log(errors.length ? `\n${errors.length} errors:\n` + errors.join('\n') : '\nno page errors');

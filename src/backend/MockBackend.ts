@@ -127,6 +127,8 @@ function genericScript(serviceId: string): MockScript {
 const AMBIENT = AMBIENT_CHATTER;
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** AWS City Live: the demo's newest captured launch lands this long after the city opens (once a session). */
+export const LAUNCH_AFTER_MS = 60_000;
 
 export interface MockOptions {
   /** Agents currently visible in the city (ambient chatter only uses these). */
@@ -180,6 +182,8 @@ export class MockBackend implements AgentBackend {
   private fixed = new Set<string>();
   /** The demo's practice drill (v2.6), once it has started. */
   private drill?: { at: Date; resolvedAt?: Date };
+  /** AWS City Live: the held-back launch has arrived (once a session; see openCity). */
+  private launchLanded = false;
   /** The drill waits until the player has finished a quest (from putProgress), so it never interrupts the first one. */
   private drillReady = false;
   private online = false;
@@ -187,7 +191,7 @@ export class MockBackend implements AgentBackend {
   private billOn = false;
   private flowOn = false;
   private flowTimer?: ReturnType<typeof setInterval>;
-  /** v2.17: practice resources taken down (resource.remove), by ARN, and the removals waiting for approval. */
+  /** v2.19: practice resources taken down (resource.remove), by ARN, and the removals waiting for approval. */
   private removed = new Set<string>();
   private removals = new Map<string, { arn: string; name: string }>();
   /** The last progress the runtime saved (putProgress): what "Download my data" gives in the demo. */
@@ -244,7 +248,18 @@ export class MockBackend implements AgentBackend {
     for (const t of this.careTimers.splice(0)) clearTimeout(t);
     // v2.6: AWS's public status, then (once a session) a practice drill in the demo's Region that resolves itself.
     this.emit(demoHealth(new Date(), this.drill));
-    this.emit(demoNews());
+    // AWS City Live: the newest captured launch (a real What's New item) arrives a minute in, once a session, so the
+    // demo's city shows a launch moment without AWS. Until then the ticker has the rest.
+    const news = demoNews();
+    const newest = [...news.items].sort((a, b) => b.date.localeCompare(a.date))[0];
+    this.emit(this.launchLanded || !newest ? news : { ...news, items: news.items.filter((n) => n !== newest) });
+    if (!this.launchLanded && newest)
+      this.careTimers.push(
+        setTimeout(() => {
+          this.launchLanded = true;
+          this.emit(demoNews());
+        }, LAUNCH_AFTER_MS / this.speed),
+      );
     if (this.drillReady) this.scheduleDrill();
     this.emit(demoInventory(new Date(), { crossRegion: !!this.account, without: this.removed }));
     if (this.billOn) this.emit(demoBill());
@@ -505,23 +520,23 @@ export class MockBackend implements AgentBackend {
       }
       case 'account.verify':
         return void this.sleep(900).then(() => {
-          // Like the server (v2.17): a refusal is an error for the request, never an account.status.
+          // Like the server (v2.19): a refusal is an error for the request, never an account.status.
           const id = /^\s*(\d{12})\s*$/.exec(cmd.roleArn)?.[1] ?? /:(\d{12}):/.exec(cmd.roleArn)?.[1];
           if (!id) return this.emit({ type: 'error', requestId: cmd.requestId, message: 'Paste your 12-digit AWS account id (or the RoleArn from the AWSCity stack).' });
           this.account = { accountId: id, region: 'us-west-2' };
-          // v2.17: the practice account allows fixes; it has no real role, so no role version.
+          // v2.19: the practice account allows fixes; it has no real role, so no role version.
           this.emit({ type: 'account.status', requestId: cmd.requestId, linked: true, ...this.account, message: 'Practice account linked.', fixes: true });
           // Linked: the practice account's replication to other Regions shows now (world map arcs, highway tankers).
           this.emit(demoInventory(new Date(), { crossRegion: true, without: this.removed }));
         });
       case 'account.recheck':
-        // v2.17 "Check again", like the server: read-only, answered on account.status (the practice account allows fixes).
+        // v2.19 "Check again", like the server: read-only, answered on account.status (the practice account allows fixes).
         return void this.sleep(400).then(() => {
           if (!this.account) return this.emit({ type: 'error', requestId: cmd.requestId, code: 'unlinked', message: 'Connect your AWS account first.' });
           this.emit({ type: 'account.status', requestId: cmd.requestId, linked: true, ...this.account, message: 'Practice account linked.', fixes: true });
         });
       case 'account.unlink':
-        // v2.17: the practice account disconnects (no MFA, like the server); its links to other Regions go with it.
+        // v2.19: the practice account disconnects (no MFA, like the server); its links to other Regions go with it.
         return void this.sleep(400).then(() => {
           this.account = undefined;
           this.emit({ type: 'account.status', requestId: cmd.requestId, linked: false, region: DEMO.region, message: 'Practice account disconnected. Nothing in it changed.' });
@@ -599,6 +614,8 @@ export class MockBackend implements AgentBackend {
         return;
       case 'deploy.teardown':
         return void this.teardown(cmd.deployId);
+      case 'auth.renew':
+        return; // v2.17: the demo has no sign-in, so there's no fresh token to hand over
       default: {
         // Every command in the contract is answered above: a new one fails to compile here instead of being ignored.
         const unknown: never = cmd;
@@ -608,7 +625,7 @@ export class MockBackend implements AgentBackend {
   }
 
   /**
-   * v2.17 resource.remove, like the server: only something the city built (managedByGame), only with the practice
+   * v2.19 resource.remove, like the server: only something the city built (managedByGame), only with the practice
    * account linked, and only after the player approves the preview. Nothing real is touched.
    */
   private async previewRemoval({ requestId, kind, id }: ResourceRemove) {
@@ -643,7 +660,7 @@ export class MockBackend implements AgentBackend {
     this.emit(demoInventory(new Date(), { crossRegion: !!this.account, without: this.removed }));
   }
 
-  /** v2.17 "Download my data" in the demo: this device's progress; no server keeps anything. */
+  /** v2.19 "Download my data" in the demo: this device's progress; no server keeps anything. */
   async exportMe(): Promise<PlayerDataExport> {
     return {
       exportedAt: new Date().toISOString(),

@@ -11,7 +11,8 @@ import type { AwsClients } from '../src/aws.js';
 import { setPublicErrors } from '../src/log.js';
 import { RETIRED_REASON } from '../src/agents/service.js';
 import { createApprovals } from '../src/contract/approvals.js';
-import { enrich, GEO_RETRY_MS, inventoryEvent, readGeo, readInventory, serviceForArn } from '../src/state/inventory.js';
+import resourceProps from '../../shared/resource-props.json' with { type: 'json' };
+import { CFN_TYPE, enrich, GEO_RETRY_MS, inventoryEvent, readGeo, readInventory, serviceForArn } from '../src/state/inventory.js';
 import type { Resource } from '../src/state/model.js';
 import { LockLostError } from '../src/store/types.js';
 import type { CityFinding, Progress, ServerEvent } from '../src/world.js';
@@ -93,10 +94,26 @@ describe('inventory: the account mirrored as city buildings', () => {
   });
 
   it('maps ARNs to landmarks, and unknown types to a "?" lot', () => {
-    expect(serviceForArn('arn:aws:ec2:us-west-2:1:volume/vol-1')).toMatchObject({ serviceId: 'ebs', type: 'ec2:volume' });
+    expect(serviceForArn('arn:aws:ec2:us-west-2:1:volume/vol-1')).toMatchObject({ serviceId: 'ebs', type: 'AWS::EC2::Volume' });
     expect(serviceForArn('arn:aws:rds:us-west-2:1:cluster:shop')).toMatchObject({ serviceId: 'aurora', name: 'shop' });
     expect(serviceForArn('arn:aws:sns:us-west-2:1:alerts')).toMatchObject({ serviceId: 'sqs' });
     expect(serviceForArn('arn:aws:states:us-west-2:1:stateMachine:flow')).toMatchObject({ serviceId: null });
+  });
+
+  it('a real account’s resources get the type names the city’s props use (seen 21 Nov: all of them landed in sheds)', () => {
+    expect(serviceForArn('arn:aws:ec2:us-west-2:047463438585:instance/i-03e06cc3ce2a69cfe')).toEqual({ serviceId: 'ec2', type: 'AWS::EC2::Instance', name: 'i-03e06cc3ce2a69cfe' });
+    expect(serviceForArn('arn:aws:s3:::aws-city-047463438585-holiday-123')).toEqual({ serviceId: 's3', type: 'AWS::S3::Bucket', name: 'aws-city-047463438585-holiday-123' });
+    expect(serviceForArn('arn:aws:dynamodb:us-west-2:047463438585:table/city-scores')).toEqual({ serviceId: 'dynamodb', type: 'AWS::DynamoDB::Table', name: 'city-scores' });
+    expect(serviceForArn('arn:aws:lambda:us-west-2:1:function:resize:3')).toMatchObject({ type: 'AWS::Lambda::Function', name: 'resize' });
+    expect(serviceForArn('arn:aws:rds:us-west-2:1:db:orders')).toMatchObject({ type: 'AWS::RDS::DBInstance', name: 'orders' });
+    expect(serviceForArn('arn:aws:sqs:us-west-2:1:jobs')).toMatchObject({ type: 'AWS::SQS::Queue', name: 'jobs' });
+    expect(serviceForArn('arn:aws:apigateway:us-west-2::/restapis/a1b2c3')).toMatchObject({ type: 'AWS::ApiGateway::RestApi', name: 'a1b2c3' });
+    expect(serviceForArn('arn:aws:apigateway:us-west-2::/apis/h1')).toMatchObject({ type: 'AWS::ApiGatewayV2::Api', name: 'h1' });
+    expect(serviceForArn('arn:aws:iam::1:role/service-role/runner')).toMatchObject({ type: 'AWS::IAM::Role', name: 'runner' });
+    // A type with no prop keeps its ARN form (it stands in its district's shed).
+    expect(serviceForArn('arn:aws:sns:us-west-2:1:alerts')).toMatchObject({ type: 'sns:topic', name: 'alerts' });
+    // Every type the server names has a prop in the city (shared/resource-props.json), so none of them falls into a shed.
+    for (const t of Object.values(CFN_TYPE)) expect(resourceProps.props, t).toHaveProperty([t]);
   });
 
   it('uses Resource Explorer when there is an index (complete), else the tagging API (partial)', async () => {
@@ -203,6 +220,74 @@ describe('inventory: the real AZ map and Region opt-ins (v2.5)', () => {
   });
 });
 
+describe('the mirror follows DescribeInstances, not the lagging listing (22 Nov 2026)', () => {
+  const ARN = (id: string, region = 'us-west-2') => `arn:aws:ec2:${region}:${ACCOUNT}:instance/${id}`;
+  const listed = (...arns: string[]) => ({ source: 'resource-explorer' as const, complete: true, items: arns.map((arn) => ({ ...serviceForArn(arn), arn, districtId: 'compute', managedByGame: false, region: arn.split(':')[3] })) });
+  const placed = (r: Resource, az: string): Resource => ({ ...r, meta: { ...r.meta, availabilityZone: az } });
+
+  it('drops a server that is shutting down or terminated (DescribeInstances keeps it for an hour)', () => {
+    const inv = listed(ARN('i-old'), ARN('i-going'));
+    const { items } = enrich(inv, snapshot([instance('i-old', 'terminated'), instance('i-going', 'shutting-down')]), 'us-west-2');
+    expect(items).toEqual([]);
+    expect(inventoryEvent({ ...inv, items }, 'us-west-2').counts).toEqual({});
+  });
+
+  it('adds a running server the listing has not caught up with, first, named from its Name tag', () => {
+    const inv = listed('arn:aws:s3:::aws-city-1-photos');
+    const { items } = enrich(inv, snapshot([placed(instance('i-new', 'running', true, 'demo'), 'us-west-2b')]), 'us-west-2');
+    expect(items[0]).toEqual({ arn: ARN('i-new'), type: 'AWS::EC2::Instance', name: 'demo', serviceId: 'ec2', districtId: 'compute', managedByGame: true, region: 'us-west-2', az: 'us-west-2b' });
+    expect(items.map((i) => i.serviceId)).toEqual(['ec2', 's3']);
+  });
+
+  it('a listed server takes its Name tag and keeps its AZ', () => {
+    const { items } = enrich(listed(ARN('i-1')), snapshot([placed(instance('i-1', 'stopped', false, 'web'), 'us-west-2a')]), 'us-west-2');
+    expect(items).toEqual([expect.objectContaining({ arn: ARN('i-1'), name: 'web', az: 'us-west-2a', managedByGame: false })]);
+  });
+
+  it('drops a listed server EC2 no longer shows only when EC2 was read in full', () => {
+    const inv = listed(ARN('i-gone'));
+    expect(enrich(inv, snapshot([]), 'us-west-2').items).toEqual([]);
+    // A failed or denied read keeps the last known list: the map is never emptied by an error.
+    expect(enrich(inv, snapshot([], { services: { ec2: 'error', dynamodb: 'ok', s3: 'ok', lambda: 'ok', rds: 'ok', apigateway: 'ok' } }), 'us-west-2').items).toHaveLength(1);
+    expect(enrich(inv, snapshot([], { services: { ec2: 'locked', dynamodb: 'ok', s3: 'ok', lambda: 'ok', rds: 'ok', apigateway: 'ok' } }), 'us-west-2').items).toHaveLength(1);
+    // At the poller's cap the snapshot isn't the whole list either.
+    const many = Array.from({ length: 200 }, (_, i) => instance(`i-${i}`, 'running'));
+    expect(enrich(inv, snapshot(many), 'us-west-2').items.filter((i) => i.arn === ARN('i-gone'))).toHaveLength(1);
+  });
+
+  it('leaves other Regions as listed (the poller reads the home Region only)', () => {
+    const { items } = enrich(listed(ARN('i-eu', 'eu-west-1')), snapshot([]), 'us-west-2');
+    expect(items).toEqual([expect.objectContaining({ arn: ARN('i-eu', 'eu-west-1'), name: 'i-eu' })]);
+  });
+
+  it('caps a Name tag at 64 characters', () => {
+    const { items } = enrich(listed(), snapshot([instance('i-long', 'running', true, 'x'.repeat(200))]), 'us-west-2');
+    expect(items[0]!.name).toHaveLength(64);
+  });
+
+  it('reconcile re-sends the mirror when a terminate and a launch keep the counts the same, with no AWS call', async () => {
+    const send = vi.fn(async (cmd: unknown) => (cmd instanceof ListIndexesCommand ? { Indexes: [{ Region: 'us-west-2', Type: 'LOCAL' }] } : cmd instanceof SearchCommand ? { Resources: [{ Arn: ARN('i-old'), Region: 'us-west-2' }] } : { AvailabilityZones: [], Regions: [] }));
+    const clients = { ec2: { send }, ec2For: () => ({ send }), explorer: { send } } as unknown as AwsClients;
+    let current = snapshot([instance('i-old', 'running', true, 'web')]);
+    const care = createCityCare({ clients, region: 'us-west-2', accountId: ACCOUNT, runner: { turn: vi.fn(), reset: () => undefined } as unknown as AgentRunner, withLock: (fn) => fn(), refresh: async () => undefined, progress: async () => null, snapshot: () => current, fixesEnabled: false });
+
+    // Nothing to rebuild before the first listing.
+    expect(care.reconcile(current)).toBeUndefined();
+    const first = (await care.refreshInventory())!;
+    expect(first.items.map((i) => i.name)).toEqual(['web']);
+
+    const calls = send.mock.calls.length;
+    current = snapshot([instance('i-old', 'terminated', true, 'web'), instance('i-new', 'running', true, 'demo')]);
+    const next = care.reconcile(current)!;
+    expect(next.counts).toEqual(first.counts);
+    expect(next.items.map((i) => i.name)).toEqual(['demo']);
+    expect(send.mock.calls.length).toBe(calls);
+    // Unchanged: nothing to send. A socket that connects now gets the rebuilt mirror.
+    expect(care.reconcile(current)).toBeUndefined();
+    expect(care.welcome()[0]).toMatchObject({ type: 'city.inventory', items: [{ name: 'demo' }] });
+  });
+});
+
 describe('city care: fixes with the player in charge', () => {
   const dynamodb = mockClient(DynamoDBClient);
   const ec2 = mockClient(EC2Client);
@@ -210,7 +295,9 @@ describe('city care: fixes with the player in charge', () => {
   const world = snapshot([{ ...table('city-orders'), meta: { pitr: false } }], { account: { ebsEncryptionByDefault: false } });
   const runner: AgentRunner = { turn: vi.fn(async (agentId: string) => ({ agentId, reply: 'Backups let you rewind.', toolCalls: [], refused: false })), reset: () => undefined };
 
+  const audit = vi.fn();
   const setup = (opts: { xp?: number; fixesEnabled?: boolean; lease?: AbortSignal; retired?: AbortSignal; live?: () => Promise<boolean> } = {}) => {
+    audit.mockClear();
     const events: ServerEvent[] = [];
     const emit = (e: ServerEvent) => events.push(e);
     const progress: Progress = { version: 2, landmarks: {}, updatedAt: '', citizens: { 'citizen:reliability': { xp: opts.xp ?? 25 }, 'citizen:security': { xp: opts.xp ?? 25 } } };
@@ -225,6 +312,7 @@ describe('city care: fixes with the player in charge', () => {
       fixesEnabled: opts.fixesEnabled ?? true,
       ...(opts.retired ? { retired: opts.retired } : {}),
       ...(opts.live ? { live: opts.live } : {}),
+      audit,
     });
     care.update(world);
     const approvals = createApprovals({ region: 'us-west-2' });
@@ -269,6 +357,17 @@ describe('city care: fixes with the player in charge', () => {
     expect(dynamodb.commandCalls(UpdateContinuousBackupsCommand)).toHaveLength(1);
     expect(resolved(events, pitr)).toBe(true);
     expect(events).toContainEqual(expect.objectContaining({ type: 'deploy.status', status: 'complete' }));
+    expect(audit).toHaveBeenCalledWith({ action: `fix:${pitr.fix!.fixId}`, target: pitr.resource.id, outcome: 'done' });
+  });
+
+  it('a fix the player says no to changes nothing and is audited as rejected', async () => {
+    const { care, events, emit, approvals, pitr } = setup();
+    const job = care.fix('r1', pitr.id, emit, approvals);
+    await vi.waitFor(() => expect(preview(events)).toBeDefined());
+    approvals.answer(preview(events)!.deployId, false);
+    await job;
+    expect(dynamodb.commandCalls(UpdateContinuousBackupsCommand)).toHaveLength(0);
+    expect(audit.mock.calls).toEqual([[{ action: `fix:${pitr.fix!.fixId}`, target: pitr.resource.id, outcome: 'rejected' }]]);
   });
 
   it('re-checks after the approval, inside the lock, and never runs the same fix twice at once', async () => {

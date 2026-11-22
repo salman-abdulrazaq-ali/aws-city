@@ -337,7 +337,7 @@ describe('runtime sessions', () => {
     expect(rt.canDeleteAccount()).toBe(true);
   });
 
-  it('v2.17: a link is made for the Region the player picked (AllowFixes when ticked), and a refused one is resent with both', async () => {
+  it('v2.19: a link is made for the Region the player picked (AllowFixes when ticked), and a refused one is resent with both', async () => {
     const { rt, useCity } = await boot();
     Object.assign(fake, { confirmTotp: async () => {} });
     fake.status('connected');
@@ -361,7 +361,7 @@ describe('runtime sessions', () => {
     expect(useCity.getState().account).toMatchObject({ linkRegion: 'eu-west-1', allowFixes: false });
   });
 
-  it('v2.17: Disconnect sends account.unlink, and Take it down sends resource.remove (the server asks for approval)', async () => {
+  it('v2.19: Disconnect sends account.unlink, and Take it down sends resource.remove (the server asks for approval)', async () => {
     const { rt, useCity } = await boot();
     fake.status('connected');
     await settle();
@@ -372,7 +372,7 @@ describe('runtime sessions', () => {
     expect(fake.sent.at(-1)).toEqual({ action: 'resource.remove', requestId: remove, kind: 'table', id: 'city-orders' });
   });
 
-  it('v2.17: Check again is one read-only account.recheck (no setup link, no verify); its answer and its refusal are this tab’s own', async () => {
+  it('v2.19: Check again is one read-only account.recheck (no setup link, no verify); its answer and its refusal are this tab’s own', async () => {
     const { rt, useCity } = await boot();
     fake.status('connected');
     await settle();
@@ -390,7 +390,7 @@ describe('runtime sessions', () => {
     expect(useCity.getState().account.error).toMatch(/few seconds/);
   });
 
-  it('v2.17: “I’ve updated the stack” asks for a fresh setup link in the linked Region, then verifies it as updated, once', async () => {
+  it('v2.19: “I’ve updated the stack” asks for a fresh setup link in the linked Region, then verifies it as updated, once', async () => {
     const { rt, useCity } = await boot();
     fake.status('connected');
     await settle();
@@ -412,7 +412,7 @@ describe('runtime sessions', () => {
     expect(useCity.getState().account.linked).toBe(true);
   });
 
-  it('v2.17: a removal refused for MFA is known by its requestId, so turning the authenticator on says to press Take it down again', async () => {
+  it('v2.19: a removal refused for MFA is known by its requestId, so turning the authenticator on says to press Take it down again', async () => {
     const { rt, useCity } = await boot();
     Object.assign(fake, { confirmTotp: async () => {} });
     fake.status('connected');
@@ -427,7 +427,7 @@ describe('runtime sessions', () => {
     expect(useCity.getState().toasts.map((t) => t.text)).toContainEqual(expect.stringMatching(/Take it down again/));
   });
 
-  it('v2.17: an account reply is this tab’s own only if it asked; a refusal is said in the card', async () => {
+  it('v2.19: an account reply is this tab’s own only if it asked; a refusal is said in the card', async () => {
     const { rt, useCity } = await boot();
     fake.status('connected');
     await settle();
@@ -486,7 +486,7 @@ describe('runtime sessions', () => {
     const text = useCity.getState().toasts.at(-1)?.text ?? '';
     expect(text).toMatch(/Couldn’t download your data/);
     expect(text).not.toMatch(/500|GET/);
-    // Once a minute per player (v2.17): a second download straight away says so, not "check your connection".
+    // Once a minute per player (v2.19): a second download straight away says so, not "check your connection".
     useCity.getState().clearToasts();
     Object.assign(fake, { exportMe: async () => Promise.reject(Object.assign(new Error('GET /me/export → 429'), { tooSoon: true })) });
     await rt.downloadMyData();
@@ -551,6 +551,24 @@ describe('runtime sessions', () => {
     const asked = fake.sent.filter((c) => c.action === 'page.classify').at(-1)!;
     expect(asked).toMatchObject({ context: { screenshotKey: 'shot-1' } });
     expect(JSON.stringify(asked)).not.toMatch(/mail\.example|bank/);
+  });
+
+  it('auto-snap never photographs a console page that can show a secret', async () => {
+    const { rt } = await boot();
+    fake.status('connected');
+    rt.setAutoSnap(true);
+    for (const url of [
+      'https://us-east-1.console.aws.amazon.com/iam/home#/users/details/ada/create-access-key',
+      'https://us-east-1.console.aws.amazon.com/iam/home#/security_credentials',
+      'https://us-west-2.console.aws.amazon.com/secretsmanager/secret?name=db',
+      'https://us-west-2.console.aws.amazon.com/systems-manager/parameters/prod/db/details',
+      'https://us-west-2.console.aws.amazon.com/kms/home#/kms/keys',
+    ]) {
+      rt.simulateFocus(url, 'AWS');
+      await settle();
+    }
+    expect(fake.sent.filter((c) => c.action === 'page.classify')).toEqual([]);
+    expect(rt.isSensitivePage('https://us-west-2.console.aws.amazon.com/s3/home')).toBe(false);
   });
 
   it('a screenshot is forgotten when the page changes and when the session ends', async () => {

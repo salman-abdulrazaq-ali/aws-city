@@ -82,7 +82,7 @@ export function StackLink({ region, children = 'Open the AWSCity stack ↗' }: {
 }
 
 /**
- * "Check again": asks the linked role once more whether it allows fixes (v2.17 account.recheck, read-only:
+ * "Check again": asks the linked role once more whether it allows fixes (v2.19 account.recheck, read-only:
  * src/app/runtime.ts recheckAccount), after AllowFixes was turned on in CloudFormation. Hosted only (FixesOn). It waits
  * for the account's answer, an error, or 15 s.
  */

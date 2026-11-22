@@ -13,6 +13,7 @@
     "AWS::ECS::Cluster": { "prop": "crate", "noun": "cluster" },
     "AWS::EFS::FileSystem": { "prop": "barrel", "noun": "file system" },
     "AWS::ApiGateway::RestApi": { "prop": "kiosk", "noun": "API" },
+    "AWS::ApiGatewayV2::Api": { "prop": "kiosk", "noun": "API" },
     "AWS::Cognito::UserPool": { "prop": "kiosk", "noun": "user pool" },
     "AWS::KMS::Key": { "prop": "vault", "noun": "key" },
     "AWS::IAM::Role": { "prop": "badge", "noun": "role" },

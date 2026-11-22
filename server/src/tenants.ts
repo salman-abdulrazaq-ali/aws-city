@@ -6,11 +6,13 @@ import type { AccountLinker } from './accounts/link.js';
 import { connectsPlayerLabel, LinkError } from './accounts/link.js';
 import type { Llm } from './agents/llm.js';
 import { metered, withErrorCodes } from './agents/metered.js';
+import { parseAction } from './agents/actions.js';
 import { type CityCare, createCityCare } from './agents/care.js';
+import { describeAction } from './agents/policy.js';
 import { type AgentRunner, createAgentRunner, outcomeMessage } from './agents/runner.js';
 import { createStrandsRunner } from './citizens/engine.js';
 import { isCitizen } from './citizens/roles.js';
-import { type ActionService, createActionService } from './agents/service.js';
+import { type ActionService, type Audit, createActionService } from './agents/service.js';
 import type { ActionName } from './agents/actions.js';
 import { type Approvals, DISCONNECTED_MESSAGE } from './contract/approvals.js';
 import { createJev } from './agents/jev.js';
@@ -25,7 +27,7 @@ import { log, who } from './log.js';
 import type { NewsFeed } from './news/feed.js';
 import { type Bill, createBill } from './state/bill.js';
 import { createFlow, type Flow } from './state/flow.js';
-import { diffSnapshots } from './state/diff.js';
+import { diffSnapshots, movesInventory } from './state/diff.js';
 import { SERVICES, type WorldSnapshot } from './state/model.js';
 import { createPoller, type Poller } from './state/poller.js';
 import { type AccountRecord, type PutResult, type Stores, today } from './store/types.js';
@@ -41,6 +43,8 @@ type Emit = (e: ServerEvent) => void;
 export interface Tenant {
   readonly sub: string;
   readonly region: string;
+  /** The linked AWS account (undefined until one is linked): approval cards name it. */
+  readonly accountId?: string;
   orchestrator(): Orchestrator;
   /** City care (citizens, findings, fixes) for a linked account. */
   care(): CityCare | undefined;
@@ -60,21 +64,21 @@ export interface Tenant {
   fresh(): Promise<WorldSnapshot | undefined>;
   progress: { get(): Promise<Progress | null>; put(input: unknown): Promise<PutResult> };
   uploads: { create(contentType: ImageType): Promise<UploadTarget> };
-  /** v2.17 `allowFixes`: the setup link asks for AllowFixes=true. */
+  /** v2.19 `allowFixes`: the setup link asks for AllowFixes=true. */
   link(requestId: string, region: string, emit: Emit, allowFixes?: boolean): Promise<void>;
-  /** `updated`: v2.17 "I've updated the stack" (the role version becomes the link's; accounts/link.ts). */
+  /** `updated`: v2.19 "I've updated the stack" (the role version becomes the link's; accounts/link.ts). */
   verify(requestId: string, roleArn: string, emit: Emit, updated?: boolean): Promise<void>;
-  /** v2.17 account.recheck ("Check again"): asks the linked role again whether fixes are allowed; read-only, no MFA. */
+  /** v2.19 account.recheck ("Check again"): asks the linked role again whether fixes are allowed; read-only, no MFA. */
   recheck(requestId: string, emit: Emit): Promise<void>;
-  /** v2.17 account.unlink: forget the link, stop reading the account, tell every tab. No MFA: taking access away. */
+  /** v2.19 account.unlink: forget the link, stop reading the account, tell every tab. No MFA: taking access away. */
   unlink(requestId: string, emit: Emit): Promise<void>;
   /**
-   * v2.17 resource.remove: take down one thing the city built, through the ActionService (policy, the gate, this socket's
+   * v2.19 resource.remove: take down one thing the city built, through the ActionService (policy, the gate, this socket's
    * approval), with no model call. deploy.preview → deploy.status, or error {requestId} if refused before any preview.
    */
   remove(cmd: Omit<ResourceRemove, 'action'>, emit: Emit, approvals: Approvals): Promise<void>;
   deleteMe(): Promise<void>;
-  /** v2.17 GET /me/export: everything stored about the player (the account link as metadata: never the ExternalId). */
+  /** v2.19 GET /me/export: everything stored about the player (the account link as metadata: never the ExternalId). */
   exportMe(): Promise<PlayerDataExport>;
 }
 
@@ -105,14 +109,17 @@ export const UNLINKED_REASON = 'Connect your AWS account first (Deploy tab → C
 const unlinkedActions = (): ActionService =>
   ({
     submit: async () => ({ status: 'denied', reason: UNLINKED_REASON }),
-    describe: (name: unknown) => `Run ${String(name)}`,
+    describe: (name: unknown, input: unknown) => {
+      const parsed = parseAction(name, input);
+      return parsed.ok ? describeAction(parsed.action) : `Run ${String(name)}`;
+    },
   }) as unknown as ActionService;
 
 /** How often the account's full resource list is re-read for the city's mirror (the poller itself runs every ~10 s). */
 const INVENTORY_EVERY_MS = 5 * 60_000;
 
 /**
- * v2.17: polls in a row on which STS refused the player role before the link counts as broken and polling stops, and
+ * v2.19: polls in a row on which STS refused the player role before the link counts as broken and polling stops, and
  * only once the first of them is REFUSAL_WINDOW_MS old, on a poll the breaker still takes for the player's own
  * (aws.ts): when our side fails, players' cached credentials expire one by one over the hour, and polling on through the
  * window keeps each refused player in the breaker while the next ones arrive.
@@ -120,7 +127,7 @@ const INVENTORY_EVERY_MS = 5 * 60_000;
 export const BROKEN_AFTER = 3;
 
 /**
- * v2.17: how often an open city re-reads its account record, so an unlink, a new link or a broken mark made on another
+ * v2.19: how often an open city re-reads its account record, so an unlink, a new link or a broken mark made on another
  * server task (or device) reaches this one: a changed or missing record rebuilds the world.
  */
 export const ACCOUNT_CHECK_MS = 60_000;
@@ -133,14 +140,14 @@ export const ACCOUNT_CHECK_MS = 60_000;
 const linkKey = (r: AccountRecord | undefined) =>
   r ? [r.status, r.accountId ?? '', r.region, r.brokenAt ?? '', r.linkedAt ?? '', createHash('sha256').update(r.externalId).digest('hex').slice(0, 16)].join('|') : '';
 
-/** v2.17 resource.remove: the existing destructive action for each kind the city builds, and what the city calls it. */
+/** v2.19 resource.remove: the existing destructive action for each kind the city builds, and what the city calls it. */
 const REMOVE: Record<ResourceRemove['kind'], { action: ActionName; input: (id: string) => Record<string, string>; label: string }> = {
   instance: { action: 'terminate_instance', input: (id) => ({ instanceId: id }), label: 'house (EC2 instance)' },
   table: { action: 'delete_table', input: (id) => ({ name: id }), label: 'library (DynamoDB table)' },
   bucket: { action: 'delete_bucket', input: (id) => ({ name: id }), label: 'warehouse (S3 bucket)' },
 };
 
-/** v2.17: the account link as the player may see it (an allowlist: the ExternalId and role ARN never leave). */
+/** v2.19: the account link as the player may see it (an allowlist: the ExternalId and role ARN never leave). */
 const linkMetadata = (r: AccountRecord): NonNullable<PlayerDataExport['account']> => ({
   status: r.status,
   region: r.region,
@@ -155,7 +162,7 @@ const linkMetadata = (r: AccountRecord): NonNullable<PlayerDataExport['account']
 });
 
 /**
- * v2.17 GET /me/export, read straight from the stores (the same with or without a city open): everything the privacy
+ * v2.19 GET /me/export, read straight from the stores (the same with or without a city open): everything the privacy
  * policy lists under "What we store" that the server keeps (Cognito keeps the sign-in): progress, the link's metadata,
  * social rows, the bill switch and cached bill, the AI request counts, the first AI day and the MFA "on since" time.
  */
@@ -204,19 +211,20 @@ interface World {
   orchestrator: Orchestrator;
   snapshot: () => Promise<WorldSnapshot>;
   linked: boolean;
-  /** v2.17: the link is kept but STS refuses its role: nothing is read (an unlinked world that knows its account). */
+  /** v2.19: the link is kept but STS refuses its role: nothing is read (an unlinked world that knows its account). */
   broken?: boolean;
   region: string;
   accountId?: string;
-  /** v2.17: whether fixes are allowed (hosted: the record's DryRun answer, absent = unknown; local: the server's setting). */
+  /** v2.19: whether fixes are allowed (hosted: the record's DryRun answer, absent = unknown; local: the server's setting). */
   fixes?: boolean;
-  /** v2.17: the player-role template version the player installed from the city's link (hosted). */
+  /** v2.19: the player-role template version the player installed from the city's link (hosted). */
   roleVersion?: number;
-  /** v2.17: the record this world was built from (linkKey): another key in the store means the world is stale. */
+  /** v2.19: the record this world was built from (linkKey): another key in the store means the world is stale. */
   link: string;
   /**
-   * v2.17: aborted when this world is replaced (unlink, a new link, a broken link, another task's change) or its city is
-   * evicted, with the reason: its writes are refused (ActionService/CityCare `live`) and its pending previews cancelled.
+   * v2.19: aborted when this world is replaced (unlink, a new link, a broken link, another task's change) or its city is
+   * evicted, with the reason: its writes are refused (ActionService/CityCare `live`) and its pending previews cancelled,
+   * so approvals and fixes still waiting on it never write to its account.
    */
   retired: AbortController;
 }
@@ -261,6 +269,17 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
     await (key ? locks.withLock(key, forget) : forget());
   };
 
+  /**
+   * Saves progress. A profile turned private leaves the live city and every leaderboard at once, whichever task saves
+   * it: with 2+ tasks, PUT /progress often lands on one with no live tenant for this player.
+   */
+  const putProgress = async (sub: string, input: unknown) => {
+    const was = (await deps.stores.progress.get(sub))?.profile?.public;
+    const res = await deps.stores.progress.put(sub, input);
+    if (res.ok && was && !(input as { profile?: { public?: boolean } })?.profile?.public) await deps.stores.social.forget(sub);
+    return res;
+  };
+
   const build = async (p: Principal) => {
     const sub = p.sub;
     const subscribers = new Set<Emit>();
@@ -284,7 +303,8 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         const flow = createFlow({ sub, region, initialOn: flowOn, broadcast, active });
         const broken = record?.brokenAt && record.status === 'linked' ? { broken: true, accountId: record.accountId, ...(record.roleVersion !== undefined ? { roleVersion: record.roleVersion } : {}) } : {};
         return {
-          orchestrator: createOrchestrator({ llm, runner, snapshot, uploads: deps.uploads, owner: sub, walkMs: deps.walkMs, knowledge: deps.knowledge }),
+          // actions: a plain request ("Create a bucket called x") still gets an honest answer: link your account first.
+          orchestrator: createOrchestrator({ llm, runner, snapshot, uploads: deps.uploads, owner: sub, walkMs: deps.walkMs, knowledge: deps.knowledge, actions: runnerDeps.actions }),
           snapshot,
           linked: false,
           region,
@@ -331,12 +351,22 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
             return;
           }
           refusedPolls = 0;
-          for (const event of diffSnapshots(prev, next)) broadcast(feedEvents(event));
-          if (care) broadcast(care.update(next));
+          const events = diffSnapshots(prev, next);
+          for (const event of events) broadcast(feedEvents(event));
+          if (!care) return;
+          broadcast(care.update(next));
+          // A server appeared, went or changed state (an agent's write re-polls at once and after 4 s): the map follows
+          // within a poll, from the last listing and this snapshot, with no AWS call.
+          if (!retired.signal.aborted && events.some(movesInventory)) {
+            const inventory = care.reconcile(next);
+            if (inventory) broadcast([inventory]);
+          }
         },
       });
       const snapshot = async () => poller.current() ?? poller.refresh();
-      const actions = createActionService({ clients: aws.clients, poller, region: aws.region, locks, accountKey: () => aws.accountId, judge, live, retired: retired.signal });
+      // Every AWS change asked for, done or refused: who (hashed), where and what. Server logs are kept 30 days.
+      const audit: Audit = (e) => log.info('aws change', { who: who(sub), account: aws.accountId, region: aws.region, ...e });
+      const actions = createActionService({ clients: aws.clients, poller, region: aws.region, locks, accountKey: () => aws.accountId, judge, live, retired: retired.signal, audit });
       const runnerDeps = { llm, actions, snapshot, knowledge: deps.knowledge };
       const strands = createStrandsRunner(runnerDeps);
       const runner = routedRunner(createAgentRunner(runnerDeps), strands, deps.config.agentEngine === 'strands');
@@ -345,6 +375,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         region: aws.region,
         accountId: aws.accountId,
         runner: strands,
+        // A retired world's fix is refused inside the lock (`live`, right before the grant), with its own message.
         withLock: (fn) => locks.withLock(aws.accountId, fn),
         refresh: () => poller.refresh(),
         progress: () => deps.stores.progress.get(sub),
@@ -353,6 +384,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         fixesEnabled: () => self?.fixes ?? deps.config.allowFixes,
         live,
         retired: retired.signal,
+        audit,
       });
       await poller.refresh().catch((err) => log.warn('first poll failed', { who: who(sub), err: (err as Error).name }));
       poller.start();
@@ -380,7 +412,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         bill,
         flow,
         inventoryTimer,
-        orchestrator: createOrchestrator({ llm, runner, snapshot, uploads: deps.uploads, owner: sub, walkMs: deps.walkMs, knowledge: deps.knowledge }),
+        orchestrator: createOrchestrator({ llm, runner, snapshot, uploads: deps.uploads, owner: sub, walkMs: deps.walkMs, knowledge: deps.knowledge, actions }),
         snapshot,
         linked: true,
         region: aws.region,
@@ -423,7 +455,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
       return run;
     };
 
-    /** v2.17, hosted only: the newest player-role template, for "Update your AWS City role". */
+    /** v2.19, hosted only: the newest player-role template, for "Update your AWS City role". */
     const latestRole = () =>
       deps.linker ? { ...(deps.linker.latestRoleVersion !== undefined ? { latestRoleVersion: deps.linker.latestRoleVersion } : {}), templateUrl: deps.linker.templateUrl } : {};
     const roleOf = (w: World) => ({ ...(deps.linker && w.roleVersion !== undefined ? { roleVersion: w.roleVersion } : {}), ...latestRole() });
@@ -501,6 +533,9 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
       get region() {
         return world.region;
       },
+      get accountId() {
+        return world.linked ? world.accountId : undefined;
+      },
       orchestrator: () => world.orchestrator,
       care: () => world.care,
       createCopilot: () => createConsoleCopilot({ llm, calls: copilotCalls }),
@@ -523,13 +558,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
       fresh: async () => (world.linked && world.poller ? world.poller.refresh() : undefined),
       progress: {
         get: () => deps.stores.progress.get(sub),
-        put: async (input) => {
-          const was = (await deps.stores.progress.get(sub))?.profile?.public;
-          const res = await deps.stores.progress.put(sub, input);
-          // A profile turned private leaves the live city and every leaderboard at once.
-          if (res.ok && was && !(input as { profile?: { public?: boolean } })?.profile?.public) await deps.stores.social.forget(sub);
-          return res;
-        },
+        put: (input) => putProgress(sub, input),
       },
       social: socialFor({ store: deps.stores.social, sub, profile: async () => (await deps.stores.progress.get(sub))?.profile }),
       uploads: { create: (contentType) => deps.uploads.create(contentType, sub) },
@@ -660,7 +689,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
       const live = tenants.get(p.sub)?.tenant;
       if (live) return live;
       return {
-        progress: { get: () => deps.stores.progress.get(p.sub), put: (input) => deps.stores.progress.put(p.sub, input) },
+        progress: { get: () => deps.stores.progress.get(p.sub), put: (input) => putProgress(p.sub, input) },
         uploads: { create: (contentType) => deps.uploads.create(contentType, p.sub) },
         exportMe: () => exportFor(deps.stores, p.sub),
         async deleteMe() {

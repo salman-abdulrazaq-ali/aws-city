@@ -78,7 +78,9 @@ const tenants = createTenants({
 });
 
 // Agents can change a linked AWS account, so linking it and approving writes to it need MFA (local token mode has no accounts to protect).
-const mfaReady = cognito && config.awsMode === 'assume-role' && config.requireMfaForLink ? createMfaCheck({ cognito, userPoolId: config.cognito!.userPoolId, since: stores.mfa }) : undefined;
+// Hosted, step-up always guards linking, approving, fixing and taking down (there is no switch to turn it off): MFA on, a
+// session signed in after it was first seen (`since`), and a recent sign-in (http.ts, the reauth window).
+const mfaReady = cognito && config.awsMode === 'assume-role' ? createMfaCheck({ cognito, userPoolId: config.cognito!.userPoolId, since: stores.mfa }) : undefined;
 const http = createHttpServer({ config, tenants, authenticate: createAuthenticate(config), uploads: memoryUploads, mfaReady, deleted });
 
 http.server.listen(config.port, config.host, () => {
@@ -94,10 +96,10 @@ http.server.listen(config.port, config.host, () => {
   });
   if (config.authMode === 'token') {
     const base = `http://${config.host}:${config.port}`;
-    // Every caller needs the token (an Origin header never authenticates on its own): the extension carries it as WXT_AWS_TOKEN.
-    console.log(`  frontend .env.local:  WXT_BACKEND=aws  WXT_AWS_WS_URL=ws://${config.host}:${config.port}/ws  WXT_AWS_API_URL=${base}  WXT_AWS_TOKEN=<token>`);
-    // Never printed in hosted mode, nor when AWS_CITY_TOKEN was given (the launcher's: it built it into the extension).
-    if (!process.env.AWS_CITY_TOKEN) console.log(`  token (WXT_AWS_TOKEN, curl): ${config.token}`);
+    // Every caller needs the token (auth.ts tokenAuth; an Origin header never authenticates on its own): the extension
+    // carries it as WXT_AWS_TOKEN. It's never printed: logs are files other programs can read.
+    console.log(`  frontend .env.local:  WXT_BACKEND=aws  WXT_AWS_WS_URL=ws://${config.host}:${config.port}/ws  WXT_AWS_API_URL=${base}  WXT_AWS_TOKEN=<AWS_CITY_TOKEN>`);
+    console.log(process.env.AWS_CITY_TOKEN ? '  token: from AWS_CITY_TOKEN' : '  token: a random one for this run (set AWS_CITY_TOKEN to choose one; npm run live does)');
   }
 });
 

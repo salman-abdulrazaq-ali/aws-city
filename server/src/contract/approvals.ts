@@ -45,7 +45,12 @@ const ownName = (a: ApprovalRequest['action']): string | undefined => {
   return undefined;
 };
 
-const labelOf = (a: ApprovalRequest['action']): string => ('suffix' in a ? `aws-city-…-${String(a.suffix)}` : (ownName(a) ?? a.type));
+/**
+ * What a change touches, as the card's resource name: a bucket's full name once the account is known (so Tear down can
+ * name it), else its suffix after "aws-city-…-".
+ */
+const labelOf = (a: ApprovalRequest['action'], accountId?: string): string =>
+  'suffix' in a ? `aws-city-${accountId ?? '…'}-${String(a.suffix)}` : (ownName(a) ?? a.type);
 
 /** What the player types when a write gets a second look: the resource's own name or id (never empty, never "…"). */
 const typedName = (a: ApprovalRequest['action']): string => ownName(a)?.trim() || a.type;
@@ -58,7 +63,12 @@ export const DISCONNECTED_MESSAGE = 'That account was disconnected, so nothing c
  * with deploy.approve / deploy.reject. Unanswered requests expire; closing the socket rejects them all, and so does
  * the request's `signal` (its account's world was retired: disconnected or changed), with the signal's reason.
  */
-export const createApprovals = (opts: { region: string; timeoutMs?: number }) => {
+export const createApprovals = (opts: { region: string | (() => string); accountId?: () => string | undefined; timeoutMs?: number }) => {
+  /** v2.18: exactly where the change goes, read as each card is made. */
+  const where = () => {
+    const accountId = opts.accountId?.();
+    return { region: typeof opts.region === 'function' ? opts.region() : opts.region, ...(accountId ? { accountId } : {}) };
+  };
   const pending = new Map<string, { resolve: (ok: boolean) => void; emit: Emit; timer: NodeJS.Timeout; confirmText?: string; unwatch?: () => void }>();
   const awaitingResult = new Map<string, string>(); // taskId → deployId of the approved call in flight
 
@@ -85,13 +95,13 @@ export const createApprovals = (opts: { region: string; timeoutMs?: number }) =>
   };
 
   return {
-    /** `requestId`: a direct command's (v2.17 resource.remove), put on the preview so the client can match it. */
+    /** `requestId`: a direct command's (v2.19 resource.remove), put on the preview so the client can match it. */
     request(taskId: string, req: ApprovalRequest, emit: Emit, requestId?: string): Promise<boolean> {
       const deployId = `a-${randomUUID().slice(0, 8)}`;
       const t = req.action.type;
       const change: DeployChange = {
         action: req.destructive ? 'Remove' : t === 'stop_instance' || t === 'start_instance' ? 'Modify' : 'Add',
-        logicalId: labelOf(req.action),
+        logicalId: labelOf(req.action, opts.accountId?.()),
         resourceType: RESOURCE_TYPE[t],
       };
       // A second look (Jev) asked for care: the player types the name (v2.3 confirmText) and reads why on a 'detail' line.
@@ -104,7 +114,7 @@ export const createApprovals = (opts: { region: string; timeoutMs?: number }) =>
         taskId,
         templateId: t,
         stackName: req.summary,
-        region: opts.region,
+        ...where(),
         changes: [change, ...why],
         costNote: COST[t],
         ...(confirmText ? { confirmText } : {}),
@@ -128,7 +138,7 @@ export const createApprovals = (opts: { region: string; timeoutMs?: number }) =>
         deployId,
         templateId: f.fix.fixId,
         stackName: f.fix.title,
-        region: opts.region,
+        ...where(),
         // Names aren't unique (every VPC has a "default" group): the id says exactly which resource changes.
         changes: [
           { action: 'Modify', logicalId: f.resource.id === f.resource.name || f.resource.id.includes(':') ? f.resource.name : `${f.resource.name} (${f.resource.id})`, resourceType: FIX_RESOURCE_TYPE[f.serviceId] ?? 'AWS account setting' },
@@ -160,7 +170,8 @@ export const createApprovals = (opts: { region: string; timeoutMs?: number }) =>
       if (!deployId) return false;
       awaitingResult.delete(taskId);
       const ok = call.outcome === 'done';
-      emit({ type: 'deploy.status', deployId, status: ok ? 'complete' : 'failed', message: call.message, outputs: ok ? { Result: call.message } : undefined });
+      // ResourceId: what a launch made (its i-… id), so the card joins the later stop/terminate cards of the same server.
+      emit({ type: 'deploy.status', deployId, status: ok ? 'complete' : 'failed', message: call.message, outputs: ok ? { Result: call.message, ...(call.resourceId ? { ResourceId: call.resourceId } : {}) } : undefined });
       return true;
     },
     cancelAll() {

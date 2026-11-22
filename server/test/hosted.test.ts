@@ -8,7 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import WebSocket from 'ws';
 import { connectsPlayerLabel, createAccountLinker, playerRoleName, templateVersion } from '../src/accounts/link.js';
 import { APIConnectionError, APIConnectionTimeoutError, APIUserAbortError, BadRequestError, InternalServerError, PermissionDeniedError, RateLimitError } from '@anthropic-ai/sdk';
-import { createMfaCheck, memoryMfa, SIGN_IN_AGAIN_MESSAGE, type StepUp } from '../src/accounts/mfa.js';
+import { createMfaCheck, memoryMfa, recentSignIn, SIGN_IN_AGAIN_MESSAGE, type StepUp } from '../src/accounts/mfa.js';
 import { metered, ModelLimitError, NEW_PLAYERS_KEY, PAUSED_MESSAGE, QUOTA_MESSAGE, withErrorCodes } from '../src/agents/metered.js';
 import { cognitoAuth, type JwtVerifier, type Principal } from '../src/auth.js';
 import { publicError, setPublicErrors } from '../src/log.js';
@@ -281,7 +281,7 @@ describe('account linking', () => {
     await expect(link('u1', 'not a region')).rejects.toThrow(/region/);
   });
 
-  it('v2.17: the link names who it connects (ConnectsPlayer) and asks for AllowFixes only when the player did', async () => {
+  it('v2.19: the link names who it connects (ConnectsPlayer) and asks for AllowFixes only when the player did', async () => {
     const { link } = setup(() => ({}));
     const plain = await link('u1', 'us-west-2', { label: 'Mayor Kind Otter' });
     expect(plain.url).toContain('param_ConnectsPlayer=Mayor%20Kind%20Otter'); // %20, not +: the console shows it as written
@@ -292,7 +292,7 @@ describe('account linking', () => {
     expect(templateVersion('https://templates.example/player-role/latest.yaml')).toBeUndefined();
   });
 
-  it("v2.17: ConnectsPlayer is the public Mayor name, else a masked email, else a short id: never the raw email, always the template's pattern", () => {
+  it("v2.19: ConnectsPlayer is the public Mayor name, else a masked email, else a short id: never the raw email, always the template's pattern", () => {
     expect(connectsPlayerLabel({ sub: 'abc' }, { public: true, name: 'Kind Otter' })).toBe('Mayor Kind Otter');
     const masked = connectsPlayerLabel({ sub: 'abc', email: 'ahmed.k@example.co.uk' }, { public: false, name: 'Kind Otter' });
     expect(masked).toBe('a***@e***.uk');
@@ -313,7 +313,7 @@ describe('account linking', () => {
     await expect(linker.verify('u1', 'arn:aws:iam::111122223333:role/Admin')).rejects.toThrow(/account id/);
   });
 
-  it('v2.17: verify records the template version the link pointed at and whether fixes are allowed (a DryRun), never guessing', async () => {
+  it('v2.19: verify records the template version the link pointed at and whether fixes are allowed (a DryRun), never guessing', async () => {
     let answer: boolean | undefined = true;
     const { linker, stores, link, canFix } = setup(ok, { canFix: async () => answer });
     await link('u1', 'us-west-2');
@@ -328,7 +328,7 @@ describe('account linking', () => {
     expect(linker).toMatchObject({ latestRoleVersion: 5, templateUrl: 'https://templates.example/player-role/v5.yaml' });
   });
 
-  it('v2.17: verify is refused a day after the link was made; a new link (same ExternalId) works again', async () => {
+  it('v2.19: verify is refused a day after the link was made; a new link (same ExternalId) works again', async () => {
     let t = Date.parse('2026-11-21T10:00:00Z');
     const { linker, link, stores } = setup(ok, { now: () => t });
     const first = await link('u1', 'us-west-2');
@@ -337,12 +337,12 @@ describe('account linking', () => {
     expect((await stores.accounts.get('u1'))?.status).toBe('pending');
     expect((await link('u1', 'us-west-2')).externalId).toBe(first.externalId);
     expect(await linker.verify('u1', '111122223333')).toMatchObject({ status: 'linked' });
-    // A record from before v2.17 (no issue time) needs a new link too.
+    // A record from before v2.19 (no issue time) needs a new link too.
     await stores.accounts.put('u2', { status: 'pending', externalId: 'e'.repeat(32), region: 'us-west-2' });
     await expect(linker.verify('u2', '111122223333')).rejects.toThrow(/more than a day old/);
   });
 
-  it('v2.17: a broken link goes back to pending on a new link, and a verify clears it', async () => {
+  it('v2.19: a broken link goes back to pending on a new link, and a verify clears it', async () => {
     const { linker, link, stores } = setup(ok);
     await link('u1', 'us-west-2');
     const linked = await linker.verify('u1', '111122223333');
@@ -388,7 +388,7 @@ describe('account linking', () => {
     expect(await stores.accounts.get('u1')).toMatchObject({ status: 'linked', region: 'us-west-2', accountId: '111122223333', roleArn: expect.stringContaining('us-west-2') });
   });
 
-  it('v2.17: the role version is the link’s only when the player installed or updated from it; another verify keeps it', async () => {
+  it('v2.19: the role version is the link’s only when the player installed or updated from it; another verify keeps it', async () => {
     const { linker, stores, link } = setup(ok);
     await link('u1', 'us-west-2');
     expect(await linker.verify('u1', '111122223333')).toMatchObject({ roleVersion: 5 }); // a first verify: installed from the link
@@ -415,7 +415,7 @@ describe('account linking', () => {
     expect(await fresh.linker.verify('u2', '111122223333')).toMatchObject({ region: 'eu-west-1', roleVersion: 5 });
   });
 
-  it('v2.17 Check again (recheck): asks the linked role about fixes again, read-only: no new link window, the role version stays', async () => {
+  it('v2.19 Check again (recheck): asks the linked role about fixes again, read-only: no new link window, the role version stays', async () => {
     let answer: boolean | undefined = false;
     const { linker, stores, link, canFix } = setup(ok, { canFix: async () => answer });
     await expect(linker.recheck('u1')).rejects.toThrow(/Connect your AWS account first/);
@@ -436,7 +436,7 @@ describe('account linking', () => {
     await expect(linker.recheck('u1')).rejects.toThrow(/stopped working/);
   });
 
-  it('v2.17 Check again racing a Disconnect or DELETE /me on another task writes nothing back (the ExternalId and role ARN stay gone)', async () => {
+  it('v2.19 Check again racing a Disconnect or DELETE /me on another task writes nothing back (the ExternalId and role ARN stay gone)', async () => {
     let held: Promise<boolean | undefined> | undefined;
     let probe!: (allowed: boolean | undefined) => void;
     const { linker, stores, link, canFix } = setup(ok, { canFix: async () => held ?? false });
@@ -451,7 +451,7 @@ describe('account linking', () => {
     expect(await stores.accounts.get('u1')).toBeUndefined();
   });
 
-  it('v2.17 Check again racing a disconnect and a new link of the same account and Region leaves the new link as it is', async () => {
+  it('v2.19 Check again racing a disconnect and a new link of the same account and Region leaves the new link as it is', async () => {
     let held: Promise<boolean | undefined> | undefined;
     let probe!: (allowed: boolean | undefined) => void;
     const { linker, stores, link, canFix } = setup(ok, { canFix: async () => held ?? false });
@@ -470,7 +470,7 @@ describe('account linking', () => {
     expect(await stores.accounts.get('u1')).toEqual(relinked);
   });
 
-  it('v2.17 Check again writes only onto the link it read: a delete landing between its re-read and its write wins', async () => {
+  it('v2.19 Check again writes only onto the link it read: a delete landing between its re-read and its write wins', async () => {
     const stores = localStores(`${process.env.TEMP ?? '/tmp'}/aws-city-recheck-${Date.now()}/progress.json`);
     let deleteAfterNextRead = false;
     const accounts = {
@@ -500,7 +500,7 @@ describe('account linking', () => {
     expect(await stores.accounts.get('u1')).toBeUndefined();
   });
 
-  it('v2.17 Check again with a role that no longer works is a plain refusal, and nothing is written', async () => {
+  it('v2.19 Check again with a role that no longer works is a plain refusal, and nothing is written', async () => {
     let fail = false;
     const { linker, stores, link } = setup((arn) => {
       if (fail) throw new Error('AccessDenied');
@@ -527,7 +527,7 @@ describe('account linking', () => {
     return { here: make(accounts), there: make(raw) };
   };
 
-  it('v2.17 verify’s refusals never feed the shared refusal breaker (three players pressing Verify too early); Check again’s do', async () => {
+  it('v2.19 verify’s refusals never feed the shared refusal breaker (three players pressing Verify too early); Check again’s do', async () => {
     const breaker = createRefusalBreaker();
     let refuse = false;
     const stores = localStores(`${process.env.TEMP ?? '/tmp'}/aws-city-breaker-${Date.now()}/progress.json`);
@@ -562,7 +562,7 @@ describe('account linking', () => {
     expect(breaker.ourSide('poller-2')).toBe(true);
   });
 
-  it('v2.17 Check again sets only fixes: a new setup link made on another task meanwhile (another Region, a new link window) is kept', async () => {
+  it('v2.19 Check again sets only fixes: a new setup link made on another task meanwhile (another Region, a new link window) is kept', async () => {
     const stores = localStores(`${process.env.TEMP ?? '/tmp'}/aws-city-recheck-link-${Date.now()}/progress.json`);
     let linkAfterNextRead = false;
     let calls = 0;
@@ -587,7 +587,7 @@ describe('account linking', () => {
     expect(rechecked).toEqual(stored);
   });
 
-  it('v2.17 a verify in flight while DELETE /me lands on another task writes nothing back (no ExternalId or role ARN after deletion)', async () => {
+  it('v2.19 a verify in flight while DELETE /me lands on another task writes nothing back (no ExternalId or role ARN after deletion)', async () => {
     let held: Promise<boolean | undefined> | undefined;
     let probe!: (allowed: boolean | undefined) => void;
     const { linker, stores, link, canFix } = setup(ok, { canFix: async () => held ?? false });
@@ -601,7 +601,7 @@ describe('account linking', () => {
     expect(await stores.accounts.get('u1')).toBeUndefined();
   });
 
-  it('v2.17 two first setup links at once (two tasks) never overwrite each other’s ExternalId', async () => {
+  it('v2.19 two first setup links at once (two tasks) never overwrite each other’s ExternalId', async () => {
     const stores = localStores(`${process.env.TEMP ?? '/tmp'}/aws-city-first-link-${Date.now()}/progress.json`);
     let theirs: string | undefined;
     const accounts = {
@@ -620,7 +620,7 @@ describe('account linking', () => {
     expect((await tasks.here.link('u1', 'us-west-2', { label: 'Player u1' })).externalId).toBe(theirs);
   });
 
-  it('v2.17 a player deleted a moment ago (a socket on another task) can neither link nor verify', async () => {
+  it('v2.19 a player deleted a moment ago (a socket on another task) can neither link nor verify', async () => {
     const gone = new Set<string>();
     const { linker, stores, link } = setup(ok, { deleted: async (sub) => gone.has(sub) });
     await link('u1', 'us-west-2');
@@ -637,7 +637,7 @@ describe('account linking', () => {
   });
 });
 
-describe('account store: unlink forgets the link (v2.17)', () => {
+describe('account store: unlink forgets the link (v2.19)', () => {
   it('local: delete removes the record, and deleting nothing is fine', async () => {
     const s = localStores(`${process.env.TEMP ?? '/tmp'}/aws-city-unlink-${Date.now()}/progress.json`);
     await s.accounts.put('u1', { status: 'linked', externalId: 'e'.repeat(32), region: 'us-west-2', accountId: '111122223333' });
@@ -731,13 +731,13 @@ describe('DynamoDB store', () => {
     expect(JSON.stringify(keys)).not.toContain('"sk":"u1"');
   });
 
-  it('v2.17 account.unlink: the ACCOUNT item is deleted under the player key', async () => {
+  it('v2.19 account.unlink: the ACCOUNT item is deleted under the player key', async () => {
     ddb.on(DeleteCommand).resolves({});
     await stores().accounts.delete('u1');
     expect(ddb.commandCalls(DeleteCommand)[0]!.args[0].input).toMatchObject({ TableName: 'aws-city-test', Key: { pk: 'USER#u1', sk: 'ACCOUNT' } });
   });
 
-  it('v2.17 a put with ifLink is conditional on the same link; a failed condition (deleted or relinked) is false, not an error', async () => {
+  it('v2.19 a put with ifLink is conditional on the same link; a failed condition (deleted or relinked) is false, not an error', async () => {
     const rec = { status: 'linked' as const, externalId: 'e'.repeat(32), region: 'us-west-2', accountId: '111122223333', linkedAt: '2026-11-21T10:00:00.000Z' };
     ddb.on(PutCommand).resolvesOnce({}).rejectsOnce(conditional()).rejectsOnce(conditional());
     expect(await stores().accounts.put('u1', { ...rec, fixes: true }, rec)).toBe(true);
@@ -753,7 +753,7 @@ describe('DynamoDB store', () => {
     expect(ddb.commandCalls(PutCommand).at(-1)!.args[0].input).not.toHaveProperty('ConditionExpression');
   });
 
-  it('v2.17 a put with ifLink for a link not verified yet (no linkedAt) needs linkedAt still absent; "new" needs no record at all', async () => {
+  it('v2.19 a put with ifLink for a link not verified yet (no linkedAt) needs linkedAt still absent; "new" needs no record at all', async () => {
     const pending = { status: 'pending' as const, externalId: 'e'.repeat(32), region: 'us-west-2' };
     ddb.on(PutCommand).resolvesOnce({}).rejectsOnce(conditional());
     expect(await stores().accounts.put('u1', { ...pending, accountId: '111122223333' }, pending)).toBe(true);
@@ -771,7 +771,7 @@ describe('DynamoDB store', () => {
     expect(create).not.toHaveProperty('ExpressionAttributeValues');
   });
 
-  it('v2.17 accounts.update sets only the named field in place, on the same link (another task’s new setup link meanwhile is kept)', async () => {
+  it('v2.19 accounts.update sets only the named field in place, on the same link (another task’s new setup link meanwhile is kept)', async () => {
     const rec = { status: 'linked' as const, externalId: 'e'.repeat(32), region: 'us-west-2', accountId: '111122223333', linkedAt: '2026-11-21T10:00:00.000Z' };
     const after = { ...rec, pendingRegion: 'eu-west-1', fixes: true };
     ddb.on(UpdateCommand).resolvesOnce({ Attributes: { pk: 'USER#u1', sk: 'ACCOUNT', record: after } }).rejectsOnce(conditional()).rejectsOnce(new Error('throttled'));
@@ -795,14 +795,14 @@ describe('DynamoDB store', () => {
     expect(broken!.ExpressionAttributeValues).not.toHaveProperty(':l');
   });
 
-  it('v2.17 accounts.get reads strongly consistent (live() and the once-a-minute re-read must see another task’s Disconnect)', async () => {
+  it('v2.19 accounts.get reads strongly consistent (live() and the once-a-minute re-read must see another task’s Disconnect)', async () => {
     const rec = { status: 'linked' as const, externalId: 'e'.repeat(32), region: 'us-west-2' };
     ddb.on(GetCommand).resolves({ Item: { pk: 'USER#u1', sk: 'ACCOUNT', record: rec } });
     expect(await stores().accounts.get('u1')).toEqual(rec);
     expect(ddb.commandCalls(GetCommand)[0]!.args[0].input).toMatchObject({ TableName: 'aws-city-test', Key: { pk: 'USER#u1', sk: 'ACCOUNT' }, ConsistentRead: true });
   });
 
-  it("v2.17 GET /me/export: the social rows are the player's own refs, each read by its key (the salted hash)", async () => {
+  it("v2.19 GET /me/export: the social rows are the player's own refs, each read by its key (the salted hash)", async () => {
     const who = whoOf('u1');
     const until = Date.now() + 60_000;
     ddb.on(QueryCommand).resolves({ Items: [{ pk: 'USER#u1', sk: 'SOCIAL#LB#shield#2026-W47', target: 'LB#shield#2026-W47' }, { pk: 'USER#u1', sk: 'SOCIAL#PRESENCE#us-west-2', target: 'PRESENCE#us-west-2' }] });
@@ -863,7 +863,7 @@ describe('DynamoDB store', () => {
     expect(ddb.commandCalls(DeleteCommand)[0]!.args[0].input).toMatchObject({ Key: { pk: 'USER#u1', sk: 'MFA' } });
   });
 
-  it('v2.17 GET /me/export reads the first AI day and the MFA time with GetItem only (an export never saves a row)', async () => {
+  it('v2.19 GET /me/export reads the first AI day and the MFA time with GetItem only (an export never saves a row)', async () => {
     ddb.on(GetCommand).resolvesOnce({ Item: { firstDay: '2026-11-19' } }).resolvesOnce({ Item: { since: 1234 } }).resolvesOnce({});
     const s = stores();
     expect(await s.quota.firstDay('u1')).toBe('2026-11-19');
@@ -1001,18 +1001,20 @@ describe('hosted server: Cognito players and tenants', () => {
   let mfaReady: ReturnType<typeof vi.fn<(p: Principal) => Promise<StepUp>>>;
   const verifier: JwtVerifier = {
     async verify(token) {
-      if (token === 'jwt-alice') return { sub: 'alice' };
-      if (token === 'jwt-bob') return { sub: 'bob' };
-      if (token === 'jwt-carol') return { sub: 'carol' };
-      if (token === 'jwt-frank') return { sub: 'frank' };
+      // Every player signed in just now (step-up's recent sign-in passes; a test that needs an old one says so).
+      const auth_time = Math.floor(Date.now() / 1000);
+      if (token === 'jwt-alice') return { sub: 'alice', auth_time };
+      if (token === 'jwt-bob') return { sub: 'bob', auth_time };
+      if (token === 'jwt-carol') return { sub: 'carol', auth_time };
+      if (token === 'jwt-frank') return { sub: 'frank', auth_time };
       // The socket-cap tests count one player's tabs: each has its own player, so a tab an earlier test closed
       // (the server frees its slot a moment later) can't take a slot.
-      if (token === 'jwt-erin') return { sub: 'erin' };
-      if (token === 'jwt-gus') return { sub: 'gus' };
+      if (token === 'jwt-erin') return { sub: 'erin', auth_time };
+      if (token === 'jwt-gus') return { sub: 'gus', auth_time };
       // POST /me/mfa's per-player limit: only its own test calls it as this player.
-      if (token === 'jwt-hana') return { sub: 'hana' };
+      if (token === 'jwt-hana') return { sub: 'hana', auth_time };
       // …and its 409/503 test: one fresh player per case, so no burst is shared with another test.
-      if (token.startsWith('jwt-mfa-')) return { sub: token.slice('jwt-'.length) };
+      if (token.startsWith('jwt-mfa-')) return { sub: token.slice('jwt-'.length), auth_time };
       // A token that expires the moment the socket opens.
       if (token === 'jwt-dave') return { sub: 'dave', exp: Math.floor(Date.now() / 1000) };
       throw new Error('bad');
@@ -1113,7 +1115,7 @@ describe('hosted server: Cognito players and tenants', () => {
     expect((await get('jwt-bob')).status).toBe(404);
   });
 
-  it('v2.17 GET /me/export: the player\'s own data as a download; another player\'s never; a deleted player 410', async () => {
+  it('v2.19 GET /me/export: the player\'s own data as a download; another player\'s never; a deleted player 410', async () => {
     const auth = (jwt: string) => ({ authorization: `Bearer ${jwt}`, origin: EXT });
     const put = await fetch(`http://127.0.0.1:${port}/progress`, {
       method: 'PUT',
@@ -1139,7 +1141,7 @@ describe('hosted server: Cognito players and tenants', () => {
     expect(await again.json()).toEqual({ error: 'You downloaded your data a moment ago. Try again in a minute.' });
   });
 
-  it('v2.17 version handshake: a newer extension is refused (409, naming the server’s version) on the upgrade and on progress', async () => {
+  it('v2.19 version handshake: a newer extension is refused (409, naming the server’s version) on the upgrade and on progress', async () => {
     const [major, minor] = CONTRACT_VERSION.split('.').map(Number);
     const newer = `${major}.${minor! + 1}`;
     expect((await open('jwt-bob', `?contract=${newer}`)).status).toBe(409);
@@ -1365,7 +1367,7 @@ describe('MFA step-up check', () => {
 
 // Every AWS write is approved through deploy.approve (task writes) or started by finding.fix: both need MFA on.
 describe('MFA step-up for writes', () => {
-  it('v2.17: account.unlink needs no MFA; resource.remove starts only with it (and is validated strictly); allowFixes reaches the link', async () => {
+  it('v2.19: account.unlink needs no MFA; resource.remove starts only with it (and is validated strictly); allowFixes reaches the link', async () => {
     let mfa: StepUp = 'enrol';
     const unlink = vi.fn(async (requestId: string, emit: (e: ServerEvent) => void) => emit({ type: 'account.status', requestId, linked: false }));
     const remove = vi.fn(async (cmd: { requestId: string }, emit: (e: ServerEvent) => void, _approvals: Approvals) => emit({ type: 'error', requestId: cmd.requestId, message: 'removed' }));
@@ -1373,7 +1375,7 @@ describe('MFA step-up for writes', () => {
     const tenant = { sub: 'erin', region: 'us-west-2', unlink, remove, link, createCopilot: () => undefined, welcome: async () => [], subscribe: () => () => undefined, emitter: (emit: unknown) => emit } as unknown as Tenant;
     const tenants = { acquire: async () => tenant, data: () => tenant, release: () => undefined, closeAll: () => undefined };
     const base = { ...loadConfig({}), authMode: 'cognito' as const, extensionOrigins: [EXT] };
-    const deps = { tenants, authenticate: async () => ({ sub: 'erin' }), mfaReady: async () => mfa };
+    const deps = { tenants, authenticate: async () => ({ sub: 'erin', authTime: Date.now() }), mfaReady: async () => mfa };
     const probe = createHttpServer({ config: { ...base, port: 0 }, ...deps });
     await new Promise<void>((r) => probe.server.listen(0, '127.0.0.1', r));
     const port = (probe.server.address() as AddressInfo).port;
@@ -1437,7 +1439,7 @@ describe('MFA step-up for writes', () => {
   const stubServer = async (tenant: Tenant, mfaReady: () => Promise<StepUp>) => {
     const tenants = { acquire: async () => tenant, data: () => tenant, release: () => undefined, closeAll: () => undefined };
     const base = { ...loadConfig({}), authMode: 'cognito' as const, extensionOrigins: [EXT] };
-    const deps = { tenants, authenticate: async () => ({ sub: 'erin' }), mfaReady };
+    const deps = { tenants, authenticate: async () => ({ sub: 'erin', authTime: Date.now() }), mfaReady };
     const probe = createHttpServer({ config: { ...base, port: 0 }, ...deps });
     await new Promise<void>((r) => probe.server.listen(0, '127.0.0.1', r));
     const port = (probe.server.address() as AddressInfo).port;
@@ -1456,7 +1458,7 @@ describe('MFA step-up for writes', () => {
     return { events, until, reply, send, close: () => (ws.close(), server.close()) };
   };
 
-  it('v2.17: a verify right after this socket’s own link passes the cooldown (once); Check again needs no MFA but waits its turn', async () => {
+  it('v2.19: a verify right after this socket’s own link passes the cooldown (once); Check again needs no MFA but waits its turn', async () => {
     let mfa: StepUp = 'ok';
     const link = vi.fn(async (requestId: string, _region: string, emit: (e: ServerEvent) => void) => emit({ type: 'account.linkUrl', requestId, url: 'u', externalId: 'e' }));
     const verify = vi.fn(async (requestId: string, _arn: string, emit: (e: ServerEvent) => void) => emit({ type: 'account.status', requestId, linked: true }));
@@ -1498,7 +1500,7 @@ describe('MFA step-up for writes', () => {
     }
   });
 
-  it('v2.17: a removal waiting for its approval counts with the tasks, never with the request slots chats need', async () => {
+  it('v2.19: a removal waiting for its approval counts with the tasks, never with the request slots chats need', async () => {
     const asks: string[] = [];
     const remove = vi.fn(async (cmd: { requestId: string }, emit: (e: ServerEvent) => void, approvals: Approvals) => {
       await approvals.request(cmd.requestId, { action: { type: 'delete_table', name: 'city-quest' } as never, summary: 'Delete table', destructive: true }, emit, cmd.requestId);
@@ -1552,7 +1554,7 @@ describe('MFA step-up for writes', () => {
     } as unknown as Tenant;
     const tenants = { acquire: async () => tenant, data: () => tenant, release: () => undefined, closeAll: () => undefined };
     const base = { ...loadConfig({}), authMode: 'cognito' as const, extensionOrigins: [EXT] };
-    const deps = { tenants, authenticate: async () => ({ sub: 'erin' }), mfaReady: async () => mfa };
+    const deps = { tenants, authenticate: async () => ({ sub: 'erin', authTime: Date.now() }), mfaReady: async () => mfa };
     const probe = createHttpServer({ config: { ...base, port: 0 }, ...deps });
     await new Promise<void>((r) => probe.server.listen(0, '127.0.0.1', r));
     const port = (probe.server.address() as AddressInfo).port;
@@ -1597,6 +1599,168 @@ describe('MFA step-up for writes', () => {
       expect(fix).toHaveBeenCalledWith('f2', 'x', expect.any(Function), expect.anything());
     } finally {
       ws.close();
+      server.close();
+    }
+  });
+
+  it('a sign-in older than 30 minutes is refused with reauth_required, even with MFA on (a stolen refresh token)', async () => {
+    const fix = vi.fn();
+    const link = vi.fn();
+    const tenant = {
+      sub: 'gina',
+      region: 'us-west-2',
+      orchestrator: () => ({ submitTask: async () => undefined }),
+      care: () => ({ fix, explain: async () => undefined, undo: () => undefined }),
+      link,
+      verify: link,
+      createCopilot: () => undefined,
+      welcome: async () => [],
+      subscribe: () => () => undefined,
+      emitter: (emit: unknown) => emit,
+    } as unknown as Tenant;
+    const tenants = { acquire: async () => tenant, data: () => tenant, release: () => undefined, closeAll: () => undefined };
+    const base = { ...loadConfig({}), authMode: 'cognito' as const, extensionOrigins: [EXT] };
+    // Signed in 2 hours ago and refreshed since: the token is valid, but the sign-in is old.
+    const deps = { tenants, authenticate: async () => ({ sub: 'gina', authTime: Date.now() - 2 * 3600_000 }), mfaReady: async (): Promise<StepUp> => 'ok' };
+    const probe = createHttpServer({ config: { ...base, port: 0 }, ...deps });
+    await new Promise<void>((r) => probe.server.listen(0, '127.0.0.1', r));
+    const port = (probe.server.address() as AddressInfo).port;
+    probe.server.close();
+    const { server } = createHttpServer({ config: { ...base, port }, ...deps });
+    await new Promise<void>((r) => server.listen(port, '127.0.0.1', r));
+    const events: ServerEvent[] = [];
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, bearerSubprotocols('x'), { origin: EXT });
+    ws.on('message', (raw) => events.push(JSON.parse(raw.toString())));
+    await new Promise((r) => ws.on('open', r));
+    try {
+      ws.send(JSON.stringify({ action: 'finding.fix', requestId: 'f1', findingId: 'x' }));
+      ws.send(JSON.stringify({ action: 'account.link', requestId: 'l1', region: 'us-west-2' }));
+      for (const end = Date.now() + 3000; events.filter((e) => e.type === 'error').length < 2 && Date.now() < end; ) await new Promise((r) => setTimeout(r, 10));
+      expect(events).toContainEqual(expect.objectContaining({ type: 'error', requestId: 'f1', code: 'reauth_required' }));
+      expect(events).toContainEqual(expect.objectContaining({ type: 'error', requestId: 'l1', code: 'reauth_required' }));
+      expect(fix).not.toHaveBeenCalled();
+      expect(link).not.toHaveBeenCalled();
+    } finally {
+      ws.close();
+      server.close();
+    }
+  });
+
+  it('a fresh sign-in on the open socket (auth.renew) unlocks step-up without dropping the socket; another player’s token doesn’t', async () => {
+    const fix = vi.fn();
+    const tenant = {
+      sub: 'hana',
+      region: 'us-west-2',
+      orchestrator: () => ({ submitTask: async () => undefined }),
+      care: () => ({ fix, explain: async () => undefined, undo: () => undefined }),
+      createCopilot: () => undefined,
+      welcome: async () => [],
+      subscribe: () => () => undefined,
+      emitter: (emit: unknown) => emit,
+    } as unknown as Tenant;
+    const tenants = { acquire: async () => tenant, data: () => tenant, release: () => undefined, closeAll: () => undefined };
+    const base = { ...loadConfig({}), authMode: 'cognito' as const, extensionOrigins: [EXT] };
+    // The socket's own token: signed in 2 hours ago. Renewals arrive as a Bearer header.
+    const authenticate = async (req: import('node:http').IncomingMessage) => {
+      const bearer = req.headers.authorization;
+      if (bearer === 'Bearer fresh-hana') return { sub: 'hana', authTime: Date.now() };
+      if (bearer === 'Bearer fresh-mallory') return { sub: 'mallory', authTime: Date.now() };
+      if (bearer) return undefined;
+      return { sub: 'hana', authTime: Date.now() - 2 * 3600_000 };
+    };
+    const deps = { tenants, authenticate, mfaReady: async (): Promise<StepUp> => 'ok' };
+    const probe = createHttpServer({ config: { ...base, port: 0 }, ...deps });
+    await new Promise<void>((r) => probe.server.listen(0, '127.0.0.1', r));
+    const port = (probe.server.address() as AddressInfo).port;
+    probe.server.close();
+    const { server } = createHttpServer({ config: { ...base, port }, ...deps });
+    await new Promise<void>((r) => server.listen(port, '127.0.0.1', r));
+    const events: ServerEvent[] = [];
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, bearerSubprotocols('x'), { origin: EXT });
+    ws.on('message', (raw) => events.push(JSON.parse(raw.toString())));
+    let closed = false;
+    ws.on('close', () => (closed = true));
+    await new Promise((r) => ws.on('open', r));
+    const errorFor = async (id: string) => {
+      for (const end = Date.now() + 3000; !events.some((e) => e.type === 'error' && 'requestId' in e && e.requestId === id) && Date.now() < end; ) await new Promise((r) => setTimeout(r, 10));
+      return events.find((e) => e.type === 'error' && 'requestId' in e && e.requestId === id);
+    };
+    try {
+      ws.send(JSON.stringify({ action: 'finding.fix', requestId: 'f1', findingId: 'x' }));
+      expect(await errorFor('f1')).toMatchObject({ code: 'reauth_required' });
+      // Someone else's fresh token on this socket changes nothing.
+      ws.send(JSON.stringify({ action: 'auth.renew', token: 'fresh-mallory' }));
+      await new Promise((r) => setTimeout(r, 100));
+      ws.send(JSON.stringify({ action: 'finding.fix', requestId: 'f2', findingId: 'x' }));
+      expect(await errorFor('f2')).toMatchObject({ code: 'reauth_required' });
+      // The player's own fresh sign-in does, on the same socket (the 5 s renew limit has passed by then in real use).
+      await new Promise((r) => setTimeout(r, 5_100));
+      ws.send(JSON.stringify({ action: 'auth.renew', token: 'fresh-hana' }));
+      await new Promise((r) => setTimeout(r, 100));
+      ws.send(JSON.stringify({ action: 'finding.fix', requestId: 'f3', findingId: 'x' }));
+      for (const end = Date.now() + 3000; fix.mock.calls.length === 0 && Date.now() < end; ) await new Promise((r) => setTimeout(r, 10));
+      expect(fix).toHaveBeenCalledWith('f3', 'x', expect.any(Function), expect.anything());
+      expect(closed).toBe(false);
+    } finally {
+      ws.close();
+      server.close();
+    }
+  }, 15_000);
+
+  it('recentSignIn: within 30 minutes, never without an auth_time, never from the future', () => {
+    const now = Date.now();
+    expect(recentSignIn({ sub: 'a', authTime: now - 5 * 60_000 }, now)).toBe(true);
+    expect(recentSignIn({ sub: 'a', authTime: now - 31 * 60_000 }, now)).toBe(false);
+    expect(recentSignIn({ sub: 'a' }, now)).toBe(false);
+    expect(recentSignIn({ sub: 'a', authTime: now + 10 * 60_000 }, now)).toBe(false);
+  });
+});
+
+describe('an account deleted on another task', () => {
+  it('its open socket here can no longer write: a score or a fix closes it with CLOSE.deleted', async () => {
+    const submit = vi.fn(async () => ({ type: 'leaderboard.state' as const, board: 'b', week: 'w', entries: [] }));
+    const fix = vi.fn();
+    const tenant = {
+      sub: 'ivy',
+      region: 'us-west-2',
+      orchestrator: () => ({ submitTask: async () => undefined }),
+      care: () => ({ fix, explain: async () => undefined, undo: () => undefined }),
+      social: { submit, beat: submit, board: submit },
+      createCopilot: () => undefined,
+      welcome: async () => [],
+      subscribe: () => () => undefined,
+      emitter: (emit: unknown) => emit,
+    } as unknown as Tenant;
+    const tenants = { acquire: async () => tenant, data: () => tenant, release: () => undefined, closeAll: () => undefined };
+    const base = { ...loadConfig({}), authMode: 'cognito' as const, extensionOrigins: [EXT] };
+    // DELETE /me ran on another task: this one only sees the tombstone in the shared store.
+    let tombstone = false;
+    const deps = { tenants, authenticate: async () => ({ sub: 'ivy', authTime: Date.now() }), mfaReady: async (): Promise<StepUp> => 'ok', deleted: async () => tombstone };
+    const probe = createHttpServer({ config: { ...base, port: 0 }, ...deps });
+    await new Promise<void>((r) => probe.server.listen(0, '127.0.0.1', r));
+    const port = (probe.server.address() as AddressInfo).port;
+    probe.server.close();
+    const { server } = createHttpServer({ config: { ...base, port }, ...deps });
+    await new Promise<void>((r) => server.listen(port, '127.0.0.1', r));
+    const open = async () => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, bearerSubprotocols('x'), { origin: EXT });
+      await new Promise((r) => ws.on('open', r));
+      return { ws, closed: new Promise<number>((r) => ws.on('close', (c) => r(c))) };
+    };
+    try {
+      const a = await open();
+      const b = await open();
+      a.ws.send(JSON.stringify({ action: 'score.submit', board: 'b', score: 1 }));
+      for (const end = Date.now() + 3000; submit.mock.calls.length === 0 && Date.now() < end; ) await new Promise((r) => setTimeout(r, 10));
+      expect(submit).toHaveBeenCalledTimes(1); // still here: the write goes through
+      tombstone = true;
+      a.ws.send(JSON.stringify({ action: 'score.submit', board: 'b', score: 2 }));
+      b.ws.send(JSON.stringify({ action: 'finding.fix', requestId: 'f1', findingId: 'x' }));
+      // b's step-up always asks; a's score reuses its last answer for 15 s at most, so a closes on its next check.
+      expect(await b.closed).toBe(CLOSE_CODES.deleted);
+      expect(fix).not.toHaveBeenCalled();
+      a.ws.close();
+    } finally {
       server.close();
     }
   });

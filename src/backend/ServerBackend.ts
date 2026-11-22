@@ -139,9 +139,14 @@ export class ServerBackend implements AgentBackend {
     void this.open();
   }
 
-  async signIn() {
+  async signIn(opts?: { fresh?: boolean }) {
     if (!this.cfg.auth) return;
-    await this.cfg.auth.signIn();
+    await this.cfg.auth.signIn(opts);
+    // Step-up on an open socket: hand it the fresh token (auth.renew) so a pending approval stays; otherwise connect.
+    if (opts?.fresh && this.ws?.readyState === WebSocket.OPEN) {
+      const token = await this.cfg.auth.token();
+      if (token) return this.raw({ action: 'auth.renew', token });
+    }
     this.reconnect();
   }
 
@@ -398,7 +403,7 @@ export class ServerBackend implements AgentBackend {
       case 'bill.enable':
       // v2.8: live traffic (the server reads CloudWatch at most every 5 minutes while it's on).
       case 'flow.enable':
-      // v2.17: disconnect the account; ask the role again whether fixes are allowed (read-only); take down one thing the city built (approved like any write).
+      // v2.19: disconnect the account; ask the role again whether fixes are allowed (read-only); take down one thing the city built (approved like any write).
       case 'account.unlink':
       case 'account.recheck':
       case 'resource.remove':
@@ -408,6 +413,8 @@ export class ServerBackend implements AgentBackend {
       case 'presence.beat':
       case 'score.submit':
       case 'leaderboard.get':
+      // v2.17: a fresh sign-in handed to the open socket (step-up), so a pending approval survives.
+      case 'auth.renew':
         return this.raw(cmd);
       case 'deploy.plan': {
         const bp = GUARDED_BLUEPRINTS.find((b) => b.id === cmd.templateId) ?? GUARDED_BLUEPRINTS.find((b) => b.id === GUARDED_EQUIV[cmd.templateId]);
@@ -421,7 +428,7 @@ export class ServerBackend implements AgentBackend {
         if (!what) return this.events.emit({ type: 'deploy.status', deployId: cmd.deployId, status: 'failed', message: 'I don’t know what that was any more.' });
         return this.task(`Please demolish what you built for me: ${what}. (Stop/terminate or delete it.)`);
       }
-      // v2.17: account.link may carry allowFixes (the setup link asks for AllowFixes=true), account.verify `updated`.
+      // v2.19: account.link may carry allowFixes (the setup link asks for AllowFixes=true), account.verify `updated`.
       case 'account.link':
       case 'account.verify':
         return this.raw(cmd);
@@ -475,7 +482,7 @@ export class ServerBackend implements AgentBackend {
     });
   }
 
-  /** A REST address on the server, naming this extension's contract version (the v2.17 handshake). */
+  /** A REST address on the server, naming this extension's contract version (the v2.19 handshake). */
   private url(path: string) {
     const u = new URL(path, this.cfg.apiUrl);
     u.searchParams.set(CONTRACT_PARAM, CONTRACT_VERSION);
@@ -534,10 +541,10 @@ export class ServerBackend implements AgentBackend {
       .catch((e) => console.warn('[server] putProgress (will retry on reconnect)', e));
   }
 
-  /** v2.17: GET /me/export, everything the server keeps about the player (the account link as metadata only). */
+  /** v2.19: GET /me/export, everything the server keeps about the player (the account link as metadata only). */
   async exportMe(): Promise<PlayerDataExport> {
     const res = await fetch(this.url('/me/export'), { headers: await this.headers(), signal: AbortSignal.timeout(15_000) });
-    // v2.17: once a minute per player; `tooSoon` lets the UI say so instead of blaming the connection.
+    // v2.19: once a minute per player; `tooSoon` lets the UI say so instead of blaming the connection.
     if (!res.ok) throw Object.assign(new Error(`GET /me/export → ${res.status}`), res.status === 429 ? { tooSoon: true } : {});
     return (await res.json()) as PlayerDataExport;
   }

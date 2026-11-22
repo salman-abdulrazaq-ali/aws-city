@@ -8,6 +8,7 @@ import { ChatPanel } from '@/ui/ChatPanel';
 import { Hud, SyncNote } from '@/ui/Hud';
 import { Workshop } from '@/ui/Workshop';
 import { Collection } from '@/ui/Collection';
+import { AccountMap } from '@/ui/AccountMap';
 import { CoinFly } from '@/ui/CoinFly';
 import { Leaderboard } from '@/ui/Leaderboard';
 import { LaunchDay } from '@/ui/launch/LaunchDay';
@@ -36,7 +37,7 @@ import { Navigator } from '@/ui/Navigator';
 import { Icon, type IconName } from '@/ui/icons';
 import { CoachTips, Tour } from '@/ui/Tour';
 import { WorldIntro } from '@/ui/WorldIntro';
-import { useLadder } from '@/ui/useLadder';
+import { useCanConnect, useLadder } from '@/ui/useLadder';
 import { FindingCard } from '@/ui/FindingCard';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { SoundCaptions } from '@/ui/SoundCaptions';
@@ -112,9 +113,11 @@ export function App({ layout }: { layout: Layout }) {
   const steps = useCity((s) => activeSteps(s.progress).map((x) => x.kind).join());
   const linked = useCity((s) => s.account.linked);
   const deployWaiting = useCity((s) => Object.values(s.deploys).some((d) => d.status === 'preview' && !d.findingId));
-  // A real account being linked keeps Deploy (its steps) in sight, in Simple too (src/state/account.ts).
+  // A real account being linked keeps Deploy (its steps) in sight, in Simple too (src/state/account.ts), and so does a
+  // hosted player with no account linked yet (Deploy is where it connects).
   const linkingNow = useCity((s) => linking(s.account));
-  const simpleCtx = { steps: steps.split(','), linked, deployWaiting, linking: linkingNow };
+  const canConnect = useCanConnect();
+  const simpleCtx = { steps: steps.split(','), linked, deployWaiting, linking: linkingNow, canConnect };
   const deployShown = shows('deployTab', prefs, simpleCtx);
   /** The tabs this player has earned and this mode shows (a new one gets the unlock toast). */
   const earned = useMemo(() => new Set([...l.tabs].filter((t) => t !== 'deploy' || deployShown)), [l.tabs, deployShown]);
@@ -173,11 +176,21 @@ export function App({ layout }: { layout: Layout }) {
           if (s.findingOpen !== fix.findingId) s.openFinding(fix.findingId);
           if (added.every((d) => d.findingId)) return;
         }
-        if (tabNow.current === 'home') setTab('deploy');
-        else if (tabNow.current !== 'deploy') setDeployBadge(true);
+        // From City the tab opens; anywhere else (an HQ's chat hides the tabs, Learn, Jobs) a toast says so and opens it.
+        const waiting = added.find((d) => !d.findingId && d.status === 'preview');
+        if (s.view.name !== 'interior' && tabNow.current === 'home') setTab('deploy');
+        else if (s.view.name === 'interior' || tabNow.current !== 'deploy') {
+          setDeployBadge(true);
+          if (waiting) s.toast('🛡️', 'Your approval is waiting in Deploy. Tap here to open it.', 'info', undefined, undefined, { first: true, action: () => useCity.getState().openDeployAt(waiting.deployId) });
+        }
       }),
     [],
   );
+  // "Approve in Deploy" (a task card, a toast): open the tab; DeployPanel brings the card up.
+  const deployOpenSeq = useCity((s) => s.deployOpenSeq);
+  useEffect(() => {
+    if (deployOpenSeq) setTabNow.current('deploy');
+  }, [deployOpenSeq]);
   // A prompt sent (or a reply to the player) while another tab is open: flag Home, where the answer shows.
   useEffect(
     () =>
@@ -364,6 +377,7 @@ export function App({ layout }: { layout: Layout }) {
         <ClientTask />
         <ClientDone />
         <Collection />
+        <AccountMap layout={layout} />
         <CoinFly />
         <Leaderboard />
         <LaunchDay />

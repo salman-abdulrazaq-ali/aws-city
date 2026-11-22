@@ -2,7 +2,7 @@
 // anyway, kept in localStorage (`awscity.opened`) so the side panel and the full tab agree.
 
 import { useMemo, useSyncExternalStore } from 'react';
-import { releaseCare } from '@/app/runtime';
+import { canSetUpMfa, releaseCare } from '@/app/runtime';
 import { ALL_AREAS, ladder, lockedAreas, type Area, type Ladder, type LadderInput } from '@/state/ladder';
 import { useCity } from '@/state/store';
 import { linking } from '@/state/account';
@@ -27,7 +27,7 @@ export function openedAreas(): ReadonlySet<string> {
 }
 
 /** Records that the player opened an area (a tab, Architecture, Day 1…), so it stays open from now on. */
-export function addOpened(area: Area) {
+function addOpened(area: Area) {
   const now = openedAreas();
   if (now.has(area)) return;
   writePref(OPENED_KEY, JSON.stringify([...now, area]));
@@ -51,7 +51,14 @@ function subscribe(fn: () => void) {
   };
 }
 
-export const useOpened = () => useSyncExternalStore(subscribe, openedAreas, openedAreas);
+const useOpened = () => useSyncExternalStore(subscribe, openedAreas, openedAreas);
+
+/**
+ * A hosted player (signed in with Cognito, so the build can set up MFA) whose AWS account isn't linked yet. Linking is
+ * why they're on a real server, so the Deploy tab is open to them and the City tab offers it (ConnectCard). Not the
+ * demo (mock) and not the local server (it uses the workshop profile, no linking).
+ */
+export const useCanConnect = () => useCity((s) => s.backendKind === 'server' && !s.account.linked) && canSetUpMfa();
 
 /** The ladder's input from the store and the opened set. */
 export function useLadderInput(): LadderInput {
@@ -59,8 +66,12 @@ export function useLadderInput(): LadderInput {
   const linked = useCity((s) => s.account.linked);
   const hasDeploys = useCity((s) => Object.keys(s.deploys).length > 0);
   const linkingNow = useCity((s) => linking(s.account));
+  const canConnect = useCanConnect();
   const opened = useOpened();
-  return useMemo(() => ({ progress, linked, hasDeploys, linking: linkingNow, opened }), [progress, linked, hasDeploys, linkingNow, opened]);
+  return useMemo(
+    () => ({ progress, linked, hasDeploys, linking: linkingNow, canConnect, opened }),
+    [progress, linked, hasDeploys, linkingNow, canConnect, opened],
+  );
 }
 
 export function useLadder(): Ladder {

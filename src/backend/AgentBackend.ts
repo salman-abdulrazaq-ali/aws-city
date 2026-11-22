@@ -1,7 +1,7 @@
 import type { ClientCommand, PlayerDataExport, Progress, ServerEvent } from './contract';
 
 /**
- * `updating`: the server is older than this extension (the v2.17 version handshake refused it), so it waits for the
+ * `updating`: the server is older than this extension (the v2.19 version handshake refused it), so it waits for the
  * server's update; `outdated`: the server no longer serves this extension's version, so the extension needs its update.
  * Progress stays on this device in both.
  */
@@ -37,13 +37,13 @@ export interface AgentBackend {
   /** Each save's outcome (the server): "Not saved to your account" shows after a refusal, until a save goes through. */
   onSave?(cb: (s: SaveState) => void): () => void;
   /**
-   * v2.17 "Download my data": everything the backend keeps about the player (the server: GET /me/export; the demo: this
+   * v2.19 "Download my data": everything the backend keeps about the player (the server: GET /me/export; the demo: this
    * device's progress, `practice: true`). The account link is metadata only, never the ExternalId.
    */
   exportMe(): Promise<PlayerDataExport>;
 
   /** Interactive sign-in (hosted server). Must be called from a user gesture. */
-  signIn?(): Promise<void>;
+  signIn?(opts?: { fresh?: boolean }): Promise<void>;
   signOut?(): Promise<void>;
   /** Hosted: enrol an authenticator app (step-up MFA before linking an AWS account). */
   startTotp?(): Promise<{ secret: string; uri: string }>;

@@ -28,7 +28,9 @@ import { glowingNow, ReturnNote, SupplyDrop } from './Loops';
 import { withCoins } from './icons';
 import { doneLine, isSimple, type TodoTask } from '@/state/simple';
 import { ANY_GAME, playAt, runTodo, useCare, useTodayGoals, useTodo } from './today';
-import { ConnectLine } from './Account';
+import { ConnectLine, useConnectOffer } from './Account';
+import { EventBanner } from './EventBanner';
+import { ConnectCard } from './ConnectCard';
 
 export { gameBuilding } from './today';
 
@@ -44,6 +46,7 @@ export function Home({ openTab, places }: { openTab: OpenTab; places?: ReactNode
   const simple = useCity((s) => isSimple(s.prefs));
   // On a first run's world map the only thing to do is pick a Region (WorldIntro): the shift waits until the city opens.
   const choosing = useCity((s) => s.view.name === 'world' && !s.prefs.region);
+  const offer = useConnectOffer();
   const more = useRef<HTMLDetailsElement>(null);
   const careFold = useRef<HTMLDetailsElement>(null);
   /** Today's "Fix something" opens City care (inside More to do) and brings it into view. */
@@ -65,6 +68,9 @@ export function Home({ openTab, places }: { openTab: OpenTab; places?: ReactNode
   if (simple) return <SimpleHome openTab={openTab} care={care} places={ladder.places ? places : undefined} />;
   return (
     <div className="home">
+      <EventBanner />
+      {/* One way in to linking at a time: the shift's ConnectLine when it offers one, else this card. */}
+      {!offer && <ConnectCard openTab={openTab} />}
       <Shift openTab={openTab} care={care} openCare={openCare} />
       <RunningTask />
       <details ref={more} className="more-fold">
@@ -142,6 +148,11 @@ function SimpleHome({ openTab, care, places }: { openTab: OpenTab; care: boolean
   };
   return (
     <div className="home simple">
+      {/* AWS City Live: re:Invent, a Summit, the player's Meetup (one line; nothing when nothing is near). */}
+      <EventBanner />
+      {/* A hosted player who hasn't linked an AWS account: the way in to Deploy's linking steps, unless the list shows
+          its own "Connect your AWS account" row (one offer at a time). */}
+      {!rows.some((t) => t.run.kind === 'connect') && <ConnectCard openTab={openTab} />}
       {/* What the player asked from the prompt bar: its card while it works, over the list. */}
       {taskUp && working && <TaskCard key={latest!.taskId} task={latest!} openTab={openTab} quiet />}
       <section className="todo" aria-labelledby="todo-title">
@@ -297,8 +308,10 @@ function Shift({ openTab, care, openCare }: { openTab: OpenTab; care: boolean; o
       {/* Done for the day, and still keen: one optional overtime goal, with a bonus crate of its own. */}
       {summary.overtime && <OvertimeChip goal={summary.overtime} openTab={openTab} game={today.game} />}
       {summary.overtimeDone && <SupplyDrop shiftDone overtime />}
-      {/* A finished task's card holds the floor: its next step is this same action, so the shift's button waits. */}
-      {taskUp ? <TaskCard key={latest!.taskId} task={latest!} openTab={openTab} /> : <NextButton action={action} calm={summary.done} />}
+      {/* A finished task's card holds the floor: its next step is this same action, so the shift's button waits. A task
+          that didn't work has no next step (Try again would say the same), so the shift's button stays, under its card. */}
+      {taskUp && <TaskCard key={latest!.taskId} task={latest!} openTab={openTab} />}
+      {(!taskUp || latest!.status === 'failed') && <NextButton action={action} calm={summary.done} />}
       {ladder.clients && <OrderBoard max={3} skip={action.kind === 'job' ? action.taskId : undefined} />}
       <ConnectLine openTab={openTab} />
       {ready.length > 0 && (

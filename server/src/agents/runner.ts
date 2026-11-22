@@ -15,7 +15,15 @@ export interface ToolCallReport {
   input: unknown;
   outcome: SubmitOutcome['status'];
   message: string;
+  /** The AWS resource the call made or changed (an instance id, a bucket or table name), when it ran. */
+  resourceId?: string;
 }
+
+/** A tool call's report: the outcome in words, and the resource it touched. */
+export const toolReport = (name: string, input: unknown, o: SubmitOutcome): ToolCallReport => {
+  const resourceId = o.status === 'done' || o.status === 'failed' ? o.result.resourceId : undefined;
+  return { name, input, outcome: o.status, message: outcomeMessage(o), ...(resourceId ? { resourceId } : {}) };
+};
 
 export interface TurnResult {
   agentId: string;
@@ -47,20 +55,65 @@ export interface TurnHooks {
  * Names and tags come from the AWS account (anyone with access can set them): < and > are JSON-escaped so a
  * name like "</city_snapshot>…" can't close the data wrapper.
  */
-export const snapshotForModel = (s: WorldSnapshot) =>
-  escapeTags(JSON.stringify({
-    region: s.region,
-    credentials: s.credentials,
-    services: s.services,
-    resources: s.resources.map((r) => ({
-      id: r.id,
-      kind: r.kind,
-      name: r.name,
-      state: r.state,
-      builtByGame: r.managedByGame,
-      ...(r.kind === 'instance' ? { type: r.meta.instanceType } : {}),
-    })),
-  }));
+/**
+ * What one snapshot may cost in a prompt. A player could fill their own account with long-named resources, and the
+ * snapshot rides in every agent turn while quotas count calls, not tokens: unbounded, a few players could spend the
+ * budget that switches the AI off for everyone (security review, 21 Nov). The city's own resources come first, the
+ * rest are counted; describe_resource still reads any one in full.
+ */
+export const SNAPSHOT_MAX_RESOURCES = 100;
+export const SNAPSHOT_MAX_NAME = 64;
+export const SNAPSHOT_MAX_CHARS = 8_000;
+const clip = (v: string | undefined, n: number) => (v !== undefined && v.length > n ? `${v.slice(0, n - 1)}…` : v);
+
+/**
+ * The city in a few lines, for a small CPU model (`llm.small`): what the game built, by id, kind, name and state (an
+ * agent still needs an instance id to stop it), then a count of everything else per kind. Names are clipped and the
+ * whole is JSON-escaped like the full snapshot, so it can't close its data wrapper.
+ */
+export const SUMMARY_MAX_BUILT = 20;
+export const snapshotSummary = (s: WorldSnapshot) => {
+  const built = s.resources.filter((r) => r.managedByGame);
+  const others: Record<string, number> = {};
+  for (const r of s.resources) if (!r.managedByGame) others[r.kind] = (others[r.kind] ?? 0) + 1;
+  return escapeTags(
+    JSON.stringify({
+      region: s.region,
+      builtByTheCity: built.slice(0, SUMMARY_MAX_BUILT).map((r) => ({ id: clip(r.id, 64), kind: r.kind, name: clip(r.name, 40), state: r.state })),
+      ...(built.length > SUMMARY_MAX_BUILT ? { moreBuilt: built.length - SUMMARY_MAX_BUILT } : {}),
+      otherResources: others,
+    }),
+  );
+};
+
+/** The city as a model reads it: the full snapshot, or the short summary for a small CPU model. */
+export const cityFor = (llm: { small?: boolean }, s: WorldSnapshot) => (llm.small ? snapshotSummary(s) : snapshotForModel(s));
+
+export const snapshotForModel = (s: WorldSnapshot) => {
+  const all = [...s.resources].sort((a, b) => Number(b.managedByGame) - Number(a.managedByGame));
+  const render = (n: number) =>
+    escapeTags(JSON.stringify({
+      region: s.region,
+      credentials: s.credentials,
+      services: s.services,
+      resources: all.slice(0, n).map((r) => ({
+        id: clip(r.id, 128),
+        kind: r.kind,
+        name: clip(r.name, SNAPSHOT_MAX_NAME),
+        state: r.state,
+        builtByGame: r.managedByGame,
+        ...(r.kind === 'instance' ? { type: typeof r.meta.instanceType === 'string' ? clip(r.meta.instanceType, 32) : r.meta.instanceType } : {}),
+      })),
+      ...(all.length > n ? { moreResources: all.length - n } : {}),
+    }));
+  let keep = Math.min(all.length, SNAPSHOT_MAX_RESOURCES);
+  let out = render(keep);
+  while (out.length > SNAPSHOT_MAX_CHARS && keep > 0) {
+    keep = Math.floor(keep * 0.7);
+    out = render(keep);
+  }
+  return out;
+};
 
 /** Valid JSON, but no tag can be formed: \u003c / \u003e instead of < / >. */
 export const escapeTags = (json: string) => json.replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
@@ -85,7 +138,7 @@ export const outcomeMessage = (o: SubmitOutcome) =>
   o.status === 'done' || o.status === 'failed' ? o.result.message : o.status === 'denied' ? o.reason : o.error;
 
 /** Answers any tool_use in a trailing assistant message that never got results (e.g. cut off at max_tokens). */
-export const closeDangling = (messages: Anthropic.MessageParam[]) => {
+const closeDangling = (messages: Anthropic.MessageParam[]) => {
   const last = messages.at(-1);
   if (last?.role !== 'assistant' || typeof last.content === 'string') return;
   const orphans = last.content.filter((b): b is Anthropic.ToolUseBlockParam => b.type === 'tool_use');
@@ -181,7 +234,7 @@ export const createAgentRunner = (deps: { llm: Llm; actions: ActionService; snap
           const outcome: SubmitOutcome = known
             ? await (hooks.approve ? deps.actions.submit(use.name, use.input, submitOpts(hooks)) : deps.actions.submit(use.name, use.input))
             : { status: 'invalid', error: `"${use.name}" isn't one of this agent's tools.` };
-          const report = { name: use.name, input: use.input, outcome: outcome.status, message: outcomeMessage(outcome) };
+          const report = toolReport(use.name, use.input, outcome);
           toolCalls.push(report);
           hooks.onToolEnd?.(report);
           results.push({

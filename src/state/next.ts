@@ -107,9 +107,9 @@ export function stepAction(step: QuestStep, count = 0): string {
 /** Cards due again before "Review N cards" outranks starting a new quest. */
 export const DUE_MIN = 3;
 /** The most cards one "Review N cards" asks for. */
-export const REVIEW_MAX = 10;
+const REVIEW_MAX = 10;
 /** A building this close (stars) to its next level is one action from it ("Ready to upgrade"). */
-export const UPGRADE_NEAR = 12;
+const UPGRADE_NEAR = 12;
 /** Stars a review pays (src/learning/srs.ts xpFor): a card never seen 4, a card due again 2. */
 const NEW_STARS = 4;
 const DUE_STARS = 2;
@@ -169,7 +169,7 @@ export interface ReadyBuilding {
  * Reviews of one building's deck that would pay `toGo` stars now: new cards first (NEW_STARS), then cards due again
  * (DUE_STARS). Undefined when its deck can't pay that much today (every card seen and not due): no "Upgrade" offer then.
  */
-export function reviewsToGo(p: Progress, serviceId: string, toGo: number, now = Date.now()): number | undefined {
+function reviewsToGo(p: Progress, serviceId: string, toGo: number, now = Date.now()): number | undefined {
   const cards = cardsFor(serviceId);
   const fresh = cards.filter((c) => !p.cards?.[c.id]).length;
   const due = cards.filter((c) => p.cards?.[c.id] && isDue(p.cards[c.id], now)).length;
@@ -193,7 +193,7 @@ export function readyToUpgrade(p: Progress, region: string, max = 3, now = Date.
     .slice(0, max);
 }
 
-export const upgradeLabel = (r: ReadyBuilding) => `Upgrade ${r.place}: ${plural(r.reviews, 'review')} to ${r.nextName}`;
+const upgradeLabel = (r: ReadyBuilding) => `Upgrade ${r.place}: ${plural(r.reviews, 'review')} to ${r.nextName}`;
 
 export interface OpenJob {
   taskId: string;

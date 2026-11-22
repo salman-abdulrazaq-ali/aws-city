@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { findExact, isCustomSelect, listboxFor, matchOption, openListbox, optionsIn, press } from '@/console/act';
 import { Pacer, nextSpeed, parseSpeed, SPEEDS } from '@/console/pacing';
 import { mayAct, mayChoose } from '@/console/safety';
+import { isCommit } from '@/console/risk';
 import { isBusy, settle } from '@/console/settle';
 import { elementFor, takeSnapshot } from '@/console/snapshot';
 import { ConsoleMock, flowFor, PRACTICE_ONLY } from '@/backend/consoleMock';
@@ -332,7 +333,7 @@ describe('the real console’s commit buttons are the player’s (Cloudscape mar
     };
   };
 
-  it('refuses the primary Create button and a commit in a menu; the form, the select, the section, Actions, Cancel and Next stay the Copilot’s', () => {
+  it('refuses the primary Create button, a commit in a menu and every submit button; the form, the select and the section stay the Copilot’s', () => {
     document.body.innerHTML = PAGE;
     document.documentElement.lang = 'en';
     const real = act(REAL);
@@ -343,11 +344,19 @@ describe('the real console’s commit buttons are the player’s (Cloudscape mar
     expect(real('Start instance', 'select', 'x')).toMatchObject({ ok: false, reason: 'commit' });
     // A real dropdown's pick never presses a commit button: still the Copilot's.
     expect(real('Subnet', 'select', 'x')).not.toMatchObject({ reason: 'commit' });
-    for (const n of ['Subnet', 'Additional settings', 'Actions', 'Connect', 'Cancel', 'Next']) expect(real(n), n).toEqual({ ok: true });
+    for (const n of ['Subnet', 'Additional settings']) expect(real(n), n).toEqual({ ok: true });
+    // Neither the main action nor named for a commit by its first word (isCommit)…
+    for (const n of ['Actions', 'Cancel', 'Next']) expect(isCommit(REAL, 'button', n), n).toBe(false);
+    // …and every Cloudscape button is type="submit" whatever it does, so that alone isn't a commit (the plain-submit rule
+    // skips Cloudscape buttons); a commit word anywhere in a name still is, on every page ("Connect", main's merged rule).
+    expect(real('Connect')).toMatchObject({ ok: false, reason: 'commit' });
+    for (const n of ['Actions', 'Cancel', 'Next']) expect(real(n), n).toEqual({ ok: true });
     expect(real('Name - optional', 'type', 'aws-city-nat')).toEqual({ ok: true });
-    // The practice console stays automatic, commit buttons included.
+    // On the practice console too, commit words are the player's to press; a Cloudscape Next isn't.
     const practice = act(PRACTICE);
-    for (const n of ['Create NAT gateway', 'Start instance', 'Next']) expect(practice(n), n).toEqual({ ok: true });
+    for (const n of ['Create NAT gateway', 'Start instance']) expect(practice(n), n).toMatchObject({ ok: false, reason: 'commit' });
+    expect(practice('Next')).toEqual({ ok: true });
+    for (const n of ['Subnet', 'Additional settings']) expect(practice(n), n).toEqual({ ok: true });
   });
 
   it('on a console in another language every button and menu item press is the player’s; the select, the section and the fields stay the Copilot’s', () => {
@@ -359,8 +368,12 @@ describe('the real console’s commit buttons are the player’s (Cloudscape mar
     for (const n of ['Subnet', 'Additional settings']) expect(real(n), n).toEqual({ ok: true });
     expect(real('Subnet', 'select', 'x')).not.toMatchObject({ reason: 'commit' });
     expect(real('Name - optional', 'type', 'aws-city-nat')).toEqual({ ok: true });
+    // The practice console isn't the real console, so its language changes nothing: only the every-page rule applies.
     const practice = act(PRACTICE);
-    for (const n of ['Create NAT gateway', 'Actions', 'Next']) expect(practice(n), n).toEqual({ ok: true });
+    expect(practice('Create NAT gateway')).toMatchObject({ ok: false, reason: 'commit' });
+    for (const n of ['Actions', 'Next']) expect(practice(n), n).toEqual({ ok: true });
+    expect(JSON.stringify(practice('Create NAT gateway'))).not.toMatch(/isn’t set to English/);
+    for (const n of ['Subnet', 'Additional settings']) expect(practice(n), n).toEqual({ ok: true });
     document.documentElement.lang = 'en';
   });
 });

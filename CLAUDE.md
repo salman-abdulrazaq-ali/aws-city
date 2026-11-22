@@ -9,6 +9,9 @@ Node 24 (`engines` `>=24` in `package.json`; proof: `npm pkg get engines.node`).
 (`scripts/launcher/require-node.mjs`) stops below 24 and prints a one-line note on 24.0–24.14, which still works.
 There are three npm projects, each with its own lockfile: the extension (root), `server/` and `infra/`. Run `npm ci` in each one
 you touch. The root `tsc` and ESLint skip `server/` and `infra/`.
+npm before 11.12 (Node 24.9 ships 11.6) refuses the server's lockfile as out of sync, and a lockfile it writes is refused
+by npm 12, so `npm run live`'s server install (`awsTools`, `scripts/start.mjs`) falls back to one `npm install`, as
+`boot.mjs` does for the root. Proof: on Node 24.9, `npm --prefix server ci` fails (EUSAGE) and `npm --prefix server install` works.
 
 ```
 npm start         # the guided launcher: demo / real AWS / deploy (scripts/launcher/boot.mjs → scripts/start.mjs)
@@ -21,6 +24,7 @@ npm run smoke     # build + Playwright Chromium demo run; screenshots in .output
 npm run smoke:copilot  # the 8 Console Copilot flows on the practice console (practice.html) + the demo Lookout; must print "no page errors"
 npm run dev       # WXT dev with Chrome for Testing (`npx playwright install chromium` once; branded Chrome opens blank)
 npm run live      # local server with real AWS (workshop profile) + the extension wired to it
+npm run open:hosted   # the live city setup deployed, built for it, in Chrome for Testing with its own profile (.cache/chrome-profile-hosted)
 npm run dev:firefox / npm run live -- --browser firefox|safari   # other browsers
 npm run lint:firefox && npm run build:safari   # Firefox (Mozilla linter, 0 errors) and Safari builds
 npm run safari:xcode   # Xcode project for Safari (.cache/safari)
@@ -84,9 +88,19 @@ When a change touches a decision, update its entry and run its Proof.
   (`DELETED_CHECK_MS`). "Your data" (sign out, delete) shows only for hosted builds. Proof: `cd server && npx vitest run test/hosted.test.ts`,
   `cd server && npx vitest run test/http.test.ts -t "origins|deleted|token"`.
 - **The player role allows exactly what the server calls, and trusts only our account.** The trust is
-  fixed at publish time, not a parameter. Proof: `cd server && npx vitest run test/player-role.test.ts`.
+  fixed at publish time, not a parameter. Proof: `cd server && npx vitest run test/player-role.test.ts`. The installed
+  role, read-only through IAM's policy simulator (SCPs included): allowed on `aws-city-<account>-*` buckets, `city-*`
+  tables and tagged IMDSv2 t4g instances in its Region; denied on other names, untagged resources, m5.large, other
+  Regions, object/item reads, IAM, STS, secrets, KMS and Lambda. Proof: `cd infra && AWS_PROFILE=aws-city node
+  scripts/check-player-role.mjs --account <test account> --assume arn:aws:iam::<test account>:role/OrganizationAccountAccessRole`
+  (28/28 on 21 Nov 2026). Every agent write works end to end on a real account (ActionService → policy → executor →
+  AWS, checked in AWS after each, everything named `livetest` removed): `cd server && AWS_PROFILE=aws-city
+  AWS_CITY_LIVE_ROLE_ARN=<role> npx vitest run test/live/actions.live.test.ts --silent=false` (skipped without it).
 - **Infra is CDK with cdk-nag AwsSolutions clean.** Every acknowledgement carries a reason. Deploys need no
-  Docker: the server image is built in CodeBuild (`@cdklabs/deploy-time-build`).
+  Docker: the server image is built in CodeBuild (`@cdklabs/deploy-time-build`). `npm run setup` prints a ⏳ line a
+  minute from the busy stack's events while cdk deploys (`infra/lib/deploy-progress.ts`; cdk runs with `--progress
+  events`), and the 5xx deploy-rollback alarm uses 1-minute periods (3 × 1 min, 5 a minute): ECS keeps a finished deploy
+  open for a window it computes from that alarm, and 3 × 5 min held it ~16 minutes after the new servers were live.
   Proof: `cd infra && npm test && npx cdk synth -q`.
 - **Agents are grounded, never unrestricted:** docs come from the read-only AWS Knowledge MCP server
   (allow-listed tools, `<aws_docs>` treated as data, official AWS hosts only). There's no AWS CLI tool
@@ -99,12 +113,84 @@ When a change touches a decision, update its entry and run its Proof.
   channel or is refused). Citizens always; landmark agents too by default (`AWS_CITY_AGENT_ENGINE=classic` keeps the
   hand-written loop as a fallback). Landmark agents run at `effort: 'high'`, citizens `low`. Source: `.claude/references/cached-sources.md`.
   Proof: `cd server && npx vitest run test/citizens.test.ts`.
+- **Amazon Nova runs the whole city on Strands Agents.** The model id picks the family (`familyOf`,
+  `server/src/agents/llm.ts`): Claude keeps the Anthropic Messages API routes above; any other Bedrock model (Amazon
+  Nova: `NOVA_MODELS` in `infra/lib/models.ts`, Pro for agents and planning, Lite for chat and the Lookout, on demand in
+  the Region) goes through Bedrock's Converse API on Strands' `BedrockModel` (`MeteredBedrockModel`, the same gate:
+  kill switch, quotas, token metrics). Agent turns take `llm.strands()`; the one-shot routes (concierge plan, `chat.ask`,
+  the Lookout with its screenshot, the Console Copilot's step) run as fresh Strands Agents through `pick` (one tool,
+  offered and never forced; a missing or invalid call keeps the route's fallback) and `say` (streamed text), in
+  `server/src/agents/once.ts`. Locally: `npm run live -- --model nova` (the launcher checks Nova with Converse and passes
+  the ids as env). Hosted: the setup wizard asks (Nova recommended; saved as `modelChoice`, `loadEnv` →
+  `modelsForChoice`); the task role may invoke exactly the two Nova foundation models in its Region (`bedrockResources`:
+  no wildcard, no cdk-nag acknowledgement; Claude keeps its profile + wildcard), and the budget's deny covers both. A new account's hold can be Region by Region and model by model: the wizard then looks for a Region where Nova answers (`NOVA_ELSEWHERE`) and offers `aiRegion` (the server calls Bedrock there, `AWS_CITY_BEDROCK_REGION`; data, sign-in and the server stay in `region`; the task role may invoke Nova only there) and `novaLiteOnly` (Lite in every slot); the launcher plays on Lite when Pro has no quota.
+  Proof: `cd server && npx vitest run test/nova.test.ts` (includes "the AI can run in another Region"), `npx vitest run tests/launcher.test.ts`, `cd infra && npm test`.
+- **Locally, the agents' AI can run on this computer** (for a Bedrock hold, or no network): `AWS_CITY_MODEL_PROVIDER=local`
+  runs every route on Strands' `OpenAIModel` against Ollama's OpenAI-compatible endpoint (`MeteredOpenAIModel`,
+  `server/src/citizens/model.ts`: the same gate; family `converse`, so the one-shot routes go through `once.ts`), and
+  `AWS_CITY_LOCAL_FALLBACK=true` puts it behind Amazon Nova with Strands' `ModelRouter` (Bedrock with one attempt, then
+  the local model). `server/src/config.ts` allows only loopback in local mode (`isLoopbackUrl`), only the city's own AI
+  service by its private name when hosted (`isPrivateServiceUrl`, below), and refuses the fallback behind Claude. A text-only local model gets the Lookout's page address, not the screenshot
+  (`llm.sees`; `AWS_CITY_LOCAL_VISION=true` for a vision model). The launcher: `npm run live -- --model local`
+  (`--local-model`, default `qwen3:8b`; `--local-fallback` with `--model nova`) offers to install Ollama with
+  Homebrew, start it and pull the model (`ensureOllama`, `scripts/start.mjs`).
+  Proof: `cd server && npx vitest run test/local-model.test.ts` (a real HTTP "Ollama" on 127.0.0.1), `npx vitest run tests/launcher.test.ts`.
+- **Hosted, the AI can run on AWS without Bedrock** (`EnvConfig.aiCpu`, offered by setup when Bedrock is held; a new
+  account's GPU quotas start at 0 too): an open model (`CPU_MODEL` in `infra/lib/models.ts`, Qwen3 4B Instruct 2507,
+  Apache-2.0, 4-bit) served by Ollama (`infra/ai-image/Dockerfile`: the release pinned by digest; the model pulled at build time in CodeBuild
+  and checked by `infra/ai-image/verify-model.sh`: the registry manifest by its own digest, `CPU_MODEL.manifest`, and its
+  five files by theirs, on Ollama's content-addressed blobs; `OLLAMA_NO_CLOUD=1`, so it calls nobody; the base image's
+  Ubuntu packages patched at build time, `apt-get -y upgrade`, while the Go findings in the ollama binary wait for an
+  Ollama built with `golang.org/x/net` 0.62) on its own Fargate
+  service: Graviton, 8 vCPU / 16 GB, `FARGATE_SPOT` or
+  `FARGATE`, a Cloud Map private name `ai.awscity-<env>.internal`, its own security group (in: 11434 from the server's
+  group only; out: HTTPS only, for its image and logs), a task role with no policy, and no desired count in the template, so `npm run ai -- on|off|status`
+  (`scripts/ai-switch.mjs`, the AWS CLI) sticks across deploys. The server gets `AWS_CITY_PRIVATE_DOMAIN`/`_LOCAL_URL`/
+  `_LOCAL_MODEL` and, behind Nova, `AWS_CITY_LOCAL_FALLBACK` (Strands' ModelRouter: Bedrock first); behind Claude the
+  model alone. Cost: `cpuAiHourly()` from `FARGATE_ARM_PRICE` (eu-west-2 Price List), shown in the review screen.
+  Proof: `cd infra && npm test` ("the AI on AWS without Bedrock", cdk-nag with it on; `test/ai-image.test.ts` runs the
+  model check), `cd server && npx vitest run test/local-model.test.ts`.
+- **A new account is walked through, not left to guess** (`docs/self-hosting.md`): root MFA, the Paid plan (upgraded as
+  root; a Free plan account closes when its credits run out), an admin user with MFA, `aws login` as that user, Nova or
+  Claude, and a new account's Bedrock hold (verifying, 0 tokens a day, Free plan, use-case form, each with its fix and a
+  support-case text). An expired or missing sign-in doesn't stop the wizard: it names it (`explainAwsError`) and offers
+  **Sign in with your browser** (`aws login --profile aws-city`), then checks again and carries on (`--yes`, keys in the
+  environment and runs without a terminal stop with the commands). The setup wizard checks the same before asking anything else: it warns on root (`sts` ARN), stops
+  on the Free plan (`GetAccountPlanState`, `@aws-sdk/client-freetier`), and names the Bedrock wall (`explainAwsError`),
+  each linking the guide's step. When Bedrock isn't ready, the wizard offers to deploy with the AI off (`aiEnabled:
+  false` → the kill switch's starting value; everything but the agents works) and re-running it once Bedrock answers
+  turns the AI on. **The questions only read AWS**: the Google secret is held in memory and the SES address only noted,
+  then one review screen (`infra/lib/review.ts`: every answer, every AWS change in order, the us-east-1 note for
+  CloudFront's WAF) offers Deploy / Change an answer (the questions again, pre-filled) / Cancel, and only then writes.
+  The questions include publishing: the operator's name, a contact email and the privacy policy's https address
+  (`privacyUrl`; setup writes the policy for the operator to host, and builds the store zips only with it), and the
+  Chrome Web Store and Edge Add-ons ids (`chromeStoreId`/`edgeStoreId`, both in `extensionIds` for sign-in); GitHub
+  deploys trust no default repo (pre-filled from this clone's origin, a warning when it differs, then a yes/no). SES
+  in its sandbox and free-mail senders are named before the SES question; an SES identity an earlier run created
+  (`sesIdentitiesCreated`) that nothing uses is offered for removal. Right after the environment, setup checks which code
+  it would deploy (`codeProblem`, `infra/lib/code-state.ts`: a `git fetch`, then main behind GitHub's main, or prod off
+  main) and offers Update now (`git pull --ff-only`, then run setup again) / Deploy this copy anyway / Stop; `--yes` stops
+  unless `--any-commit`; the review shows "Code: main @ <sha>". A checkout 6 commits behind deployed the city without two
+  merged fixes on 21 Nov 2026. Proof: `npm run setup -- --dry-run` (changes nothing in AWS), `cd infra && npm test` (`test/code-state.test.ts`),
+  `npx vitest run tests/launcher.test.ts`; every link in the guide opens (checked when it changes).
 - **AWS's public status and news reach every player, read once by the server** (`server/src/news/`, contract v2.6 `aws.health`/`aws.news`).
   The sources are the public Health Dashboard JSON (UTF-16 with a BOM), with the status RSS as fallback, and What's New. Hosts are
   allow-listed, there are no redirects, a size cap and a timeout, and a failure backs off. Feed text is untrusted data (neutralised,
   trimmed, never given to a model). Services map only through verified codes in `shared/aws-health-services.json`. There's no IAM and
   no Health API (it needs a Business support plan). The demo plays the real Bahrain/UAE events plus a `drill: true` practice event.
   Proof: `cd server && npx vitest run test/news.test.ts test/tenants.test.ts`, `npx vitest run tests/incidents.test.ts tests/contract.test.ts`.
+- **AWS City Live: the city changes with what AWS is doing.** Events are data with an official page each
+  (`shared/events.json`: re:Invent 2026, 30 Nov – 4 Dec, Las Vegas; links only to aws.amazon.com and meetup.com,
+  `isEventUrl`). `src/world/liveEvents.ts` is pure (`eventPhase`, `bannerEvent`: live first, else the soonest within
+  `BANNER_DAYS`); the City tab's `EventBanner` (both modes, never the primary button) opens the Events board, and
+  `?date=YYYY-MM-DD` previews a day. A What's New launch that lands while the city is open (`bus` `launch`, after the news
+  rung, never the batch on connect) bumps its building with "🚀 New from AWS" and its agent's line (`CityScene.onLaunch`,
+  `LAUNCH_GAP_MS` apart, at most `LAUNCH_MAX` a batch, one toast); a building's card lists its newest launches
+  (`WhatsNew`). The demo holds back its newest captured launch for `LAUNCH_AFTER_MS`. While re:Invent is live the server
+  reads What's New every 10 minutes (`newsEvery`) and keeps `MAX_NEWS` 60. Strands Agents and Amazon Nova are taught in
+  AgentCore Academy and Bedrock Mesa (cards from AWS pages, glossary terms); Strands isn't a service (no console, Region
+  or icon). Proof: `npx vitest run tests/live-events.test.ts tests/events-ui.test.tsx tests/content.test.ts`,
+  `cd server && npx vitest run test/news.test.ts`, `npm run smoke` (86: banner, board with axe, re:Invent live, a launch on S3).
 - **Findings are rules; the model only explains.** `server/src/agents/findings.ts` checks each poll (no model calls);
   players read `shared/wa-rules.json`; an unreadable setting never raises a finding.
   Proof: `cd server && npx vitest run test/care.test.ts`.
@@ -116,7 +202,7 @@ When a change touches a decision, update its entry and run its Proof.
   resource id, and the citizen must be level 3 (a teaching gate, not a security control). Local mode needs
   `AWS_CITY_ALLOW_FIXES=true` (`npm run live -- --allow-fixes`), and its "fixes are off" message says so (`howToAllowFixes`);
   so does the UI (`FixesOn` shows the CloudFormation steps and "Check again" only on hosted builds, locally `LOCAL_FIXES_COMMAND`).
-  Hosted, fixes are per account (v2.17): the setup link sets `AllowFixes=true` when the player asks (`account.link {allowFixes}`),
+  Hosted, fixes are per account (v2.19): the setup link sets `AllowFixes=true` when the player asks (`account.link {allowFixes}`),
   and verify learns whether the role allows them without changing anything (`fixesAllowed`: EC2's DryRun of the EBS fix,
   `DryRunOperation` = yes); "Check again" re-runs that DryRun for the linked record (`account.recheck`, read-only: no MFA, no
   new link window, the role version stays, the same world; an answer that can't tell keeps the known one, and a link that
@@ -131,7 +217,7 @@ When a change touches a decision, update its entry and run its Proof.
   session only, every call asks first (`permissions.ask` in `.claude/settings.json`), and it's never wired
   into the game's agents (they get only allow-listed read-only docs tools). Proof: `cd server && npx vitest run test/knowledge.test.ts`.
 - **Every AWS write needs the player's approval** (contract v2 `deploy.preview` → `deploy.approve`).
-  With no approval channel, writes are refused (only reads run). v2.17 `resource.remove` (no model) goes the same way:
+  With no approval channel, writes are refused (only reads run). v2.19 `resource.remove` (no model) goes the same way:
   `ActionService.submit` with the socket's approvals, so policy, Jev, the preview, MFA on approve and the gate all apply.
   Proof: `server/test/approvals.test.ts`, `server/test/service.test.ts` ("refuses every write without an approval channel"),
   `cd server && npx vitest run test/tenants.test.ts -t "resource.remove"`.
@@ -143,7 +229,7 @@ When a change touches a decision, update its entry and run its Proof.
   sends it, grant or not (strict zod: RunInstances one encrypted disk and `CpuCredits: standard`; PutBucketTagging/DeleteBucket
   `ExpectedBucketOwner` = the account, CreateBucket has none so its name prefix stands in); and one without a grant naming its
   command and exact target, once. The one exception is a rule's `probe`, its exact DryRun (`{DryRun: true}` on the EBS fix,
-  v2.17): it changes nothing and needs no grant, and IAM checks it against the fix's own action, so it maps to aws-city-fix
+  v2.19): it changes nothing and needs no grant, and IAM checks it against the fix's own action, so it maps to aws-city-fix
   and answers "are fixes on?". What goes on to be serialised is zod's checked copy, never the caller's object (a later
   change, getter or Proxy can't alter it). A grant is minted for one account (refused from clients in another or an unknown
   one), its entries are frozen copies, and all are spent when `withGrant` ends (a timer started inside gets nothing). Only
@@ -157,8 +243,9 @@ When a change touches a decision, update its entry and run its Proof.
   outer wall. Proof: `cd server && npx vitest run test/guard.test.ts test/player-role.test.ts test/service.test.ts test/fixes.test.ts test/care.test.ts`.
 - **Jev, a second opinion that only tightens** (`server/src/agents/jev.ts`, `docs/jev.md`). Off unless `TYPESAFE_API_KEY` is
   set (local or hosted). ActionService asks TypeSafe's Jev about a write after policy passes and before the player is asked
-  (the `judge` dependency); never about a read, a denied write or one with no approval channel. The state is only the
-  player's own words (`TurnHooks.intent` = task.submit's prompt, ≤ 500 chars), the action type, `describeAction` and
+  (the `judge` dependency, in `write()`, so an agent's write and a plain request's direct one alike); never about a read,
+  a denied write or one with no approval channel. The state is only the player's own words (`TurnHooks.intent` =
+  task.submit's prompt, ≤ 500 chars, on both paths in `server/src/contract/orchestrator.ts`), the action type, `describeAction` and
   `destructive`, with 12-digit ids and ARNs redacted; nothing from AWS. Questions: `intent` (`noul`, only with the player's
   words) and `risk` (`score`, 3 levels, lowest first); the thresholds are code (`verdictFor`: block < 0.2 intent; ask < 0.6
   or risk ≥ 1.2; `AWS_CITY_JEV_*`). Block refuses with a plain sentence; ask adds a "Safety check" detail line and the
@@ -169,7 +256,14 @@ When a change touches a decision, update its entry and run its Proof.
   Proof: `cd server && npx vitest run test/jev.test.ts test/service.test.ts test/guard.test.ts`.
 - **Linking an AWS account, approving a write, applying a fix and taking something down need MFA (step-up).** Hosted players must have TOTP
   on for `account.link`/`account.verify`, `deploy.approve`, `finding.fix` and `resource.remove` (Google sign-ins are exempt); prod Cognito runs Plus with threat protection.
-  On isn't enough: the session must have signed in after it (`server/src/accounts/mfa.ts`). The server keeps the first time it saw TOTP on
+  Each of those passes every check, in order, and none replaces another (`stepUp` in `server/src/http.ts`): the player
+  wasn't deleted on another task (`stillHere`, else the socket closes with `4403`); an authenticator is on (else
+  `mfa_required`); this session signed in after the server first saw it on (below, else code `auth`); and it signed in
+  within the last 30 minutes (the token's `auth_time`, `recentSignIn` in `server/src/accounts/mfa.ts`; error
+  `reauth_required`, "Sign in again" (`ReauthPrompt`) → `prompt=login`, then the fresh token goes over the open socket
+  as `auth.renew` (v2.17) so a pending approval survives), so a stolen 30-day refresh token can't approve anything.
+  There is no switch to turn step-up off hosted (the old `REQUIRE_MFA_FOR_LINK` is gone).
+  The first-sight rule (`server/src/accounts/mfa.ts`): the server keeps the first time it saw TOTP on
   (`Stores.mfa` `since`, files or DynamoDB `USER#<sub> MFA`; seeing it off forgets it) and passes only an access token whose `auth_time` is at
   or after it; an older session gets code `auth` with `SIGN_IN_AGAIN_MESSAGE`, which the UI shows as sent (`errorText` keeps an
   `auth` error's own words). After enrolling, the extension calls `POST /me/mfa` (the server
@@ -187,9 +281,12 @@ When a change touches a decision, update its entry and run its Proof.
   `resource.remove` is tracked like a fix (`StepUp` in `src/app/runtime.ts`: "press Take it down
   again"). `account.recheck` and `account.unlink` need no MFA (they change nothing, or take access away). Sign-out
   revokes the refresh token (`/oauth2/revoke`, bounded); an email change waits for its code (`keepOriginal`). A "TOTP is on" answer is
-  cached 60 s at most. Proof: `cd server && npx vitest run test/hosted.test.ts -t "MFA|me/mfa"` (includes "MFA step-up for writes"),
-  `npx vitest run tests/auth.test.ts tests/ui-logic.test.ts tests/runtime-session.test.ts tests/server-backend.test.ts`, `cd infra && npm test`.
-- **A linked account can be disconnected, notices a deleted stack, and upgrades its role** (contract v2.17). `account.unlink`
+  cached 60 s at most. The Deploy tab walks a player through it one step at a time: the authenticator first ("🔐 First,
+  protect your account": a QR code of the `otpauth://` link to scan, `src/ui/QrCode.tsx` with `uqr`, the key behind
+  "Can't scan it?"), and only then the three linking steps (below). Proof: `cd server && npx vitest run
+  test/hosted.test.ts -t "MFA|me/mfa|30 minutes|auth.renew"` (includes "MFA step-up for writes"),
+  `npx vitest run tests/auth.test.ts tests/ui-logic.test.ts tests/runtime-session.test.ts tests/server-backend.test.ts tests/link-steps.test.tsx`, `cd infra && npm test`.
+- **A linked account can be disconnected, notices a deleted stack, and upgrades its role** (contract v2.19). `account.unlink`
   needs no MFA (taking access away): `AccountStore.delete` (files or DynamoDB `USER#<sub> ACCOUNT`), an unlinked world, the
   poller stopped, `account.status {linked: false}` to every tab. Unlink and DELETE /me forget the record holding that AWS
   account's lock (`forgetUnderLock` in `server/src/tenants.ts`; no account id: at once), so a write already past `live()` on any
@@ -199,7 +296,9 @@ When a change touches a decision, update its entry and run its Proof.
   `rejected` "That account was disconnected, so nothing changed." (`Approvals` watch the signal), and ActionService and
   CityCare ask `live()` inside the account lock right before minting a grant, which also re-reads the stored link before a
   write (CityCare checks the retired signal once more after its re-read; a store error in `live()` is a plain refusal,
-  `LINK_UNCHECKED_REASON`, so the approved card still gets its outcome). Every open or warm city (its last tab closed, kept
+  `LINK_UNCHECKED_REASON`, so the approved card still gets its outcome). A `live()` that says no refuses with `RETIRED_REASON` (`server/src/agents/service.ts`),
+  so an approval given before the player re-linked another account never writes to the old one, and a retired world's
+  fix is audited `denied`. Every open or warm city (its last tab closed, kept
   until eviction, still polling) re-reads its record once a minute (`ACCOUNT_CHECK_MS`, one read whether or not a tab is open)
   and rebuilds when it's gone or its status/account/Region/`brokenAt` or link changed (`linkKey`: also `linkedAt` and a hash
   of the ExternalId, kept in memory and never logged), so an unlink, a disconnect and new link of the same account and Region,
@@ -247,19 +346,24 @@ When a change touches a decision, update its entry and run its Proof.
   Serverless quest templates (`hello-api`, `queue-worker`) are practice builds on the server (`ServerBackend.planPractice`),
   never an EC2 house. Proof: `cd server && npx vitest run test/tenants.test.ts test/hosted.test.ts test/poller.test.ts test/guard.test.ts test/player-role.test.ts test/care.test.ts test/service.test.ts`,
   `npx vitest run tests/server-backend.test.ts tests/contract.test.ts tests/runtime-session.test.ts`, `cfn-lint` on the template (CI).
-- **The player's own AWS account: easy to find, linked where they choose, easy to let go** (contract v2.17; rules pure in
+- **The player's own AWS account: easy to find, linked where they choose, easy to let go** (contract v2.19; rules pure in
   `src/state/account.ts`, `src/ui/Account.tsx`, the card in `src/ui/DeployPanel.tsx`). On the hosted server ⋯ → Account
   has the AWS account (its card in Deploy), Sign in or out, Download my data (`exportMe`, saved as a local JSON file) and
   Delete my account… (asked first, in a dialog), and Privacy policy ↗ when the build has its address (`WXT_PRIVACY_URL`,
   https only, `privacyPolicyUrl`/`openPrivacyPolicy` in `src/app/runtime.ts`; also on Deploy's sign-in card; a hosted store
   build needs it, and `npm run setup` asks for it and builds the store zips only with it).
-  The To-do row, the shift's line (Everything) and ⋯ open Deploy with the steps unfolded (`openAccountCard`). Step 1
-  picks the Region by name (`LINK_REGIONS`, the commercial partition only; it starts on the Region asked for last, the
-  linked one, else the city's) and says "Your key will be made in <Region>; the city reads that Region"; step 2 has
-  "Allow small fixes" (a new link with `allowFixes`; the box follows the link that arrived), who the stack serves
-  (`connectsPlayer`: the link's `param_ConnectsPlayer`, "don't create the stack if that isn't you"), that the link works
-  for a day, and what the console asks (`linkChecklist`: the right account and Region, rights to create IAM roles and
-  stacks, the IAM acknowledgement, CREATE_COMPLETE in about a minute, then Verify). A refused link, verify or Disconnect
+  The To-do row, the shift's line (Everything) and ⋯ open Deploy with the steps unfolded (`openAccountCard`; the City
+  tab's `ConnectCard` opens Deploy, which unfolds them for a player who can connect). Step 1 picks the Region by name (`LINK_REGIONS`, the commercial partition only; it starts on the
+  Region asked for last, the linked one, else the city's) and says "Your key will be made in <Region>; the city reads
+  that Region"; step 2 has "Allow small fixes" (a new link with `allowFixes`; the box follows the link that arrived), who
+  the stack serves (`connectsPlayer`: the link's `param_ConnectsPlayer`, "don't create the stack if that isn't you"),
+  one list of what the console will ask (your own account, the Region to keep by name, `linkRegion` from the link's
+  `?region=`; a sign-in that may create IAM roles and stacks, which workshop accounts can't; the IAM acknowledgement;
+  CREATE_COMPLETE in about a minute, then Done and Verify; `linkChecklist` in `src/state/account.ts` holds the same
+  points, but the card writes its own), Open CloudFormation or Copy link (for an AWS session in another browser), that
+  the link works for a day, and for a host to use a different account from the one the city runs in
+  (`docs/self-hosting.md` step 9 shows how to make one). Step 3, the account number, opens once they press "Done: it says
+  CREATE_COMPLETE" (`accountInput` accepts the console's 1234-5678-9012 and a stray full stop). A refused link, verify or Disconnect
   (`error {requestId}`: a failed verify, a link over a day old) is said in the card as an alert (`account.error`) with
   "Get a new setup link". The linked card names the Region, says whether small fixes are on (and how to turn them on),
   offers "Update your AWS City role (vN → vM)" when `roleVersion < latestRoleVersion` (steps, the template address, the
@@ -280,13 +384,67 @@ When a change touches a decision, update its entry and run its Proof.
   'detail' lines in words ("Safety check: …") and the name typed before Approve. A practice build (`isPracticeDeploy`)
   says it made nothing in the AWS account and has no Tear down. Proof: `npx vitest run
   tests/account.test.ts tests/account-ui.test.tsx tests/deploy-account.test.tsx tests/runtime-session.test.ts
-  tests/session.test.ts tests/finding-pacing.test.ts tests/release-check.test.ts`.
-- **Hosted deploys only run in Regions with a Claude geo inference profile** (`infra/lib/models.ts`: `us`, `eu`, `au`,
+  tests/session.test.ts tests/finding-pacing.test.ts tests/release-check.test.ts tests/link-steps.test.tsx`.
+- **Red-team pass, 21 Nov 2026: what an attacker with a page, a token or a laptop process can't do.**
+  - The Console Copilot fills fields and points; the player presses anything that commits (a button, link or menu item
+    with a commit word anywhere in its name: create, save, launch, add, attach…; any form submit control but
+    Cloudscape's) and types any value that opens access (`0.0.0.0/0`, `*`) or names an account
+    (`isCommitControl`/`isRiskyValue`, `src/console/risk.ts`, checked in the extension and on the server, on every page;
+    the real console's own rules are in "The Console Copilot hands risky steps back" below). Page text is
+    fenced as `<console_page>` data. Proof: `npx vitest run tests/console.test.ts tests/practice-console.test.ts`,
+    `npm run smoke:copilot` (it plays the player through `[data-awscity-your-turn]`).
+  - The local server takes only its token, never an Origin alone; the launcher mints a fresh one every run
+    (`liveConfig`, `scripts/launcher/live-run.mjs`) and builds it into the extension, and the token is never printed.
+    Proof: `cd server && npx vitest run test/http.test.ts -t "token"`, `npx vitest run tests/launcher.test.ts`.
+  - A deleted account's sockets on other tasks close with `4403` (`stillHere`: each minute, `DELETED_CHECK_MS`, and
+    before step-up, the bill, scores and presence); an approval given before a re-link never writes to the old account
+    (`live()` inside the account lock, `RETIRED_REASON`). Proof: `cd server && npx vitest run test/hosted.test.ts -t "another task"
+    test/service.test.ts -t "re-linked"`.
+  - Model input is bounded and clean: the snapshot is capped (100 resources, 64-char names, 8k chars), player text loses
+    keys, secrets, tokens and emails (`server/src/secrets.ts`), every persona carries `NO_SECRETS_RULE`, and on the
+    self-hosted model each player's calls take turns with no retries. Proof: `cd server && npx vitest run
+    test/runner.test.ts test/secrets.test.ts test/local-model.test.ts -t "take turns"`.
+  - The refresh token lives in the extension's own IndexedDB (`src/backend/vault.ts`), never in `storage.local`
+    (content scripts can read that); auto-snap skips pages that can show a secret (`autoSnaps`: an AWS page that's
+    neither `isSecretPage` nor `isSensitivePage`, `src/app/runtime.ts`); page focus and
+    Copilot messages from a web page's content script are ignored (`fromWebPage`). Proof: `npx vitest run
+    tests/auth.test.ts tests/runtime-session.test.ts`.
+  - Limits: screenshots 10 then 1 per 6 s per player, server-made `screenshotKey`s only, board reads cached 15 s per
+    player, a private profile leaves the boards whichever task saves it. CloudFront adds AWS's managed security
+    headers (HSTS, nosniff). CI installs before AWS credentials exist, saves no git credentials, pins the binfmt image,
+    CodeQL also scans the workflows, Dependabot waits 7 days, and releases build read-only and publish separately;
+    the `staging` environment deploys only from protected branches (`gh api repos/salman-abdulrazaq-ali/aws-city/environments
+    --jq '.environments[]|{name,deployment_branch_policy}'`). Proof: `cd server && npm test`, `cd infra && npm test`.
+- **Security Hub's best-practice checks are each fixed, suppressed with a reason, or deferred** (`docs/runbook.md` →
+  Security Hub). In code: the server task runs as its nonroot user, Cognito threat protection covers custom flows, the VPC's default
+  security group allows nothing. While Bedrock is held the server asks only the Fargate model (`aiCpu.primary`: one
+  call and one quota count per answer, not a failed Bedrock try first). Proof: `cd infra && npm test` ("Security Hub
+  basics", "Bedrock held"), and the runbook's `aws securityhub get-findings` command.
+- **The repo and the AWS account are locked down.** GitHub: `main` changes only through a pull request with CI green
+  (ruleset "main": the `extension`, `server`, `infra`, `fresh-clone` ×3 and `analyze` checks, no force-push or deletion,
+  only the admin may bypass); Actions run only GitHub-owned, verified-creator and `softprops/action-gh-release` actions,
+  pinned to a full SHA (required); fork pull requests from outside collaborators wait for approval; secret scanning with
+  push protection; the `prod` environment needs the maintainer's approval and deploys only from `main`; `SECURITY.md`
+  (private reporting) and `.github/CODEOWNERS`. The deploy workflow skips until `AWS_DEPLOY_ROLE_ARN` is set. AWS: the
+  baseline in `docs/runbook.md` step 5 (GuardDuty, CloudTrail, Access Analyzer, EBS default encryption, a password
+  policy, account-wide S3 Block Public Access for ACLs), and for the organization: no root user in member accounts
+  (central root management), an organization trail, GuardDuty and an analyzer for every account, the SCP
+  `AWSCityGuardrails` (stay in the org, security services stay on, no member root, three Regions), and Security Hub
+  (Foundational Best Practices), Config and Inspector ECR scanning. The server image runs on distroless Node
+  (`server/Dockerfile`: no shell or package manager, uid 65532); the AI image as uid 65534 on a read-only disk. Proof: `gh api repos/salman-abdulrazaq-ali/aws-city/rulesets`,
+  `gh api repos/salman-abdulrazaq-ali/aws-city/actions/permissions`, the runbook's "Check:" commands.
+- **Hosted deploys with Claude only run in Regions with a Claude geo inference profile** (Amazon Nova: any Region that offers it on demand) (`infra/lib/models.ts`: `us`, `eu`, `au`,
   `in`; there is no `apac` profile, so e.g. Tokyo is refused). Each geo gets the newest pair with a profile there for
   both models (`GEO_MODELS`, from the Bedrock model cards): Claude Opus 5.5 / Sonnet 5.5 in `us`/`eu`/`au`; India has no
   5.5 profile and keeps Opus 5 / Sonnet 5. Model ids and their IAM ARNs derive from the Region; synth and the setup
-  wizard refuse other Regions. Local mode follows the same table: the launcher (`localModels` in `scripts/launcher/lib.mjs`) picks the Region's models, passes them as `AWS_CITY_MODEL`/`AWS_CITY_LIGHT_MODEL`/`AWS_CITY_FALLBACK_MODEL` and refuses a Region with no profile; `server/src/config.ts` keeps the `us.` defaults only when started by hand.
-  Proof: `cd infra && npm test`.
+  wizard refuse other Regions. Local mode (`npm start` real AWS, `npm run live`) uses the same table: `localModels(region)`
+  (`scripts/launcher/lib.mjs`, from `modelsFor` in `infra/lib/models.ts`) picks the Region's models for the launcher's
+  Bedrock check and the server's `AWS_CITY_MODEL`/`_FALLBACK_MODEL`/`_LIGHT_MODEL` (`modelEnv`; a player's own env wins),
+  so eu-west-2 runs on `eu.`, and with Claude a Region with no profile is refused in plain words before sign-in
+  (`unsupportedRegionText` names the Regions that work). Only the bare server (`cd server && npm start`) keeps the `us.`
+  defaults in `server/src/config.ts`. A new account's Bedrock errors are named in plain words (account still being
+  verified, the use-case form, a quota of 0: `explainAwsError`, and the wizard's note; the launcher links
+  `BEDROCK_ACCESS_URL`). Proof: `cd infra && npm test`, `npx vitest run tests/launcher.test.ts`.
 - **Bedrock calls never force `tool_choice`** (Bedrock rejects it while thinking is on, and always for
   Claude 5.5-generation models; the defaults are Opus 5.5 / Sonnet 5.5, `server/src/config.ts`, but any model can be
   configured). Ask for the tool in the prompt and handle a missing call. Short routes use `effort: 'low'`. On 5.5
@@ -310,20 +468,23 @@ When a change touches a decision, update its entry and run its Proof.
 - **One seam to the backend.** Only `src/backend/` does network I/O. `contract.ts` is the source of
   truth; `docs/backend-contract.md` mirrors it. UI code reading the extension's own files goes through
   `readAsset` (`src/backend/assets.ts`: same-origin `/assets/` paths only). A client needs a server of its contract version or newer
-  (`CONTRACT_VERSION`, `src/backend/contract.ts`; the server's strict `Progress` schema refuses unknown fields): deploy the server
-  first. The v2.17 version handshake checks it: the client names its version as `?contract=` on `/ws` and every REST call (a
+  (`CONTRACT_VERSION` `'2.19'`, `src/backend/contract.ts`; the server's strict `Progress` schema refuses unknown fields): deploy the server
+  first. v2.17 is a fresh sign-in on an open socket (`auth.renew`, step-up's `reauth_required`), v2.18 the AWS account on
+  an approval card (`deploy.preview.accountId`), v2.19 the account's lifecycle below and the version handshake (it was
+  drafted as v2.17 on a branch). The v2.19 version handshake checks it: the client names its version as `?contract=` on `/ws` and every REST call (a
   query parameter, since a new request header would fail an older server's CORS preflight); every REST answer names the
   server's in `x-aws-city-contract` (CORS-exposed; `/health` has it and the server's version in its body, on purpose: ops
   read which build answers); a client newer than the server, or older than
   `MIN_CLIENT_CONTRACT` (`versionRefusal` in `server/src/http.ts`; versions compare as major.minor numbers, `compareContract`),
-  is refused with 409 on the upgrade and on `GET`/`PUT /progress`, and an unversioned client predates it and is let in. After
+  is refused with 409 on the upgrade and on `GET`/`PUT /progress`, and an unversioned client predates it and is let in
+  (`MIN_CLIENT_CONTRACT` stays `'2.0'`: a v2.18 client sends no version, and no older numbered client is turned away). After
   two refused upgrades `ServerBackend` asks GET /progress why: status `updating` (the server is older: saves wait on the device,
   asked again every 60–90 s) or `outdated` (update the extension; no retries), an amber dot and one calm line above the tabs
   (`SyncNote`, `syncLine` in `src/ui/logic.ts`: "The city’s server is being updated — your progress is kept on this device" /
   "A newer AWS City is ready — update the extension"), never a schema error. A `PUT /progress` refused with a 4xx (not 401 or
   409) isn't re-sent on every open: `onSave` reports `refused`, and the same line says "Not saved to your account — kept on
   this device" until a save goes through (`CityState.saveRefused`); 5xx, network errors, 401 and 409 keep the copy for the
-  next open. v2.17 adds `account.unlink`, `account.recheck` and `resource.remove` (an older server refuses an unknown action
+  next open. v2.19 adds `account.unlink`, `account.recheck` and `resource.remove` (an older server refuses an unknown action
   as a bad command), `account.link.allowFixes` and `account.verify.updated` (an older server's `account.link`/`account.verify`
   schemas aren't strict, so it drops them silently: the link lacks AllowFixes, the version isn't moved), `account.status`'s
   lifecycle fields and REST `GET /me/export`; `ServerBackend.send` ends in a `never` default, so a new command can't be dropped silently.
@@ -370,8 +531,17 @@ When a change touches a decision, update its entry and run its Proof.
 - **The city mirrors the account's map; the bill is opt-in.** `city.inventory.zones`/`regionStatus` come from
   `ec2:DescribeAvailabilityZones`/`DescribeRegions`, cached a day; a Region that can't be read is left out. `city.bill`
   (`ce:GetCostAndUsage`, $0.01 a request) is read only after `bill.enable {on:true}`, then at most once a day per player;
-  `shared/ce-services.json` maps only verified Cost Explorer service names (the rest show as "other").
-  Proof: `cd server && npx vitest run test/bill.test.ts test/care.test.ts test/player-role.test.ts`, `npx vitest run tests/contract.test.ts`.
+  `shared/ce-services.json` maps only verified Cost Explorer service names (the rest show as "other"). The home Region's
+  servers follow DescribeInstances, not the listing (Resource Explorer lags by minutes: on 22 Nov 2026 a terminated
+  server stayed on the map and a new one called demo didn't appear): `enrich` (`server/src/state/inventory.ts`) drops
+  servers shutting down or terminated, adds ones the listing hasn't caught up with (first, under the frame's item cap) and
+  names them from their Name tag; a listed server EC2 doesn't show is dropped only when EC2 was read in full (ok, under
+  `MAX_PER_SERVICE`). A poll that creates, removes or changes a server (`movesInventory`, `server/src/state/diff.ts`)
+  re-sends the mirror from the last listing (`care.reconcile`, no AWS call), and the mirror's "changed?" signature
+  includes the items, so a terminate plus a launch with the same counts is still sent. An agent's write re-polls at once
+  and after 4 s, so the map follows it within seconds.
+  Proof: `cd server && npx vitest run test/bill.test.ts test/care.test.ts test/player-role.test.ts`, `cd server && npx vitest
+  run test/care.test.ts -t "DescribeInstances" test/diff.test.ts`, `npx vitest run tests/contract.test.ts`.
 - **Street plans come from OpenStreetMap, baked.** A Region with `shared/city-maps/<region>.json` (v1, ODbL, © OpenStreetMap
   contributors) gets a 64×64 core of its real downtown's streets: `src/world/citymap.ts` decodes and validates it,
   `src/world/zoning.ts` zones it (superblocks keep today's insides, blocks → water/park/building, 3×3 lots fronting a
@@ -449,7 +619,8 @@ When a change touches a decision, update its entry and run its Proof.
   it opens after the first quest, and the demo's practice drill waits for it (`MockBackend.putProgress`); storms still show.
   There's no "Open anyway" list: the shift's "Coming up next" names the next unlock and how to earn it. Deploy also shows
   while a real account is being linked (`linking` in `src/state/account.ts`: a setup link is out, the server asked for an
-  authenticator first, or the link broke), so its steps never vanish mid-link; linking opens nothing else.
+  authenticator first, or the link broke), so its steps never vanish mid-link, and for a hosted player who can link one
+  (`canConnect`); linking opens nothing else.
   Proof: `npx vitest run tests/ladder.test.ts tests/finding-pacing.test.ts tests/contract.test.ts tests/account.test.ts`.
 - **Simple by default** (`prefs.simple`, absent = on; `src/state/simple.ts`). Every surface asks `shows(feature, prefs, ctx)`:
   Home, the HUD, the tabs and the Drawing board (`App.tsx`), My City (`Collection.tsx`), the news ticker, the toasts
@@ -464,10 +635,15 @@ When a change touches a decision, update its entry and run its Proof.
   to go over `TODO_MAX`, gone once the day is done, while ⋯ → Account always has it); a walk run from a game, an HQ or the world map goes back to the city first (`walkTo`,
   `walkToStation`); in the city, Simple drops the islands' "AWS trouble" labels and the drill's citizen talk, and the
   "E · Visit X" hint goes once its step is done; the HUD is ⭐ · coins · To do · Decorate · ⋯; tabs City · Learn · Jobs, Deploy only for a deploy step, a linked
-  account, a change waiting for approval or a real account being linked; Learn hides the Drawing board (a design step shows it); City care waits for a
+  account, a change waiting for approval, a real account being linked (`linking`) or a hosted player who can link one
+  (`useCanConnect`: signed in, nothing linked; the ladder opens Deploy for them too, and Deploy shows the three linking
+  steps at once). One way in to linking shows at a time: the City tab's `ConnectCard` (never a second primary button)
+  stands above the list only while no "Connect your AWS account" row is in sight (so it comes back once the day is done
+  or the row is under "+N more"), and with Everything on only when the shift's `ConnectLine` offers nothing
+  (`useConnectOffer`, `src/ui/Home.tsx`); Learn hides the Drawing board (a design step shows it); City care waits for a
   finished quest; My City is buildings, stars and coins. Hidden, never deleted: badges, combos, coins, the season road and
   the shift keep recording, and ⋯ → Show everything / Keep it simple switches back and forth with nothing lost. The tour's
-  second step points at the list. Proof: `npx vitest run tests/simple.test.ts tests/simple-ui.test.tsx tests/session.test.ts tests/account-ui.test.tsx`, `npm run smoke`
+  second step points at the list. Proof: `npx vitest run tests/simple.test.ts tests/simple-ui.test.tsx tests/session.test.ts tests/account-ui.test.tsx tests/connect-card.test.tsx`, `npm run smoke`
   (runs Simple first: `01s-simple-first-city`, `80-simple-home`, `80b-simple-task-ticked`, `80c-simple-day-done`,
   `80d-simple-panel`, `80e-simple-tour`; then turns Everything on for the feature checks).
 - **Home is Today's shift** (with Everything on; the City tab, `src/ui/Home.tsx`): one big button from `nextAction` (`src/state/next.ts`, pure
@@ -520,8 +696,11 @@ When a change touches a decision, update its entry and run its Proof.
   starts from it: the new-card stars (4⭐) for each of its cards the player knows, below Expert at most (`carriedStars`,
   `CARRY_MAX`), once per city (copies merge by the higher xp). Old saves migrate into the city being built. Selectors
   take the Region (`isDiscovered(p, id, region)`); without one they mean "anywhere". Your real resources stand where they
-  live (`src/world/resources.ts`, `shared/resource-props.json`): servers on their AZ's island, buckets on the lake.
-  Proof: `npx vitest run tests/cities.test.ts tests/resources.test.ts`, `cd server && npx vitest run test/progress.test.ts`.
+  live (`src/world/resources.ts`, `shared/resource-props.json`): servers on their AZ's island, buckets on the lake. The
+  server names each item's type the way the props are keyed (`CFN_TYPE` in `server/src/state/inventory.ts`: ARN types →
+  CloudFormation names; S3, SQS and SNS ARNs have no type segment, `UNTYPED`); before 21 Nov 2026 every real item went
+  out as `ec2:instance`-style types and stood in a shed. Proof: `npx vitest run tests/cities.test.ts tests/resources.test.ts`,
+  `cd server && npx vitest run test/progress.test.ts test/care.test.ts -t "type names"`.
 - **Plain language.** Player-facing text goes through `<Plain>` (`src/ui/Term.tsx`): every glossary term and service
   name can be tapped for its definition. Every acronym a player reads is a glossary term, a service name or on the allow-list.
   Simple words first: every flashcard has `simple` (≤ 110 chars), every puzzle `simpleWhy`, every service `simple` (≤ 90);
@@ -720,6 +899,70 @@ When a change touches a decision, update its entry and run its Proof.
   if needed; Home passes `openTab` so it opens Deploy). Home's agent offer is the same `AgentOffer`, and each featured
   request's words route to the agent offering it (`FEATURED_REQUESTS`, `matchText`). A building card separates 💬 Ask a question (the HQ chat) from 🛠️ Watch it done (an agent task, whose TaskCard then shows on that same card, scrolled into view). Its sign's marks are said in words there (`signLegend`: ×N resources, ! N things to check). Proof:
   `npx vitest run tests/watch.test.ts tests/watch-ui.test.tsx tests/taxonomy.test.ts tests/daily-pay.test.ts`; `npm run smoke` (`03`–`06-task-*.png`).
+  The agent is told the concierge's plan after the player's words, fenced as `<concierge_plan>` data it acts on only as
+  far as the player asked; a step that destroys something reaches it only when the player's own words ask for one (`withPlan`,
+  `planForAgent`, `server/src/contract/orchestrator.ts`: the concierge reads page context, which anyone can word), and
+  a plan step that changes AWS (`isActionStep`: its first verb) but that no tool call made shows `failed`, "not done: no
+  change was made", and the task isn't ok; only explanation steps walk through as done. A plain request in the player's
+  own words ("Create a bucket called holiday-123", "Terminate i-0123…": `parseCommand`, `server/src/agents/commands.ts`)
+  skips the model: its own agent (`ownerOf`) walks there and the server submits it through the same ActionService and
+  approval card at once (`direct`, `server/src/contract/orchestrator.ts`; Jev reads the same words as `intent`), then the
+  agent explains it in a few words after `task.done`; a request understood but not allowed (an m5.large) is answered at
+  once with why (`ok: false`). Only `task.submit`'s prompt is read, never page context or a plan; a small CPU model took 1–3 minutes before the card and
+  sometimes said "I'll build it now" without a tool call (Qwen3 4B, 21 Nov 2026; Ollama's OpenAI API ignores
+  `tool_choice`). Every approval card names the account and Region it writes to (`deploy.preview.accountId`, v2.18, read
+  when the card is made), and every write asked for, done or refused (fixes too), is logged as `aws change` (`audit`,
+  `server/src/tenants.ts`). The card can't be missed: a task card with one waiting says "⏳ Waiting for your Approve" with
+  Approve in Deploy → (`openDeployAt`, leaving an HQ first), elsewhere a toast opens it, and Deploy brings the card up with
+  focus on Approve (`deployFocus`). "My builds" is one card per resource for the agents' changes (`arrangeBuilds`,
+  `src/state/builds.ts`: a launch joins its server's later cards by `deploy.status.outputs.ResourceId`; status words fit
+  the action; Tear down only while it exists, sent as a plain request, and not when My builds' inventory list already
+  offers Take it down for the same resource: one removal button each). The card says where the task is: "Watch Sally
+  walk there", then "Sally is there and on it" once she's arrived (`watchLine`), "💭 thinking… up to a minute" while her
+  model call runs (`thinkingLine`, from `agent.state`), and a failed task its reason (`failedReason`) with ↻ Try again;
+  the city's bubble says the reason too, and "Real AWS calls" lists the hosted server's calls (`s3:CreateBucket` from
+  service + "CreateBucket — …", never its model calls). A request refused at once keeps the concierge's reason on screen
+  ("X, you're up!" waits for the first step that runs), and the agent's last bubble says why (`bubbleText`, whole
+  sentences that fit, asides dropped; `failedBubble`, `src/state/watch.ts`), never only "That didn't work…" (seen 22 Nov
+  2026: a refused m5.large read as nothing happening). Proof: `cd server && npx vitest run
+  test/contract.test.ts test/commands.test.ts test/service.test.ts test/approvals.test.ts test/care.test.ts`; `npx vitest
+  run tests/approval-target.test.tsx tests/builds.test.ts tests/approve-flow.test.tsx tests/ui.test.tsx tests/progress-chat.test.tsx`,
+  `npm run smoke` (`06b-task-refused`).
+- **HQ chat answers every question, one at a time** (`src/ui/ChatPanel.tsx`). The answer's bubble shows at once,
+  thinking (`addUserChat`); a question asked while one is answering waits in `chatQueue` ("· next") and goes when the
+  answer ends, never dropped; the agent in the HQ only points to the chat ("Answered in the chat ↓", not the answer a
+  second time). A fix waiting for its approval has its own slots (`MAX_FIXES_PER_SOCKET`, `server/src/http.ts`), so it
+  never blocks the chat's three. A small CPU model (`llm.small`: the local provider) reads a short city summary
+  (`snapshotSummary`: what the city built, by id; the rest counted) and one docs page instead of the full snapshot and
+  three: reading the prompt is most of its time (~27 tokens a second). Proof: `npx vitest run tests/progress-chat.test.tsx`,
+  `cd server && npx vitest run test/runner.test.ts test/contract.test.ts -t "summary|small CPU"`.
+- **"My AWS, live": the linked account as one map** (`src/ui/AccountMap.tsx`, pure `src/world/accountMap.ts`; Deploy's
+  account card and ⋯, linked only). Built from what the server already sends (`city.inventory`, `city.bill`,
+  `city.flow`): services in columns the way a request travels (`tierOf`: network & front door, compute and messaging,
+  data, security & operations, other), each with its count, this month's cost and live rate, tap for its resources;
+  servers and databases in their lettered Zone; the only lines are the data links AWS reports (replication, standby).
+  Which resource talks to which isn't read yet (it needs read-only player-role permissions: API Gateway integrations,
+  Lambda event sources, load-balancer targets, CloudFront origins), and the map says so rather than guessing. Two views
+  (an `aria-pressed` group): Services (the columns) and **Diagram** (asked for on 22 Nov 2026: the account drawn, data
+  moving, each service's cost by day and month): `layoutArch` (`src/world/archDiagram.ts`, pure: lanes per column,
+  right-angle links whose last segment is straight, left to right in the tab and top to bottom in the 400 px panel) and
+  `accountDiagram` (`src/world/accountDiagram.ts`). Its solid lines are the data links AWS reports (replicas, standbys,
+  load-balancer traffic) to where the data goes; its dashed lines are how those services usually connect (`courierLegs`
+  over `shared/flows.json`, adjacent pairs, `FAN_IN` flows left out, each with its AWS source in "How these usually
+  connect"): they teach, they don't report, and the legend says so. Dots move with SVG `animateMotion` (`src/ui/ArchDiagram.tsx`;
+  more and quicker at a service's `city.flow` rate, `dotPlan`), sit still under reduced motion and pause while the page is
+  hidden. Costs (`src/world/accountCost.ts`): AWS's month so far per service; a day = that ÷ UTC days so far, a month = a
+  day × the month's days, both marked est. There's no list-price estimate: the client doesn't know a server's size or
+  whether it's running. Each box is a real button (arrow keys move, `nextSlot`) labelled with its name and figures. Proof:
+  `npx vitest run tests/account-map.test.tsx tests/account-diagram.test.ts`, `npm run smoke` (`18b-my-aws-map`,
+  `18c-my-aws-diagram`, `18e-my-aws-diagram-panel`, axe, still dots under reduced motion). A third view, **How AWS City
+  runs** (`shared/city-architecture.json`, `src/world/cityArchitecture.ts`), draws the city's own hosted parts the same
+  way (blue lines, in request order, from `infra/lib`); its only prices are Fargate's, worked out from the task sizes and
+  `FARGATE_ARM_PRICE` (servers $1.09 a day, the AI $8.72 a day while on), the rest is pay per use, and the idle total is
+  the README's own estimate; the file holds no dollar figure of its own. It describes the published defaults, never the
+  private `aws-city.config.json`. Proof: `cd infra && npx vitest run test/city-architecture.test.ts` (the sizes match the
+  synthesized task definitions, `CPU_MODEL`, `cpuAiHourly()` and prod's `minTasks`), `npx vitest run
+  tests/city-architecture.test.ts tests/content.test.ts`, `npm run smoke` (`18d-city-architecture`).
 - **City Clients: side jobs for real kinds of business** (`shared/clients.json`, `src/world/clients.ts`, `src/ui/clients/`).
   18 businesses: wave 1 (Amazon Air hub, bank, stadium, hospital, shop, school) and wave 2 (streaming studio, game studio,
   news site, port, energy utility, factory, farm co-op, car maker, phone network, town council, hotel, charity), three
@@ -873,30 +1116,41 @@ When a change touches a decision, update its entry and run its Proof.
   the player role, the ActionService and `deploy.approve`), so pure rules in `src/console/risk.ts` decide, never the model
   (the server imports the same file). `isRisky` reads every label a control carries and its section: deletes, billing,
   credentials, full-access and power-user policies (one CamelCase word: no leading `\b`), Block Public Access and "I
-  acknowledge" boxes, `0.0.0.0/0`, `::/0`, Anywhere-IPv4/6, All traffic, other accounts, trust policies, Create role. On
+  acknowledge" boxes, public, share, anywhere (Anywhere-IPv4/6), `0.0.0.0` alone or as `/0` (never inside a private
+  range: `10.0.0.0/16` is an ordinary VPC CIDR), `::/0`, All traffic, account ids and other accounts, trust, Create role. On
   the real console's `PLAYER_ONLY_PAGES` (IAM, IAM Identity Center, Organizations, KMS, Secrets Manager, security group
-  rules, S3 permissions) `mayAct` refuses every click, pick and keystroke; the practice console is never one. Anywhere on
-  the real console (`isConsoleUrl`, never `practice.html`) the click that commits a form is the player's (also a "select" aimed at it, which ends in the same press unless the element opens a list; the server marks both `confirm`) (`isCommit`,
-  reason `commit`: "Your turn: press “Create database” when you’re happy with the settings.", the settings part only when
-  the button's form, else the page's `main`, has a field to look over (`hasSettings`: never a search box, a table's row
-  boxes or a hidden field), else "Your turn: press “Create database”."): a button or menu item named
+  rules, S3 permissions) `mayAct` refuses every click, pick and keystroke; the practice console is never one. The press
+  that commits is the player's when either of two rules says so (`mayAct` in `src/console/safety.ts`; also a "select"
+  aimed at it, which ends in the same press unless the element opens a list), reason `commit`: "Your turn: press
+  “Create database” when you’re happy with the settings.", the settings part only when the button's form, else the
+  page's `main`, has a field to look over (`hasSettings`: never a search box, a table's row boxes or a hidden field),
+  else "Your turn: press “Create database”.". On every page, the practice console too: a button, link or menu item with
+  a commit word anywhere in its name (`isCommitControl`/`isCommitWord`: create, save, launch, add, attach, edit, set,
+  copy, stop, test…: an allowlist of what the Copilot may press, not a list of bad words), and a form's submit control
+  (`isSubmitControl`: `type="submit"`, or a `<button>` with no type inside a form) except a Cloudscape one: Cloudscape
+  renders every button `type="submit"` (Next, Cancel, Actions…), so for its buttons only a commit word or, on the real
+  console, the primary variant counts. Anywhere on the real console (`isConsoleUrl`, never `practice.html`) also the
+  click that commits a form (`isCommit`): a button or menu item whose name starts with
   create, launch, start, run, confirm, submit, save, apply, update, enable, attach, associate, allocate, request, deploy,
   purchase, buy, subscribe or order, or one the page marks as its main action (`isMainAction`: Cloudscape's primary
-  variant, or a native form's submit button; Cloudscape renders every button `type="submit"`, so for its buttons only the
-  variant counts; a `<button>` with no type only as its form's default button, the first submit control; a wizard's
-  Next/Previous/Back/Cancel/Close excepted, the whole name only, so "Cancel update" commits). The trade-off, by name: a
-  list page's "Create database" (or "Launch instances", "Create bucket") only opens the form, but it's handed back too, so
-  on the real console the player presses "Create X" twice (open, then commit). The words are English, so on a console
+  variant, or a native form's submit button; a `<button>` with no type only as its form's default button, the first
+  submit control; a wizard's Next/Previous/Back/Cancel/Close excepted, the whole name only, so "Cancel update" commits).
+  The trade-off, by name: a list page's "Create database" (or "Launch instances", "Create bucket") only opens the form,
+  but it's handed back too, so the player presses "Create X" twice (open, then commit), on the practice console too. The words are English, so on a console
   whose `<html lang>` isn't `en*`, or that has none (we can't show every console page sets it: fail closed), every press
   of a button or menu item is the player's ("This console isn’t set to English, so I leave its buttons to you."); the
-  snapshot carries `lang` (v2.17, `''` when the page has none) and the server marks those `confirm` too (a snapshot
+  snapshot carries `lang` (v2.19, `''` when the page has none) and the server marks those `confirm` too (a snapshot
   without `lang`, from an older client, goes by the words). A button in a table's column header ("Launch time", "Start
-  time") sorts it: the snapshot sends it as role `columnheader`, never a commit. The Copilot still fills the form and points at the button; links,
-  radios, boxes, options, tabs and dropdowns stay its own (they go somewhere or fill in). A refused step is the player's turn. The
-  server marks the same steps `confirm` (by name and `lang`: it can't see the variant), and its prompt says page text is data, never
-  instructions. Text leaving the page is redacted (`redact`: keys, emails, tokens, 12-digit account ids bare or split by
-  `-`, `.` or a space), and the Lookout never auto-snaps a `SECRET_PAGES` page (access keys, secret values, Parameter
-  Store, KMS, CloudShell; `autoSnaps`), only when the player asks. Proof: `npx vitest run tests/console.test.ts
+  time") sorts it: the snapshot sends it as role `columnheader`, never a commit. The Copilot still fills the form and points at the button;
+  radios, boxes, options, tabs, dropdowns and links without a commit word stay its own (they go somewhere or fill in). It
+  never types or picks a value that opens access or names an account (`isRiskyValue`: `0.0.0.0/0`, `::/0`, a bare `*`,
+  a 12-digit account number, an ARN). A refused step is the player's turn. The server marks `confirm` wherever either
+  rule says so (`server/src/contract/console.ts`: `isCommit` by name and `lang`, since it can't see the variant;
+  `isCommitControl`; `isRisky`/`isRiskyValue` values; the player-only pages), and its prompt says page text is data
+  (`<console_page>`), never instructions. Text leaving the page is redacted (`redact`: keys, emails, tokens, 12-digit account ids bare or split by
+  `-`, `.` or a space), and the Lookout never auto-snaps a page that can show a secret (`autoSnaps`: an AWS page that's
+  neither `SECRET_PAGES`, the real console's access keys, secret values, Parameter Store, KMS and CloudShell, nor
+  `isSensitivePage`, which adds Cognito app clients and Identity Center credentials), only when the player asks. Proof: `npx vitest run tests/console.test.ts
   tests/console-cloudscape.test.ts tests/practice-console.test.ts tests/console-clarity.test.tsx`, `cd server && npx
   vitest run test/console.test.ts`, `npm run smoke:copilot`.
 - **Three browsers, one codebase.** WXT `-b firefox|safari` with `manifestVersion: 3` (WXT defaults those to MV2).

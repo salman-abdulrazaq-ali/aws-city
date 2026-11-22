@@ -108,12 +108,12 @@ async function play(service: (typeof PRACTICE_SERVICES)[number], goal: string) {
       const el = findExact(document, step.target!);
       const item = snap().items.find((i) => i.id === step.target?.id);
       const verdict = mayAct(item, step.action, el, step.value);
-      // A step the agent may take itself is never refused. One the page refuses (a risky control) is one the flow
-      // already hands back (risk 'confirm'), and the player presses it here.
-      if (step.risk === 'confirm') {
-        expect(verdict.ok || verdict.reason === 'risky', `${service}: ${step.say}`).toBe(true);
-        handedBack.push(step.target!.name);
-      } else expect(verdict, `${service}: ${step.say}`).toEqual({ ok: true });
+      // The agent only ever acts itself on a safe control; anything else is handed to the player (who presses it here):
+      // a commit (create, save, launch…: the rule holds on the practice console too), a risky control the flow already
+      // hands back (risk 'confirm'), or a step the model marked for the player's OK.
+      if (!verdict.ok)
+        expect(verdict.reason === 'commit' || (verdict.reason === 'risky' && step.risk === 'confirm'), `${service}: ${step.say} (${verdict.reason})`).toBe(true);
+      if (!verdict.ok || step.risk === 'confirm') handedBack.push(step.target!.name);
       if (step.action === 'click') press(el!);
       else if (step.action === 'type') typeInto(el!, step.value ?? '');
       else if (step.action === 'select') {
@@ -148,14 +148,14 @@ describe('the practice console is never a player-only page', () => {
 });
 
 describe('every scripted Copilot flow completes on the practice console', () => {
-  const CASES: { service: (typeof PRACTICE_SERVICES)[number]; goal: string; created: RegExp; confirm?: string[] }[] = [
-    { service: 's3', goal: 'Create an S3 bucket', created: /^city-demo-\w+ \(SSE-S3 · Block all public access on\)$/ },
-    { service: 'ec2', goal: 'Launch an EC2 instance', created: /^city-web-\w+ \(t3\.micro\)$/, confirm: ['Launch instance'] },
-    { service: 'dynamodb', goal: 'Create a DynamoDB table', created: /^city-demo-\w+ \(pk id\)$/ },
-    { service: 'lambda', goal: 'Create a Lambda function', created: /^city-hello \(Node\.js 24\.x, from scratch\)$/ },
-    { service: 'rds', goal: 'Create an RDS database', created: /^city-db-\w+ \(PostgreSQL, Free tier\)$/, confirm: ['Create database'] },
-    { service: 'cloudfront', goal: 'Create a CloudFront distribution', created: /^city-site\.s3\.us-west-2\.amazonaws\.com \(OAC, redirect http to https\)$/ },
-    { service: 'sqs', goal: 'Create an SQS queue', created: /^city-orders-\w+ \(Standard\)$/ },
+  const CASES: { service: (typeof PRACTICE_SERVICES)[number]; goal: string; created: RegExp; confirm: string[] }[] = [
+    { service: 's3', goal: 'Create an S3 bucket', created: /^city-demo-\w+ \(SSE-S3 · Block all public access on\)$/, confirm: ['Create bucket', 'Create bucket'] },
+    { service: 'ec2', goal: 'Launch an EC2 instance', created: /^city-web-\w+ \(t3\.micro\)$/, confirm: ['Launch instances', 'Launch instance'] },
+    { service: 'dynamodb', goal: 'Create a DynamoDB table', created: /^city-demo-\w+ \(pk id\)$/, confirm: ['Create table', 'Create table'] },
+    { service: 'lambda', goal: 'Create a Lambda function', created: /^city-hello \(Node\.js 24\.x, from scratch\)$/, confirm: ['Create function', 'Create function'] },
+    { service: 'rds', goal: 'Create an RDS database', created: /^city-db-\w+ \(PostgreSQL, Free tier\)$/, confirm: ['Create database', 'Create database'] },
+    { service: 'cloudfront', goal: 'Create a CloudFront distribution', created: /^city-site\.s3\.us-west-2\.amazonaws\.com \(OAC, redirect http to https\)$/, confirm: ['Create distribution', 'Create distribution'] },
+    { service: 'sqs', goal: 'Create an SQS queue', created: /^city-orders-\w+ \(Standard\)$/, confirm: ['Create queue', 'Create queue'] },
     { service: 'iam', goal: 'Create an IAM role for Lambda', created: /^city-lambda-role-\w+ \(Lambda, AWSLambdaBasicExecutionRole\)$/, confirm: ['Create role', 'Create role'] },
   ];
   for (const c of CASES) {
@@ -167,7 +167,8 @@ describe('every scripted Copilot flow completes on the practice console', () => 
       expect(r.risky, r.said.join(' → ')).toBeUndefined();
       expect(r.created, r.said.join(' → ')).toMatch(c.created);
       expect(r.done).toMatchObject({ type: 'task.done', ok: true, xp: [{ serviceId: c.service, amount: 20 }] });
-      expect(r.handedBack).toEqual(c.confirm ?? []);
+      // Every create/launch is the player's to press (the list page's button and the form's own), never the agent's.
+      expect(r.handedBack).toEqual(c.confirm);
       // Each flow explains as it goes: every step has a why.
       expect(r.said.length).toBeGreaterThanOrEqual(5);
     });

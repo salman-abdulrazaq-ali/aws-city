@@ -301,7 +301,7 @@ describe('ServerBackend connection status', () => {
   });
 });
 
-describe('the version handshake (v2.17)', () => {
+describe('the version handshake (v2.19)', () => {
   const [major, minor] = parseContract(CONTRACT_VERSION)!;
   const older = `${major}.${minor - 1}`;
   const newer = `${major}.${minor + 1}`;
@@ -518,7 +518,7 @@ describe('the player tag on this device', () => {
   });
 });
 
-describe('ServerBackend sends every socket command in the contract (v2.17)', () => {
+describe('ServerBackend sends every socket command in the contract (v2.19)', () => {
   beforeEach(() => {
     FakeSocket.all = [];
     vi.stubGlobal('WebSocket', FakeSocket);
@@ -560,6 +560,8 @@ describe('ServerBackend sends every socket command in the contract (v2.17)', () 
     'presence.beat': { cmd: { action: 'presence.beat', region: 'us-west-2', rank: 'Town' }, way: 'socket' },
     'score.submit': { cmd: { action: 'score.submit', board: 'shield', score: 10 }, way: 'socket' },
     'leaderboard.get': { cmd: { action: 'leaderboard.get', board: 'shield' }, way: 'socket' },
+    // v2.17: a fresh sign-in on the open socket (step-up), forwarded as it is.
+    'auth.renew': { cmd: { action: 'auth.renew', token: 'fresh-access-token' }, way: 'socket' },
   };
 
   it('forwards each socket command as-is (flow.enable, account.unlink, resource.remove and allowFixes included), and nothing else', async () => {
@@ -589,7 +591,7 @@ describe('ServerBackend sends every socket command in the contract (v2.17)', () 
   });
 });
 
-describe('quest deploy steps on the server (v2.17)', () => {
+describe('quest deploy steps on the server (v2.19)', () => {
   beforeEach(() => {
     FakeSocket.all = [];
     vi.stubGlobal('WebSocket', FakeSocket);
@@ -645,7 +647,7 @@ describe('quest deploy steps on the server (v2.17)', () => {
   });
 });
 
-describe('Download my data (v2.17)', () => {
+describe('Download my data (v2.19)', () => {
   afterEach(() => vi.unstubAllGlobals());
   it('GET /me/export with the bearer token; a refusal is an error, never an empty export', async () => {
     const calls: string[] = [];
@@ -660,7 +662,7 @@ describe('Download my data (v2.17)', () => {
     status = 410;
     await expect(backend.exportMe()).rejects.toThrow(/410/);
     await expect(backend.exportMe()).rejects.not.toHaveProperty('tooSoon');
-    // Once a minute per player (v2.17): marked, so the UI can say so.
+    // Once a minute per player (v2.19): marked, so the UI can say so.
     status = 429;
     await expect(backend.exportMe()).rejects.toMatchObject({ tooSoon: true });
   });

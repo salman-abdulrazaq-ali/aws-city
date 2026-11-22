@@ -8,7 +8,7 @@ import { feel } from './feedback';
 import { useDialog } from './useDialog';
 
 const GAME_NAMES: Record<string, string> = { fishing: 'S3 Fishing', shield: 'Shield Wall', route53: 'Dance Hall', lambda: 'Food Stall', ec2: 'Rush Hour', dynamodb: 'Sorting Office', redteam: 'Red Team Range', queue: 'Queue Juggler', iamgate: 'Permission Gate', edge: 'Edge Cache', launch: 'Launch Day' };
-export const boardName = (board: string) => (board.startsWith('mayors:') ? `Mayors of ${regionInfo(board.slice(7))?.city ?? board.slice(7)}` : (GAME_NAMES[board] ?? board));
+const boardName = (board: string) => (board.startsWith('mayors:') ? `Mayors of ${regionInfo(board.slice(7))?.city ?? board.slice(7)}` : (GAME_NAMES[board] ?? board));
 
 /**
  * This week's leaderboards: the Mayors of this Region (city rank) and each mini-game. You appear only with a public

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ErrorEvent } from '@/backend/contract';
 import { bus } from '@/state/bus';
 
-export const PENDING_TIMEOUT_MS = 15_000;
+const PENDING_TIMEOUT_MS = 15_000;
 
 /** How long after a click an error with no id may still be its answer (the server's id-less refusals are immediate). */
 export const RECENT_MS = 5_000;
@@ -29,7 +29,7 @@ export function keysForError(
     return key ? [key] : [];
   }
   const keys = [...startedAt.keys()];
-  if (e.code === 'mfa_required') return keys.filter((k) => k.startsWith('decide:'));
+  if (e.code === 'mfa_required' || e.code === 'reauth_required') return keys.filter((k) => k.startsWith('decide:'));
   return keys.filter((k) => now - startedAt.get(k)! <= RECENT_MS);
 }
 

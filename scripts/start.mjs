@@ -4,7 +4,7 @@
 // and stays its remote control (scripts/launcher/panel.mjs). On stage: `npm start -- --demo --browser cft` asks nothing.
 import './launcher/require-node.mjs';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
@@ -20,15 +20,19 @@ import { sourceStamp } from './launcher/stamp.mjs';
 import {
   alreadyOpenPid,
   choiceLabel,
+  DEFAULT_LOCAL_MODEL,
   detectBrowsers,
   explainAwsError,
   explainDownloadError,
   extensionsPage,
   BEDROCK_ACCESS_URL,
+  hasLocalModel,
   helpText,
   introPlays,
   listProfiles,
-  localModels,
+  LOCAL_URL,
+  localEnv,
+  localModels as claudeModelsFor,
   meaningfulLines,
   parseArgs,
   parsePastedKeys,
@@ -51,6 +55,10 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PREFS = path.join(ROOT, '.cache/launcher.json');
 const AWS_DIR = path.join(os.homedir(), '.aws');
 const PROFILE = 'aws-city';
+// Claude's inference-profile ids follow the Region (us./eu./au./in.): the table the setup wizard and the CDK app use
+// (plain erasable TypeScript, no imports, so Node 24 loads it on a fresh clone). The server gets the pair as env.
+// (Which Regions have Claude, in a player's words: claudeModelsFor (lib.mjs localModels), from the same table.)
+const { geoFor, modelsForChoice } = await import(new URL('../infra/lib/models.ts', import.meta.url).href);
 const interactive = isInteractive();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -91,7 +99,11 @@ async function awsTools() {
     sceneDirty = true;
     const s = p.spinner();
     s.start('Getting the AWS tools ready (one time, about a minute)…');
-    const ok = await runQuiet('npm', ['--prefix', 'server', 'ci', '--no-audit', '--no-fund', '--loglevel=error']);
+    const quiet = ['--no-audit', '--no-fund', '--loglevel=error'];
+    let ok = await runQuiet('npm', ['--prefix', 'server', 'ci', ...quiet]);
+    // npm before 11.12 (Node 24.0–24.14 ships 11.6) reads the lockfile newer npm writes as out of sync (EUSAGE), and a
+    // lockfile old npm writes is refused by new npm, so no one file suits both: one plain install fixes it, as boot.mjs does.
+    if (!ok) ok = await runQuiet('npm', ['--prefix', 'server', 'install', ...quiet]);
     if (!ok) {
       s.stop('Couldn’t install the server’s packages.', 1);
       bye(`Run ${pc.cyan('cd server && npm ci')} to see why, then ${pc.cyan('npm start')} again.`);
@@ -99,7 +111,7 @@ async function awsTools() {
     s.stop('AWS tools ready');
   }
   const req = createRequire(path.join(ROOT, 'server/package.json'));
-  return { sts: req('@aws-sdk/client-sts'), providers: req('@aws-sdk/credential-providers'), bedrock: req('@anthropic-ai/bedrock-sdk') };
+  return { sts: req('@aws-sdk/client-sts'), providers: req('@aws-sdk/credential-providers'), bedrock: req('@anthropic-ai/bedrock-sdk'), runtime: req('@aws-sdk/client-bedrock-runtime') };
 }
 
 const awsFiles = () => ({
@@ -210,8 +222,11 @@ async function connectAws(tools, region, prefs, wanted) {
   }
 }
 
-/** One tiny Claude call on Bedrock, so missing model access shows up now instead of in the game. */
-async function bedrockHello(tools, profile, region, models) {
+/** One tiny model call on Bedrock, so missing model access shows up now instead of in the game. */
+async function bedrockHello(tools, profile, region, choice = 'claude') {
+  if (choice === 'nova') return novaHello(tools, profile, region);
+  const models = claudeModelsFor(region);
+  if (!models.ok) return { ok: false, message: models.message, hint: 'Quit and run npm run live -- --region eu-west-2 (or another Region from that list).' };
   try {
     const client = new tools.bedrock.AnthropicBedrock({ awsRegion: region, providerChainResolver: async () => tools.providers.fromIni({ profile }) });
     const hello = (model) => client.messages.create({ model, max_tokens: 64, messages: [{ role: 'user', content: 'Reply with OK.' }] });
@@ -229,6 +244,118 @@ async function bedrockHello(tools, profile, region, models) {
       hint: `If Claude isn't enabled here, open the Bedrock console in ${region}, pick a Claude model in the Model catalog and send the one-time use-case form: ${BEDROCK_ACCESS_URL}`,
     };
   }
+}
+
+/** Amazon Nova (Bedrock's Converse API, the same route the server's Strands agents use): Lite, then Pro. */
+/** Nova Pro had no quota where Lite answered (novaHello): the server runs Lite in both slots. */
+let novaLiteOnly = false;
+
+async function novaHello(tools, profile, region) {
+  const { main, light } = modelsForChoice(region, 'nova');
+  try {
+    const client = new tools.runtime.BedrockRuntimeClient({ region, credentials: tools.providers.fromIni({ profile }) });
+    const hello = (modelId) => client.send(new tools.runtime.ConverseCommand({ modelId, messages: [{ role: 'user', content: [{ text: 'Reply with OK.' }] }], inferenceConfig: { maxTokens: 16 } }));
+    await hello(light);
+    // A new account's Bedrock hold lifts model by model: Pro can still be at 0 where Lite answers. Play on Lite then.
+    novaLiteOnly = !(await hello(main).then(
+      () => true,
+      () => false,
+    ));
+    return { ok: true, detail: novaLiteOnly ? 'Amazon Nova Lite is ready (Pro has no quota here yet, so the city uses Lite)' : 'Amazon Nova Pro + Lite are ready (Strands Agents on Bedrock)' };
+  } catch (err) {
+    const held = /Throttl|too many tokens|quota/i.test(`${err?.name} ${err?.message}`);
+    return {
+      ok: false,
+      message: explainAwsError(err),
+      hint: held
+        ? `Bedrock is holding this account: quit and play with the AI on this computer: npm run live -- --model local (or try another Region: --region us-west-2).`
+        : `Amazon Nova on Bedrock in ${region}: https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html`,
+    };
+  }
+}
+
+// ── The AI on this computer: Ollama, behind Strands Agents' OpenAI model (server/src/citizens/model.ts) ──────────────
+const OLLAMA_LOG = path.join(ROOT, '.cache', 'ollama.log');
+
+/** Ollama's model ids, or undefined when nothing answers on LOCAL_URL. */
+async function localModels() {
+  try {
+    const r = await fetch(`${LOCAL_URL}/models`, { signal: AbortSignal.timeout(2000) });
+    return r.ok ? ((await r.json()).data ?? []).map((m) => String(m.id)) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Ollama installed, running and holding `model`, asking before each change (before the panel, like ensureAwsCli):
+ * install with Homebrew, start `ollama serve` in the background (it keeps running, like the Ollama app; its log in
+ * .cache/ollama.log), download the model once. False when the player says no or it can't be done.
+ */
+async function ensureOllama(model) {
+  let ids = await localModels();
+  if (!ids) {
+    if (!has('ollama')) {
+      if (!interactive || !has('brew')) {
+        p.log.warn(`The AI on this computer runs in Ollama: install it from ${pc.cyan('https://ollama.com/download')}, then run this again.`);
+        return false;
+      }
+      sceneDirty = true;
+      if (!(await ask(p.confirm({ message: 'Install Ollama with Homebrew? (free; it runs the AI model on this computer)', initialValue: true })))) return false;
+      const s = p.spinner();
+      s.start('Installing Ollama…');
+      const done = await runQuiet('brew', ['install', 'ollama']);
+      s.stop(done ? 'Ollama installed' : 'Homebrew couldn’t install it', done ? 0 : 1);
+      if (!done) return false;
+    }
+    mkdirSync(path.dirname(OLLAMA_LOG), { recursive: true });
+    const log = openSync(OLLAMA_LOG, 'a');
+    // Loopback only, whatever OLLAMA_HOST the shell has: the model must never listen on the network (Ollama has no auth).
+    spawn('ollama', ['serve'], { detached: true, stdio: ['ignore', log, log], env: { ...process.env, OLLAMA_HOST: '127.0.0.1:11434' } }).unref();
+    for (let i = 0; i < 60 && !ids; i++) {
+      await sleep(250);
+      ids = await localModels();
+    }
+    if (!ids) {
+      p.log.warn(`Ollama didn't start. Its log: ${OLLAMA_LOG}`);
+      return false;
+    }
+  }
+  if (hasLocalModel(ids, model)) return true;
+  if (!interactive) {
+    p.log.warn(`Download the model once first: ollama pull ${model}`);
+    return false;
+  }
+  sceneDirty = true;
+  const size = model === DEFAULT_LOCAL_MODEL ? 'about 5 GB' : 'a few GB';
+  if (!(await ask(p.confirm({ message: `Download ${model} for Ollama now? (once; ${size})`, initialValue: true })))) return false;
+  if (spawnSync('ollama', ['pull', model], { stdio: 'inherit' }).status === 0) return true;
+  p.log.warn(`Couldn't download ${model}. Try: ollama pull ${model}`);
+  return false;
+}
+
+/** One tiny call to the model on this computer, so a problem shows now instead of in the game (a cold load can take a while). */
+async function localHello(model) {
+  try {
+    const r = await fetch(`${LOCAL_URL}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Reply with OK.' }], max_tokens: 16 }),
+      signal: AbortSignal.timeout(180_000),
+    });
+    if (!r.ok) return { ok: false, message: `Ollama answered ${r.status}: ${(await r.text()).slice(0, 160)}`, hint: `Check it on its own: ollama run ${model}` };
+    return { ok: true, detail: `${model} answers on this computer (Strands Agents; no Bedrock calls)` };
+  } catch (err) {
+    return { ok: false, message: `The model on this computer didn't answer: ${err?.message ?? err}`, hint: `Is Ollama running? Start it with: ollama serve (log: ${OLLAMA_LOG})` };
+  }
+}
+
+/** Bedrock first (Amazon Nova), then the model on this computer: ready when either answers. */
+async function fallbackHello(tools, profile, region, model) {
+  const bedrock = await novaHello(tools, profile, region);
+  const local = await localHello(model);
+  if (bedrock.ok) return { ok: true, detail: `${bedrock.detail}; ${local.ok ? `${model} on this computer if Bedrock is busy` : 'the model on this computer isn’t answering'}` };
+  return local.ok ? { ok: true, detail: `Bedrock isn't answering (${bedrock.message}); the agents use ${model} on this computer` } : bedrock;
 }
 
 /** What the last failed step left to read after the launcher closes (e.g. the build's last lines). */
@@ -539,7 +666,7 @@ async function askChoices(prefs, found) {
       initialValue: prefs.mode ?? 'demo',
       options: [
         { value: 'demo', label: 'Play the demo', hint: 'no AWS account needed' },
-        { value: 'live', label: 'Real AWS on this computer', hint: 'your AWS account + Claude on Bedrock' },
+        { value: 'live', label: 'Real AWS on this computer', hint: 'your AWS account + AI on Bedrock (Amazon Nova or Claude)' },
         { value: 'deploy', label: 'Put it online for everyone', hint: 'deploys to your AWS account (~25 min)' },
       ],
     }),
@@ -623,11 +750,18 @@ async function main() {
   }
 
   // Real AWS: sign-in first (questions only if it has to), then the panel does the rest.
+  // The agents' models: Claude (geo profiles), Amazon Nova (on demand in the Region) or a model on this computer
+  // (Ollama), --model or last time's; Nova can have the local model behind it (--local-fallback).
+  const choice = args.model ?? (prefs.model === 'nova' || prefs.model === 'local' ? prefs.model : 'claude');
+  const localFallback = choice === 'nova' && (args.localFallback ?? (args.model ? false : prefs.localFallback === true));
+  const localModel = args.localModel ?? prefs.localModel ?? DEFAULT_LOCAL_MODEL;
+  const usesLocal = choice === 'local' || localFallback;
+  if (usesLocal && !(await ensureOllama(localModel))) bye('The AI on this computer isn’t ready, so nothing was started.');
   const tools = await awsTools();
   /** Why a typed Region won't do (not a Region name, or no Claude there), or undefined when it will. */
   const regionProblem = (v) => {
     if (!REGION_RE.test(v ?? '')) return 'e.g. us-west-2';
-    const m = localModels(v);
+    const m = claudeModelsFor(v);
     return m.ok ? undefined : m.message;
   };
   const region =
@@ -635,22 +769,30 @@ async function main() {
     (plan.kind !== 'ask' && REGION_RE.test(prefs.region ?? '')
       ? prefs.region
       : interactive
-        ? ((sceneDirty = true), await ask(p.text({ message: 'AWS Region (where Claude runs for you)', initialValue: prefs.region ?? 'us-west-2', validate: regionProblem })))
+        ? ((sceneDirty = true),
+          await ask(
+            p.text({
+              message: 'AWS Region (where Claude runs for you)',
+              initialValue: prefs.region ?? 'us-west-2',
+              // Amazon Nova runs on demand in the Region itself: any Region name will do. Claude needs a geo profile there.
+              validate: (v) => (choice === 'nova' && REGION_RE.test(v ?? '') ? undefined : regionProblem(v)),
+            }),
+          ))
         : 'us-west-2');
   // One Region drives Claude and the mirrored account, and not every Region has Claude: say so before signing in.
-  const models = localModels(region);
-  if (!models.ok) {
-    p.log.error(models.message);
+  const claude = choice === 'claude' ? claudeModelsFor(region) : undefined;
+  if (claude && !claude.ok) {
+    p.log.error(claude.message);
     bye(`Run ${pc.cyan('npm start -- --region us-west-2')} (or another Region above) to try again.`);
   }
   const { profile, account } = await connectAws(tools, region, prefs, args.profile);
-  savePrefs({ mode, browser, profile, region });
+  savePrefs({ mode, browser, profile, region, model: choice, localFallback, localModel });
 
   const cfg = liveConfig(browser, { allowFixes: args.allowFixes === true });
   const dash = panel(
     [
       { id: 'aws', title: 'AWS sign-in' },
-      { id: 'bedrock', title: 'Check Claude on Bedrock' },
+      { id: 'bedrock', title: choice === 'local' ? `Check ${localModel} on this computer` : localFallback ? `Check Amazon Nova, then ${localModel} on this computer` : choice === 'nova' ? 'Check Amazon Nova on Bedrock' : 'Check Claude on Bedrock' },
       { id: 'prepare', title: 'Get the browser ready' },
       { id: 'build', title: 'Build the city' },
       { id: 'server', title: 'Start the server' },
@@ -662,7 +804,7 @@ async function main() {
   let server;
   let stopping = false;
   const go =
-    (await runStep(dash, 'bedrock', () => bedrockHello(tools, profile, region, models), { canSkip: true })) &&
+    (await runStep(dash, 'bedrock', () => (choice === 'local' ? localHello(localModel) : localFallback ? fallbackHello(tools, profile, region, localModel) : bedrockHello(tools, profile, region, choice)), { canSkip: true })) &&
     (await runStep(dash, 'prepare', prepareStep(dash, browser, mode))) &&
     (await runStep(dash, 'build', buildStep(dash, browser, cfg.extEnv))) &&
     (await runStep(dash, 'server', async () => {
@@ -675,14 +817,16 @@ async function main() {
       dash.status(`Starting the server with AWS profile "${profile}"…`);
       let ready = false;
       dash.logTitle('Server log');
-      server = startServer({ profile, region, models, cfg, onLog: (l) => (dash.log(l), !ready && dash.status(`server: ${l}`)) });
+      const models = choice === 'local' ? undefined : choice === 'nova' || geoFor(region) ? modelsForChoice(region, choice, { liteOnly: novaLiteOnly }) : undefined;
+      const env = usesLocal ? localEnv({ model: localModel, fallback: localFallback }, process.env) : {};
+      server = startServer({ profile, region, models, env, cfg, onLog: (l) => (dash.log(l), !ready && dash.status(`server: ${l}`)) });
       void server.exited.then((code) => {
         if (!ready || stopping) return;
         dash.set('server', { status: 'failed', detail: `stopped (exit ${code ?? '?'})` });
         dash.status(`The server stopped. Press l for its log (full log: ${SERVER_LOG}).`);
       });
       ready = await server.ready;
-      if (ready) return { ok: true, detail: `${cfg.url} · Claude on Bedrock` };
+      if (ready) return { ok: true, detail: `${cfg.url} · ${choice === 'local' ? `${localModel} on this computer` : `${choice === 'nova' ? 'Amazon Nova' : 'Claude'} on Bedrock${localFallback ? `, then ${localModel} here` : ''}`}` };
       server.stop();
       return { ok: false, message: 'did not start', hint: `Press t to try again; its log is in ${SERVER_LOG}.` };
     }));

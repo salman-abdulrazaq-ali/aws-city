@@ -23,7 +23,7 @@ import { log, who } from './log.js';
  * are picked up without restarting the server. (Static session keys carry no expiry, so
  * the SDK would otherwise cache the first ones forever.)
  */
-export const refreshingProfile = (profile: string): AwsCredentialIdentityProvider => async () => {
+const refreshingProfile = (profile: string): AwsCredentialIdentityProvider => async () => {
   const creds = await fromIni({ profile, ignoreCache: true })();
   return { ...creds, expiration: new Date(Date.now() + 60_000) };
 };

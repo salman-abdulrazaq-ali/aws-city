@@ -30,7 +30,7 @@ export function backIn(s: CardState, now = Date.now()) {
 }
 
 /** What the active quests' cards steps for this service still need (the most any one of them needs). */
-export function questCardsNeeded(p: Progress, serviceId: string) {
+function questCardsNeeded(p: Progress, serviceId: string) {
   let need = 0;
   for (const [id, st] of Object.entries(p.quests ?? {})) {
     const step = st.status === 'active' ? questById(id)?.steps[st.step] : undefined;

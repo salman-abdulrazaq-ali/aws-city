@@ -206,7 +206,7 @@
   font-weight: 800;
 }
 
-/* ── Your AWS account (v2.17): the Region, the console's checklist, the linked card's actions, My builds ── */
+/* ── Your AWS account (v2.19): the Region, the console's checklist, the linked card's actions, My builds ── */
 .link-region {
   max-width: 100%;
 }
@@ -330,4 +330,39 @@
   font-size: var(--fs-sm);
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+/* authenticator setup: three numbered steps, a QR code to scan (white quiet zone in every theme) */
+.mfa-steps {
+  margin: var(--s-3) 0 0;
+  padding-left: var(--s-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.mfa-steps li > b,
+.mfa-steps li > label b {
+  display: block;
+}
+.mfa-steps .muted {
+  display: block;
+}
+.qr {
+  display: block;
+  margin: var(--s-2) 0;
+  border-radius: var(--r-md);
+  max-width: 100%;
+  height: auto;
+}
+.link-step .how {
+  margin: var(--s-2) 0;
+  padding-left: var(--s-6);
+  font-size: var(--fs-sm);
+}
+/* One card per resource (src/state/builds.ts): what changed over time, and what this approval would change. */
+.build-history {
+  margin-top: var(--s-1);
+}
+.build-change {
+  margin-top: var(--s-2);
+  font-weight: 600;
 }

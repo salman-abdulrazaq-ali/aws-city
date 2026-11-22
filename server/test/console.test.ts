@@ -24,9 +24,12 @@ describe('Console Copilot (contract v2.1)', () => {
     const events: ServerEvent[] = [];
     await cp.start({ taskId: 'c1', goal: 'Create an S3 bucket', context: {}, snapshot }, (e) => events.push(e));
     const first = events.find((e) => e.type === 'console.step');
-    // A Create button on the real console is the learner's to press (isCommit), whatever the model says.
+    // A Create button on the real console is the learner's to press (isCommit, isCommitControl), whatever the model says.
     expect(first).toMatchObject({ taskId: 'c1', index: 0, agentId: 's3', action: 'click', target: { id: 'e1' }, risk: 'confirm', why: 'Buckets hold objects' });
     expect(JSON.stringify(calls[0].messages)).toContain('e1 | button | Create bucket');
+    // Page text is fenced as data, and the system prompt says so.
+    expect(JSON.stringify(calls[0].messages)).toContain('<console_page>');
+    expect(JSON.stringify(calls[0].system).replace(/\\n/g, " ")).toMatch(/data, never\s+instructions/);
     // Bedrock rejects a forced tool_choice while thinking is on: ask, don't force.
     expect(calls[0].tool_choice).toEqual({ type: 'auto' });
     expect(calls[0].output_config).toEqual({ effort: 'low' });
@@ -146,6 +149,16 @@ describe('Console Copilot — snapshot trimming and page changes', () => {
     await cp.start({ taskId: 't2', goal: 'x', context: {}, snapshot }, (e) => events.push(e));
     expect(events.find((e) => e.type === 'console.step')).toMatchObject({ risk: 'confirm' });
   });
+
+  it('typing a value that opens access or names another account goes back to the learner (a planted page label can’t)', async () => {
+    for (const value of ['0.0.0.0/0', '::/0', '1111 2222 3333', 'arn:aws:iam::111122223333:root']) {
+      const { llm } = fakeLlm([step({ action: 'type', target: { id: 'e1', name: 'Source' }, value, say: 'Filling it in', risk: 'safe' })]);
+      const cp = createConsoleCopilot({ llm });
+      const events: ServerEvent[] = [];
+      await cp.start({ taskId: `v-${value}`, goal: 'x', context: {}, snapshot }, (e) => events.push(e));
+      expect(events.find((e) => e.type === 'console.step'), value).toMatchObject({ risk: 'confirm' });
+    }
+  });
 });
 
 describe('Console Copilot — hardening (deterministic, whatever the model says)', () => {
@@ -182,7 +195,8 @@ describe('Console Copilot — hardening (deterministic, whatever the model says)
     // the model names it innocently; the page's own section for that id says otherwise
     expect(await first(page, { action: 'click', target: { id: 'b', name: 'Edit' }, say: 'Editing', risk: 'safe' })).toMatchObject({ risk: 'confirm' });
     expect(await first(page, { action: 'type', target: { id: 'c', name: 'Trust policy' }, value: '{}', say: 'Typing it', risk: 'safe' })).toMatchObject({ risk: 'confirm' });
-    expect(await first(page, { action: 'click', target: { id: 'e', name: 'Add tag' }, say: 'Adding a tag', risk: 'safe' })).toMatchObject({ risk: 'safe' });
+    // Adding commits a change too (isCommitControl, on any page): the learner presses it.
+    expect(await first(page, { action: 'click', target: { id: 'e', name: 'Add tag' }, say: 'Adding a tag', risk: 'safe' })).toMatchObject({ risk: 'confirm' });
   });
 
   it('hands back the button that commits a form on the real console (a billable create), but lets it fill the form, move on and point', async () => {
@@ -209,14 +223,18 @@ describe('Console Copilot — hardening (deterministic, whatever the model says)
     expect(await first(rds, { action: 'select', target: { id: 'c', name: 'Create database' }, value: 'x', say: 'Choosing it', risk: 'safe' })).toMatchObject({ risk: 'confirm' });
     // The page's own name for that id decides, however the model names it.
     expect(await first(rds, click('c', 'Next'))).toMatchObject({ risk: 'confirm' });
-    // Filling the form, a wizard's Next, a link and pointing at the button stay the Copilot's.
-    for (const [id, name] of [['p', 'Production'], ['r', 'Create new security group'], ['x', 'Next'], ['k', 'Create bucket']])
+    // Filling the form, a wizard's Next and pointing at the button stay the Copilot's.
+    for (const [id, name] of [['p', 'Production'], ['r', 'Create new security group'], ['x', 'Next']])
       expect(await first(rds, click(id, name)), name).toMatchObject({ risk: 'safe' });
+    // A link named with a commit word is the learner's too (isCommitControl: button, link or menu item, on any page).
+    expect(await first(rds, click('k', 'Create bucket'))).toMatchObject({ risk: 'confirm' });
     expect(await first(rds, { action: 'type', target: { id: 'n', name: 'DB instance identifier' }, value: 'aws-city-db', say: 'Naming it', risk: 'safe' })).toMatchObject({ risk: 'safe' });
     expect(await first(rds, { action: 'point', target: { id: 'c', name: 'Create database' }, say: 'Press this when you are happy', risk: 'safe' })).toMatchObject({ risk: 'safe' });
-    // The practice console isn't the real one: it stays automatic.
+    // The practice console isn't the real one (isCommit's form rule stays off there: its Next moves on), but a commit
+    // word is the learner's on any page (isCommitControl), the practice console too.
     const practice = { ...rds, url: 'chrome-extension://abcdefghijklmnop/practice.html#/rds/create' };
-    expect(await first(practice, click('c', 'Create database'))).toMatchObject({ risk: 'safe' });
+    expect(await first(practice, click('c', 'Create database'))).toMatchObject({ risk: 'confirm' });
+    expect(await first(practice, click('x', 'Next'))).toMatchObject({ risk: 'safe' });
   });
 
   it('on a console that isn’t in English (or doesn’t say), every button or menu item press goes back to the learner', async () => {
@@ -242,7 +260,7 @@ describe('Console Copilot — hardening (deterministic, whatever the model says)
       for (const [id, name] of [['r', 'Produktion'], ['k', 'Volumes'], ['h', 'Startzeit']]) expect(await first(page, click(id, name)), `${page.lang} ${name}`).toMatchObject({ risk: 'safe' });
       expect(await first(page, { action: 'type', target: { id: 'n', name: 'Name' }, value: 'aws-city-web', say: 'Naming it', risk: 'safe' })).toMatchObject({ risk: 'safe' });
     }
-    // In English the words decide again (a wizard's Next moves on), and a client from before v2.17 (no lang) keeps that rule.
+    // In English the words decide again (a wizard's Next moves on), and a client from before v2.19 (no lang) keeps that rule.
     const { lang: _, ...older } = de;
     for (const page of [{ ...de, lang: 'en-GB' }, older]) expect(await first(page, click('w', 'Weiter'))).toMatchObject({ risk: 'safe' });
     // The practice console stays automatic.

@@ -2760,6 +2760,22 @@
         "simple": "Bedrock can send your request to another Region. Keep it in one area for data rules, or go worldwide to save.",
         "tier": 3,
         "source": "https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html"
+      },
+      {
+        "id": "bedrock-11",
+        "q": "What is Amazon Nova?",
+        "a": "Amazon's portfolio of AI offerings, including Nova models: fast and cost-effective foundation models for text and multimodal needs, available on Amazon Bedrock.",
+        "simple": "Amazon's own AI models on Bedrock: fast and low-cost, for text and more.",
+        "tier": 1,
+        "source": "https://aws.amazon.com/ai/generative-ai/nova/"
+      },
+      {
+        "id": "bedrock-12",
+        "q": "Can an AWS account on the Free plan use Amazon Bedrock?",
+        "a": "Yes: AWS lists Amazon Bedrock as available on both the Free and Paid plans. Amazon Bedrock AgentCore is Paid plan exclusive.",
+        "simple": "Bedrock, yes, on both plans. AgentCore needs the Paid plan.",
+        "tier": 2,
+        "source": "https://aws.amazon.com/free/"
       }
     ],
     "agentcore": [
@@ -2853,6 +2869,46 @@
         "tier": 4,
         "source": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-a2a.html",
         "talk": "agentic-microservices"
+      },
+      {
+        "id": "agentcore-12",
+        "q": "What is Strands Agents?",
+        "a": "An open-source SDK, first released by AWS, for building autonomous AI agents with a model-driven approach: the foundation model is the core of the agent's intelligence and does the reasoning.",
+        "simple": "A free toolkit from AWS for building AI agents. The model does the thinking; your code gives it tools.",
+        "tier": 1,
+        "source": "https://docs.aws.amazon.com/prescriptive-guidance/latest/agentic-ai-frameworks/strands-agents.html"
+      },
+      {
+        "id": "agentcore-13",
+        "q": "Which models can a Strands agent run on?",
+        "a": "Various foundation models, including Anthropic Claude and Amazon Nova (Premier, Pro, Lite and Micro) on Amazon Bedrock, and others, through interfaces such as Amazon Bedrock and OpenAI.",
+        "simple": "Many: Claude or Amazon Nova on Bedrock, and models from other providers too.",
+        "tier": 2,
+        "source": "https://docs.aws.amazon.com/prescriptive-guidance/latest/agentic-ai-frameworks/strands-agents.html"
+      },
+      {
+        "id": "agentcore-14",
+        "q": "How does a Strands agent get its tools?",
+        "a": "From an extensible tool set: tools for AWS service interaction, your own custom tools, and native support for the Model Context Protocol (MCP), so it can use tools other servers offer.",
+        "simple": "It comes with AWS tools, you can add your own, and it speaks MCP to borrow tools from other servers.",
+        "tier": 2,
+        "source": "https://docs.aws.amazon.com/prescriptive-guidance/latest/agentic-ai-frameworks/strands-agents.html"
+      },
+      {
+        "id": "agentcore-15",
+        "q": "How can several Strands agents work as a team?",
+        "a": "With built-in coordination models: the Swarm, Graph and Workflow patterns.",
+        "simple": "Strands has ready-made team patterns for agents, called Swarm, Graph and Workflow.",
+        "tier": 3,
+        "source": "https://docs.aws.amazon.com/prescriptive-guidance/latest/agentic-ai-frameworks/strands-agents.html"
+      },
+      {
+        "id": "agentcore-16",
+        "q": "Which AWS service runs on Strands Agents?",
+        "a": "AWS Transform for .NET uses Strands Agents to power its application modernization capabilities.",
+        "simple": "AWS uses it itself: one of AWS’s own services for updating old apps is built on Strands agents.",
+        "tier": 4,
+        "source": "https://docs.aws.amazon.com/prescriptive-guidance/latest/agentic-ai-frameworks/strands-agents.html"
       }
     ],
     "sagemaker": [

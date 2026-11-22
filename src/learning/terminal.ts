@@ -154,7 +154,7 @@ const EXAMPLES: Record<string, string> = {
 const LITERAL = /<([a-z0-9-]+)>|\{\{([a-z0-9-]+)\}\}/i;
 
 /** A name to try for `<name>`: the example the notes suggest, or `my-<name>`. */
-export const exampleName = (name: string) => EXAMPLES[name] ?? `my-${name}`;
+const exampleName = (name: string) => EXAMPLES[name] ?? `my-${name}`;
 
 /** The teaching note for a placeholder typed as it was shown: a name to pick, or a value an earlier step printed. */
 export function placeholderNote(name: string): string {

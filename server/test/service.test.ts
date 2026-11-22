@@ -18,7 +18,7 @@ const { executeAction } = vi.hoisted(() => {
 });
 vi.mock('../src/agents/executor.js', () => ({ executeAction }));
 
-const { createActionService, LINK_UNCHECKED_REASON, NEEDS_APPROVAL_REASON, REJECTED_REASON } = await import('../src/agents/service.js');
+const { createActionService, LINK_UNCHECKED_REASON, NEEDS_APPROVAL_REASON, REJECTED_REASON, RETIRED_REASON } = await import('../src/agents/service.js');
 const { UNCHECKED_REASON } = await import('../src/agents/jev.js');
 
 const pollerFor = (resources = snapshot([])) => ({ current: () => resources, refresh: async () => resources, start() {}, stop() {} }) as Poller;
@@ -41,6 +41,19 @@ describe('action service', () => {
     expect(await service.submit('launch_instance', { name: 'house' })).toEqual({ status: 'denied', reason: NEEDS_APPROVAL_REASON });
     expect(await service.submit('create_table', { name: 'city-quest' })).toEqual({ status: 'denied', reason: NEEDS_APPROVAL_REASON });
     expect(await service.submit('stop_instance', { instanceId: mine.id })).toEqual({ status: 'denied', reason: NEEDS_APPROVAL_REASON });
+    expect(executeAction).not.toHaveBeenCalled();
+  });
+
+  it('an approval that arrives after the player re-linked another account never writes to the old one', async () => {
+    executeAction.mockClear();
+    let live = true;
+    const service = createActionService({ clients: {} as AwsClients, poller: pollerFor(), region: 'us-west-2', live: async () => live });
+    // The player approves on the card, but meanwhile linked a different AWS account (the old world was retired).
+    const approve = async () => {
+      live = false;
+      return true;
+    };
+    expect(await service.submit('launch_instance', { name: 'house' }, { approve })).toEqual({ status: 'denied', reason: RETIRED_REASON });
     expect(executeAction).not.toHaveBeenCalled();
   });
 
@@ -95,6 +108,24 @@ describe('action service', () => {
     const approve = vi.fn(async () => false);
     await service.submit('describe_resource', { id: 'anything' }, { approve });
     expect(approve).not.toHaveBeenCalled();
+  });
+
+  it('audits every write asked for, done or refused, and never a read or input that did not parse', async () => {
+    const mine = instance('i-0000000000000001a', 'running');
+    const audit = vi.fn();
+    const service = createActionService({ clients: {} as AwsClients, poller: pollerFor(snapshot([mine])), region: 'us-west-2', audit });
+    await service.submit('create_table', { name: 'city-quest' }, { approve: async () => true });
+    await service.submit('terminate_instance', { instanceId: mine.id }, { approve: async () => false });
+    await service.submit('stop_instance', { instanceId: 'i-00000000000000bad' }, { approve: async () => true }); // not the city's
+    await service.submit('launch_instance', { name: 'house' }); // no Approve button
+    await service.submit('describe_resource', { id: mine.id });
+    await service.submit('create_bucket', { suffix: 'X' }, { approve: async () => true });
+    expect(audit.mock.calls.map(([e]) => [e.action, e.target, e.outcome])).toEqual([
+      ['create_table', 'city-quest', 'done'],
+      ['terminate_instance', mine.id, 'rejected'],
+      ['stop_instance', 'i-00000000000000bad', 'denied'],
+      ['launch_instance', 'house', 'denied'],
+    ]);
   });
 });
 

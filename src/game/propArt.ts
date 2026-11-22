@@ -6,15 +6,15 @@ import type Phaser from 'phaser';
 import type { PropKind } from '@/world/resources';
 import { COLOR } from './theme';
 
-export const PROP_W = 24;
-export const PROP_H = 28;
-export const PROP_GROUND = 22;
+const PROP_W = 24;
+const PROP_H = 28;
+const PROP_GROUND = 22;
 export const PROP_ORIGIN = { x: 0.5, y: PROP_GROUND / PROP_H } as const;
 
 export type ArtKind = PropKind | 'shed';
-export const propTexture = (kind: ArtKind) => `res:${kind}`;
-export const flagTexture = (color: number) => `tier:flag:${color.toString(16)}`;
-export const SPARKLE_TEXTURE = 'tier:sparkle';
+const propTexture = (kind: ArtKind) => `res:${kind}`;
+const flagTexture = (color: number) => `tier:flag:${color.toString(16)}`;
+const SPARKLE_TEXTURE = 'tier:sparkle';
 
 const OUTLINE = COLOR.bgDeep;
 /** Graphics' point lists are typed as Vector2s but read only x and y. */

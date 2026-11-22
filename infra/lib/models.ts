@@ -43,5 +43,67 @@ export const modelsFor = (region: string): { main: string; light: string } => {
   return { main: `${geo}.anthropic.${m.main}`, light: `${geo}.anthropic.${m.light}` };
 };
 
+/**
+ * Amazon Nova, Amazon's own models, through Bedrock's Converse API (the server runs them on Strands Agents' Bedrock
+ * model). On-demand in the Region itself, no geo profile, so these ids are the same everywhere Nova is offered on demand
+ * (eu-west-2 lists Nova Pro and Nova Lite as ON_DEMAND: `aws bedrock list-foundation-models --by-inference-type ON_DEMAND`).
+ * Pro thinks for the agents and the concierge, Lite answers chat and classifies pages.
+ */
+export const NOVA_MODELS = { main: 'amazon.nova-pro-v1:0', light: 'amazon.nova-lite-v1:0' } as const;
+
+/**
+ * The open model the city runs on Fargate when Bedrock can't (EnvConfig.aiCpu): Qwen3 4B Instruct 2507 (Apache-2.0,
+ * tool calling, no thinking step, which a CPU can't afford), 4-bit, from the Ollama registry. `manifest` is the sha256 of
+ * the registry's manifest document (registry.ollama.ai, 21 Nov 2026; infra/ai-image/model-manifest.json) and `digests`
+ * the five files it lists (config, weights, chat template, licence, params): infra/ai-image/verify-model.sh fails the
+ * image build if what Ollama pulled differs in any byte.
+ */
+export const CPU_MODEL = {
+  id: 'qwen3:4b-instruct-2507-q4_K_M',
+  name: 'Qwen3 4B',
+  manifest: 'sha256:0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0',
+  digests: [
+    'sha256:b72accf9724e93698c57cbd3b1af2d3341b3d05ec2089d86d273d97964853cd2',
+    'sha256:85e4a5b7b8ef0e48af0e8658f5aaab9c2324c76c1641493f4d1e25fce54b18b9',
+    'sha256:eade0a07cac7712787bbce23d12f9306adb4781d873d1df6e16f7840fa37afec',
+    'sha256:d18a5cc71b84bc4af394a31116bd3932b42241de70c77d2b76d69a314ec8aa12',
+    'sha256:0914c7781e001948488d937994217538375b4fd8c1466c5e7a625221abd3ea7a',
+  ],
+  /** Task size: the model (2.5 GB) and two 16k-token conversations' KV cache fit in 16 GB. */
+  cpu: 8192,
+  memoryMiB: 16384,
+} as const;
+/** Fargate on Graviton (ARM) in eu-west-2, on demand (AWS Price List API, Nov 2026): per vCPU-hour and per GB-hour. */
+export const FARGATE_ARM_PRICE = { region: 'eu-west-2', vcpuHour: 0.03725, gbHour: 0.00409 } as const;
+/** What the AI service costs an hour on demand at FARGATE_ARM_PRICE (Spot is usually well under half of it). */
+export const cpuAiHourly = () => (CPU_MODEL.cpu / 1024) * FARGATE_ARM_PRICE.vcpuHour + (CPU_MODEL.memoryMiB / 1024) * FARGATE_ARM_PRICE.gbHour;
+
+export type ModelChoice = 'claude' | 'nova';
+
+/**
+ * The server's two models for this Region and choice; Claude throws where it has no geo profile, Nova doesn't.
+ * `liteOnly` (Nova): Lite in both slots, for an account whose Region has a Nova Lite quota but none for Pro yet (a new
+ * account's Bedrock hold lifts model by model).
+ */
+export const modelsForChoice = (region: string, choice: ModelChoice, opts: { liteOnly?: boolean } = {}): { main: string; light: string } =>
+  choice === 'nova' ? (opts.liteOnly ? { main: NOVA_MODELS.light, light: NOVA_MODELS.light } : { ...NOVA_MODELS }) : modelsFor(region);
+
 /** The foundation model behind a profile id: us.anthropic.claude-opus-5-5 → anthropic.claude-opus-5-5. */
 export const foundationModel = (profileId: string) => profileId.replace(/^[a-z]+\.(?=anthropic\.)/, '');
+
+/** A geo inference profile id (`us.`, `eu.`…) routes across Regions; an on-demand id (Amazon Nova) stays in its own. */
+export const isProfileId = (id: string) => /^[a-z]+\.(?=anthropic\.)/.test(id);
+
+/**
+ * What the server's task role may invoke for these models (bedrock:InvokeModel and InvokeModelWithResponseStream, the
+ * same two actions for InvokeModel and Converse). A geo profile: the profile in this Region, plus the foundation model in
+ * every Region it routes to (a wildcard, acknowledged in cdk-nag). An on-demand model (Amazon Nova): exactly that model
+ * in this Region, no wildcard.
+ */
+export const bedrockResources = (region: string, account: string, models: readonly string[]) => [
+  ...models.filter(isProfileId).map((m) => `arn:aws:bedrock:${region}:${account}:inference-profile/${m}`),
+  ...models.map((m) => (isProfileId(m) ? `arn:aws:bedrock:*::foundation-model/${foundationModel(m)}*` : `arn:aws:bedrock:${region}::foundation-model/${m}`)),
+];
+
+/** The wildcard resources in `bedrockResources` (each needs a cdk-nag acknowledgement). */
+export const bedrockWildcards = (models: readonly string[]) => models.filter(isProfileId).map((m) => `arn:aws:bedrock:*::foundation-model/${foundationModel(m)}*`);

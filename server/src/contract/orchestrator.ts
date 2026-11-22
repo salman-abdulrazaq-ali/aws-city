@@ -2,8 +2,12 @@ import { docsBlock, type Knowledge, neutralise } from '../knowledge/mcp.js';
 import type Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import type { Llm } from '../agents/llm.js';
+import { pick, say } from '../agents/once.js';
 import { agentSystemPrompt, CONCIERGE_PROMPT, lookoutPrompt } from '../agents/personas.js';
-import { type AgentRunner, snapshotForModel } from '../agents/runner.js';
+import { type AgentRunner, cityFor, type ToolCallReport, toolReport } from '../agents/runner.js';
+import { type ActionName, AWS_API, ownerOf, READ_ONLY } from '../agents/actions.js';
+import { type Command, parseCommand } from '../agents/commands.js';
+import type { ActionService, ApprovalRequest } from '../agents/service.js';
 import type { Approvals } from './approvals.js';
 import type { WorldSnapshot } from '../state/model.js';
 import {
@@ -21,12 +25,48 @@ import {
   type TaskSubmit,
 } from '../world.js';
 import type { UploadStore } from './uploads.js';
-import { publicError } from '../log.js';
+import { log, publicError } from '../log.js';
+import { isCommitWord } from '../../../src/console/risk.js';
 
 export type Emit = (event: ServerEvent) => void;
 
 const SERVICE_IDS = SERVICES.map((s) => s.id) as [string, ...string[]];
 const XP = { task: 15, perWrite: 5, attempted: 3, classify: 3 } as const;
+
+/**
+ * The landmark agent's words to act on: the player's request (first, unchanged), then the concierge's plan as fenced data
+ * (<concierge_plan>), so the agent does what the city just showed the player it would. A small model left with only
+ * "Store my holiday photos cheaply" answered with advice and made no change (21 Nov 2026).
+ *
+ * The plan is model text, and the concierge reads page context (a console page's title can carry anyone's words), so it
+ * never becomes instructions: it's neutralised, fenced, and a step that destroys something stays only when the player's
+ * own words ask for one (planForAgent). The agent acts on what the player asked; every change still waits for their Approve.
+ */
+export const withPlan = (prompt: string, steps: readonly string[]) => {
+  const plan = planForAgent(prompt, steps);
+  return plan.length
+    ? `${prompt}\n\n<concierge_plan>\n${plan.map((s, i) => `${i + 1}. ${neutralise(s)}`).join('\n')}\n</concierge_plan>\nDo what the player's own words ask. If that changes AWS, use your tools now (each change waits for the player's Approve), then explain briefly.`
+    : prompt;
+};
+
+/** The leading verb of a plan step, lower-case letters only. */
+const leadingVerb = (step: string) => (step.trim().split(/\s+/)[0] ?? '').toLowerCase().replace(/[^a-z]/g, '');
+const DESTROYS = /^(delete|terminate|demolish|remove|stop|detach|revoke|disable|destroy|drop|empty|purge)$/;
+const ASKS_TO_DESTROY = /\b(delete|terminate|demolish|remove|stop|detach|revoke|disable|destroy|drop|empty|purge|tear down|teardown|clean up)\b/i;
+/** The plan the agent sees: steps that destroy something only when the player's own words ask for it. */
+export const planForAgent = (prompt: string, steps: readonly string[]) =>
+  ASKS_TO_DESTROY.test(prompt) ? [...steps] : steps.filter((s) => !DESTROYS.test(leadingVerb(s)));
+
+/**
+ * A plan step that changes AWS (the concierge puts those first, one action each: "Create a bucket named X", "Launch a
+ * t4g.nano"): its leading verb commits a change (risk.ts isCommitWord) or removes something. Explanations ("Explain…",
+ * "Show…") don't.
+ */
+const REMOVES = /^(delete|terminate|demolish|remove|make|build|put|turn)$/;
+export const isActionStep = (step: string) => {
+  const verb = leadingVerb(step);
+  return isCommitWord(verb) || REMOVES.test(verb);
+};
 
 const PLAN_TOOL = {
   name: 'plan_task',
@@ -73,6 +113,11 @@ const toolInput = <T>(msg: Anthropic.Message, name: string, schema: z.ZodType<T>
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** A screenshot's MIME type as the Converse image format (the Lookout uploads PNG or JPEG). */
+const IMAGE_FORMATS = { 'image/png': 'png', 'image/jpeg': 'jpeg', 'image/webp': 'webp', 'image/gif': 'gif' } as const;
+const imageFormat = (contentType: string | undefined) =>
+  contentType && contentType in IMAGE_FORMATS ? IMAGE_FORMATS[contentType as keyof typeof IMAGE_FORMATS] : undefined;
+
 /**
  * Implements the frontend contract (docs/backend-contract.md) on top of the agent runner.
  * Rule from the contract: every real AWS call made for an agent is wrapped in agent.state working → idle.
@@ -86,6 +131,11 @@ export const createOrchestrator = (deps: {
   knowledge?: Knowledge;
   /** Whose screenshots this orchestrator may read (the signed-in player; 'local' for the local server). */
   owner?: string;
+  /**
+   * The tenant's ActionService (the same one the agents' tools use): a plain request goes straight through it, with the
+   * same policy, approval card and MFA, and no model call before the card. Omitted = every request goes to the agents.
+   */
+  actions?: Pick<ActionService, 'submit' | 'describe'>;
   /** Time the agent gets to walk to its landmark before work starts (mock uses ~4.5 s). */
   walkMs?: number;
   paceMs?: number;
@@ -105,30 +155,111 @@ export const createOrchestrator = (deps: {
 
   const plan = async (cmd: Omit<TaskSubmit, 'action'>) => {
     const snapshot = await deps.snapshot();
-    const msg = await deps.llm.create({
-      max_tokens: 16000,
-      // Routing a request is a quick decision: low effort keeps thinking (and cost) small.
-      output_config: { effort: 'low' },
-      system: CONCIERGE_PROMPT,
-      tools: [PLAN_TOOL],
-      messages: [
-        {
-          role: 'user',
-          content: `<city_snapshot>${snapshotForModel(snapshot)}</city_snapshot>\n${describeContext(cmd.context)}\n\nPlayer request: ${cmd.prompt}`,
-        },
-      ],
-    });
-    const parsed = toolInput(msg, PLAN_TOOL.name, Plan);
+    const request = `<city_snapshot>${cityFor(deps.llm, snapshot)}</city_snapshot>\n${describeContext(cmd.context)}\n\nPlayer request: ${cmd.prompt}`;
+    const parsed =
+      deps.llm.family === 'converse'
+        ? // Amazon Nova (Converse) on Strands Agents: one tool call that records the plan.
+          await pick(deps.llm, {
+            system: CONCIERGE_PROMPT,
+            prompt: `${request}\n\nCall ${PLAN_TOOL.name} with your plan.`,
+            tool: { name: PLAN_TOOL.name, description: PLAN_TOOL.description, schema: Plan },
+            model: { maxTokens: 4000 },
+          })
+        : toolInput(
+            await deps.llm.create({
+              max_tokens: 16000,
+              // Routing a request is a quick decision: low effort keeps thinking (and cost) small.
+              output_config: { effort: 'low' },
+              system: CONCIERGE_PROMPT,
+              tools: [PLAN_TOOL],
+              messages: [{ role: 'user', content: request }],
+            }),
+            PLAN_TOOL.name,
+            Plan,
+          );
     if (parsed) return parsed;
     // The model answered without the tool: fall back to the frontend's own keyword routing.
     const agentId = matchText(cmd.prompt) ?? cmd.context.serviceId ?? 'bedrock';
     return { agentId, steps: ['Taking a look at your request'], reply: `Sounds like a job for ${placeFor(agentId)?.agentName ?? agentId}!` };
   };
 
+  /** One short answer with no tools, streamed to `onText`: `say` on Converse (Nova, the local model), the Messages API otherwise. */
+  const speak = async (system: string, prompt: string, onText: (delta: string) => void, maxTokens: number) =>
+    deps.llm.family === 'converse'
+      ? (await say(deps.llm, { system, prompt, model: { light: true, maxTokens }, onText })).refused
+      : (await deps.llm.stream({ max_tokens: 16000, output_config: { effort: 'low' }, system, messages: [{ role: 'user', content: prompt }] }, onText)).stop_reason === 'refusal';
+
+  /**
+   * A plain request in the player's own words ("Create a bucket called holiday-123"): no concierge or agent model call
+   * before the change. The action's own agent walks to its building and the server submits exactly what was typed through
+   * the ActionService, so the approval card shows seconds after the player asks (a small CPU model took 1-3 minutes
+   * before, and sometimes promised the change without making it: seen live, 21 Nov 2026). Policy, the server-written
+   * card, MFA and the recent sign-in all still apply. Only the player's request text is read: never page context or a plan.
+   * A request that was understood but isn't allowed (an m5.large) is answered at once with why. After the change, the
+   * agent explains it in a few words (one model call, after task.done, skipped when the AI is off).
+   */
+  const direct = async (cmd: Omit<TaskSubmit, 'action'>, command: Command, emit: Emit, approvals: Approvals, actions: NonNullable<typeof deps.actions>, signal?: AbortSignal) => {
+    const { taskId } = cmd;
+    const agentId = ownerOf(command.name) ?? 'bedrock';
+    const spot = placeFor(agentId);
+    const place = spot?.place ?? serviceById(agentId)?.name ?? agentId;
+    if (!command.ok) {
+      emit({ type: 'agent.message', from: 'concierge', to: 'user', text: command.reason });
+      emit({ type: 'task.plan', taskId, agentId, targetServiceId: agentId, steps: ['Check your request'] });
+      emit({ type: 'task.step', taskId, index: 0, text: `Check your request — ${command.reason}`, status: 'failed' });
+      emit({ type: 'task.done', taskId, ok: false, result: command.reason, xp: [] });
+      return;
+    }
+    const summary = actions.describe(command.name, command.input);
+    emit({ type: 'agent.message', from: 'concierge', to: 'user', text: `That's a job for ${spot?.agentName ?? agentId} at ${place}!` });
+    emit({ type: 'agent.message', from: 'concierge', to: agentId, text: `New request: “${cmd.prompt.slice(0, 60)}”` });
+    const steps = [`Heading to ${place}`, summary];
+    emit({ type: 'task.plan', taskId, agentId, targetServiceId: agentId, steps });
+    emit({ type: 'task.step', taskId, index: 0, text: steps[0]!, status: 'running' });
+    await sleep(walkMs);
+    if (signal?.aborted) return;
+    emit({ type: 'task.step', taskId, index: 0, text: `Arrived at ${place}`, status: 'done' });
+    emit({ type: 'task.step', taskId, index: 1, text: summary, status: 'running' });
+    const api = AWS_API[command.name];
+    emit({ type: 'agent.state', agentId, state: 'working', service: api.split(':')[0], detail: `${api.split(':')[1] ?? api} — ${summary}` });
+    let call: ToolCallReport;
+    try {
+      const outcome = await actions.submit(command.name, command.input, {
+        // Said when the card is really shown: policy is checked first, and a refused change says why instead.
+        approve: (req) => {
+          emit({ type: 'agent.message', from: agentId, to: 'user', text: `I'll do exactly what you asked: ${req.summary}. Your approval card is waiting in Deploy.` });
+          return approvals.request(taskId, req, emit);
+        },
+        // Jev (if on) reads the player's own words, as for an agent's write.
+        intent: cmd.prompt,
+      });
+      call = toolReport(command.name, command.input, outcome);
+    } finally {
+      emit({ type: 'agent.state', agentId, state: 'idle' });
+    }
+    approvals.reportResult(taskId, call, emit);
+    const ok = call.outcome === 'done';
+    emit({ type: 'task.step', taskId, index: 1, text: ok ? summary : `${summary} — ${call.message}`, status: ok ? 'done' : 'failed' });
+    emit({ type: 'task.done', taskId, ok, result: call.message.slice(0, 400), xp: [{ serviceId: agentId, amount: ok ? XP.task + XP.perWrite : XP.attempted }] });
+    if (!ok || signal?.aborted) return;
+    // A few words on what was just built, from the agent (its persona, no tools). The change is done either way.
+    let text = '';
+    await speak(
+      `${agentSystemPrompt(agentId)}\n\nThe change below was just made in the player's AWS account. In plain text, under 50 words: what it is, and one thing to try next.`,
+      `The player asked: ${neutralise(cmd.prompt)}\nDone: ${neutralise(call.message)}`,
+      (d) => void (text += d),
+      600,
+    ).catch((err) => log.warn('explain after a change skipped', { taskId, err: (err as Error).name })); // the AI resting, a quota
+    if (text.trim() && !signal?.aborted) emit({ type: 'agent.message', from: agentId, to: 'user', text: text.trim().slice(0, 600) });
+  };
+
   /** `signal`: aborted when the socket that asked closes, so the agent stops making model calls for nobody. */
   const submitTask = async (cmd: Omit<TaskSubmit, 'action'>, emit: Emit, approvals?: Approvals, signal?: AbortSignal) => {
     const { taskId } = cmd;
     try {
+      // A plain request goes straight to its agent's action; anything else is planned by the concierge.
+      const command = approvals && deps.actions ? parseCommand(cmd.prompt) : undefined;
+      if (command && approvals && deps.actions) return await direct(cmd, command, emit, approvals, deps.actions, signal);
       const p = await working(emit, 'concierge', 'bedrock', 'InvokeModel — routing your request', () => plan(cmd));
       if (signal?.aborted) return;
       const agentId = serviceById(p.agentId) ? p.agentId : 'bedrock';
@@ -144,45 +275,64 @@ export const createOrchestrator = (deps: {
 
       let index = 1;
       const last = steps.length - 1;
-      const result = await deps.runner.turn(agentId, cmd.prompt, {
+      const approve = approvals ? (req: ApprovalRequest) => approvals.request(taskId, req, emit) : undefined;
+      const onToolStart = ({ name, api, summary }: { name: string; api: string; summary: string }) => {
+        // A change ticks the plan step that makes it: explanation steps before that one walk through as done first, so
+        // "Explain buckets", "Create a bucket" never ticks the explanation and calls the real change "not done".
+        // Only for a write: a read (describe_resource, a docs search) never moves the plan on.
+        const write = Object.hasOwn(AWS_API, name) && !READ_ONLY.has(name as ActionName);
+        const at = write ? steps.findIndex((s, i) => i >= index && isActionStep(s)) : -1;
+        for (; at > index; index++) {
+          emit({ type: 'task.step', taskId, index, text: steps[index]!, status: 'running' });
+          emit({ type: 'task.step', taskId, index, text: steps[index]!, status: 'done' });
+        }
+        emit({ type: 'task.step', taskId, index: Math.min(index, last), text: steps[Math.min(index, last)]!, status: 'running' });
+        emit({ type: 'agent.state', agentId, state: 'working', service: api.split(':')[0], detail: `${api.split(':')[1] ?? api} — ${summary}` });
+      };
+      const onToolEnd = (call: ToolCallReport) => {
+        approvals?.reportResult(taskId, call, emit);
+        emit({ type: 'agent.state', agentId, state: 'idle' });
+        const i = Math.min(index, last);
+        const ok = call.outcome === 'done';
+        emit({ type: 'task.step', taskId, index: i, text: ok ? steps[i]! : `${steps[i]} — ${call.message}`, status: ok ? 'done' : 'failed' });
+        index++;
+      };
+      const result = await deps.runner.turn(agentId, withPlan(cmd.prompt, p.steps), {
         onModelCall: (phase) =>
           emit(phase === 'start' ? { type: 'agent.state', agentId, state: 'working', service: 'bedrock', detail: 'InvokeModel — thinking' } : { type: 'agent.state', agentId, state: 'idle' }),
-        onToolStart: ({ api, summary }) => {
-          emit({ type: 'task.step', taskId, index: Math.min(index, last), text: steps[Math.min(index, last)]!, status: 'running' });
-          emit({ type: 'agent.state', agentId, state: 'working', service: api.split(':')[0], detail: `${api.split(':')[1] ?? api} — ${summary}` });
-        },
-        approve: approvals ? (req) => approvals.request(taskId, req, emit) : undefined,
+        onToolStart,
+        approve,
+        // Jev's state is only the player's own words (never the plan, the reply or anything from AWS).
         intent: cmd.prompt,
-        onToolEnd: (call) => {
-          approvals?.reportResult(taskId, call, emit);
-          emit({ type: 'agent.state', agentId, state: 'idle' });
-          const i = Math.min(index, last);
-          const ok = call.outcome === 'done';
-          emit({ type: 'task.step', taskId, index: i, text: ok ? steps[i]! : `${steps[i]} — ${call.message}`, status: ok ? 'done' : 'failed' });
-          index++;
-        },
+        onToolEnd,
         onText: (text) => emit({ type: 'agent.message', from: agentId, to: 'user', text }),
         signal,
       });
       if (signal?.aborted) return;
 
-      const ok = !result.refused && result.toolCalls.every((c) => c.outcome === 'done');
+      const { toolCalls, reply } = result;
+      let ok = !result.refused && toolCalls.every((c) => c.outcome === 'done');
       if (ok) {
-        // Explanation-only plans (no tool calls) still walk through their remaining steps.
+        // The steps the agent's tool calls didn't cover: explanations walk through as done, but a step that changes AWS
+        // was not done (no tool call made it), and says so, never a ✓ (seen live 21 Nov: "Create a bucket" ticked, nothing
+        // created). A task with such a step didn't do what it planned.
         for (; index <= last; index++) {
           emit({ type: 'task.step', taskId, index, text: steps[index]!, status: 'running' });
           await sleep(paceMs);
-          emit({ type: 'task.step', taskId, index, text: steps[index]!, status: 'done' });
+          if (isActionStep(steps[index]!)) {
+            emit({ type: 'task.step', taskId, index, text: `${steps[index]} — not done: no change was made`, status: 'failed' });
+            ok = false;
+          } else emit({ type: 'task.step', taskId, index, text: steps[index]!, status: 'done' });
         }
       }
       if (result.refused) emit({ type: 'agent.message', from: agentId, to: 'user', text: result.reply });
 
-      const writes = result.toolCalls.filter((c) => c.outcome === 'done' && c.name !== 'describe_resource' && c.name !== 'review_architecture').length;
+      const writes = toolCalls.filter((c) => c.outcome === 'done' && c.name !== 'describe_resource' && c.name !== 'review_architecture').length;
       emit({
         type: 'task.done',
         taskId,
         ok,
-        result: (result.reply || (ok ? 'Done.' : 'That did not work out.')).slice(0, 400),
+        result: (reply || (ok ? 'Done.' : 'That did not work out.')).slice(0, 400),
         xp: [{ serviceId: agentId, amount: ok ? XP.task + XP.perWrite * writes : XP.attempted }],
         ...(result.sources?.length ? { sources: result.sources } : {}),
       });
@@ -207,26 +357,17 @@ export const createOrchestrator = (deps: {
     emit({ type: 'agent.state', agentId, state: 'working', service: 'bedrock', detail: 'Answering your question' });
     let sent = false;
     try {
-      const [snapshot, docs] = await Promise.all([deps.snapshot(), deps.knowledge?.search(`${svc.name} ${cmd.question}`, 3) ?? []]);
-      const msg = await deps.llm.stream(
-        {
-          max_tokens: 16000,
-          output_config: { effort: 'low' }, // a short spoken answer
-          system: `${agentSystemPrompt(agentId)}\n\nYou are answering a question at ${district.hq}. Reply in plain text (no markdown headings), under 120 words.`,
-          messages: [
-            {
-              role: 'user',
-              content: `${docsBlock(docs)}<city_snapshot>${snapshotForModel(snapshot)}</city_snapshot>\n${describeContext(cmd.context)}\n\nQuestion: ${cmd.question}`,
-            },
-          ],
-        },
-        (delta) => {
-          sent = true;
-          emit({ type: 'chat.answer', requestId, districtId, agentId, delta, done: false });
-        },
-      );
+      const [snapshot, docs] = await Promise.all([deps.snapshot(), deps.knowledge?.search(`${svc.name} ${cmd.question}`, deps.llm.small ? 1 : 3) ?? []]);
+      const system = `${agentSystemPrompt(agentId)}\n\nYou are answering a question at ${district.hq}. Reply in plain text (no markdown headings), under 120 words.`;
+      const question = `${docsBlock(docs)}<city_snapshot>${cityFor(deps.llm, snapshot)}</city_snapshot>\n${describeContext(cmd.context)}\n\nQuestion: ${cmd.question}`;
+      const onText = (delta: string) => {
+        sent = true;
+        emit({ type: 'chat.answer', requestId, districtId, agentId, delta, done: false });
+      };
+      // On the light model, streamed: a short spoken answer.
+      const refused = await speak(system, question, onText, 1500);
       if (!sent) {
-        const text = msg.stop_reason === 'refusal' ? "Sorry, I can't answer that one." : 'Hmm, I have nothing to add.';
+        const text = refused ? "Sorry, I can't answer that one." : 'Hmm, I have nothing to add.';
         emit({ type: 'chat.answer', requestId, districtId, agentId, delta: text, done: false });
       }
       const sources = docs.map(({ title, url }) => ({ title, url }));
@@ -248,9 +389,21 @@ export const createOrchestrator = (deps: {
     }
     try {
       const report = await working(emit, 'lookout', 'bedrock', image ? 'InvokeModel (vision) on screenshot' : 'InvokeModel on page title', async () => {
+        const ask = `${describeContext(context) || 'No URL or title.'}\n\nWhat is this page about?`;
+        if (deps.llm.family === 'converse') {
+          // Amazon Nova (Converse) or a local model on Strands Agents: the screenshot as an image block when there is one
+          // and the model reads images (a text-only local model gets the page's address and title), then the text.
+          const format = deps.llm.sees ? imageFormat(image?.contentType) : undefined;
+          return pick(deps.llm, {
+            system: lookoutPrompt,
+            prompt: [...(image && format ? [{ image: { format, source: { bytes: new Uint8Array(image.bytes) } } }] : []), { text: `${ask}\n\nCall ${REPORT_TOOL.name}.` }],
+            tool: { name: REPORT_TOOL.name, description: REPORT_TOOL.description, schema: Report },
+            model: { light: true, maxTokens: 1000 },
+          });
+        }
         const content: Anthropic.ContentBlockParam[] = [];
         if (image) content.push({ type: 'image', source: { type: 'base64', media_type: image.contentType, data: image.bytes.toString('base64') } });
-        content.push({ type: 'text', text: `${describeContext(context) || 'No URL or title.'}\n\nWhat is this page about?` });
+        content.push({ type: 'text', text: ask });
         const msg = await deps.llm.create(
           { max_tokens: 16000, output_config: { effort: 'low' }, system: lookoutPrompt, tools: [REPORT_TOOL], messages: [{ role: 'user', content }] },
           { light: true },

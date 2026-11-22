@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// Finding the account card (v2.17): ⋯ → Account on the hosted server (connect, download, sign out, delete with a confirm),
+// Finding the account card (v2.19): ⋯ → Account on the hosted server (connect, download, sign out, delete with a confirm),
 // the To-do row and the shift's line for a signed-in player with no working link, and City care saying up front when the
 // player's role doesn't allow fixes.
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';

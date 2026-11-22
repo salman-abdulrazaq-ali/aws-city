@@ -5,10 +5,10 @@
 import { dayKey } from '@/state/progress';
 import { readPref, writePref } from '@/ui/logic';
 
-export const DAILY_KEY = 'awscity.daily';
+const DAILY_KEY = 'awscity.daily';
 
 /** One day's counts by key. */
-export interface DayCounts {
+interface DayCounts {
   day: string;
   n: Record<string, number>;
 }

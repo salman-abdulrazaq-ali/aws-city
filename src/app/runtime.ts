@@ -2,6 +2,7 @@
 // they never touch the backend or chrome.* directly.
 
 import { browser } from 'wxt/browser';
+import { fromWebPage } from './sender';
 import { createBackend, type AgentBackend } from '@/backend';
 import type { ConsoleStepEvent, PageSnapshot, ResourceRemove } from '@/backend/contract';
 import { agentName, emptyProgress, errorText } from '@/state/store';
@@ -19,6 +20,7 @@ import { isPracticeService, isPracticeUrl, PRACTICE_PATH, practiceRoute, practic
 import type { CopilotMessage } from '@/console/agent';
 import { isSecretPage, redactConsoleUrl } from '@/console/risk';
 import { isReadingUrl } from '@/world/reading';
+import { isEventUrl } from '@/world/liveEvents';
 import { isWorkshopUrl } from '@/world/workshops';
 import { SURFACE, SURFACE_NAME, type Surface } from '@/app/surface';
 import { badgeById, newBadges } from '@/state/badges';
@@ -118,14 +120,14 @@ const absorb = (other: Progress) => {
  * Unsynced progress from a session that ended without the player signing out (the sign-in expired or was revoked),
  * tagged with whose it was. It's absorbed only when that same player signs back in on this device.
  */
-export const PARKED_PROGRESS_KEY = 'progress.parked';
+const PARKED_PROGRESS_KEY = 'progress.parked';
 type ParkedProgress = { player: string; progress: Progress };
 /**
  * Whose saved `progress` that is, on a backend with sign-in: the player id, or '' if it was earned while no one's copy
  * had been read (it merges into whoever signs in, as signed-out play always has). A copy with no owner saved beside it
  * predates the tag, so it's treated as unconfirmed.
  */
-export const PROGRESS_OWNER_KEY = 'progress.owner';
+const PROGRESS_OWNER_KEY = 'progress.owner';
 /** A backend with sign-in has players (the mock and the local server don't). */
 const hasPlayers = () => typeof backend?.playerId === 'function';
 /**
@@ -331,7 +333,7 @@ function watchBadges() {
 // ── v2.11: the live city and leaderboards ──
 
 /** How often an open, visible tab says the player is still in the city. */
-export const BEAT_MS = 30_000;
+const BEAT_MS = 30_000;
 let beatTimer: ReturnType<typeof setInterval> | undefined;
 /** What each board was last sent this week (a best only goes up, so only a better one is sent). */
 const sentScores = new Map<string, number>();
@@ -447,8 +449,9 @@ export function setFlow(on: boolean) {
 // ── Page focus (from background.ts) ──
 
 async function initFocus() {
-  browser.runtime.onMessage.addListener((msg: RuntimeMessage) => {
-    if (msg?.type === 'page.focus') handleFocus(msg.focus);
+  browser.runtime.onMessage.addListener((msg: RuntimeMessage, sender) => {
+    // Only the background reports focus: a content script faking it could aim auto-snap at any tab.
+    if (msg?.type === 'page.focus' && !fromWebPage(sender)) handleFocus(msg.focus);
   });
   const saved = (await browser.storage.session.get(FOCUS_STORAGE_KEY))[FOCUS_STORAGE_KEY] as PageFocus | undefined;
   if (saved) handleFocus(saved);
@@ -475,10 +478,12 @@ function handleFocus(f: PageFocus) {
 }
 
 /**
- * Pages the Lookout may photograph on its own (auto-snap): AWS pages, never one that shows a secret (`SECRET_PAGES`:
- * access keys, secret values, SecureStrings, KMS, CloudShell). A photo isn't redacted, so those are snapped only on ask.
+ * Pages the Lookout may photograph on its own (auto-snap): AWS pages, never one that can show a secret (risk.ts
+ * `SECRET_PAGES` on the real console: access keys, secret values, SecureStrings, KMS, CloudShell; and `isSensitivePage`'s
+ * paths: Cognito app clients, Identity Center credentials too). A photo isn't redacted, so those are snapped only on ask.
  */
-export const autoSnaps = (f: Pick<PageFocus, 'kind' | 'url'>) => isAwsPage(f) && !isSecretPage(f.url);
+export const autoSnaps = (f: Pick<PageFocus, 'kind' | 'url'>) =>
+  isAwsPage(f) && !isSecretPage(f.url) && !(f.kind !== 'docs' && isSensitivePage(f.url));
 
 async function initSettings() {
   const s = (await browser.storage.local.get(SETTINGS_STORAGE_KEY))[SETTINGS_STORAGE_KEY] as { autoSnap?: boolean } | undefined;
@@ -497,7 +502,15 @@ export function pageContext(f: PageFocus | undefined = store().focus) {
 }
 
 /** AWS console and docs pages: the only ones whose URL and title the agents see, and the only ones auto-snapped. */
-export const isAwsPage = (f: Pick<PageFocus, 'kind'>) => f.kind === 'console' || f.kind === 'console-home' || f.kind === 'docs';
+const isAwsPage = (f: Pick<PageFocus, 'kind'>) => f.kind === 'console' || f.kind === 'console-home' || f.kind === 'docs';
+
+/**
+ * Console pages that can show a secret: IAM access keys and security credentials, Secrets Manager, Parameter Store,
+ * KMS, Cognito app clients (their secrets), IAM Identity Center credentials. Auto-snap skips them (the DOM snapshot is
+ * redacted; a screenshot isn't); the player can still snap one on purpose.
+ */
+const SENSITIVE_PAGE = [/\/secretsmanager\//, /\/systems-manager\/parameters/, /\/kms\//, /security[_-]credentials/i, /access[_-]?keys?/i, /\/cognito\/.*app-?clients?/i, /\/singlesignon\//, /\/iam\/home.*\/credentials/i];
+export const isSensitivePage = (url: string | undefined) => !!url && SENSITIVE_PAGE.some((r) => r.test(url));
 
 export function submitPrompt(prompt: string) {
   const text = prompt.trim();
@@ -648,11 +661,12 @@ export function setAutoSnap(on: boolean) {
 
 // ── Account linking + real deploys (curated templates, change-set approval) ──
 
-export function signIn() {
+export function signIn(opts?: { fresh?: boolean }) {
   if (!backend?.signIn || store().signingIn) return;
   store().setSigningIn(true);
   void backend
-    .signIn()
+    .signIn(opts)
+    .then(() => store().clearReauth())
     .catch((e: unknown) => {
       const msg = e instanceof Error ? e.message : String(e);
       if (/cancel|closed|did not approve/i.test(msg)) return store().log({ kind: 'system', text: 'Sign-in cancelled.' });
@@ -677,7 +691,7 @@ export const canReconnect = () => typeof optional()?.reconnect === 'function';
  * runs the developer's own profile, and its sign-out does nothing).
  */
 export const canDeleteAccount = () => backend?.hosted === true && typeof optional()?.deleteAccount === 'function';
-/** "Download my data" (v2.17 GET /me/export): signed-in players on the hosted server. */
+/** "Download my data" (v2.19 GET /me/export): signed-in players on the hosted server. */
 export const canDownloadData = () => backend?.hosted === true && typeof backend.exportMe === 'function';
 
 /** The file "Download my data" saves (a local download: nothing else is fetched or uploaded). */
@@ -838,7 +852,7 @@ export async function confirmMfaSetup(code: string) {
 
 /**
  * A setup link for `region` (the player picks it: the key is made there and the city reads that Region). `allowFixes`:
- * the quick-create link turns AllowFixes on (v2.17). Returns the requestId (an error for this request carries it), or
+ * the quick-create link turns AllowFixes on (v2.19). Returns the requestId (an error for this request carries it), or
  * undefined if nothing was sent.
  */
 export function linkAccount(region: string, opts: { allowFixes?: boolean } = {}) {
@@ -852,7 +866,7 @@ export function linkAccount(region: string, opts: { allowFixes?: boolean } = {})
 }
 
 /**
- * v2.17: Disconnect the linked account (no MFA: taking access away is always allowed). The answer is account.status
+ * v2.19: Disconnect the linked account (no MFA: taking access away is always allowed). The answer is account.status
  * {linked: false} with this requestId; the AWSCity stack stays in the account until the player deletes it.
  */
 export function unlinkAccount() {
@@ -874,7 +888,7 @@ function askAccount(requestId: string) {
 }
 
 /**
- * "Check again" (after turning AllowFixes on in CloudFormation): v2.17 account.recheck asks the linked role again,
+ * "Check again" (after turning AllowFixes on in CloudFormation): v2.19 account.recheck asks the linked role again,
  * without changing anything, whether it allows fixes. No setup link, no MFA; the role version stays as it was. Returns
  * the requestId (the answer, account.status, or an error carries it).
  */
@@ -904,7 +918,7 @@ export function confirmRoleUpdate() {
   return requestId;
 }
 
-/** v2.17: Take down one thing the city built; the server asks for approval like any write (deploy.preview → deploy.approve). */
+/** v2.19: Take down one thing the city built; the server asks for approval like any write (deploy.preview → deploy.approve). */
 export function removeResource(kind: ResourceRemove['kind'], id: string) {
   if (!backend) return undefined;
   const requestId = uid();
@@ -1006,6 +1020,15 @@ export function openReading(url: string) {
   void browser.tabs.create({ url });
 }
 
+/** An event's page (the Events board): AWS's own, or a meetup's page on meetup.com (src/world/liveEvents.ts). */
+export function openEvent(url: string) {
+  if (!isEventUrl(url)) {
+    store().toast('⚠️', 'That link isn’t an AWS or Meetup event page, so it wasn’t opened.', 'error');
+    return;
+  }
+  void browser.tabs.create({ url });
+}
+
 /** The map data's licence page: the only OpenStreetMap address the game opens (the map itself is bundled). */
 export const OSM_COPYRIGHT_URL = 'https://www.openstreetmap.org/copyright';
 /** OpenStreetMap's own site over https (nothing else, no credentials in the URL). */
@@ -1042,7 +1065,7 @@ export function openPrivacyPolicy() {
 }
 
 /** v2.6: AWS's own status page (a fixed address, never one from a feed). */
-export const AWS_STATUS_URL = 'https://health.aws.amazon.com/health/status';
+const AWS_STATUS_URL = 'https://health.aws.amazon.com/health/status';
 export function openAwsStatus() {
   void browser.tabs.create({ url: AWS_STATUS_URL });
 }
@@ -1057,7 +1080,7 @@ export function openWorkshopSource(url: string) {
 }
 
 /** AWS CloudShell, where a workshop's commands run for real (signed in already, in the console's Region). */
-export const CLOUDSHELL_URL = 'https://console.aws.amazon.com/cloudshell/home';
+const CLOUDSHELL_URL = 'https://console.aws.amazon.com/cloudshell/home';
 export function openCloudShell() {
   void browser.tabs.create({ url: CLOUDSHELL_URL });
 }

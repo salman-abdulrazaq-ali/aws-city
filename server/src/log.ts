@@ -61,6 +61,6 @@ export const publicError = (scope: string, err: unknown, fields: Fields = {}): s
   if (!hosted) return e?.message ?? String(err);
   if (isModelDenied(err)) return PAUSED_MESSAGE;
   if (e?.status === 429 || e?.name === 'ThrottlingException') return 'The city’s AI is busy right now. Try again in a minute.';
-  if (e?.name === 'TimeoutError' || /timed? ?out/i.test(e?.message ?? '')) return 'That took too long. Try again.';
+  if (e?.name === 'TimeoutError' || /timed? ?out/i.test(e?.message ?? '')) return 'The city’s AI took too long (it may be busy with another request). Try again in a minute.';
   return `Something went wrong on our side (ref ${ref}). Try again.`;
 };

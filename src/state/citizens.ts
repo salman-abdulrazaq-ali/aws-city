@@ -18,7 +18,7 @@ export const CITIZEN_XP = {
   /** Asking the citizen to explain a finding. */
   explain: 2,
 };
-export const PUZZLE_PILLAR_MIN = 70;
+const PUZZLE_PILLAR_MIN = 70;
 
 /** Level needed to offer each kind of fix. */
 export const FIX_LEVEL = { game: 2, account: 3 } as const;
@@ -82,7 +82,7 @@ export const cardReviewsFor = (p: Progress, c: CitizenDef) =>
   }, 0);
 
 /** How a citizen learns, in a few words, for the "Teach <name> first" line. */
-export function howToTeach(c: CitizenDef) {
+function howToTeach(c: CitizenDef) {
   const services = c.districts.flatMap((d) => servicesIn(d).slice(0, 1).map((s) => s.name.replace(/^(Amazon|AWS) /, '')));
   const list = services.length > 1 ? `${services.slice(0, -1).join(', ')} or ${services.at(-1)}` : services[0];
   return `review flashcards for ${list}, pass an architecture puzzle scoring ${PUZZLE_PILLAR_MIN} or more on ${PILLARS.find((p) => p.id === c.pillar)?.name ?? c.pillar}, or ask ${c.name} to explain a finding`;

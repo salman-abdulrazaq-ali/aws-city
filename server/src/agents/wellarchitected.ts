@@ -26,7 +26,7 @@ export interface Scorecard {
   score: number | null;
 }
 
-export const PILLAR_URL: Record<Pillar, string> = {
+const PILLAR_URL: Record<Pillar, string> = {
   'operational-excellence': 'https://docs.aws.amazon.com/wellarchitected/latest/operational-excellence-pillar/welcome.html',
   security: 'https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html',
   reliability: 'https://docs.aws.amazon.com/wellarchitected/latest/reliability-pillar/welcome.html',
@@ -55,7 +55,7 @@ const DOCS = {
  */
 export const OLD_RUNTIME = /^(nodejs($|[4-9]\.|1\d\.|20\.)|python(2\.|3\.[0-9]$)|ruby(2\.|3\.2$)|java8$|go1\.x$|provided(\.al2)?$|dotnetcore|dotnet(5\.0|[3-7])$)/;
 /** Scheduled deprecations from the same page: each counts as deprecated from its date, so the check doesn't drift. */
-export const UPCOMING_DEPRECATIONS: { runtime: string; from: string }[] = [
+const UPCOMING_DEPRECATIONS: { runtime: string; from: string }[] = [
   { runtime: 'python3.10', from: '2026-10-31' },
   { runtime: 'dotnet8', from: '2026-11-10' },
   { runtime: 'dotnet9', from: '2026-11-10' },

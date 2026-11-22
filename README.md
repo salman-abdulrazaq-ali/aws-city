@@ -8,7 +8,7 @@
 
 **🏆 1st place, North Hackathon at Northumbria University**
 
-[![CI](https://github.com/iloveclouduk/AWS-North-Hackathon/actions/workflows/ci.yml/badge.svg)](https://github.com/iloveclouduk/AWS-North-Hackathon/actions/workflows/ci.yml)
+[![CI](https://github.com/salman-abdulrazaq-ali/aws-city/actions/workflows/ci.yml/badge.svg)](https://github.com/salman-abdulrazaq-ali/aws-city/actions/workflows/ci.yml)
 ![Node 24](https://img.shields.io/badge/node-24-339933?logo=nodedotjs&logoColor=white)
 ![Chrome · Edge · Firefox · Safari](https://img.shields.io/badge/browsers-Chrome%20%C2%B7%20Edge%20%C2%B7%20Firefox%20%C2%B7%20Safari-4285F4)
 ![Built on AWS](https://img.shields.io/badge/built%20on-AWS-FF9900?logo=amazonwebservices&logoColor=white)
@@ -142,7 +142,7 @@ minutes the first time, and it starts in **Demo mode**: no account, no AWS, noth
 On Windows, press the <kbd>Windows</kbd> key, type **cmd** and press Enter (Command Prompt). Then paste these two lines:
 
 ```bash
-git clone https://github.com/iloveclouduk/AWS-North-Hackathon.git && cd AWS-North-Hackathon
+git clone https://github.com/salman-abdulrazaq-ali/aws-city.git && cd aws-city
 npm start
 ```
 
@@ -157,7 +157,7 @@ browser once (about 150 MB). Then a new browser window opens with two tabs:
 
 The terminal stays open as the city's remote control: press **q** there when you're done (it closes the window too).
 When you want to keep your city, open the **⋯** menu and pick **Sign in to save your city**. Next time, open a terminal,
-type `cd AWS-North-Hackathon`, then `npm start`, and press Enter at **Play again?**
+type `cd aws-city`, then `npm start`, and press Enter at **Play again?**
 
 ---
 
@@ -176,7 +176,7 @@ Publishing guides: [Chrome Web Store](docs/chrome-web-store.md) · [Firefox Add-
 ## Start here: one command
 
 ```bash
-git clone https://github.com/iloveclouduk/AWS-North-Hackathon.git && cd AWS-North-Hackathon
+git clone https://github.com/salman-abdulrazaq-ali/aws-city.git && cd aws-city
 npm start
 ```
 
@@ -236,7 +236,7 @@ Keep the `--`: without it npm keeps the options for itself.
 ### 1 · Play now
 
 ```bash
-git clone https://github.com/iloveclouduk/AWS-North-Hackathon.git && cd AWS-North-Hackathon
+git clone https://github.com/salman-abdulrazaq-ali/aws-city.git && cd aws-city
 npm install
 npm run open          # builds the extension and opens Chromium with it loaded
 ```
@@ -268,10 +268,16 @@ npm install
 npm run setup         # a wizard: asks a few questions, checks everything, deploys, builds the extension
 ```
 
+**New AWS account? Follow [the step-by-step guide](docs/self-hosting.md)**. It covers everything a new account
+needs: root MFA, the Paid plan (upgrade as root), an admin user with MFA, signing in, Amazon Nova or Claude, and what
+to do while AWS holds Bedrock for a new account.
+
 **Before you start** (the wizard checks these and tells you exactly what's missing):
-1. **An AWS account where you're an admin**, signed in on this computer. Use `aws login`
-   (AWS CLI 2.32+), `aws configure sso`, or `export AWS_PROFILE=<profile>`.
-2. **Claude on Amazon Bedrock.** Serverless models are enabled on first use, but Anthropic asks each
+1. **An AWS account on the Paid plan, where you're an admin (not root)**, signed in on this computer. Use `aws login`
+   (AWS CLI 2.32+), `aws configure sso`, or `export AWS_PROFILE=<profile>`. The wizard warns about root and stops on the
+   Free plan, whose account closes when its credits run out.
+2. **The AI models on Amazon Bedrock.** The wizard asks: **Amazon Nova** (recommended: Amazon's own models, nothing
+   extra to enable) or **Claude**. For Claude, serverless models are enabled on first use, but Anthropic asks each
    account (or organization) for a one-time use-case form: in the Bedrock console, open the **Model catalog**,
    pick a Claude model and submit it. The first call also needs `aws-marketplace:Subscribe` and a payment
    method ([AWS docs](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html)). The wizard
@@ -284,7 +290,8 @@ contains no secrets):
 | Question | Why | If you're not sure |
 |---|---|---|
 | Environment | `prod` (players) or `staging` (test copy). Both can live in one account. | `staging` first, then `prod` |
-| Region | Where it runs. Claude runs through a Bedrock geo inference profile, so only these Regions work: US and Canada (`us.`), Europe (`eu.`), Sydney/Melbourne (`au.`), Mumbai/Hyderabad (`in.`); the wizard lists them (`infra/lib/models.ts`). | `us-west-2` |
+| AI models | Amazon Nova (on demand in the Region, run on Strands Agents) or Claude (geo inference profiles). | **Amazon Nova** |
+| Region | Where it runs. With Claude, only Regions with a Bedrock geo inference profile work: US and Canada (`us.`), Europe (`eu.`), Sydney/Melbourne (`au.`), Mumbai/Hyderabad (`in.`); the wizard lists them (`infra/lib/models.ts`). | `us-west-2` |
 | Web address | A Route 53 domain gives `api.yourdomain.com`; otherwise CloudFront gives free HTTPS. | **No domain** |
 | Sign-in page name | Your Cognito sign-in address. The wizard checks it's free. | Accept the suggestion |
 | Google sign-in | Optional "Sign in with Google" ([guide](docs/google-sign-in.md)). Email + password always works. | Skip; add it later |
@@ -305,7 +312,9 @@ contains no secrets):
    assigns its id), plus a copy to try in `.output/chrome-mv3-<env>` when the local build may sign in.
 
 **When it's done:**
-- **Try it (staging):** in `chrome://extensions`, click **Load unpacked** and pick `.output/chrome-mv3-staging`.
+- **Try it:** answer Yes to setup's last question, or run `npm run open:hosted` any time. It opens your live city in
+  its own browser window. In your everyday Chrome: `chrome://extensions` → **Load unpacked** → `.output/chrome-mv3-staging`
+  (the keyed copy setup keeps for this environment; `.output/chrome-mv3` is the same build until the demo rebuilds it).
 - **Publish:** upload `.output/*-chrome.zip` to the Chrome Web Store (and, if you like, Edge Add-ons)
   ([guide](docs/chrome-web-store.md)), then run `npm run setup` again and enter the store ids.
 - **Players connect their own AWS account** from ⋯ → Account: the steps, the role's exact permissions, updating,
@@ -335,10 +344,18 @@ contains no secrets):
 npm start                             # pick "Real AWS": signs you in, checks Claude on Bedrock, then runs live
 npm run live                          # the same, without the questions: profile aws-city / workshop / default
 npm run live -- --profile me --region eu-west-1 --browser firefox
+npm run live -- --model local         # the agents' AI on this computer (Ollama): when Bedrock is held, or offline
+npm run live -- --model nova --local-fallback   # Amazon Nova first, this computer when Bedrock is held
 ```
 
 The local server listens on `127.0.0.1` only and uses your profile. Each change still needs your
 Approve. It picks up refreshed keys within a minute.
+
+**The AI on this computer.** `--model local` runs every agent on [Strands Agents](https://strandsagents.com) with a
+model in [Ollama](https://ollama.com) instead of Bedrock: the same tools, approvals and MFA, no model costs, and the
+questions never leave your computer. The launcher offers to install Ollama (Homebrew), start it and download the
+model once (`qwen3:8b`, about 5 GB; `--local-model` picks another). `--local-fallback` puts it behind Amazon Nova
+with Strands' `ModelRouter`, so the city keeps talking when Bedrock is held. The hosted city stays on Bedrock only.
 
 ---
 
@@ -375,7 +392,7 @@ flowchart LR
   once. Optionally, Jev (a second opinion that can only make a change stricter) looks at each proposed write first:
   [docs/jev.md](docs/jev.md).
 - **Costs are capped.** Each player has a daily AI quota, and there's a kill switch
-  (`/aws-city/<env>/ai-enabled`). At 100% of the budget, AI is cut off automatically.
+  (`/cloud-city/<env>/ai-enabled`). At 100% of the budget, AI is cut off automatically.
 - **Architecture:** [docs/well-architected.md](docs/well-architected.md) is our Well-Architected
   review with evidence. Infra passes the cdk-nag AWS Solutions checks.
 

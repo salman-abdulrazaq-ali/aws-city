@@ -64,13 +64,22 @@ Neither one deletes what the game built in your AWS account: take those down fir
 
 ## What we process but don't keep
 
-- **Your questions and requests** are sent to Claude (an AI model) on Amazon Bedrock to produce the
-  agents' answers. Amazon Bedrock doesn't store them or use them to train models.
+- **Your questions and requests** are sent to an AI model on Amazon Bedrock (Amazon Nova or Claude, whichever the
+  city's host chose) to produce the agents' answers. Amazon Bedrock doesn't store them or use them to train models.
+  They're processed in the AWS Region the host runs the AI in, usually the Region that stores your data; when a new
+  account's Bedrock is still on hold there, it can be another one (the host's setup says which). While Bedrock is
+  unavailable, a host can instead answer them with an open model (Qwen3) running on its own AWS servers in the
+  Region that stores your data; nothing is kept after the answer. Before anything reaches a model, the server takes out
+  anything that looks like an access key, secret key, session token or email address.
 - **A safety check on changes (only if this service has it turned on):** before you're asked to approve a change an
   agent wants to make in your AWS account, your own words for that task (at most 500 characters, with AWS account ids
   and ARNs removed), the kind of change and its one-line summary are sent to TypeSafe's Jev service, which says how
   risky the change looks. Nothing read from your AWS account is sent, and the check can only make the city stricter
   (you still approve every change).
+- **AWS documentation search:** to ground an answer in AWS's own documentation, the server sends a short search
+  (the service's name and your question, with keys and emails taken out) to AWS's public Knowledge MCP service
+  (`knowledge-mcp.global.api.aws`), which is run by AWS outside the host's account. It doesn't include your
+  account id, your name or your sign-in.
 - **Names of the resources in your linked AWS account** (e.g. bucket and table names) are read so
   the city can draw them, and so are your account's Availability Zone names and IDs and which AWS Regions it has turned
   on. They're kept in the server's memory while you're playing, not saved.
@@ -140,4 +149,4 @@ logs above age out on their own schedule (30 or 90 days).
 
 ## Contact
 
-Questions, deletion requests and concerns about children's data: {{CONTACT_EMAIL}} ({{OPERATOR_NAME}}).
+Questions, deletion requests and concerns about children's data: {{CONTACT_EMAIL}} ({{OPERATOR_NAME}}). You can also open an issue at https://github.com/salman-abdulrazaq-ali/aws-city.

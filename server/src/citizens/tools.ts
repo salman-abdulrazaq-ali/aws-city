@@ -2,7 +2,7 @@ import { tool } from '@strands-agents/sdk';
 import { z } from 'zod';
 import { docsBlock, type Knowledge } from '../knowledge/mcp.js';
 import { ACTION_SCHEMAS, type ActionName } from '../agents/actions.js';
-import { outcomeMessage, outcomeText, submitOpts, type ToolCallReport, type TurnHooks } from '../agents/runner.js';
+import { outcomeText, submitOpts, toolReport, type ToolCallReport, type TurnHooks } from '../agents/runner.js';
 import type { ActionService, SubmitOutcome } from '../agents/service.js';
 
 /** What a tool callback needs from the turn that's running (set by the engine before each invoke). */
@@ -25,7 +25,7 @@ export const actionTools = (names: ActionName[], deps: { actions: ActionService;
       callback: async (input: unknown) => {
         const ctx = deps.turn();
         const outcome: SubmitOutcome = ctx?.hooks.approve ? await deps.actions.submit(name, input, submitOpts(ctx.hooks)) : await deps.actions.submit(name, input);
-        const report: ToolCallReport = { name, input, outcome: outcome.status, message: outcomeMessage(outcome) };
+        const report: ToolCallReport = toolReport(name, input, outcome);
         ctx?.toolCalls.push(report);
         ctx?.hooks.onToolEnd?.(report);
         return outcomeText(outcome);
@@ -33,7 +33,7 @@ export const actionTools = (names: ActionName[], deps: { actions: ActionService;
     }),
   );
 
-export const SEARCH_DOCS = 'search_aws_docs';
+const SEARCH_DOCS = 'search_aws_docs';
 
 /** Read-only AWS documentation search through the allow-listed Knowledge MCP client (results wrapped as data). */
 export const docsTool = (knowledge: Knowledge, sources: () => { title: string; url: string }[] | undefined) =>

@@ -3,7 +3,7 @@ import { planDeploy, submitPrompt } from '@/app/runtime';
 import { bus } from '@/state/bus';
 import { nextAction } from '@/state/next';
 import { agentName, useCity, type FeedItem, type TaskView } from '@/state/store';
-import { agentOffer, liveStep, paidLine, taskPhase, taskStory } from '@/state/watch';
+import { agentOffer, liveStep, paidLine, taskPhase, taskStory, thinkingLine, watchLine } from '@/state/watch';
 import { placeFor } from '@/world/places';
 import { feel } from './feedback';
 import { offlineReason } from './logic';
@@ -59,6 +59,10 @@ export function TaskCard({ task, openTab, quiet = false }: { task: TaskView; ope
   const progress = useCity((s) => s.progress);
   const cityRegion = useCity((s) => s.cityRegion);
   const clientFocus = useCity((s) => s.clientFocus);
+  // The agent's model call is running (a small CPU model can take most of a minute): the card says so.
+  const thinking = useCity((s) => (finished ? undefined : thinkingLine(s.agents[who], story.who)));
+  // A change this task asked for, waiting for the player's OK in Deploy (the card says so and takes them there).
+  const waiting = useCity((s) => Object.values(s.deploys).find((d) => d.taskId === task.taskId && d.status === 'preview'));
   // The one next step (src/state/next.ts), read once the task is done.
   const next = useMemo(() => (phase === 'result' && !quiet ? nextAction({ progress, cityRegion, clientFocus }) : undefined), [phase, quiet, progress, cityRegion, clientFocus]);
   const now = liveStep(task);
@@ -108,7 +112,7 @@ export function TaskCard({ task, openTab, quiet = false }: { task: TaskView; ope
       <div className="task-prompt">“{task.prompt}”</div>
       {phase === 'framing' && (
         <p className="watch-framing">
-          <Plain text={story.framing} /> {story.watch}
+          <Plain text={story.framing} /> {watchLine(task, story.who)}
         </p>
       )}
       {/* While watching, the card names the step the canvas shows (the walk there too), in step with its bubble. */}
@@ -119,6 +123,19 @@ export function TaskCard({ task, openTab, quiet = false }: { task: TaskView; ope
           </span>{' '}
           <Plain text={now.text} />
         </p>
+      )}
+      {thinking && !waiting && (
+        <p className="watch-thinking" role="status">
+          {thinking}
+        </p>
+      )}
+      {!finished && waiting && (
+        <div className="task-approve" role="status">
+          <span>⏳ Waiting for your Approve</span>
+          <button className="btn tiny" onClick={() => (feel.tap(), useCity.getState().openDeployAt(waiting.deployId))} title="Opens the Deploy tab at this change's card">
+            Approve in Deploy →
+          </button>
+        </div>
       )}
       {phase === 'result' && (
         <div className="watch-result">
@@ -148,9 +165,16 @@ export function TaskCard({ task, openTab, quiet = false }: { task: TaskView; ope
           {deploy === 'link' && <p className="muted small">Link the practice account in Deploy first, then press “See it in Deploy” again.</p>}
         </div>
       )}
-      {phase === 'failed' && task.result && (
+      {phase === 'failed' && (
         <div className="task-result">
-          <Plain text={task.result} />
+          {task.result && <Plain text={task.result} />}
+          {!quiet && (
+            <div className="actions">
+              <button className="btn tiny" disabled={!!offline} title={offline ?? 'Ask again, with the same words'} onClick={() => (feel.send(), submitPrompt(task.prompt))}>
+                ↻ Try again
+              </button>
+            </div>
+          )}
         </div>
       )}
       {details && calls.length > 0 && (

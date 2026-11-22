@@ -17,6 +17,8 @@ import { serviceById } from '@/world/taxonomy';
 import { REGIONS } from '@/world/culture';
 import { citizenById, PILLAR_LABEL } from '@/world/citizens';
 import { bus } from './bus';
+import { doneLine } from './builds';
+import { failedReason } from './watch';
 import { growthLine, growthOf } from './growth';
 import { newsOpen } from './ladder';
 import { builtCities, carriedStars, landmarkOf, migrateCities, withLandmark } from './cities';
@@ -124,6 +126,8 @@ export interface Toast {
   /** A building's moment (browsing grew it): its service icon pops beside the text, with its growth line under it. */
   serviceId?: string;
   detail?: string;
+  /** Pressing the toast does this (then it goes), e.g. open the approval waiting in Deploy. Without one it just goes. */
+  action?: () => void;
 }
 
 /** Info toasts wait here so only one shows at a time (errors show at once). */
@@ -195,9 +199,11 @@ export interface AccountState {
   error?: string;
   /** The server wants an authenticator app on before linking (error code mfa_required). */
   mfaRequired?: boolean;
+  /** The server wants a fresh sign-in before linking, approving or fixing (error code reauth_required). */
+  reauthRequired?: boolean;
   /** Bumped on every account.status, so a repeated reply (same message) still settles a pending button. */
   seq?: number;
-  // v2.17 (account.status): a link whose role stopped working, whether fixes are allowed, the role's version.
+  // v2.19 (account.status): a link whose role stopped working, whether fixes are allowed, the role's version.
   broken?: boolean;
   fixes?: boolean;
   roleVersion?: number;
@@ -218,6 +224,12 @@ export interface DeployView {
   templateId: string;
   stackName: string;
   region: string;
+  /** v2.18: the AWS account the change goes to. */
+  accountId?: string;
+  /** The agent task that asked for this change (its card offers "Approve in Deploy"). */
+  taskId?: string;
+  /** What the change made or touched (a launch's i-… id, from deploy.status outputs.ResourceId). */
+  resourceId?: string;
   changes: DeployChange[];
   costNote?: string;
   status: 'preview' | DeployStatusEvent['status'];
@@ -401,6 +413,11 @@ export interface CityState {
   taskOrder: string[];
   feed: FeedItem[];
   chats: Record<string, ChatMsg[]>;
+  /** Questions asked in an HQ while its last answer is still coming: sent one by one, never dropped. */
+  chatQueue: Record<string, string[]>;
+  queueChat(districtId: string, question: string): void;
+  /** The next queued question for this HQ (removed from the queue), if any. */
+  takeQueuedChat(districtId: string): string | undefined;
   toasts: Toast[];
   view: View;
   /** The Region whose city you're in (each Region is its own city; the world map picks one). */
@@ -412,6 +429,14 @@ export interface CityState {
   lastSnapshot?: string;
   account: AccountState;
   deploys: Record<string, DeployView>;
+  /** The approval card the Deploy tab brings into view and focuses next time it shows it (then clears). */
+  deployFocus?: string;
+  /** Bumped by openDeployAt: the app opens the Deploy tab (leaving an HQ first). */
+  deployOpenSeq: number;
+  /** Open Deploy at this approval card (from a task card or a toast), wherever the player is. */
+  openDeployAt(deployId?: string): void;
+  /** The Deploy tab brought the focused card up. */
+  clearDeployFocus(): void;
   agentLevels: Record<string, number>;
   /** v2.3 city care: what's in the account, the findings by id, and the one whose card is open. */
   inventory?: Inventory;
@@ -442,6 +467,9 @@ export interface CityState {
   openLaunch(open: boolean): void;
   /** My City (src/ui/Collection.tsx): everything earned, open or closed. */
   collectionOpen: boolean;
+  /** "My AWS, live" (src/ui/AccountMap.tsx): the linked account as one map. */
+  accountMapOpen: boolean;
+  openAccountMap(open: boolean): void;
   openCollection(open: boolean): void;
   /** A Console Copilot task started from a workshop step: when it finishes well, the step is done for real. */
   copilotFor?: { taskId: string; workshopId: string; stepId: string };
@@ -558,7 +586,7 @@ export interface CityState {
   addUserChat(districtId: string, requestId: string, text: string): void;
   log(item: Omit<FeedItem, 'id' | 'at'>): void;
   /** `first`: the player's own moment (a quest step done): it goes to the front of the queue and is never trimmed. */
-  toast(icon: string, text: string, kind?: Toast['kind'], merge?: { group: 'discover'; item: string }, building?: { serviceId: string; detail?: string }, opts?: { first?: boolean }): void;
+  toast(icon: string, text: string, kind?: Toast['kind'], merge?: { group: 'discover'; item: string }, building?: { serviceId: string; detail?: string }, opts?: { first?: boolean; action?: () => void }): void;
   /** Drop every toast, shown or waiting. */
   clearToasts(): void;
   /** Internal: put one toast on screen now (toast() decides when). */
@@ -571,6 +599,8 @@ export interface CityState {
   /** A sign-in window is open (buttons disable until it settles). */
   signingIn: boolean;
   setSigningIn(on: boolean): void;
+  /** A fresh sign-in finished: step-up can go ahead. */
+  clearReauth(): void;
   /** Signed out (here or in another surface): forget everything that belonged to that player. */
   resetSession(): void;
   /** Coach-mark tour overlay (UI-only, not persisted here — the done flag lives in localStorage). */
@@ -772,6 +802,7 @@ export const useCity = create<CityState>()((set, get) => ({
   taskOrder: [],
   feed: [],
   chats: {},
+  chatQueue: {},
   toasts: [],
   // First time: the world map, to pick a Region. After that: straight back into your last Region's city.
   view: loadPrefs().region ? { name: 'city' } : { name: 'world' },
@@ -780,6 +811,7 @@ export const useCity = create<CityState>()((set, get) => ({
   snap: 'idle',
   account: { linked: false },
   deploys: {},
+  deployOpenSeq: 0,
   agentLevels: {},
   findings: {},
   openIncident: (id) => set({ incidentOpen: id }),
@@ -811,6 +843,7 @@ export const useCity = create<CityState>()((set, get) => ({
   explanations: {},
   workshopChecks: {},
   collectionOpen: false,
+  accountMapOpen: false,
   launchOpen: false,
   openLaunch: (launchOpen) => set({ launchOpen }),
   boards: {},
@@ -830,6 +863,7 @@ export const useCity = create<CityState>()((set, get) => ({
     set({ progress: { ...p, profile: { public: on, name }, updatedAt: new Date().toISOString() } });
   },
   openCollection: (collectionOpen) => set({ collectionOpen }),
+  openAccountMap: (accountMapOpen) => set({ accountMapOpen }),
   openWorkshop: (workshopOpen) => set({ workshopOpen }),
   openClients: (id) => set(id ? { clientsOpen: id, clientFocus: id } : { clientsOpen: id }),
   setBuild: (on) => set({ build: on ? (get().build ?? { tool: 'place', undo: [] }) : undefined, ...(on ? { selected: undefined } : {}) }),
@@ -1200,9 +1234,18 @@ export const useCity = create<CityState>()((set, get) => ({
       }
       case 'agent.state': {
         set({ agents: { ...s.agents, [e.agentId]: { state: e.state, service: e.service, detail: e.detail } } });
-        // An API name (service:Action) while one of the player's tasks runs on this agent: that task made the call.
-        const own = e.state === 'working' && e.detail && /^[a-z0-9-]+:[A-Za-z]+$/.test(e.detail) ? Object.values(s.tasks).find((t) => t.status === 'running' && t.agentId === e.agentId) : undefined;
-        if (own && !own.calls?.includes(e.detail!)) set({ tasks: { ...get().tasks, [own.taskId]: { ...own, calls: [...(own.calls ?? []), e.detail!] } } });
+        // An API name while one of the player's tasks runs on this agent: that task made the call. The demo sends
+        // "s3:CreateBucket"; the server sends service "s3" and "CreateBucket — <what>" (its model calls aren't AWS calls).
+        const api =
+          e.state !== 'working' || !e.detail
+            ? undefined
+            : /^[a-z0-9-]+:[A-Za-z]+$/.test(e.detail)
+              ? e.detail
+              : e.service && e.service !== 'bedrock' && /^([A-Z][A-Za-z]+) — /.exec(e.detail)
+                ? `${e.service}:${/^([A-Z][A-Za-z]+) — /.exec(e.detail)![1]}`
+                : undefined;
+        const own = api ? Object.values(s.tasks).find((t) => t.status === 'running' && t.agentId === e.agentId) : undefined;
+        if (own && api && !own.calls?.includes(api)) set({ tasks: { ...get().tasks, [own.taskId]: { ...own, calls: [...(own.calls ?? []), api] } } });
         if (e.state === 'working' && e.detail) s.log({ kind: 'state', from: e.agentId, text: e.detail, ambient: !taskRunning(s) });
         break;
       }
@@ -1279,7 +1322,7 @@ export const useCity = create<CityState>()((set, get) => ({
         const id = `a-${e.requestId}`;
         const i = list.findIndex((m) => m.id === id);
         if (i === -1) list.push({ id, role: 'agent', agentId: e.agentId, text: e.delta, pending: !e.done });
-        else list[i] = { ...list[i], text: list[i].text + e.delta, pending: !e.done };
+        else list[i] = { ...list[i], agentId: e.agentId, text: list[i].text + e.delta, pending: !e.done };
         set({ chats: { ...s.chats, [e.districtId]: list.slice(-CHAT_MAX) } });
         // An answer pays its building for the first few questions a day, so chatting isn't a star tap.
         // Both caps count only answers that would pay: a building's own first few, then the city-wide day's total.
@@ -1341,8 +1384,10 @@ export const useCity = create<CityState>()((set, get) => ({
         set({
           deploys: {
             ...s.deploys,
-            [e.deployId]: { deployId: e.deployId, templateId: e.templateId, stackName: e.stackName, region: e.region, changes: e.changes, costNote: e.costNote, status: 'preview', ...care },
+            [e.deployId]: { deployId: e.deployId, templateId: e.templateId, stackName: e.stackName, region: e.region, accountId: e.accountId, ...(e.taskId ? { taskId: e.taskId } : {}), changes: e.changes, costNote: e.costNote, status: 'preview', ...care },
           },
+          // The Deploy tab brings a new approval up and focuses Approve when it next shows (a fix is approved on its finding's card).
+          ...(e.findingId ? {} : { deployFocus: e.deployId }),
         });
         if (e.findingId) get().noteCare(e.findingId);
         break;
@@ -1396,12 +1441,20 @@ export const useCity = create<CityState>()((set, get) => ({
           }
         break;
       }
-      case 'aws.news':
+      case 'aws.news': {
+        const seen = new Set((s.news?.items ?? []).map((n) => n.id));
         set({ news: e });
+        // AWS City Live: a launch that lands while the city is open lights up its building (not the batch on connect),
+        // after the news rung opens (src/state/ladder.ts). One info toast a batch, so re:Invent week doesn't flood.
+        const fresh = s.news && newsOpen(s.progress, s.account.linked) ? e.items.filter((n) => !seen.has(n.id)) : [];
+        for (const item of fresh) bus.emit('launch', { item });
+        if (fresh.length) s.toast('🚀', `New from AWS: ${fresh[0].title}${fresh.length > 1 ? ` (+${fresh.length - 1} more)` : ''}`);
         break;
+      }
       case 'deploy.status': {
         const d = s.deploys[e.deployId];
-        if (d) set({ deploys: { ...s.deploys, [e.deployId]: { ...d, status: e.status, outputs: e.outputs ?? d.outputs, message: e.message } } });
+        const resourceId = e.outputs?.ResourceId ?? d?.resourceId;
+        if (d) set({ deploys: { ...s.deploys, [e.deployId]: { ...d, status: e.status, outputs: e.outputs ?? d.outputs, message: e.message, ...(resourceId ? { resourceId } : {}) } } });
         s.log({ kind: 'system', text: `🏗️ ${d?.stackName ?? e.deployId}: ${e.status}${e.message ? ` — ${e.message}` : ''}` });
         if (d?.findingId) {
           // A fix: the finding's own event says how it went; only a refusal needs saying here.
@@ -1413,10 +1466,13 @@ export const useCity = create<CityState>()((set, get) => ({
           if (get().celebration === before)
             s.toast(
               '🚀',
-              // A practice build (a serverless template the server can't build for real yet) made nothing in AWS.
+              // A practice build (a serverless template the server can't build for real yet) made nothing in AWS; anything
+              // else says what it did in its own words (src/state/builds.ts doneLine).
               isPracticeDeploy(e.deployId)
                 ? `${d?.stackName ?? 'Your stack'}: practice build done. Nothing was created in your AWS account.`
-                : `${d?.stackName ?? 'Your stack'} is built in ${s.backendKind === 'mock' ? 'the practice account' : 'your AWS account'}!`,
+                : d
+                  ? doneLine(d, s.backendKind === 'mock')
+                  : 'Your stack is built!',
             );
         }
         break;
@@ -1432,12 +1488,17 @@ export const useCity = create<CityState>()((set, get) => ({
         const care = e.requestId ? Object.entries(s.careRequests).find(([, r]) => r.requestId === e.requestId) : undefined;
         if (care) get().noteCare(care[0]);
         if (e.code === 'mfa_required') set({ account: { ...s.account, mfaRequired: true } });
+        if (e.code === 'reauth_required') set({ account: { ...get().account, reauthRequired: true } });
         // A Disconnect that failed: its button stops waiting.
         if (e.requestId && e.requestId === s.account.unlinking) set({ account: { ...get().account, unlinking: undefined } });
         const text = errorText(e);
         s.log({ kind: 'system', text: `⚠️ ${text}` });
         s.toast('⚠️', text, 'error');
-        if (e.taskId && s.tasks[e.taskId]) set({ tasks: { ...s.tasks, [e.taskId]: { ...s.tasks[e.taskId], status: 'failed' } } });
+        // A task that failed says why on its card, and the step it was on stops as failed (never left "running").
+        if (e.taskId && s.tasks[e.taskId]) {
+          const t = s.tasks[e.taskId];
+          set({ tasks: { ...s.tasks, [e.taskId]: { ...t, status: 'failed', result: failedReason(text), steps: t.steps.map((st) => (st.status === 'running' ? { ...st, status: 'failed' as const } : st)) } } });
+        }
         // Show it in the HQ chat it belongs to (by requestId), else in the HQ the player is standing in.
         const chats = get().chats;
         const byRequest = e.requestId ? Object.keys(chats).find((d) => chats[d].some((m) => m.id === `u-${e.requestId}`)) : undefined;
@@ -1464,7 +1525,15 @@ export const useCity = create<CityState>()((set, get) => ({
 
   addUserChat: (districtId, requestId, text) => {
     const s = get();
-    set({ chats: { ...s.chats, [districtId]: [...(s.chats[districtId] ?? []), { id: `u-${requestId}`, role: 'user' as const, text }].slice(-CHAT_MAX) } });
+    // The answer's bubble shows at once, thinking, so a slow model never looks like nothing happened.
+    const asked = [{ id: `u-${requestId}`, role: 'user' as const, text }, { id: `a-${requestId}`, role: 'agent' as const, text: '', pending: true }];
+    set({ chats: { ...s.chats, [districtId]: [...(s.chats[districtId] ?? []), ...asked].slice(-CHAT_MAX) } });
+  },
+  queueChat: (districtId, question) => set((s) => ({ chatQueue: { ...s.chatQueue, [districtId]: [...(s.chatQueue[districtId] ?? []), question].slice(-5) } })),
+  takeQueuedChat: (districtId) => {
+    const [next, ...rest] = get().chatQueue[districtId] ?? [];
+    if (next !== undefined) set((s) => ({ chatQueue: { ...s.chatQueue, [districtId]: rest } }));
+    return next;
   },
 
   log: (item) => set((s) => ({ feed: [...s.feed, { ...item, id: nextId++, at: Date.now() }].slice(-FEED_MAX) })),
@@ -1473,6 +1542,7 @@ export const useCity = create<CityState>()((set, get) => ({
   patchAccount: (patch) => set((s) => ({ account: { ...s.account, ...patch } })),
   restartLink: () => set((s) => ({ account: { ...s.account, wantsLink: true, linkUrl: undefined, externalId: undefined, stackLeft: undefined, error: undefined } })),
   setSigningIn: (signingIn) => set({ signingIn }),
+  clearReauth: () => set((st) => (st.account.reauthRequired ? { account: { ...st.account, reauthRequired: false } } : {})),
   resetSession: () => {
     // Findings held for this player must not reach the next one.
     heldFindings.clear();
@@ -1542,7 +1612,16 @@ export const useCity = create<CityState>()((set, get) => ({
         return;
       }
     }
-    const entry = { icon, text, kind, ms: building ? 4500 : 3500, ...(merge ? { group: merge.group, items: [merge.item] } : {}), ...(building ? { serviceId: building.serviceId, detail: building.detail } : {}) };
+    const entry = {
+      icon,
+      text,
+      kind,
+      // A toast that does something stays long enough to be pressed.
+      ms: opts?.action ? 9000 : building ? 4500 : 3500,
+      ...(merge ? { group: merge.group, items: [merge.item] } : {}),
+      ...(building ? { serviceId: building.serviceId, detail: building.detail } : {}),
+      ...(opts?.action ? { action: opts.action } : {}),
+    };
     if (opts?.first) toastQueue.unshift(entry);
     else toastQueue.push(entry);
     // A burst never trickles on for a minute: only the latest few wait their turn (a `first` toast at the front stays).
@@ -1561,6 +1640,12 @@ export const useCity = create<CityState>()((set, get) => ({
     toastTimers.set(id, setTimeout(() => get().dismissToast(id), t.ms));
   },
   setTourOpen: (tourOpen) => set({ tourOpen }),
+  openDeployAt: (deployId) => {
+    // An HQ's chat stands where the tabs are: go back out to the city first.
+    if (get().view.name === 'interior') get().setView({ name: 'city' });
+    set((s) => ({ deployOpenSeq: s.deployOpenSeq + 1, ...(deployId ? { deployFocus: deployId } : {}) }));
+  },
+  clearDeployFocus: () => set({ deployFocus: undefined }),
   dismissToast: (id) => {
     // Slide out first, then remove.
     if (!get().toasts.some((t) => t.id === id && !t.leaving)) return;

@@ -7,7 +7,7 @@ import type { Approvals } from '../src/contract/approvals.js';
 import type { Orchestrator } from '../src/contract/orchestrator.js';
 import { createProgressStore } from '../src/contract/progress.js';
 import { createUploadStore } from '../src/contract/uploads.js';
-import { createHttpServer, DELETED_CHECK_MS, health, MIN_CLIENT_CONTRACT, rateLimiter, sweeper, versionRefusal } from '../src/http.js';
+import { createHttpServer, DELETED_CHECK_MS, health, MIN_CLIENT_CONTRACT, rateLimiter, ROOT_INFO, sweeper, versionRefusal } from '../src/http.js';
 import type { Poller } from '../src/state/poller.js';
 import type { Tenant } from '../src/tenants.js';
 import { CONTRACT_HEADER, CONTRACT_VERSION, type ServerEvent } from '../src/world.js';
@@ -78,13 +78,24 @@ const until = async (ok: () => boolean, ms = 3000) => {
 };
 
 describe('HTTP/WebSocket guards', () => {
-  it('REST needs the token; the pinned extension origin alone is refused (its id is public)', async () => {
+  it('REST needs the token; the pinned extension origin alone is refused (its id is public, and any local program can forge it)', async () => {
     expect((await fetch(`${base}/progress`)).status).toBe(401);
     expect((await fetch(`${base}/progress`, { headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(404);
     expect((await fetch(`${base}/progress`, { headers: { origin: 'chrome-extension://abc' } })).status).toBe(401);
     expect((await fetch(`${base}/progress`, { headers: { origin: 'chrome-extension://abc', authorization: `Bearer ${TOKEN}` } })).status).toBe(404);
-    // Origin stays the browser check: a foreign one is refused even with the token.
+    // Origin stays the browser check: a foreign one is refused, with or without the token.
+    expect((await fetch(`${base}/progress`, { headers: { origin: 'chrome-extension://other' } })).status).toBe(403);
     expect((await fetch(`${base}/progress`, { headers: { origin: 'chrome-extension://other', authorization: `Bearer ${TOKEN}` } })).status).toBe(403);
+  });
+
+  it('the root says what the server is, with no sign-in and nothing about a player', async () => {
+    const r = await fetch(`${base}/`);
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ ...ROOT_INFO, status: 'ok' });
+    // Only the bare root: everything else still needs the token.
+    expect((await fetch(`${base}/?x=1`)).status).toBe(200);
+    expect((await fetch(`${base}/me`)).status).toBe(401);
+    expect((await fetch(`${base}/`, { method: 'POST' })).status).not.toBe(200);
   });
 
   it('rejects a foreign Host header (DNS rebinding), except the health check', async () => {
@@ -96,6 +107,7 @@ describe('HTTP/WebSocket guards', () => {
         s.on('end', () => resolve(data));
       });
     expect(await raw('/progress')).toMatch(/^HTTP\/1.1 421/);
+    expect(await raw('/')).toMatch(/^HTTP\/1.1 421/);
     // Load balancer health checks use the task's IP as Host; /health says only which build answers.
     expect(await raw('/health')).toMatch(/^HTTP\/1.1 200/);
   });
@@ -156,6 +168,14 @@ describe('HTTP/WebSocket guards', () => {
     expect((await fetch(uploadUrl, { method: 'PUT', body: 'jpeg-bytes' })).status).toBe(200);
     expect((await fetch(uploadUrl, { method: 'PUT', body: 'again' })).status).toBe(403);
   });
+
+  it('screenshot uploads are rate-limited per player (a burst, then one every few seconds)', async () => {
+    const auth = { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' };
+    const codes: number[] = [];
+    for (let i = 0; i < 12; i++) codes.push((await fetch(`${base}/screenshots`, { method: 'POST', headers: auth, body: JSON.stringify({ contentType: 'image/png' }) })).status);
+    expect(codes.filter((c) => c === 200).length).toBeLessThanOrEqual(10);
+    expect(codes).toContain(429);
+  });
 });
 
 describe('player approvals over the socket (contract v2)', () => {
@@ -195,6 +215,21 @@ describe('player approvals over the socket (contract v2)', () => {
     const unlinked = next(ws!, 'error');
     ws!.send(JSON.stringify({ action: 'finding.explain', requestId: 'c2', findingId: 'f-1' }));
     expect(await unlinked).toMatchObject({ requestId: 'c2', code: 'unlinked' });
+    ws!.close();
+  });
+
+  it('a presence region or screenshot key the server never made is a bad command', async () => {
+    const { ws } = await openWs(TOKEN);
+    const bad = [
+      { action: 'presence.beat', region: `us-${'a'.repeat(40)}-1` },
+      { action: 'page.classify', requestId: 'p1', context: { screenshotKey: 'screenshots/../other/x.jpg' } },
+      { action: 'page.classify', requestId: 'p2', context: { screenshotKey: 'screenshots/local/not-a-uuid.png' } },
+    ];
+    for (const cmd of bad) {
+      const err = next(ws!, 'error');
+      ws!.send(JSON.stringify(cmd));
+      expect(await err).toMatchObject({ message: expect.stringContaining('Bad command') });
+    }
     ws!.close();
   });
 
@@ -243,7 +278,7 @@ describe('player approvals over the socket (contract v2)', () => {
   });
 });
 
-describe('the version handshake (v2.17)', () => {
+describe('the version handshake (v2.19)', () => {
   const auth = { authorization: `Bearer ${TOKEN}` };
   const progress = (contract?: string, init: RequestInit = {}) => fetch(`${base}/progress${contract === undefined ? '' : `?contract=${contract}`}`, { ...init, headers: { ...auth, ...init.headers } });
   const newer = `${CONTRACT_VERSION.split('.')[0]}.${Number(CONTRACT_VERSION.split('.')[1]) + 1}`;
@@ -351,13 +386,13 @@ describe('extension origins per browser', () => {
     expect(originMatches('https://evil.example', [])).toBe(false);
   });
 
-  it('Origin alone never authenticates (not even an exact one), and only scheme wildcards are accepted', async () => {
+  it('Origin alone never authenticates (exact or wildcard), and only scheme wildcards are accepted', async () => {
     const { ConfigError, loadConfig } = await import('../src/config.js');
     const { tokenAuth } = await import('../src/auth.js');
     const config = loadConfig({ EXTENSION_ORIGIN: 'chrome-extension://abc,moz-extension://*' });
     const auth = tokenAuth(config);
     const req = (origin: string, authorization?: string) => ({ headers: { origin, ...(authorization ? { authorization } : {}) } }) as never;
-    // The dev extension's id is public: any local program can send its Origin header.
+    // The dev extension's id is public: any local program can send its Origin header. Without the token it's refused.
     expect(await auth(req('chrome-extension://abc'), new URL('http://x/'))).toBeUndefined();
     expect(await auth(req('moz-extension://any-firefox-extension'), new URL('http://x/'))).toBeUndefined();
     expect(await auth(req('chrome-extension://abc', `Bearer ${config.token}`), new URL('http://x/'))).toEqual({ sub: 'local' });

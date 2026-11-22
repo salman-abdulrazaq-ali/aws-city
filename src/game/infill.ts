@@ -38,7 +38,7 @@ export interface InfillSprite {
 }
 
 /** A building in a segment: its sprite and footprint (tiles). */
-export interface InfillBuilding {
+interface InfillBuilding {
   sprite: string;
   x: number;
   y: number;
@@ -111,8 +111,8 @@ const SHAPES: readonly [number, number][] = [
   [1, 1],
 ];
 /** Street trees on every third sidewalk tile; a car on about this share of an avenue's kerb tiles. */
-export const TREE_EVERY = 3;
-export const PARK_SHARE = 0.3;
+const TREE_EVERY = 3;
+const PARK_SHARE = 0.3;
 export const MAX_PARKED = 48;
 /** Street lamps stand where (x + 2y) % 17 == 0 (CityMap.buildStreetFurniture): trees keep off those tiles. */
 const isLampTile = (x: number, y: number) => (x + 2 * y) % 17 === 0;
@@ -124,20 +124,20 @@ const isLampTile = (x: number, y: number) => (x + 2 * y) % 17 === 0;
 export const CLEAR_BAND = 3;
 export const CLEAR_MARGIN = 1;
 /** A locked district's tallest class where the real place is built up (density ≥ 2): mid-rise walk-ups. */
-export const LOCKED_CAP = 1;
+const LOCKED_CAP = 1;
 /** Share of segments drawn in the other style (accents), of big segments with a courtyard garden, of a segment's dominant kind. */
-export const STYLE_ACCENT = 0.25;
-export const GARDEN_SHARE = 1 / 8;
-export const DOMINANT_SHARE = 0.65;
+const STYLE_ACCENT = 0.25;
+const GARDEN_SHARE = 1 / 8;
+const DOMINANT_SHARE = 0.65;
 const GARDEN = ['tree1', 'tree0', 'flowers', 'pack:bench_SE', 'tree1'] as const;
 /** AZ islands start this many tiles out from the core (layout.RIVER.to + 1): infill never rises over them. */
 const ISLAND_FROM = RIVER.to + 1;
 const CAR_SKINS = ['navy', 'orange', 'white', 'teal'] as const;
 /** How far a parked car sits from its lane tile's centre, towards the kerb (lanes run at ±0.22). */
-export const PARK_OFFSET = 0.4;
+const PARK_OFFSET = 0.4;
 
 /** The district level (average landmark tier of the buildings put up, at least two): what decor's skyline used. */
-export function districtLevel(id: DistrictId, tierOf: (s: string) => number) {
+function districtLevel(id: DistrictId, tierOf: (s: string) => number) {
   const tiers = servicesIn(id)
     .map((s) => tierOf(s.id))
     .filter((t) => t >= 0);

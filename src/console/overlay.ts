@@ -53,7 +53,7 @@ button.px.stop { background: #ff6b6b; border-color: #ff6b6b; color: #fff; }
  * What the player sees for a control: radio tiles and styled checkboxes hide the native input
  * (1 px, opacity 0), so frame the label around it instead. Acting still uses the exact input.
  */
-export function visualTarget(el: Element): Element {
+function visualTarget(el: Element): Element {
   if (!(el instanceof HTMLInputElement)) return el;
   const r = el.getBoundingClientRect();
   const opacity = Number(el.ownerDocument.defaultView?.getComputedStyle(el).opacity ?? '1');

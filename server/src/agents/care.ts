@@ -3,7 +3,7 @@ import { classifyAwsError, type AwsClients } from '../aws.js';
 import type { Approvals } from '../contract/approvals.js';
 import { GuardDeniedError, mintGrant, withGrant } from '../guard/gate.js';
 import { log, publicErrors } from '../log.js';
-import { enrich, inventoryEvent, readGeo, readInventory } from '../state/inventory.js';
+import { enrich, type Inventory, inventoryEvent, readGeo, readInventory } from '../state/inventory.js';
 import { forgetSetting } from '../state/poller.js';
 import type { WorldSnapshot } from '../state/model.js';
 import { LockLostError } from '../store/types.js';
@@ -11,14 +11,14 @@ import type { CityFinding, CityInventoryEvent, Progress, ServerEvent } from '../
 import { diffFindings, findingsFor } from './findings.js';
 import { FIXES, PartialFix, type FixContext } from './fixes.js';
 import { escapeTags, type AgentRunner } from './runner.js';
-import { RETIRED_REASON } from './service.js';
+import { type Audit, type AuditEntry, RETIRED_REASON } from './service.js';
 
 type Emit = (e: ServerEvent) => void;
 
 /** XP a citizen needs for each level (shared/citizens.json): 2 fixes the city's own resources, 3 anything. */
 const LEVEL_XP = citizensJson.levels.map((l) => l.xp);
 export const citizenLevel = (xp: number) => LEVEL_XP.filter((need) => xp >= need).length;
-export const LEVEL_FOR_SCOPE = { game: 2, account: 3 } as const;
+const LEVEL_FOR_SCOPE = { game: 2, account: 3 } as const;
 
 /** Which cached setting a fix changes, so the next poll reads it fresh. */
 const SETTING_KEY: Record<string, (f: CityFinding) => string | undefined> = {
@@ -59,10 +59,28 @@ export const createCityCare = (deps: {
   live?: () => Promise<boolean>;
   /** Aborted when this world is retired: a pending fix preview is cancelled. */
   retired?: AbortSignal;
+  /** Called once per approval card answered: the fix was done, failed, refused or the player said no (an audit line). */
+  audit?: Audit;
 }) => {
   const fixesEnabled = () => (typeof deps.fixesEnabled === 'function' ? deps.fixesEnabled() : deps.fixesEnabled);
   let open = new Map<string, CityFinding>();
   let inventory: CityInventoryEvent | undefined;
+  /** The last account listing (Resource Explorer or tagging) and its geo, rebuilt against each snapshot. */
+  let listing: { inv: Inventory; geo: Pick<CityInventoryEvent, 'zones' | 'regionStatus'> } | undefined;
+  const build = (l: NonNullable<typeof listing>, snapshot: WorldSnapshot | undefined) => {
+    const { items, links } = enrich(l.inv, snapshot, deps.region);
+    return inventoryEvent({ ...l.inv, items }, deps.region, undefined, links, l.geo);
+  };
+  // Which items (by ARN, name and AZ), not only how many: a terminate and a launch in one window keep the counts the
+  // same (seen 22 Nov 2026), and the map still has to change.
+  const sig = (e?: CityInventoryEvent) =>
+    JSON.stringify([e?.counts, e?.regions, e?.links?.map((l) => l.id), e?.source, e?.zones, e?.regionStatus, e?.items.map((i) => `${i.arn}|${i.name}|${i.az ?? ''}|${i.managedByGame ? 1 : 0}`).sort()]);
+  /** Keep the event for sockets that connect later; return it when it differs from what was last sent. */
+  const publish = (event: CityInventoryEvent) => {
+    const changed = sig(event) !== sig(inventory);
+    inventory = event;
+    return changed ? event : undefined;
+  };
   const ctx: FixContext = { accountId: deps.accountId };
   /** One fix per finding at a time, across every socket of this player (no duplicate approval cards). */
   const fixing = new Set<string>();
@@ -114,7 +132,8 @@ export const createCityCare = (deps: {
     }
 
     const { deployId, approved } = approvals.requestFix(requestId, { ...f, fix }, emit, confirmFor(f), detail, deps.retired);
-    if (!(await approved)) return;
+    const audit = (outcome: AuditEntry['outcome']) => deps.audit?.({ action: `fix:${fix.fixId}`, target: f.resource.id, outcome });
+    if (!(await approved)) return audit(deps.retired?.aborted ? 'denied' : 'rejected');
     try {
       // The approval may have waited minutes: check again inside the account lock, right before the change.
       const message = await deps.withLock(async (lease) => {
@@ -135,7 +154,10 @@ export const createCityCare = (deps: {
           emit({ type: 'agent.state', agentId: f.citizenId, state: 'idle' });
         }
       });
-      if (message === false) return emit({ type: 'deploy.status', deployId, status: 'failed', message: RETIRED_REASON });
+      if (message === false) {
+        audit('denied');
+        return emit({ type: 'deploy.status', deployId, status: 'failed', message: RETIRED_REASON });
+      }
       if (message === undefined) return emit({ type: 'deploy.status', deployId, status: 'complete', message: 'Already sorted, so nothing was changed.' });
       if (message === null) {
         emit({ type: 'deploy.status', deployId, status: 'complete', message: `${f.resource.name} was already fixed, so nothing was changed.` });
@@ -144,17 +166,20 @@ export const createCityCare = (deps: {
       }
       const key = SETTING_KEY[fix.fixId]?.(f);
       if (key) forgetSetting(deps.clients, key);
+      audit('done');
       emit({ type: 'deploy.status', deployId, status: 'complete', message });
       emit({ type: 'city.finding', finding: resolve(f) });
       say(emit, f.citizenId, `${message} Thanks for the help! ${fix.rollback}`);
       void deps.refresh().catch((err) => log.warn('refresh after fix failed', { err: (err as Error).name })); // the next poll retries
     } catch (err) {
       if (err instanceof PartialFix) {
+        audit('done'); // part of it changed: the message says which
         emit({ type: 'deploy.status', deployId, status: 'complete', message: err.message });
         say(emit, f.citizenId, err.message);
         void deps.refresh().catch((err) => log.warn('refresh after fix failed', { err: (err as Error).name })); // the next poll retries
         return;
       }
+      audit('failed');
       if (err instanceof LockLostError) return emit({ type: 'deploy.status', deployId, status: 'failed', message: err.message });
       log.warn('fix failed', { fix: fix.fixId, err: (err as Error).name });
       // The city's own gate refused it: not an IAM problem, so don't send the player to their stack.
@@ -183,18 +208,24 @@ export const createCityCare = (deps: {
     welcome(): ServerEvent[] {
       return [...(inventory ? [inventory] : []), ...[...open.values()].map((finding) => ({ type: 'city.finding' as const, finding }))];
     },
-    /** Read the account's resource list; returns the event when the counts changed. */
+    /** Read the account's resource list; returns the event when the mirror changed. */
     async refreshInventory(): Promise<CityInventoryEvent | undefined> {
       const inv = await readInventory(deps.clients, deps.region);
       if (!inv) return undefined;
-      const { items, links } = enrich(inv, deps.snapshot?.() ?? undefined, deps.region);
+      const snapshot = deps.snapshot?.() ?? undefined;
       // v2.5: the real AZ map and Region opt-ins (cached a day; a Region that can't be read is left out).
-      const geo = await readGeo(deps.clients, deps.region, items);
-      const event = inventoryEvent({ ...inv, items }, deps.region, undefined, links, geo);
-      const sig = (e?: CityInventoryEvent) => JSON.stringify([e?.counts, e?.regions, e?.links?.map((l) => l.id), e?.source, e?.zones, e?.regionStatus]);
-      const changed = sig(event) !== sig(inventory);
-      inventory = event;
-      return changed ? event : undefined;
+      const geo = await readGeo(deps.clients, deps.region, enrich(inv, snapshot, deps.region).items);
+      listing = { inv, geo };
+      return publish(build(listing, snapshot));
+    },
+
+    /**
+     * After a poll that created, removed or changed a server: the mirror again from the last listing and this
+     * snapshot, with no AWS call (the listing lags by minutes; the snapshot is DescribeInstances, now). Returns the
+     * event when the mirror changed; nothing before the first listing.
+     */
+    reconcile(snapshot: WorldSnapshot): CityInventoryEvent | undefined {
+      return listing ? publish(build(listing, snapshot)) : undefined;
     },
 
     /** The finding's citizen explains it (one metered model turn, read-only tools). */

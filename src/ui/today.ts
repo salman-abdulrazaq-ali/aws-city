@@ -82,7 +82,7 @@ export function useTodayGoals(care: boolean) {
   // The order board feeds the shift: how many jobs it has open now (City Clients must be open).
   const jobs = ladder.clients ? openJobs(progress, region, focus, 5).length : 0;
   // A fix or a workshop step that can't be done now is a bonus chip, so it never holds the day open (a role made
-  // without AllowFixes can't fix anything: v2.17 account.status fixes false).
+  // without AllowFixes can't fix anything: v2.19 account.status fixes false).
   const fixesOff = useCity((s) => s.account.linked && s.account.fixes === false);
   const careNow = care && !fixesOff && fixableNow(progress, Object.values(findings));
   const labsNow = stepsLeftToPay(progress.workshops, real ? 'real' : 'practice');

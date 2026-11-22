@@ -34,7 +34,7 @@ describe('sign-out and account linking state', () => {
 
   it('a failed verify is shown, and each reply bumps seq so a waiting button settles', () => {
     useCity.setState({ account: { linked: false }, toasts: [] });
-    // A reply to the player's own verify carries its requestId (only replies are toasted, v2.17).
+    // A reply to the player's own verify carries its requestId (only replies are toasted, v2.19).
     const fail = { type: 'account.status', requestId: 'r1', linked: false, message: 'I couldn’t use the AWSCity role.' } as const;
     useCity.getState().applyServerEvent(fail);
     useCity.getState().applyServerEvent(fail);

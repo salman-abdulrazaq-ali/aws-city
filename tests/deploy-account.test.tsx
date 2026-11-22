@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // The Deploy tab's account cards: the authenticator setup whenever the server asks, "Your data" for signed-in players,
-// and (v2.17) linking in the Region the player picks, the console's checklist, Allow small fixes, the linked card's
+// and (v2.19) linking in the Region the player picks, the console's checklist, Allow small fixes, the linked card's
 // Disconnect / another Region / role update, a broken link, My builds with "Take it down", and typed build approvals.
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -61,7 +61,7 @@ describe('the Deploy tab’s account cards', () => {
   it('a linked player asked for MFA (approving a change, a fix) gets the authenticator setup too', () => {
     useCity.setState({ account: { linked: true, accountId: '123456789012', region: 'us-west-2', mfaRequired: true } });
     render(<DeployPanel />);
-    expect(screen.getByText(/Protect your account first/)).toBeTruthy();
+    expect(screen.getByText(/First, protect your account/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Set up an authenticator' })).toBeTruthy();
   });
 
@@ -85,7 +85,7 @@ describe('the Deploy tab’s account cards', () => {
   });
 });
 
-describe('linking (v2.17)', () => {
+describe('linking (v2.19)', () => {
   it('step 1 picks the Region by name, starting on this city’s, and says where the key is made', () => {
     useCity.setState({ account: { linked: false, wantsLink: true } });
     render(<DeployPanel />);
@@ -148,7 +148,7 @@ describe('linking (v2.17)', () => {
   });
 });
 
-describe('a linked account (v2.17)', () => {
+describe('a linked account (v2.19)', () => {
   it('shows its Region by name, and "Use another Region or account" starts again with the Region picker', () => {
     useCity.setState({ account: { ...linked } });
     render(<DeployPanel />);
@@ -240,7 +240,7 @@ describe('a linked account (v2.17)', () => {
   });
 });
 
-describe('My builds and approvals (v2.17)', () => {
+describe('My builds and approvals (v2.19)', () => {
   const inventory = (items: InventoryItem[]) => ({ takenAt: '', region: 'eu-west-1', source: 'tagging' as const, complete: true, counts: {}, items, truncated: false, homeRegion: 'eu-west-1' });
 
   it('lists what the city built (from the inventory, so it survives a reload), each with Take it down', () => {

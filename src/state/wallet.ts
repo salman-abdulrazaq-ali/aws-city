@@ -75,7 +75,7 @@ export function roundCoins(roundsToday: number, newBest: boolean, full = FULL_RO
 export const LOG_DAYS = 14;
 
 const EMPTY: Wallet = { earned: 0, spent: 0 };
-export const walletOf = (p: Progress): Wallet => p.wallet ?? EMPTY;
+const walletOf = (p: Progress): Wallet => p.wallet ?? EMPTY;
 
 /** Coins the player can spend now. */
 export const coins = (p: Progress) => Math.max(0, walletOf(p).earned - walletOf(p).spent);

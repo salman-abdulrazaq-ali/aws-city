@@ -403,8 +403,8 @@ describe('MockBackend speaks the contract', () => {
   describe('AWS public status (v2.6)', () => {
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-    it('is contract 2.17 (2.6 added these), and both new events pass the frame guard', () => {
-      expect(CONTRACT_VERSION).toBe('2.17');
+    it('is contract 2.19 (2.6 added these), and both new events pass the frame guard', () => {
+      expect(CONTRACT_VERSION).toBe('2.19');
       expect(isServerEvent(demoHealth())).toBe(true);
       expect(isServerEvent(demoNews())).toBe(true);
     });
@@ -571,7 +571,7 @@ describe('Merges that never lose a freeze, a refund or a removal (v2.16)', () =>
   });
 });
 
-describe('The account lifecycle (v2.17)', () => {
+describe('The account lifecycle (v2.19)', () => {
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   /** A demo city whose practice account is linked. */
   const linkedMock = async () => {
@@ -690,7 +690,7 @@ describe('The account lifecycle (v2.17)', () => {
   });
 });
 
-describe('The version handshake (v2.17)', () => {
+describe('The version handshake (v2.19)', () => {
   it('the version is major.minor; the client names it in a query parameter, the server in a header; the docs mirror both', () => {
     expect(parseContract(CONTRACT_VERSION)).toBeDefined();
     expect(CONTRACT_PARAM).toBe('contract');

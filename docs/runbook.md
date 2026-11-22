@@ -10,6 +10,9 @@ evidence is in `docs/well-architected.md`.
 
 ## First deploy (once per AWS account)
 
+A new AWS account: start with [the step-by-step guide](self-hosting.md) (root MFA, the Paid plan, an admin user,
+Amazon Nova or Claude, and a new account's Bedrock hold). This section is the operator's checklist.
+
 1. **Prerequisites** (yours): an AWS account with admin access for the first deploy; Claude Opus 5.5 and
    Sonnet 5.5 invocable on Bedrock in the region (Opus 5 and Sonnet 5 in India, which has no 5.5 profile:
    `infra/lib/models.ts` `GEO_MODELS`). The server calls them through a geo cross-Region inference profile
@@ -45,6 +48,15 @@ evidence is in `docs/well-architected.md`.
    also `WXT_AWS_WS_URL`, `WXT_AWS_API_URL`, `WXT_COGNITO_DOMAIN`, `WXT_COGNITO_CLIENT_ID` (stack outputs).
    From then on: merge to `main` → CI → staging deploys the exact commit CI tested; the staging run's summary
    shows the **prod `cdk diff`**; a reviewer approves → prod.
+   Before turning this on (security review, 21 Nov 2026; not live while `githubRepo` is empty):
+   - `staging` deploys only from protected branches (set 21 Nov). Staging and prod still share one deploy role that
+     can reach every CDK bootstrap role, so also add a required reviewer on `staging`, or give each environment its
+     own role (better: its own account). Check: `gh api repos/<owner>/<repo>/environments --jq '.environments[]|{name,protection_rules}'`.
+   - The repo uses GitHub's immutable OIDC subject (`repo:<owner>@<id>/<repo>@<id>:…`); `ci-stack.ts`'s trust policy
+     and setup's check expect `repo:<owner>/<repo>:…`, so the role would refuse GitHub until they match.
+     Check: `gh api repos/<owner>/<repo>/actions/oidc/customization/sub`.
+   - Releases (`release.yml`) publish through the `prod` environment, which allows only `main`: add a `v*` tag rule
+     to it (and a tag ruleset limiting who may push `v*`) before the first release.
 5. One-time account settings CDK doesn't manage:
    - **Amazon Inspector** ECR scanning for the CDK assets repository: `aws inspector2 enable --resource-types ECR`.
    - **Cost allocation tags**: activate `app` and `env` in Billing → Cost allocation tags (from the management
@@ -55,6 +67,59 @@ evidence is in `docs/well-architected.md`.
      calls system geo inference profiles, which can't be tagged, and the cut-off is there for that spend
      (`infra/lib/budget-stack.ts`). If you also activate them as **IAM principal** tags (they appear after the task
      role's first Bedrock call), Cost Explorer can split Bedrock spend by environment too.
+   - **The account's security baseline.** `<r>` is your deploy Region; run the Regional ones there and in `us-east-1`
+     (CloudFront's firewall). Each "Check:" reads it back.
+     - **GuardDuty** (threat detection; a 30-day free trial, then a few dollars a month for a small account):
+       `aws guardduty create-detector --enable --region <r>`. Check: `aws guardduty list-detectors --region <r>`.
+     - **CloudTrail**: one multi-Region trail with log file validation into its own bucket (Block Public Access on,
+       TLS-only policy, a lifecycle rule; CloudTrail console → Create trail does all of it). The first copy of
+       management events is free. Check: `aws cloudtrail get-trail-status --name <trail> --query IsLogging`.
+     - **IAM Access Analyzer** (anything shared outside the account):
+       `aws accessanalyzer create-analyzer --analyzer-name account-external-access --type ACCOUNT --region <r>`.
+       Check: `aws accessanalyzer list-analyzers --region <r>`.
+     - **EBS encryption by default**: `aws ec2 enable-ebs-encryption-by-default --region <r>`.
+       Check: `aws ec2 get-ebs-encryption-by-default --region <r>`.
+     - **Password policy** (for any IAM user with a console password):
+       `aws iam update-account-password-policy --minimum-password-length 14 --require-symbols --require-numbers --require-uppercase-characters --require-lowercase-characters --password-reuse-prevention 24`.
+       Check: `aws iam get-account-password-policy`.
+     - **S3 Block Public Access for ACLs, account-wide:**
+       `aws s3control put-public-access-block --account-id <acct> --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=false,RestrictPublicBuckets=false`.
+       Only the ACL half: the Data stack's templates bucket serves the player role template and the Safari sign-in
+       relay through a public bucket policy (`player-role/*`, `auth/*`), so blocking public policies would break
+       linking an account. Check: `aws s3control get-public-access-block --account-id <acct>`, then open the
+       player role template URL (the Data stack's `PlayerRoleTemplateUrl` output): it must still load.
+       IAM Access Analyzer reports exactly that one public read (the templates bucket); any other finding is new. It
+       isn't archived: an archive rule can't match on the action, so it would also hide a wider policy there.
+   - **An AWS Organization with other accounts** (e.g. a second account for testing linking, `docs/self-hosting.md`
+     step 9). Run these from the management account. Each one is reversible from there.
+     - **No root user in member accounts:** `aws organizations enable-aws-service-access --service-principal iam.amazonaws.com`,
+       `aws iam enable-organizations-root-credentials-management`, `aws iam enable-organizations-root-sessions`, then
+       per member `aws sts assume-root --target-principal <member> --task-policy-arn arn=arn:aws:iam::aws:policy/root-task/IAMDeleteRootUserCredentials`
+       and, with those credentials, delete any root password, access keys, certificates and MFA.
+       Check: `aws iam list-organizations-features` lists RootCredentialsManagement and RootSessions.
+     - **One trail for the organization:** allow `AWSLogs/<org-id>/*` writes in the trail bucket's policy (same
+       `aws:SourceArn` condition), `aws organizations enable-aws-service-access --service-principal cloudtrail.amazonaws.com`,
+       `aws cloudtrail update-trail --name <trail> --is-organization-trail`. Check: `aws cloudtrail describe-trails --query 'trailList[].IsOrganizationTrail'`.
+     - **GuardDuty for every account:** in each Region you use, `aws guardduty enable-organization-admin-account --admin-account-id <mgmt>`,
+       `aws guardduty create-members` for each member, `aws guardduty update-organization-configuration --auto-enable-organization-members ALL`.
+       Check: `aws guardduty list-members --detector-id <id> --region <r>` shows each member Enabled.
+     - **An organization analyzer:** `aws accessanalyzer create-analyzer --analyzer-name org-external-access --type ORGANIZATION --region <r>`.
+     - **Members' account settings** (through `OrganizationAccountAccessRole`): S3 Block Public Access, all four
+       settings on, and EBS encryption by default in each Region.
+     - **Guardrails (an SCP on the root, `AWSCityGuardrails`; members only, never the management account):** members
+       can't leave the organization; can't stop or delete CloudTrail, GuardDuty, Access Analyzer, Config, Security Hub
+       or Inspector, or switch off S3 Block Public Access or EBS encryption; a member's root user can't act (central
+       root sessions from the management account still can, `aws:AssumedRoot`); and only eu-west-2, us-west-2 and
+       us-east-1 work (AWS's documented global-service exemptions). Validate first:
+       `aws accessanalyzer validate-policy --policy-type SERVICE_CONTROL_POLICY --policy-document file://scp.json`.
+       Check: from a member, a call in another Region (e.g. `ap-south-1`) is refused with "explicit deny in a service
+       control policy", and the city still reads the linked account.
+   - **Continuous checks** (a few dollars a month): AWS Config recording all resources into its own private bucket,
+     Security Hub with AWS Foundational Security Best Practices only (`--no-enable-default-standards` then
+     `batch-enable-standards`), and Amazon Inspector for ECR (`aws inspector2 enable --resource-types ECR`), which
+     switches the registry to enhanced scanning (OS and npm packages, rescanned as new CVEs appear).
+     Check: `aws securityhub get-enabled-standards`, `aws configservice describe-configuration-recorder-status`,
+     `aws ecr get-registry-scanning-configuration` (ENHANCED).
 6. Release the extension: bump `version` in `package.json`, tag `v<that version>` → the `release` workflow attaches the
    zips → upload them in the Chrome Web Store dashboard (the same zip goes to Edge Add-ons) with
    `docs/store-listing.md` and `docs/privacy-policy.md`. The workflow stops if the tag isn't `v` + the package version,
@@ -63,7 +128,7 @@ evidence is in `docs/well-architected.md`.
 
 ## Kill switch / budget
 
-- **Manual, instant (~30 s):** `aws ssm put-parameter --name /aws-city/<env>/ai-enabled --value false --overwrite`
+- **Manual, instant (~30 s):** `aws ssm put-parameter --name /cloud-city/<env>/ai-enabled --value false --overwrite`
   (players see "the city's AI is resting"; everything else works). Turn back on with `--value true`.
 - **Automatic:** at 100% of the monthly budget (what it counts: *Cost allocation tags* above), AWS Budgets attaches `AWSCityDenyBedrock-<env>` to
   `AWSCityTaskRole-<env>`. This exists even without an alarm email (Budgets notifies an SNS topic). You're
@@ -72,6 +137,10 @@ evidence is in `docs/well-architected.md`.
   and reset the budget action in the Budgets console.
 - Per-player daily cap: `dailyModelCalls` (redeploy); global daily cap: `globalDailyModelCalls`. The Console
   Copilot also has a per-player 60-calls-per-10-minutes budget.
+- **The AI on Fargate** (`aiCpu`, when Bedrock is held): `npm run ai -- off` stops its task (no cost while off),
+  `npm run ai -- on` starts it (2–4 minutes), `npm run ai -- status` shows it. It runs until you switch it off: the
+  budget action only denies Bedrock, so watch the 50%/80% emails. The kill switch above still stops every model call,
+  this one included. Its log group is `AWSCity-<env>-Service-AiLogs…`; `npm run setup` without it removes the service.
 
 ## Alarms (SNS → alarmEmail)
 
@@ -101,6 +170,45 @@ them with errors (`LoggedErrors`, `UnhandledRejections`) and model throttles.
   They should also **Disconnect** in the game (⋯ → Account → Your AWS account: it forgets the link record at once) and delete
   the `AWSCity` stack in their own AWS account, which removes our access. Only the player can remove that role: the
   stack lives in their account.
+
+## Security Hub (AWS Foundational Security Best Practices, eu-west-2)
+
+The first full scan (21 Nov 2026) failed 72 checks. Each one is fixed, by design (suppressed with this reason), or
+deferred. Check what's still open:
+`aws securityhub get-findings --region eu-west-2 --filters '{"ComplianceStatus":[{"Value":"FAILED","Comparison":"EQUALS"}],"RecordState":[{"Value":"ACTIVE","Comparison":"EQUALS"}],"WorkflowStatus":[{"Value":"NEW","Comparison":"EQUALS"}]}' --query 'Findings[].Compliance.SecurityControlId'`
+
+- **Fixed in code (`infra/`):**
+  - ECS.20: the server's task definition runs it as its nonroot user (65532).
+  - Cognito.4: prod threat protection is on for custom auth flows too.
+  - EC2.2: the city VPC's default security group allows nothing (`restrictDefaultSecurityGroup`).
+- **Fixed in the account (one-time, the owner runs them):**
+  - SSM.7: public sharing of SSM documents blocked.
+  - EC2.182: EBS snapshot public access blocked (all three Regions).
+  - SSM.6: SSM Automation logs to CloudWatch.
+  - The empty default VPC in eu-west-2 deleted (EC2.2, EC2.6); `aws ec2 create-default-vpc` brings it back.
+  - GuardDuty S3, Lambda and EC2 malware protection, and Inspector EC2 and Lambda scanning (a few dollars a month).
+  - Account.1: a security contact.
+  - IAM.2: the admin user's policy comes through an `Admins` group.
+- **By design (suppressed with this reason):**
+  - S3.1, S3.2, S3.8: the templates bucket serves `templates/player-role/*` and `auth/*` publicly. CloudFormation
+    quick-create needs a public template URL, and Safari's sign-in relay is a static page. Everything else in it is
+    private, and the account blocks public ACLs.
+  - ECS.2, EC2.15, EC2.172: tasks sit in public subnets with no NAT gateway (cost). Their security groups let in only
+    the load balancer, the server or CloudFront.
+  - ELB.1, ELB.18, ELB.21, ELB.22: the load balancer is internal. It's reached only through CloudFront's VPC origin
+    inside the VPC; viewers get HTTPS from CloudFront.
+  - Cognito.5: MFA is optional to play, and required (step-up) to link an account, approve a change, apply a fix or
+    take something down.
+  - SecretsManager.1: the Google OAuth client secret can't rotate automatically (Google issues it).
+  - ECR.2: image tags are content hashes, so a tag never points at different code.
+- **Deferred (after the workshop):**
+  - CloudTrail.2 (SSE-KMS) and CloudTrail.5 (CloudWatch Logs)
+  - Macie
+  - VPC endpoints or NAT (EC2.10, EC2.55–60, ECS.2)
+  - Stack termination protection and ALB deletion protection, which need `setup --destroy` to turn them off first
+  - GuardDuty Runtime Monitoring
+  - A scoped CDK bootstrap (KMS.2, CloudFormation.4)
+  - S3.9 access logs on the log buckets themselves
 
 ## Deploys and restarts
 
@@ -140,13 +248,22 @@ Screenshots in S3 expire after a day and aren't backed up; that's by design.
 
 ## Player support
 
-- **"It says turn on an authenticator first":** linking an AWS account, approving a change and applying a fix need TOTP
-  MFA (agents can change that account). Deploy tab → *Set up an authenticator*; after enrolling the extension ends every
-  session and the player signs in again with the code. Google sign-ins are exempt (MFA is at Google). Turn the check off
-  only for testing: `REQUIRE_MFA_FOR_LINK=false`.
+- **Step-up, in one place:** linking an AWS account (and *Verify*), approving a change, applying a fix and taking
+  something down (*Take it down*) each pass every check, in this order: the player wasn't deleted on another task (else
+  the socket closes), TOTP MFA is on (`mfa_required`), this session signed in after the server first saw it on (code
+  `auth`), and it signed in within the last 30 minutes (`reauth_required`). One check never replaces another. Hosted,
+  there's no switch to turn any of it off (the old `REQUIRE_MFA_FOR_LINK` is gone); the local server has no sign-in, so
+  no step-up.
+- **"It says turn on an authenticator first":** step-up needs TOTP MFA (agents can change that account). Deploy tab →
+  *Set up an authenticator*; after enrolling the extension ends every session and the player signs in again with the
+  code. Google sign-ins are exempt (MFA is at Google).
 - **"Sign out, then sign in again with your app's code":** the player has TOTP on, but this session started before the
   server first saw it on (`server/src/accounts/mfa.ts` keeps that time and accepts only an access token whose `auth_time`
   is at or after it). Signing out and in fixes it. Nothing to do on the server.
+- **"Sign in again to confirm this":** step-up needs a sign-in from the last 30 minutes (`STEP_UP_MAX_AGE_MS`,
+  `server/src/accounts/mfa.ts`), so a stolen refresh token can't act on a player's AWS account. The *Sign in again*
+  button asks for the password and authenticator code again, and the fresh token goes over the open socket
+  (`auth.renew`), so a change waiting for approval survives.
 - **Lost authenticator:** `aws cognito-idp admin-set-user-mfa-preference --user-pool-id <pool> --username <user> --software-token-mfa-settings Enabled=false`
   after verifying who they are by email.
 - **"Can't link my account":** they must create the stack from the link in the *same* region, then paste the

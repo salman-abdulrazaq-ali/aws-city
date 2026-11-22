@@ -1,4 +1,6 @@
 # Weekly dependency, action and base-image updates (actions stay pinned by SHA; Dependabot bumps the SHA).
+# A 7-day cooldown: a version is proposed only once it has been public for a week, so a hijacked release is usually
+# caught and pulled before it reaches us (security updates aren't held back).
 version: 2
 updates:
   - package-ecosystem: npm
@@ -8,9 +10,12 @@ updates:
       aws-sdk: { patterns: ['@aws-sdk/*', '@smithy/*'] }
       cdk: { patterns: ['aws-cdk', 'aws-cdk-lib', 'cdk-nag', 'constructs'] }
     open-pull-requests-limit: 10
+    cooldown: { default-days: 7 }
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
   - package-ecosystem: docker
-    directory: /server
+    directories: ['/server', '/infra/ai-image']
     schedule: { interval: weekly }
+    cooldown: { default-days: 7 }

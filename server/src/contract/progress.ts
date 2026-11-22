@@ -222,7 +222,7 @@ export const createProgressStore = (file: string) => {
         if (current && Date.parse(current.updatedAt) > Date.parse(parsed.data.updatedAt)) return { ok: true as const };
         await mkdir(dirname(file), { recursive: true });
         const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-        await writeFile(tmp, JSON.stringify(parsed.data, null, 2));
+        await writeFile(tmp, JSON.stringify(parsed.data, null, 2), { flag: 'wx', mode: 0o600 });
         await rename(tmp, file);
         cache = parsed.data as Progress;
         return { ok: true as const };

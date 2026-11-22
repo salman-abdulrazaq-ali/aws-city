@@ -55,6 +55,8 @@ export interface SimpleContext {
   deployWaiting?: boolean;
   /** A real account is being linked (src/state/account.ts `linking`): its steps are in Deploy. */
   linking?: boolean;
+  /** A hosted player with no AWS account linked yet: Deploy is where it connects. */
+  canConnect?: boolean;
 }
 
 /** Whether `feature` shows for these prefs (and, in Simple, whether it's needed now). */
@@ -66,7 +68,7 @@ export function shows(feature: Feature, prefs: { simple?: boolean } | undefined,
     case 'care':
       return (ctx.questsDone ?? 0) >= 1 || !!ctx.linked;
     case 'deployTab':
-      return !!ctx.steps?.includes('deploy') || !!ctx.linked || !!ctx.deployWaiting || !!ctx.linking;
+      return !!ctx.steps?.includes('deploy') || !!ctx.linked || !!ctx.deployWaiting || !!ctx.linking || !!ctx.canConnect;
     case 'drawingBoard':
       return !!ctx.steps?.includes('design');
     default:
@@ -79,7 +81,7 @@ export function shows(feature: Feature, prefs: { simple?: boolean } | undefined,
 /** The most tasks the list shows at once. */
 export const TODO_MAX = 5;
 /** Below this many, the order board's other jobs fill the list. */
-export const TODO_MIN = 3;
+const TODO_MIN = 3;
 /** While a quest step is open, the day reads done only once this many of today's goals are ticked. */
 export const DAY_MIN_DONE = 2;
 

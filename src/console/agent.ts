@@ -4,6 +4,7 @@
 // (src/console/safety.ts, src/console/risk.ts). Every action is shown
 // (highlight + agent bubble) before it happens, paced by the player's speed setting, and held while they've paused.
 import { browser } from 'wxt/browser';
+import { fromWebPage } from '@/app/sender';
 import { choose, closeListbox, findExact, findTarget, isCustomSelect, matchOption, openListbox, optionsIn, press, typeInto } from './act';
 import { Overlay } from './overlay';
 import { Pacer, SPEED_KEY, SPEED_LABEL, nextSpeed, parseSpeed } from './pacing';
@@ -77,9 +78,11 @@ export function startCopilotAgent(accept: (msg: CopilotMessage) => boolean = () 
     new Promise<StepResult>((resolve) => {
       ensureOverlay().show(el, { agent, say, why, yourTurn: true });
       if (!el) return resolve({ ok: false, note: 'not found' });
+      el.setAttribute('data-awscity-your-turn', '');
       // Cloudscape options select on mouseup and can vanish before a click event fires.
       const events = el.getAttribute('role') === 'option' ? ['click', 'change', 'mouseup'] : ['click', 'change'];
       const finish = (ok: boolean, note: string) => {
+        el.removeAttribute('data-awscity-your-turn');
         for (const ev of events) el.removeEventListener(ev, onDone, true);
         clearTimeout(timer);
         clearInterval(watch);
@@ -162,8 +165,9 @@ export function startCopilotAgent(accept: (msg: CopilotMessage) => boolean = () 
     return { ok: true, snapshot: takeSnapshot(document) };
   }
 
-  browser.runtime.onMessage.addListener((msg: CopilotMessage, _sender, sendResponse) => {
-    if (!msg?.type?.startsWith('copilot.') || !accept(msg)) return;
+  browser.runtime.onMessage.addListener((msg: CopilotMessage, sender, sendResponse) => {
+    // Steps come from the extension only, never from a content script in another tab (the practice page hears those).
+    if (!msg?.type?.startsWith('copilot.') || fromWebPage(sender) || !accept(msg)) return;
     if (msg?.type === 'copilot.snapshot') {
       // A new task: fresh pacing state, keeping the player's speed.
       const speed = pacer.speed;

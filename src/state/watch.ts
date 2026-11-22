@@ -66,7 +66,7 @@ const STORIES: Record<string, StoryDef> = {
 };
 
 /** "Sally the Angler" → "Sally". */
-export const firstName = (agentName: string) => agentName.split(' the ')[0];
+const firstName = (agentName: string) => agentName.split(' the ')[0];
 
 export interface TaskStory {
   agentId: string;
@@ -81,7 +81,7 @@ export interface TaskStory {
 }
 
 /** The agent a task goes to: the one the plan named, else the one its words point at, else the concierge's default. */
-export const taskAgent = (task: Pick<TaskView, 'agentId' | 'prompt'>) => task.agentId ?? matchText(task.prompt) ?? 'bedrock';
+const taskAgent = (task: Pick<TaskView, 'agentId' | 'prompt'>) => task.agentId ?? matchText(task.prompt) ?? 'bedrock';
 
 /** The story of a task (any agent: a hand-written one, else the building's own first lesson). */
 export function taskStory(task: Pick<TaskView, 'agentId' | 'prompt'>): TaskStory {
@@ -101,6 +101,46 @@ export function agentOffer(serviceId: string): { prompt: string; story: string }
   const p = placeFor(serviceId);
   if (!def || !p) return undefined;
   return { prompt: def.prompt, story: `${firstName(p.agentName)} can ${def.will} in ${p.place}, and you can watch every step.` };
+}
+
+/**
+ * The framing's last words: "Watch Sally walk there." while she walks, then that she's at work once she's arrived (seen
+ * 21 Nov 2026: "walk there" stayed up the whole time a slow model thought).
+ */
+export function watchLine(task: Pick<TaskView, 'steps'>, who: string): string {
+  return task.steps[0]?.status === 'done' ? `${who} is there and on it.` : `Watch ${who} walk there.`;
+}
+
+/** The agent's model call is running: say so, since a small model can take most of a minute. */
+export function thinkingLine(agent: { state: string; service?: string; detail?: string } | undefined, who: string): string | undefined {
+  return agent?.state === 'working' && agent.detail?.startsWith('InvokeModel') ? `💭 ${who} is thinking… this can take up to a minute.` : undefined;
+}
+
+/** A failed task's reason, without the server's "Task failed: " lead. */
+export const failedReason = (message: string) => message.replace(/^Task failed:\s*/, '').trim();
+
+/**
+ * A message as one speech bubble: "(…)" asides dropped, whole sentences while they fit in `max`, and a first sentence
+ * that's too long on its own cut with "…". Seen 22 Nov 2026: a refused m5.large read "That didn't work…" in the city
+ * (the reason was cut at its aside, then replaced), so the player thought nothing happened.
+ */
+export function bubbleText(text: string, max = 90): string {
+  const plain = failedReason(text).replace(/\s*\([^()]*\)/g, '').replace(/\s+/g, ' ').trim();
+  const sentences = plain.split(/(?<=[.!?])\s+/).filter(Boolean);
+  const first = sentences[0] ?? '';
+  if (first.length > max) return `${first.slice(0, max - 1).trimEnd()}…`;
+  let out = first;
+  for (const s of sentences.slice(1)) {
+    if (out.length + 1 + s.length > max) break;
+    out = `${out} ${s}`;
+  }
+  return out;
+}
+
+/** The agent's last bubble on a task that didn't work: why, never only "That didn't work…" when there's a reason. */
+export function failedBubble(result?: string): string {
+  const why = result ? bubbleText(result) : '';
+  return why ? `✗ ${why}` : 'That didn’t work…';
 }
 
 /** Where a task is: before it starts (framing), while it runs (live), or finished (result). */

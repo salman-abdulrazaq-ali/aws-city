@@ -1,27 +1,36 @@
 import { describe, expect, it } from 'vitest';
 import { frame, introGrowth, introLines, INTRO_SECONDS, sceneLayout, sceneLines, STILL_T } from '../scripts/launcher/banner.mjs';
-import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { localToken } from '../scripts/launcher/live-run.mjs';
+import { HOSTED_PROFILE, hostedBuildProblem } from '../scripts/launcher/lib.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { depsPlan, explainNpmError, installMessage, readDepsFacts } from '../scripts/launcher/boot.mjs';
 import { panelReserve, renderPanel, wrap, type PanelState } from '../scripts/launcher/panel.mjs';
 import { buildEnv, sourceEntries, sourceStamp, stampOf } from '../scripts/launcher/stamp.mjs';
 import { liveConfig } from '../scripts/launcher/live-run.mjs';
+import { modelsFor, modelsForChoice, NOVA_MODELS } from '../infra/lib/models';
+import { DEFAULT_LOCAL_MODEL as SERVER_LOCAL_MODEL, DEFAULT_LOCAL_URL as SERVER_LOCAL_URL } from '../server/src/config';
 import {
   browserFromArg,
   choiceLabel,
+  DEFAULT_LOCAL_MODEL,
   detectBrowsers,
   elapsed,
   explainAwsError,
   explainDownloadError,
   extensionsPage,
+  hasLocalModel,
   helpText,
   introPlays,
   listProfiles,
   localModels,
+  LOCAL_URL,
+  localEnv,
   modelEnv,
   parseArgs,
   parseBuildProgress,
+  profileRegion,
   parseDownloadProgress,
   parsePastedKeys,
   pickProfile,
@@ -67,9 +76,61 @@ describe('npm start helpers', () => {
     expect(parsePastedKeys('hello')).toBeUndefined();
   });
 
+  it("reads a profile's own Region from ~/.aws/config, never another profile's", () => {
+    const config = '[default]\nregion = us-east-1\n\n[profile aws-city]\nlogin_session = arn:aws:iam::111122223333:user/admin\nregion = eu-west-2\n\n[profile other]\noutput = json\n';
+    expect(profileRegion(config, 'aws-city')).toBe('eu-west-2');
+    expect(profileRegion(config, 'default')).toBe('us-east-1');
+    expect(profileRegion(config, 'other')).toBeUndefined();
+    expect(profileRegion(config, 'missing')).toBeUndefined();
+    expect(profileRegion('[profile aws-city]\noutput = json\n[profile x]\nregion = ap-south-1\n', 'aws-city')).toBeUndefined();
+    expect(profileRegion('', 'aws-city')).toBeUndefined();
+    // A name with regex characters is matched literally.
+    expect(profileRegion('[profile a.b]\nregion = eu-west-1\n[profile aXb]\nregion = us-west-2\n', 'a.b')).toBe('eu-west-1');
+  });
+
   it('turns AWS errors into a next step', () => {
     expect(explainAwsError({ name: 'ExpiredTokenException', message: 'x' })).toMatch(/expired/);
     expect(explainAwsError({ name: 'CredentialsProviderError', message: 'Could not load credentials from any providers' })).toMatch(/No AWS sign-in/);
+    // The SDK's exact words when an `aws login` session runs out (@aws-sdk/credential-provider-login): expired, not missing.
+    expect(explainAwsError({ name: 'CredentialsProviderError', message: 'Your session has expired. Please reauthenticate.' })).toMatch(/sign-in has expired/);
+    expect(explainAwsError({ name: 'CredentialsProviderError', message: 'Failed to load a token for session x, please re-authenticate using aws login' })).toMatch(/sign-in has expired/);
+  });
+
+  it("names a new account's Claude walls: verification, the use-case form and a quota of 0", () => {
+    // Bedrock's real answer on a brand-new account (eu-west-2, Nov 2026).
+    const verifying = {
+      name: 'AccessDeniedException',
+      message: 'Your account is currently being verified. Verification normally takes less than 2 hours. Until your account is verified, you may not have access to this operation.',
+    };
+    expect(explainAwsError(verifying)).toMatch(/still being verified.*2 hours/);
+    const form = explainAwsError({ name: 'ResourceNotFoundException', message: 'Model use case details have not been submitted for this account.' });
+    expect(form).toMatch(/use-case form/);
+    // The form's AccessDenied flavour still points at the form, not at "not allowed".
+    expect(explainAwsError({ name: 'AccessDeniedException', message: 'Model access is denied: use case details not submitted' })).toBe(form);
+    for (const err of [
+      { name: 'ThrottlingException', message: 'Too many tokens, please wait before trying again.' },
+      { name: 'ServiceQuotaExceededException', message: 'x' },
+    ]) expect(explainAwsError(err)).toMatch(/New accounts start at 0.*AWS Support case/);
+    expect(explainAwsError({ name: 'AccessDeniedException', message: 'not authorized to perform bedrock:InvokeModel' })).toMatch(/not allowed/);
+    // Bedrock's answer for Claude on a Free plan account (eu-west-2, Nov 2026).
+    expect(explainAwsError({ name: 'AccessDeniedException', message: 'anthropic.claude-sonnet-5-5 is not available for this account. You can explore other available models on Amazon Bedrock.' })).toMatch(/Paid plan.*root user/);
+  });
+
+  it("gives the local server the Region's Claude models (eu-west-2 → eu.), unless the player set their own", () => {
+    expect(modelEnv(modelsFor('eu-west-2'))).toEqual({
+      AWS_CITY_MODEL: 'eu.anthropic.claude-opus-5-5',
+      AWS_CITY_FALLBACK_MODEL: 'eu.anthropic.claude-sonnet-5-5',
+      AWS_CITY_LIGHT_MODEL: 'eu.anthropic.claude-sonnet-5-5',
+    });
+    expect(modelEnv(modelsFor('us-west-2')).AWS_CITY_MODEL).toBe('us.anthropic.claude-opus-5-5');
+    expect(modelEnv(modelsFor('ap-south-1')).AWS_CITY_MODEL).toBe('in.anthropic.claude-opus-5');
+    const own = modelEnv(modelsFor('eu-west-2'), { AWS_CITY_MODEL: 'eu.anthropic.claude-sonnet-5-5', AWS_CITY_FALLBACK_MODEL: 'eu.anthropic.claude-sonnet-5' });
+    expect(own).toEqual({ AWS_CITY_MODEL: 'eu.anthropic.claude-sonnet-5-5', AWS_CITY_FALLBACK_MODEL: 'eu.anthropic.claude-sonnet-5', AWS_CITY_LIGHT_MODEL: 'eu.anthropic.claude-sonnet-5' });
+    expect(() => modelsFor('ap-northeast-1')).toThrow(/geo inference profile/);
+    // Amazon Nova: on demand in the Region (no geo profile), Pro for the agents, Lite for chat; its ids reach the server.
+    expect(modelEnv(modelsForChoice('eu-west-2', 'nova'))).toEqual({ AWS_CITY_MODEL: 'amazon.nova-pro-v1:0', AWS_CITY_FALLBACK_MODEL: 'amazon.nova-lite-v1:0', AWS_CITY_LIGHT_MODEL: 'amazon.nova-lite-v1:0' });
+    expect(modelsForChoice('ap-northeast-1', 'nova')).toEqual(NOVA_MODELS);
+    expect(modelsForChoice('eu-west-2', 'claude')).toEqual(modelsFor('eu-west-2'));
   });
 });
 
@@ -82,6 +143,19 @@ describe('npm start options (the stage one-liner)', () => {
     expect(parseArgs(['--live', '--profile', 'workshop', '--region=eu-west-1'])).toEqual({ help: false, mode: 'live', profile: 'workshop', region: 'eu-west-1' });
     expect(parseArgs(['--live', '--allow-fixes'])).toEqual({ help: false, mode: 'live', allowFixes: true });
     expect(helpText()).toContain('--allow-fixes');
+    // The agents' models: Claude or Amazon Nova (real AWS only).
+    expect(parseArgs(['--live', '--model', 'nova', '--region', 'eu-west-2'])).toEqual({ help: false, mode: 'live', model: 'nova', region: 'eu-west-2' });
+    expect(parseArgs(['--live', '--model=Claude'])).toEqual({ help: false, mode: 'live', model: 'claude' });
+    expect(parseArgs(['--live', '--model', 'gpt']).error).toMatch(/claude, nova or local/);
+    expect(parseArgs(['--demo', '--model', 'nova']).error).toMatch(/real AWS/);
+    // The AI on this computer (Ollama), alone or behind Amazon Nova.
+    expect(parseArgs(['--live', '--model', 'local'])).toEqual({ help: false, mode: 'live', model: 'local' });
+    expect(parseArgs(['--live', '--model', 'local', '--local-model', 'llama3.1:8b'])).toEqual({ help: false, mode: 'live', model: 'local', localModel: 'llama3.1:8b' });
+    expect(parseArgs(['--live', '--model', 'nova', '--local-fallback'])).toEqual({ help: false, mode: 'live', model: 'nova', localFallback: true });
+    expect(parseArgs(['--live', '--model', 'claude', '--local-fallback']).error).toMatch(/goes with --model nova/);
+    expect(parseArgs(['--live', '--local-model', '; rm -rf /']).error).toMatch(/Ollama model name/);
+    expect(parseArgs(['--demo', '--local-fallback']).error).toMatch(/real AWS/);
+    expect(helpText()).toContain('--model local');
     expect(parseArgs(['-b', 'Edge']).browser).toBe('edge');
     expect(parseArgs(['--browser', 'city']).browser).toBe('cft');
     expect(parseArgs(['--browser', 'safari']).browser).toBe('safari');
@@ -520,5 +594,83 @@ describe('real AWS: Claude models follow the Region', () => {
     expect(r.message).toMatch(/us-west-2/);
     expect(r.message).toMatch(/eu-central-1/);
     expect(r.message).not.toMatch(/inference profile|ARN/);
+  });
+});
+
+describe('the AI on this computer (Ollama)', () => {
+  it('finds the model among Ollama’s ids; a name without a tag means :latest', () => {
+    expect(hasLocalModel(['qwen3:8b', 'llama3.1:latest'], 'qwen3:8b')).toBe(true);
+    expect(hasLocalModel(['llama3.1:latest'], 'llama3.1')).toBe(true);
+    expect(hasLocalModel(['qwen3'], 'qwen3:latest')).toBe(true);
+    expect(hasLocalModel(['qwen3:4b'], 'qwen3:8b')).toBe(false);
+    expect(hasLocalModel([], 'qwen3:8b')).toBe(false);
+  });
+
+  it('gives the server the local model alone, or behind Bedrock; a player’s own env wins', () => {
+    expect(localEnv({ model: 'qwen3:8b' })).toEqual({ AWS_CITY_MODEL_PROVIDER: 'local', AWS_CITY_LOCAL_MODEL: 'qwen3:8b', AWS_CITY_LOCAL_URL: LOCAL_URL });
+    expect(localEnv({ model: 'qwen3:8b', fallback: true })).toEqual({ AWS_CITY_LOCAL_FALLBACK: 'true', AWS_CITY_LOCAL_MODEL: 'qwen3:8b', AWS_CITY_LOCAL_URL: LOCAL_URL });
+    expect(localEnv({ model: 'qwen3:8b' }, { AWS_CITY_LOCAL_MODEL: 'gemma3:4b' }).AWS_CITY_LOCAL_MODEL).toBe('gemma3:4b');
+    expect(LOCAL_URL).toBe('http://127.0.0.1:11434/v1');
+    // The launcher and the server agree on the defaults.
+    expect(LOCAL_URL).toBe(SERVER_LOCAL_URL);
+    expect(DEFAULT_LOCAL_MODEL).toBe(SERVER_LOCAL_MODEL);
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('the local server token file', () => {
+  const root = () => mkdtempSync(path.join(os.tmpdir(), 'aws-city-token-'));
+
+  it('is made once, readable only by you, and reused', () => {
+    const r = root();
+    const token = localToken(r);
+    expect(token).toMatch(/^[\w-]{43}$/);
+    const file = path.join(r, '.cache', 'local-token');
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(localToken(r)).toBe(token);
+    rmSync(r, { recursive: true, force: true });
+  });
+
+  it('a copy others can read is replaced, not used', () => {
+    const r = root();
+    const file = path.join(r, '.cache', 'local-token');
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, `${'x'.repeat(43)}\n`);
+    chmodSync(file, 0o644);
+    const token = localToken(r);
+    expect(token).not.toBe('x'.repeat(43));
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    rmSync(r, { recursive: true, force: true });
+  });
+
+  it('a planted symlink is never read or written through', () => {
+    const r = root();
+    const target = path.join(r, 'elsewhere');
+    writeFileSync(target, `${'y'.repeat(43)}\n`, { mode: 0o600 });
+    const file = path.join(r, '.cache', 'local-token');
+    mkdirSync(path.dirname(file), { recursive: true });
+    symlinkSync(target, file);
+    const token = localToken(r);
+    expect(token).not.toBe('y'.repeat(43)); // not read through the link
+    expect(readFileSync(target, 'utf8')).toBe(`${'y'.repeat(43)}\n`); // not written through it
+    expect(lstatSync(file).isSymbolicLink()).toBe(false);
+    rmSync(r, { recursive: true, force: true });
+  });
+});
+
+describe('opening the live (hosted) city', () => {
+  const env = 'WXT_BACKEND=hosted\nWXT_AWS_API_URL=https://d1example.cloudfront.net\nWXT_COGNITO_CLIENT_ID=abc\n';
+
+  it('needs the addresses setup writes, and a build with the fixed extension id', () => {
+    expect(hostedBuildProblem({ envProduction: env })).toBeUndefined();
+    expect(hostedBuildProblem({ envProduction: env, manifest: JSON.stringify({ key: 'MIIB…' }) })).toBeUndefined();
+    expect(hostedBuildProblem({})).toMatch(/npm run setup/);
+    expect(hostedBuildProblem({ envProduction: 'WXT_AWS_API_URL=http://insecure' })).toMatch(/npm run setup/);
+    expect(hostedBuildProblem({ envProduction: env, manifest: JSON.stringify({ name: 'AWS City' }) })).toMatch(/fixed extension id/);
+    expect(hostedBuildProblem({ envProduction: env, manifest: 'not json' })).toMatch(/fixed extension id/);
+  });
+
+  it('keeps its own profile, apart from the demo’s', () => {
+    expect(HOSTED_PROFILE).toBe('.cache/chrome-profile-hosted');
+    expect(HOSTED_PROFILE).not.toBe('.cache/chrome-profile');
   });
 });

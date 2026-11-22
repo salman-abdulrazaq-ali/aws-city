@@ -13,10 +13,10 @@ import { reducedMotion } from './motion';
 import { constructionStage } from '@/state/growth';
 import { ensureFlagTexture, ensureSparkleTexture, PROP_ORIGIN } from './propArt';
 
-export const TIER_FLAG = 1;
-export const TIER_BENCH = 2;
+const TIER_FLAG = 1;
+const TIER_BENCH = 2;
 export const TIER_PLAZA = 3;
-export const TIER_SPARKLE = 4;
+const TIER_SPARKLE = 4;
 const SPARKS = 5;
 
 /** The row in front of a service landmark's lot (src/world/layout.ts). */

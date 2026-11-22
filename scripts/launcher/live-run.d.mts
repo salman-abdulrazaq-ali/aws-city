@@ -11,3 +11,5 @@ export interface LiveConfig {
 }
 export declare function liveConfig(browser: string, o?: { port?: string; allowFixes?: boolean }): LiveConfig;
 export declare const SERVER_LOG: string;
+/** A token kept in <root>/.cache/local-token (mode 0600), made once, then reused. liveConfig mints its own each run. */
+export declare function localToken(root?: string): string;

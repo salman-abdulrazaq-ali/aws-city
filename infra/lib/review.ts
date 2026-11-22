@@ -1,0 +1,100 @@
+/**
+ * The setup wizard's review screen (infra/setup/setup.mjs): every answer on one screen, and the changes it will make in
+ * AWS, before anything is written. Pure and plain erasable TypeScript, no imports: the wizard imports this file directly
+ * (Node 24 strips the types), and test/review.test.ts covers it.
+ */
+
+export interface ReviewAnswers {
+  envName: 'staging' | 'prod';
+  modelChoice: 'nova' | 'claude';
+  region: string;
+  /** Empty: no custom domain (CloudFront, whose firewall is in us-east-1). */
+  domainName: string;
+  cognitoDomainPrefix: string;
+  googleClientId: string;
+  alarmEmail: string;
+  monthlyBudgetUsd: number;
+  sesFromEmail: string;
+  storeId: string;
+  allowDev: boolean;
+  firefox: boolean;
+  safari: boolean;
+  githubRepo: string;
+  /** False: deploy with the kill switch off (Bedrock wasn't ready). */
+  aiEnabled: boolean;
+  /** Where the AI runs when Bedrock answers only in another Region ('' or absent = `region`). */
+  aiRegion?: string;
+  /** Amazon Nova on Lite alone (no Pro quota yet). */
+  novaLiteOnly?: boolean;
+  /** The AI on the city's own Fargate service (EnvConfig.aiCpu): the model's name and its on-demand cost a day. */
+  aiCpu?: { spot: boolean; primary?: boolean; model: string; daily: number };
+  /** Which code this deploys (`codeRow`, infra/lib/code-state.ts): "main @ d349c21 (up to date with GitHub)". */
+  code?: string;
+}
+
+/** Big free email providers. Their addresses make a poor SES "from" address: mail sent as them is often filtered. */
+export const FREE_MAIL_DOMAINS = [
+  'gmail.com',
+  'googlemail.com',
+  'outlook.com',
+  'hotmail.com',
+  'hotmail.co.uk',
+  'live.com',
+  'msn.com',
+  'yahoo.com',
+  'yahoo.co.uk',
+  'icloud.com',
+  'me.com',
+  'aol.com',
+  'proton.me',
+  'protonmail.com',
+  'gmx.com',
+] as const;
+
+export const isFreeMail = (email: string) => (FREE_MAIL_DOMAINS as readonly string[]).includes(email.trim().toLowerCase().split('@')[1] ?? '');
+
+/** Why CloudFront needs us-east-1 (AWS WAF developer guide: a CloudFront web ACL is created in US East (N. Virginia)). */
+export const cloudFrontNote = (region: string) =>
+  `CloudFront is global, and AWS requires its firewall (AWS WAF) in us-east-1 (N. Virginia). Only that firewall lives there; your server, data and sign-in stay in ${region}.`;
+
+/** The answers, as label/value rows. */
+export const reviewRows = (a: ReviewAnswers): [string, string][] => [
+  ['Environment', a.envName === 'staging' ? 'staging (a test copy)' : 'prod (the one players use)'],
+  ...(a.code ? ([['Code', a.code]] as [string, string][]) : []),
+  ['AI models', a.modelChoice === 'nova' ? (a.novaLiteOnly ? 'Amazon Nova Lite (no Pro quota yet)' : 'Amazon Nova') : 'Claude'],
+  ['AI at first', a.aiEnabled ? 'on' : 'off until Bedrock answers (run setup again to switch it on)'],
+  ...(a.aiRegion && a.aiRegion !== a.region ? ([['AI runs in', `${a.aiRegion} (only the agents' questions; data stays in ${a.region})`]] as [string, string][]) : []),
+  ...(a.aiCpu
+    ? ([['AI on Fargate', `${a.aiCpu.model} on Graviton, ${a.aiCpu.spot ? 'Spot' : 'on-demand'}, private to your VPC, ${a.aiCpu.primary ? 'answering alone until Bedrock does' : 'behind Bedrock'} (about $${a.aiCpu.daily.toFixed(2)} a day on demand${a.aiCpu.spot ? ', Spot less' : ''}; off: npm run ai -- off)`]] as [string, string][])
+    : []),
+  ['Region', a.domainName ? a.region : `${a.region} (CloudFront's firewall: us-east-1)`],
+  ['Web address', a.domainName || 'CloudFront HTTPS (https://xxxx.cloudfront.net)'],
+  ['Sign-in page', `${a.cognitoDomainPrefix}.auth.${a.region}.amazoncognito.com`],
+  ['Google sign-in', a.googleClientId ? `yes (${a.googleClientId.slice(0, 12)}…)` : 'no (email + password)'],
+  ['Alarm email', a.alarmEmail || 'none'],
+  ['Monthly budget', `$${a.monthlyBudgetUsd} (the AI switches off at 100%)`],
+  ['Sign-up emails from', a.sesFromEmail ? `${a.sesFromEmail} (Amazon SES)` : 'Cognito’s default sender (~50 a day)'],
+  ['Chrome Web Store id', a.storeId || 'none yet'],
+  ['Local build signs in', a.allowDev ? 'yes' : 'no'],
+  ['Other browsers', [a.firefox && 'Firefox', a.safari && 'Safari'].filter(Boolean).join(', ') || 'none'],
+  ['GitHub deploys', a.githubRepo || 'no'],
+];
+
+/** What confirming will do in AWS, in order. */
+export const plannedActions = (
+  a: ReviewAnswers,
+  ctx: { account: string; storeGoogleSecret: boolean; verifySes: boolean; deleteSes: readonly string[]; bootstrap: readonly string[] },
+): string[] => [
+  ...(ctx.storeGoogleSecret ? ['Store the Google client secret in Secrets Manager ("aws-city/google-oauth")'] : []),
+  ...(ctx.verifySes ? [`Ask Amazon SES to verify ${a.sesFromEmail} (it sends a verification email)`] : []),
+  ...ctx.deleteSes.map((e) => `Remove the SES identity ${e} (set up by an earlier run, no longer used)`),
+  ...ctx.bootstrap.map((r) => `Prepare ${ctx.account}/${r} for CDK (one time)${r === 'us-east-1' && r !== a.region ? ': for CloudFront’s firewall' : ''}`),
+  ...(a.aiCpu ? [`Build the AI image (${a.aiCpu.model}, about 4 GB) in AWS CodeBuild and run it on a private Fargate service`] : []),
+  `Deploy AWS City (${a.envName}) in ${a.region}: about 15–25 minutes the first time`,
+];
+
+/** The review box's text: answers, then the AWS changes. */
+export const reviewText = (rows: readonly [string, string][], actions: readonly string[]) => {
+  const width = Math.max(...rows.map(([k]) => k.length));
+  return [...rows.map(([k, v]) => `${k.padEnd(width)}  ${v}`), '', 'In AWS, confirming will:', ...actions.map((x, i) => `  ${i + 1}. ${x}`)].join('\n');
+};

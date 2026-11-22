@@ -25,6 +25,7 @@
     "check": "tsc --noEmit && vitest run",
     "lint": "eslint .",
     "open": "node scripts/open.mjs --build",
+    "open:hosted": "node scripts/open.mjs --hosted",
     "art": "python3 art/pack/import_agentic.py && python3 art/characters/aws_city.py && python3 art/characters/crowd_small.py && python3 art/tiles/generate_tiles.py",
     "smoke:copilot": "node scripts/build-demo.mjs && node scripts/smoke-copilot.mjs",
     "live": "node scripts/live.mjs",
@@ -34,6 +35,7 @@
     "region-facts": "node scripts/fetch-region-facts.mjs",
     "city-maps": "node scripts/fetch-city-maps.mjs",
     "setup": "node scripts/launcher/require-node.mjs && npm --prefix infra ci --no-audit --no-fund --loglevel=error && node infra/setup/setup.mjs",
+    "ai": "node scripts/ai-switch.mjs",
     "lint:firefox": "wxt build -b firefox && web-ext lint -s .output/firefox-mv3",
     "safari:xcode": "wxt build -b safari && xcrun safari-web-extension-converter .output/safari-mv3 --project-location .cache/safari --app-name \"AWS City\" --bundle-identifier dev.awscity.AWS-City --macos-only --no-prompt --force"
   },
@@ -41,6 +43,7 @@
     "phaser": "^4.2.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "uqr": "0.1.3",
     "zustand": "^5.0.15"
   },
   "devDependencies": {

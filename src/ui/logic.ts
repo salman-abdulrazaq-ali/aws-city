@@ -110,7 +110,7 @@ export const isAccountIdOrRoleArn = (v: string) => /^\d{12}$/.test(v.trim()) || 
 // ── Small localStorage prefs (per surface is fine; failures are ignored) ──
 
 export const TAB_KEY = 'awscity.tab';
-export const TOUR_KEY = 'awscity.tourDone';
+const TOUR_KEY = 'awscity.tourDone';
 
 export function readPref(key: string): string | null {
   try {

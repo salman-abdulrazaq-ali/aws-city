@@ -8,13 +8,15 @@
 const RISKY = [
   /\bdelete\b/, /\bterminate\b/, /\bremove\b/, /\bpurge\b/, /\bdestroy\b/, /\bempty\b/, /\bdisable\b/, /\bdeactivate\b/,
   /make public/, /\bpublic access\b.*\b(off|disable)/, /attach (policy|policies)/, /administratoraccess/, /full ?access/,
-  /power ?user/,
-  // who can reach what: S3 Block Public Access (any of its boxes, or the "I acknowledge … public" one), the
-  // whole internet as a source, every port, other accounts
-  /\bblock (all )?public\b/, /\bi acknowledge\b/, /anywhere[- ]?ipv[46]/, /(^|[^\d.])0\.0\.0\.0\/0\b/, /::\/0/, /\ball traffic\b/,
-  /\b(an)?other aws accounts?\b/, /\bcross-?account\b/,
+  // Managed policies inside one word (PowerUserAccess), and who can reach what: S3 Block Public Access (any of its boxes,
+  // or the "I acknowledge … public" one), the whole internet as a source, every port, other accounts. The 21 Nov security
+  // review's broader words (public, share, anywhere, account id, trust) hand the click back too.
+  /power ?user/, /\bpublic\b/, /\bblock (all )?public\b/, /\bi acknowledge\b/, /\bshare\b/, /\banywhere\b/, /anywhere[- ]?ipv[46]/,
+  // 0.0.0.0, alone or as /0, but never inside a private range (10.0.0.0/16 is an ordinary VPC CIDR)
+  /(^|[^\d.])0\.0\.0\.0(?!\d)/, /::\/0/, /\ball traffic\b/,
+  /account id/, /\b(an)?other aws accounts?\b/, /another (aws )?account/, /\bcross[- ]?account\b/,
   // who may take on a role, and making one
-  /\btrust(ed)? (entit|polic|relationship)/, /\bcreate (new )?(iam )?role\b/,
+  /\btrust(ed)?\b/, /\bcreate (new )?(iam )?role\b/,
   /create access key/, /\baccess keys?\b/, /\bsecret\b/, /\bpassword\b/, /\bmfa\b/, /\broot\b/,
   /\bbilling\b/, /\bpayment\b/, /\bpurchase\b/, /\bbuy\b/, /\bsubscribe\b/, /reserved instance/, /savings plan/, /\bupgrade\b/,
   /sign ?out/, /close account/, /account settings/, /\btransfer\b/,
@@ -59,7 +61,7 @@ export const isEnglishPage = (lang: string) => /^en(-|$)/i.test(lang.trim());
  * (`primary`: Cloudscape's primary variant or a native form's default submit button, which only the page can see; a
  * wizard's Next/Previous excepted). The commit words are English, so on a page whose `lang` isn't (`isEnglishPage`;
  * `''` when the page has none) every press of a button or menu item is the player's. `lang` undefined means not known
- * (a snapshot from before v2.17): the words alone decide. The Copilot acts with the console user's own rights, outside
+ * (a snapshot from before v2.19): the words alone decide. The Copilot acts with the console user's own rights, outside
  * the player role's caps, so that press is always the player's: it fills the form and points at the button. The server
  * applies the same rule by name and the snapshot's `lang`.
  */
@@ -69,6 +71,23 @@ export function isCommit(url: string | undefined, role: string, name: string, pr
   const n = name.trim();
   return COMMIT.test(n) || (primary && !STEP_ONLY.test(n));
 }
+
+/**
+ * Words that commit a change anywhere in a control's name (create, save, launch, add, attach…; security review, 21 Nov).
+ * The Copilot navigates, points and fills fields; the player presses these, on any page (the practice console too).
+ * Text planted on a console page (a tag, an object key, an AMI name) can then steer what the agent fills in, but never
+ * make it commit anything: an allowlist of what it may do, not a list of bad words. (`isCommit` above is the real
+ * console's form-commit rule, by its first word, the page's main action and its language; both apply.)
+ */
+const COMMIT_WORD =
+  /\b(create|save|launch|submit|apply|update|attach|add|allow|grant|confirm|deploy|enable|start|run|publish|accept|invite|modify|change|associate|import|upload|request|register|authori[sz]e|finish|set|assign|copy|restore|reboot|stop|connect|send|edit|invoke|test|execute|replace|rotate)\b/;
+export const isCommitWord = (name: string) => COMMIT_WORD.test(name.toLowerCase());
+/** A commit is pressed on a button, link or menu item; picking a tile, radio, tab or option commits nothing. */
+export const isCommitControl = (role: string, name: string) => ['button', 'link', 'menuitem'].includes(role) && isCommitWord(name);
+
+/** Values the Copilot never types itself: networks open to the world, a bare wildcard, an AWS account number, an ARN. */
+const RISKY_VALUE = [/0\.0\.0\.0\/0/, /::\/0/, /^\s*\*\s*$/, /\b\d{4}[\s.-]?\d{4}[\s.-]?\d{4}\b/, /\barn:aws/i];
+export const isRiskyValue = (value: string) => RISKY_VALUE.some((r) => r.test(value));
 
 /** A console page, matched on its lower-cased path + query + hash (`/iam/home#/roles`). */
 export interface ConsolePage {

@@ -4,7 +4,7 @@
 import type { SnapshotItem } from './types';
 
 import { byIdFrom } from './dom';
-import { isCommit, isConsoleUrl, isEnglishPage, isRisky, playerOnlyPage } from './risk';
+import { isCommit, isCommitControl, isConsoleUrl, isEnglishPage, isRisky, isRiskyValue, playerOnlyPage } from './risk';
 
 export { isConsoleUrl, isRisky };
 
@@ -54,7 +54,7 @@ export function riskSignals(el: Element): string {
 
 /** The control a click really lands on: a click on an icon or span inside a "Delete" button is a Delete click. */
 const CONTROL = 'button, a[href], [role=button], [role=menuitem], [role=menuitemradio], [role=option], [role=tab], [role=link], label, summary';
-export function controlsAround(el: Element): Element[] {
+function controlsAround(el: Element): Element[] {
   const out: Element[] = [];
   for (let p: Element | null = el.parentElement, depth = 0; p && depth < 6; p = p.parentElement, depth++) {
     if (p.matches(CONTROL)) out.push(p);
@@ -63,7 +63,7 @@ export function controlsAround(el: Element): Element[] {
 }
 
 /** Links that leave the AWS console are never followed by the agent. */
-export function leavesConsole(el: Element): boolean {
+function leavesConsole(el: Element): boolean {
   const a = el.closest('a[href]') as HTMLAnchorElement | null;
   if (!a) return false;
   try {
@@ -129,6 +129,15 @@ export function mayChoose(option: Element, fieldName = ''): Verdict {
 const opensAList = (el: Element) => el instanceof HTMLSelectElement || el.getAttribute('aria-haspopup') === 'listbox' || el.getAttribute('role') === 'combobox';
 
 /**
+ * A form's submit control: type=submit, or a <button> with no type inside a form (which submits by default). Not a
+ * Cloudscape button: Cloudscape renders every button `type="submit"` (Next, Cancel, Actions…), so for those only the
+ * primary variant says "commit" (`isMainAction`), as do the commit words (`isCommit`/`isCommitControl`).
+ */
+const isSubmitControl = (el: Element) =>
+  !/\bawsui/.test(el.getAttribute('class') ?? '') &&
+  (el.matches('button[type="submit" i], input[type="submit" i], input[type="image" i]') || (el.tagName === 'BUTTON' && !el.hasAttribute('type') && !!el.closest('form')));
+
+/**
  * Decide whether the agent may act on this element itself. `url` is the page's (the element's document by default):
  * on the real console's player-only pages (`PLAYER_ONLY_PAGES`) every click, pick and keystroke is the player's.
  */
@@ -153,16 +162,25 @@ export function mayAct(item: SnapshotItem | undefined, action: string, el?: Elem
   if (el && action === 'type' && (isRisky(riskSignals(el)) || isRisky(value ?? '') || /\b(confirm|to confirm)\b/i.test(riskSignals(el))))
     return { ok: false, reason: 'risky', message: 'This field confirms something important — please type it yourself.' };
   if (item.disabled) return { ok: false, reason: 'disabled', message: `“${item.name}” is disabled right now.` };
+  // The player types any value that opens access widely or names an account (risk.ts isRiskyValue).
+  if ((action === 'type' || action === 'select') && isRiskyValue(value ?? ''))
+    return { ok: false, reason: 'risky', message: 'That value opens access widely or names an AWS account — please enter it yourself.' };
   if (item.sensitive) return { ok: false, reason: 'sensitive', message: 'That field holds a secret — please fill it in yourself.' };
   if ((action === 'click' || action === 'select' || action === 'type') && (isRisky(item.name, item.context) || isRisky(value ?? ''))) {
     return { ok: false, reason: 'risky', message: `“${item.name}” can change or cost something important — your turn to click it.` };
   }
-  // On the real console the press that commits a form (creates, launches, saves…) is the player's (isCommit), and on a
-  // console that isn't in English (or doesn't say) every press of a button is. A "select" on anything that isn't a
-  // dropdown ends in the same press (act.ts choose → press), so it counts too.
+  // The press that commits a change is the player's. On any page (the practice console too): a button, link or menu item
+  // with a commit word anywhere in its name (isCommitControl) and any form submit control. On the real console also the
+  // form's commit by its first word or the page's main action (isCommit), and on a console that isn't in English (or
+  // doesn't say) every press of a button. A "select" on anything that isn't a dropdown ends in the same press (act.ts
+  // choose → press), so it counts too.
   const lang = el?.ownerDocument.documentElement.getAttribute('lang') ?? '';
-  if ((action === 'click' || (action === 'select' && !!el && !opensAList(el))) && isCommit(url, item.role, item.name, !!el && isMainAction(el), lang)) {
-    const message = !isEnglishPage(lang)
+  const presses = action === 'click' || (action === 'select' && !!el && !opensAList(el));
+  if (
+    presses &&
+    (isCommitControl(item.role, item.name) || (el !== undefined && isSubmitControl(el)) || isCommit(url, item.role, item.name, !!el && isMainAction(el), lang))
+  ) {
+    const message = !!url && isConsoleUrl(url) && !isEnglishPage(lang)
       ? `Your turn: press “${item.name}”. This console isn’t set to English, so I leave its buttons to you.`
       : el && hasSettings(el)
         ? `Your turn: press “${item.name}” when you’re happy with the settings.`

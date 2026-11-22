@@ -34,7 +34,7 @@ import { CityMapError, decodeCityMap, rawCityMap } from './citymap';
 import { DISTRICTS, type DistrictId } from './taxonomy';
 import { zonePlan } from './zoning';
 
-export type Axis = 'x' | 'y';
+type Axis = 'x' | 'y';
 export type EdgeSide = 'N' | 'W' | 'S' | 'E';
 
 /**

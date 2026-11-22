@@ -9,18 +9,21 @@ import { createApprovals } from './contract/approvals.js';
 import { type ConsoleCopilot, Snapshot } from './contract/console.js';
 import type { ProgressStore } from './contract/progress.js';
 import { MAX_UPLOAD_BYTES, type MemoryUploadStore, UPLOAD_PATH } from './contract/uploads.js';
-import { MFA_REQUIRED_MESSAGE, SIGN_IN_AGAIN_MESSAGE, type StepUp } from './accounts/mfa.js';
+import { MFA_REQUIRED_MESSAGE, REAUTH_MESSAGE, recentSignIn, SIGN_IN_AGAIN_MESSAGE, type StepUp } from './accounts/mfa.js';
 import { log, publicError, who } from './log.js';
 import { verifyStep } from './workshops/checks.js';
 import { isBoard, memorySocial, socialFor } from './social.js';
 import type { Poller } from './state/poller.js';
 import type { Tenant, TenantHub } from './tenants.js';
+import { redactSecrets } from './secrets.js';
 import { CLOSE_CODES, compareContract, CONTRACT_HEADER, CONTRACT_PARAM, CONTRACT_VERSION, type ServerEvent } from './world.js';
 import pkg from '../package.json' with { type: 'json' };
 
 const JSON_LIMIT = 64 * 1024;
 const MAX_TASKS_PER_SOCKET = 2;
 const MAX_REQUESTS_PER_SOCKET = 3;
+/** Fixes waiting for their approval, per socket (one per finding anyway: city care holds the rest). */
+const MAX_FIXES_PER_SOCKET = 3;
 /** v2.11: presence beats closer together than this are ignored (the client beats every 30 s). */
 const BEAT_MIN_MS = 20_000;
 const HEARTBEAT_MS = 25_000;
@@ -62,13 +65,22 @@ const DELETED_CACHE_MS = 10 * 60_000;
  * on the task that handled it, and this closes the rest (other tasks, other devices).
  */
 export const DELETED_CHECK_MS = 60_000;
+/** A socket's last "not deleted" answer is reused this long for cheap writes (presence, scores); step-up always asks. */
+const HERE_CACHE_MS = 15_000;
 /** score.submit and leaderboard.get per socket: a burst of 5, then one every 5 s (each is a player-table read or write). */
 const SOCIAL_BURST = 5;
 const SOCIAL_PER_SECOND = 1 / 5;
 const IDLE_CHECK_MS = 15_000;
+/** At most one auth.renew per socket in this long (each is a token verification). */
+const RENEW_MIN_MS = 5_000;
+/** Screenshot uploads per player (each up to 5 MB, kept a day): a burst of 10, then one every 6 s. */
+const SCREENSHOT_BURST = 10;
+const SCREENSHOTS_PER_SECOND = 1 / 6;
+/** Exactly the keys uploads.create makes: screenshots/<owner folder>/<uuid>.<jpg|png>. */
+const SCREENSHOT_KEY = /^screenshots\/(local|[0-9a-f]{24})\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png)$/;
 
 /** WebSocket close codes the extension understands (CLOSE_CODES in src/backend/contract.ts; see ServerBackend). */
-export const CLOSE = CLOSE_CODES;
+const CLOSE = CLOSE_CODES;
 
 /**
  * The oldest client contract this server still serves: raise it when a release drops an old client's shapes. Clients
@@ -118,7 +130,7 @@ class HttpError extends Error {
 }
 
 /** The local single-player server (and the tests) pass their pieces directly. */
-export interface SingleTenantDeps {
+interface SingleTenantDeps {
   poller: Poller;
   orchestrator: Orchestrator;
   uploads: MemoryUploadStore;
@@ -129,7 +141,7 @@ export interface SingleTenantDeps {
   createCopilot?: () => ConsoleCopilot;
 }
 
-export interface HubDeps {
+interface HubDeps {
   tenants: TenantHub;
   authenticate: Authenticate;
   /** The local upload store (PUT /uploads/…); hosted uploads go straight to S3. */
@@ -150,7 +162,7 @@ export interface HubDeps {
 export type Deps = { config: Config } & (SingleTenantDeps | HubDeps);
 
 /** Adapts the local pieces to the multi-player hub: one player, "local". */
-export const singleTenant = (d: SingleTenantDeps & { config: Config }): TenantHub => {
+const singleTenant = (d: SingleTenantDeps & { config: Config }): TenantHub => {
   // One player: the live city is just them (still useful to try the feature locally).
   const localSocial = memorySocial();
   const tenant: Tenant = {
@@ -182,27 +194,28 @@ export const singleTenant = (d: SingleTenantDeps & { config: Config }): TenantHu
 
 // ── Client → server command validation (mirrors ClientCommand in src/backend/contract.ts) ──
 const Context = z
-  .object({ url: z.string().max(2048).optional(), title: z.string().max(512).optional(), serviceId: z.string().max(64).optional(), screenshotKey: z.string().max(200).optional() })
+  .object({ url: z.string().max(2048).optional(), title: z.string().max(512).optional(), serviceId: z.string().max(64).optional(), screenshotKey: z.string().regex(SCREENSHOT_KEY).optional() })
   .strip();
 const Id = z.string().min(1).max(100);
 const Command = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('task.submit'), taskId: Id, prompt: z.string().min(1).max(2000), context: Context.default({}) }),
-  z.object({ action: z.literal('chat.ask'), requestId: Id, districtId: z.string().max(64), question: z.string().min(1).max(2000), context: Context.default({}) }),
+  // Player text loses any credentials before it reaches a model or the docs search (secrets.ts).
+  z.object({ action: z.literal('task.submit'), taskId: Id, prompt: z.string().min(1).max(2000).transform(redactSecrets), context: Context.default({}) }),
+  z.object({ action: z.literal('chat.ask'), requestId: Id, districtId: z.string().max(64), question: z.string().min(1).max(2000).transform(redactSecrets), context: Context.default({}) }),
   z.object({ action: z.literal('page.classify'), requestId: Id, context: Context }),
   // contract v2: the player's answer to a deploy.preview (approval of a guarded write)
   z.object({ action: z.literal('deploy.approve'), deployId: Id, confirm: z.string().max(300).optional() }),
   z.object({ action: z.literal('deploy.reject'), deployId: Id }),
   // contract v2.1: Console Copilot
-  z.object({ action: z.literal('console.start'), taskId: Id, goal: z.string().min(1).max(500), context: Context.default({}), snapshot: Snapshot }),
+  z.object({ action: z.literal('console.start'), taskId: Id, goal: z.string().min(1).max(500).transform(redactSecrets), context: Context.default({}), snapshot: Snapshot }),
   z.object({ action: z.literal('console.observe'), taskId: Id, index: z.number().int().min(0).max(100), ok: z.boolean(), note: z.string().max(200).optional(), snapshot: Snapshot }),
   z.object({ action: z.literal('console.stop'), taskId: Id }),
-  // Connecting the player's own AWS account (hosted); v2.17: allowFixes, and disconnecting it
+  // Connecting the player's own AWS account (hosted); v2.19: allowFixes, and disconnecting it
   z.object({ action: z.literal('account.link'), requestId: Id, region: z.string().min(1).max(32), allowFixes: z.boolean().optional() }),
   z.object({ action: z.literal('account.verify'), requestId: Id, roleArn: z.string().min(1).max(200), updated: z.boolean().optional() }),
   z.object({ action: z.literal('account.unlink'), requestId: Id }).strict(),
-  // contract v2.17 "Check again": the linked role's fixes answer, read again (read-only, no MFA)
+  // contract v2.19 "Check again": the linked role's fixes answer, read again (read-only, no MFA)
   z.object({ action: z.literal('account.recheck'), requestId: Id }).strict(),
-  // contract v2.17: take down one thing the city built (no model; the ActionService and the player's approval)
+  // contract v2.19: take down one thing the city built (no model; the ActionService and the player's approval)
   z.object({ action: z.literal('resource.remove'), requestId: Id, kind: z.enum(['instance', 'table', 'bucket']), id: z.string().regex(/^[A-Za-z0-9._-]{1,255}$/) }).strict(),
   // contract v2.3: city care (the citizens' findings)
   z.object({ action: z.literal('finding.explain'), requestId: Id, findingId: Id }),
@@ -212,8 +225,10 @@ const Command = z.discriminatedUnion('action', [
   z.object({ action: z.literal('bill.enable'), on: z.boolean() }).strict(),
   // contract v2.8: live traffic on or off
   z.object({ action: z.literal('flow.enable'), on: z.boolean() }).strict(),
+  // contract v2.17: a fresh sign-in on this socket (step-up)
+  z.object({ action: z.literal('auth.renew'), token: z.string().min(1).max(8192) }).strict(),
   // contract v2.11: the live city and leaderboards (server/src/social.ts)
-  z.object({ action: z.literal('presence.beat'), region: z.string().regex(/^[a-z]{2}(-[a-z]+)+-\d$/), rank: z.enum(['Village', 'Town', 'City', 'Metropolis', 'Megacity', 'Global City']).optional() }).strict(),
+  z.object({ action: z.literal('presence.beat'), region: z.string().max(32).regex(/^[a-z]{2}(-[a-z]+)+-\d$/), rank: z.enum(['Village', 'Town', 'City', 'Metropolis', 'Megacity', 'Global City']).optional() }).strict(),
   z.object({ action: z.literal('score.submit'), board: z.string().min(1).max(40), score: z.number().finite().min(0).max(1_000_000) }).strict(),
   z.object({ action: z.literal('leaderboard.get'), board: z.string().min(1).max(40) }).strict(),
   // contract v2.10: check a workshop step in the account (read-only; server/src/workshops/checks.ts)
@@ -256,6 +271,9 @@ export const SERVER_VERSION: string = pkg.version;
  */
 export const health = (draining: boolean) => ({ status: draining ? 503 : 200, body: { status: draining ? 'draining' : 'ok', version: SERVER_VERSION, contract: CONTRACT_VERSION } });
 
+/** What a person sees opening the server's address in a browser: what it is, nothing about any player. */
+export const ROOT_INFO = { service: 'AWS City', about: 'This is an AWS City server. Play in the AWS City browser extension.' } as const;
+
 const send = (res: ServerResponse, status: number, body?: unknown): void => {
   if (body === undefined) res.writeHead(status).end();
   else res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
@@ -276,6 +294,13 @@ export const createHttpServer = (deps: Deps) => {
   /** POST /me/mfa per player: a token bucket and when it was last used (a bucket left alone that long is full again). */
   const mfaNotes = new Map<string, { allow: () => boolean; at: number }>();
   const sweepMfaNotes = sweeper(mfaNotes, (n, now) => now - n.at >= MFA_NOTE_BURST * MFA_NOTE_EVERY_MS);
+  const screenshotLimits = new Map<string, () => boolean>();
+  const screenshotRate = (sub: string) => {
+    if (screenshotLimits.size > 10_000) screenshotLimits.clear(); // bounded: forgetting a bucket only refills it
+    let ok = screenshotLimits.get(sub);
+    if (!ok) screenshotLimits.set(sub, (ok = rateLimiter(SCREENSHOT_BURST, SCREENSHOTS_PER_SECOND)));
+    return ok();
+  };
   /** Whether this player deleted their account recently (a yes is remembered here, a no is asked again). */
   const isDeleted = async (sub: string) => {
     if (!deleted) return false;
@@ -335,6 +360,8 @@ export const createHttpServer = (deps: Deps) => {
     const url = guard(req);
     // The version handshake: every answer from here on names this server's contract version.
     res.setHeader(CONTRACT_HEADER, CONTRACT_VERSION);
+    // Someone opened the server's address in a browser: say what this is instead of "Please sign in again".
+    if (req.method === 'GET' && url.pathname === '/') return send(res, 200, { ...ROOT_INFO, status: draining ? 'draining' : 'ok' });
     if (req.headers.origin) {
       res.setHeader('access-control-allow-origin', req.headers.origin);
       res.setHeader('access-control-expose-headers', CONTRACT_HEADER);
@@ -383,9 +410,10 @@ export const createHttpServer = (deps: Deps) => {
         .object({ contentType: z.enum(['image/jpeg', 'image/png']), url: z.string().max(2048).optional(), title: z.string().max(512).optional() })
         .safeParse(await readJson(req));
       if (!body.success) throw new HttpError(400, 'contentType must be image/jpeg or image/png');
+      if (!screenshotRate(principal.sub)) throw new HttpError(429, 'Too many screenshots. Try again in a moment.');
       return send(res, 200, await hub.data(principal).uploads.create(body.data.contentType));
     }
-    // v2.17: everything we store about the player, as a download (the account link as metadata: never the ExternalId).
+    // v2.19: everything we store about the player, as a download (the account link as metadata: never the ExternalId).
     if (route === 'GET /me/export') {
       const now = Date.now();
       if (now - (exported.get(principal.sub) ?? -Infinity) < EXPORT_EVERY_MS) throw new HttpError(429, 'You downloaded your data a moment ago. Try again in a minute.');
@@ -547,8 +575,10 @@ export const createHttpServer = (deps: Deps) => {
     log.info('socket open', { who: who(principal.sub), connId });
     let tasks = 0;
     let requests = 0;
+    let fixes = 0;
     /** v2.11: when this socket last beat (presence.beat answers at most every BEAT_MIN_MS). */
     let lastBeat = 0;
+    let lastRenew = 0;
     let alive = true;
     const withinRate = rateLimiter(FRAME_BURST, FRAMES_PER_SECOND);
     const socialRate = rateLimiter(SOCIAL_BURST, SOCIAL_PER_SECOND);
@@ -558,16 +588,51 @@ export const createHttpServer = (deps: Deps) => {
     const raw = (e: ServerEvent) => sendTo(ws, e);
     const emit = tenant.emitter(raw);
     // Events for a task still running when its socket closes are dropped (accepted limitation).
-    const approvals = createApprovals({ region: tenant.region });
+    // Read when each card is made, not once per socket: a re-link changes the account and Region mid-connection.
+    const approvals = createApprovals({ region: () => tenant.region, accountId: () => tenant.accountId });
     /** Aborted on close: this socket's agent turns stop (other tabs' turns run on). */
     const turns = new AbortController();
-    /** MFA step-up (hosted); a failed check counts as "not enrolled". */
-    const stepUp = async (): Promise<StepUp> => (mfaReady ? await mfaReady(principal).catch(() => 'enrol' as const) : 'ok');
-    /** What a refused step-up tells the player: turn on an authenticator, or sign in again (this session predates it). */
-    const stepUpRefused = (verdict: StepUp, requestId?: string): ServerEvent =>
-      verdict === 'reauth'
-        ? { type: 'error', ...(requestId ? { requestId } : {}), code: 'auth', message: SIGN_IN_AGAIN_MESSAGE }
-        : { type: 'error', ...(requestId ? { requestId } : {}), code: 'mfa_required', message: MFA_REQUIRED_MESSAGE };
+    /**
+     * Deleted elsewhere (DELETE /me lands on one task; this socket may be on another): close with CLOSE.deleted. Only a
+     * confirmed deletion closes it; a store hiccup doesn't. `fresh` false reuses a "still here" up to HERE_CACHE_MS old.
+     */
+    let hereAt = 0;
+    const stillHere = async (fresh = true) => {
+      if (!fresh && Date.now() - hereAt < HERE_CACHE_MS) return true;
+      try {
+        if (await isDeleted(principal.sub)) {
+          ws.close(CLOSE.deleted, 'Account deleted');
+          return false;
+        }
+        hereAt = Date.now();
+      } catch (err) {
+        log.warn('deleted check failed', { who: who(principal.sub), err: (err as Error).name });
+      }
+      return true;
+    };
+    type Refusal = 'enrol' | 'reauth' | 'reauth_required' | 'deleted';
+    /**
+     * Step-up (hosted) for linking, approving, fixing and taking down. All of: the player wasn't deleted on another task
+     * (else the socket closes); an authenticator is on ('enrol': a failed check counts as not enrolled); this session
+     * signed in after it was first seen (accounts/mfa.ts: 'reauth', sign out and in again with the code); and the sign-in
+     * is recent (recentSignIn, the last 30 minutes: 'reauth_required', a fresh sign-in on this socket with auth.renew), so
+     * a stolen refresh token can't act on a player's AWS account. Each is checked; none replaces another.
+     */
+    const stepUp = async (): Promise<'ok' | Refusal> => {
+      if (!(await stillHere())) return 'deleted';
+      if (!mfaReady) return 'ok';
+      const verdict: StepUp = await mfaReady(principal).catch(() => 'enrol' as const);
+      if (verdict !== 'ok') return verdict;
+      return recentSignIn(principal) ? 'ok' : 'reauth_required';
+    };
+    /** What a refused step-up tells the player: turn on an authenticator, sign out and in again, or sign in again here. */
+    const refuse = (why: Refusal, requestId?: string) => {
+      if (why === 'deleted') return; // the socket is already closing with CLOSE.deleted
+      const id = requestId ? { requestId } : {};
+      if (why === 'reauth') return emit({ type: 'error', ...id, code: 'auth', message: SIGN_IN_AGAIN_MESSAGE });
+      if (why === 'reauth_required') return emit({ type: 'error', ...id, code: 'reauth_required', message: REAUTH_MESSAGE });
+      emit({ type: 'error', ...id, code: 'mfa_required', message: MFA_REQUIRED_MESSAGE });
+    };
     const copilot = tenant.createCopilot();
     const unsubscribe = tenant.subscribe(emit);
     const heartbeat = setInterval(() => {
@@ -585,20 +650,13 @@ export const createHttpServer = (deps: Deps) => {
         : setTimeout(() => {
             const hardStop = Date.now() + EXPIRED_GRACE_MS;
             const check = () => {
-              if ((tasks === 0 && requests === 0 && approvals.size === 0) || Date.now() >= hardStop) return ws.close(CLOSE.reauth, 'Session refresh');
+              if ((tasks === 0 && requests === 0 && fixes === 0 && approvals.size === 0) || Date.now() >= hardStop) return ws.close(CLOSE.reauth, 'Session refresh');
               expiryCheck = setTimeout(check, IDLE_CHECK_MS);
               expiryCheck.unref?.();
             };
             check();
           }, Math.max(0, untilExpiry));
-    const deletedCheck = deleted
-      ? setInterval(() => {
-          isDeleted(principal.sub).then(
-            (yes) => yes && ws.close(CLOSE.deleted, 'Account deleted'),
-            (err) => log.warn('deleted check failed', { who: who(principal.sub), err: (err as Error).name }),
-          );
-        }, DELETED_CHECK_MS)
-      : undefined;
+    const deletedCheck = deleted ? setInterval(() => void stillHere(), DELETED_CHECK_MS) : undefined;
     heartbeat.unref?.();
     maxAge.unref?.();
     expiry?.unref?.();
@@ -663,7 +721,7 @@ export const createHttpServer = (deps: Deps) => {
         // Every AWS write is approved here: a player who turned MFA off can't approve one. The preview stays
         // pending, so it can still be approved once MFA is back on (or rejected, which needs no step-up).
         if (cmd.action === 'deploy.reject' || !mfaReady) return answer();
-        void stepUp().then((verdict) => (verdict === 'ok' ? answer() : emit(stepUpRefused(verdict))));
+        void stepUp().then((why) => (why === 'ok' ? answer() : refuse(why)));
         return;
       }
       if (cmd.action === 'account.link' || cmd.action === 'account.verify' || cmd.action === 'account.recheck' || cmd.action === 'account.unlink') {
@@ -682,8 +740,8 @@ export const createHttpServer = (deps: Deps) => {
         if (cmd.action === 'account.unlink') return void tenant.unlink(cmd.requestId, emit).catch(failed);
         if (cmd.action === 'account.recheck') return void tenant.recheck(cmd.requestId, emit).catch(failed);
         void (async () => {
-          const verdict = await stepUp();
-          if (verdict !== 'ok') return emit(stepUpRefused(verdict, cmd.requestId));
+          const why = await stepUp();
+          if (why !== 'ok') return refuse(why, cmd.requestId);
           if (cmd.action === 'account.link') {
             const requestId = cmd.requestId;
             return tenant.link(requestId, cmd.region, (e) => (e.type === 'account.linkUrl' && e.requestId === requestId && (linkedAt = Date.now()), emit(e)), cmd.allowFixes);
@@ -694,12 +752,12 @@ export const createHttpServer = (deps: Deps) => {
       }
       if (cmd.action === 'resource.remove') {
         // A change the player approves, like an agent's: it counts with this socket's tasks (it may wait minutes for the
-        // approval), never with its request slots, which chats and checks need meanwhile. Started only with MFA on
+        // approval), never with its request slots, which chats and checks need meanwhile. Started only after step-up
         // (hosted), and deploy.approve checks it again.
         if (tasks >= MAX_TASKS_PER_SOCKET) return emit({ type: 'error', message: 'Two tasks or changes are already waiting. Finish or reject one first.', requestId: cmd.requestId });
         tasks++;
         const { action: _a, ...remove } = cmd;
-        const job = stepUp().then((verdict) => (verdict === 'ok' ? tenant.remove(remove, emit, approvals) : emit(stepUpRefused(verdict, cmd.requestId))));
+        const job = stepUp().then((why) => (why === 'ok' ? tenant.remove(remove, emit, approvals) : refuse(why, cmd.requestId)));
         void track(job.catch((err) => emit({ type: 'error', requestId: cmd.requestId, message: publicError('remove failed', err) }))).finally(() => tasks--);
         return;
       }
@@ -707,15 +765,18 @@ export const createHttpServer = (deps: Deps) => {
         const care = tenant.care();
         if (!care) return emit({ type: 'error', requestId: cmd.requestId, code: 'unlinked', message: 'Connect your AWS account first, so the citizens can look after it.' });
         if (cmd.action === 'finding.undo') return care.undo(cmd.findingId, emit);
-        // An explanation is a Bedrock call and a fix may wait minutes for approval: both count as requests on this socket.
-        if (requests >= MAX_REQUESTS_PER_SOCKET) return emit({ type: 'error', message: 'Still working on your last request. Try again in a moment.', requestId: cmd.requestId });
-        requests++;
+        // An explanation is a model call: it counts as a request on this socket. A fix may wait minutes for its approval, so
+        // it has its own slots: a card left open must never block the HQ chat (seen 21 Nov: "Still answering…", unanswered).
+        const fix = cmd.action === 'finding.fix';
+        if (fix ? fixes >= MAX_FIXES_PER_SOCKET : requests >= MAX_REQUESTS_PER_SOCKET) return emit({ type: 'error', message: 'Still working on your last request. Try again in a moment.', requestId: cmd.requestId });
+        if (fix) fixes++;
+        else requests++;
         const failed = (err: unknown) => emit({ type: 'error', requestId: cmd.requestId, message: publicError('city care failed', err) });
         const job =
           cmd.action === 'finding.explain'
             ? care.explain(cmd.findingId, emit)
-            : stepUp().then((verdict) => (verdict === 'ok' ? care.fix(cmd.requestId, cmd.findingId, emit, approvals) : emit(stepUpRefused(verdict, cmd.requestId))));
-        void track(Promise.resolve(job).catch(failed)).finally(() => requests--);
+            : stepUp().then((why) => (why === 'ok' ? care.fix(cmd.requestId, cmd.findingId, emit, approvals) : refuse(why, cmd.requestId)));
+        void track(Promise.resolve(job).catch(failed)).finally(() => (fix ? fixes-- : requests--));
         return;
       }
       if (cmd.action === 'presence.beat' || cmd.action === 'score.submit' || cmd.action === 'leaderboard.get') {
@@ -725,7 +786,7 @@ export const createHttpServer = (deps: Deps) => {
         if (cmd.action === 'presence.beat') lastBeat = now;
         // Scores and boards are rate-limited like frames: a plain refusal, and nothing is read or written.
         else if (!socialRate()) return emit({ type: 'error', message: 'Too many scores and leaderboard requests. Try again in a few seconds.' });
-        const job =
+        const run = (): Promise<ServerEvent> =>
           cmd.action === 'presence.beat'
             ? tenant.social.beat(cmd.region, cmd.rank)
             : cmd.action === 'score.submit'
@@ -733,7 +794,9 @@ export const createHttpServer = (deps: Deps) => {
               : isBoard(cmd.board)
                 ? tenant.social.board(cmd.board)
                 : Promise.reject(new Error('unknown board'));
-        void track(job.then(emit).catch((err) => emit({ type: 'error', message: publicError('live city failed', err) })));
+        // A write must not bring back a player deleted on another task (their name on a board, their presence).
+        const job = cmd.action === 'leaderboard.get' ? run() : stillHere(false).then((ok) => (ok ? run() : undefined));
+        void track(job.then((e) => e && emit(e)).catch((err) => emit({ type: 'error', message: publicError('live city failed', err) })));
         return;
       }
       if (cmd.action === 'workshop.verify') {
@@ -749,6 +812,18 @@ export const createHttpServer = (deps: Deps) => {
         ).finally(() => requests--);
         return;
       }
+      if (cmd.action === 'auth.renew') {
+        // A fresh sign-in (step-up) on this socket: the same player's new token moves their sign-in time forward, so a
+        // pending approval survives. It's checked exactly like a new connection's; another player's token changes nothing.
+        if (Date.now() - lastRenew < RENEW_MIN_MS) return;
+        lastRenew = Date.now();
+        void authenticate({ headers: { authorization: `Bearer ${cmd.token}` } } as IncomingMessage, new URL('http://localhost/ws'))
+          .then((p) => {
+            if (p?.sub === principal.sub && p.authTime !== undefined && p.authTime > (principal.authTime ?? 0)) principal.authTime = p.authTime;
+          })
+          .catch(() => undefined);
+        return;
+      }
       if (cmd.action === 'flow.enable') {
         // At most one CloudWatch read every 5 minutes per player (flow.ts), however often this is sent.
         void tenant.flow(cmd.on, emit).catch((err) => emit({ type: 'error', message: publicError('flow failed', err) }));
@@ -756,7 +831,9 @@ export const createHttpServer = (deps: Deps) => {
       }
       if (cmd.action === 'bill.enable') {
         // At most one Cost Explorer read a day per player (bill.ts), however often this is sent.
-        void tenant.bill(cmd.on, emit).catch((err) => emit({ type: 'error', message: publicError('bill failed', err) }));
+        void (cmd.on ? stillHere() : Promise.resolve(true))
+          .then((ok) => (ok ? tenant.bill(cmd.on, emit) : undefined))
+          .catch((err) => emit({ type: 'error', message: publicError('bill failed', err) }));
         return;
       }
       if (cmd.action === 'task.submit') {

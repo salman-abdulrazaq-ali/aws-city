@@ -25,7 +25,7 @@ const BOX = 40;
  * each service on it, once a day per service across every design, at most 8 services a design and DESIGN_COINS_A_DAY a
  * day (src/state/wallet.ts designPay).
  */
-export const DESIGN_COINS = COIN_PAY.drawing;
+const DESIGN_COINS = COIN_PAY.drawing;
 /** The first-time guide was closed (this device). */
 const GUIDE_KEY = 'awscity.drawingGuide';
 const GROUPS: { kind: string; label: string; color: string; dashed?: boolean }[] = [

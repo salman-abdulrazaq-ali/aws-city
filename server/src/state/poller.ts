@@ -25,7 +25,7 @@ type Collector = (clients: AwsClients, accountId: string) => Promise<Resource[]>
 const tagValue = (tags: Tag[] | undefined, key: string) => tags?.find((t) => t.Key === key)?.Value;
 
 /** Listings stop here: the city shows a learner's account, not a fleet (and every poll stays cheap). */
-const MAX_PER_SERVICE = 200;
+export const MAX_PER_SERVICE = 200;
 /** At most this many per-table calls in flight: DescribeTable/ListTagsOfResource have low per-account rates. */
 const TABLE_CONCURRENCY = 5;
 /**
@@ -92,14 +92,14 @@ const setting = async <T>(clients: AwsClients, key: string, read: () => Promise<
 const ADMIN_PORTS = [22, 3389];
 const WORLD = (p: IpPermission) => p.IpRanges?.some((r) => r.CidrIp === '0.0.0.0/0') || p.Ipv6Ranges?.some((r) => r.CidrIpv6 === '::/0');
 /** An inbound rule that lets anyone on the internet reach SSH (22) or RDP (3389). */
-export const opensAdminToWorld = (p: IpPermission) =>
+const opensAdminToWorld = (p: IpPermission) =>
   !!WORLD(p) && (p.IpProtocol === '-1' || (p.IpProtocol === 'tcp' && ADMIN_PORTS.some((port) => (p.FromPort ?? 0) <= port && port <= (p.ToPort ?? 65535))));
 
 /** Drop a cached setting (after a fix changed it), so the next poll reads it fresh. */
 export const forgetSetting = (clients: AwsClients, key: string) => void settingCache.get(clients)?.delete(key);
 
 /** The four Block Public Access settings as '1'/'0' flags (no configuration = all off). */
-export const bpaFlags = (c?: PublicAccessBlockConfiguration) => [c?.BlockPublicAcls, c?.IgnorePublicAcls, c?.BlockPublicPolicy, c?.RestrictPublicBuckets].map((on) => (on ? '1' : '0')).join('');
+const bpaFlags = (c?: PublicAccessBlockConfiguration) => [c?.BlockPublicAcls, c?.IgnorePublicAcls, c?.BlockPublicPolicy, c?.RestrictPublicBuckets].map((on) => (on ? '1' : '0')).join('');
 
 const collectEc2: Collector = async ({ ec2 }) => {
   const resources: Resource[] = [];
