@@ -3,6 +3,7 @@ import { askDistrict } from '@/app/runtime';
 import { checkExplain, explainQuestion, explainService, framedExplain, MAX_CHARS, MIN_WORDS } from '@/state/explain';
 import { agentName, useCity } from '@/state/store';
 import type { Quest } from '@/world/content';
+import { AiNote } from './AiNote';
 import { feel } from './feedback';
 import { Plain } from './Term';
 
@@ -15,6 +16,7 @@ export function ExplainBack({ quest }: { quest: Quest }) {
   const [text, setText] = useState('');
   const [sent, setSent] = useState<{ requestId?: string; text: string }>();
   const fieldId = useId();
+  const noteId = useId();
   const serviceId = explainService(quest);
   const reply = useCity((s) => (sent?.requestId ? s.chats[quest.districtId]?.find((m) => m.id === `a-${sent.requestId}`) : undefined));
   const check = checkExplain(serviceId, sent?.text ?? text);
@@ -40,7 +42,8 @@ export function ExplainBack({ quest }: { quest: Quest }) {
         <label htmlFor={fieldId}>
           <Plain text={explainQuestion(quest)} />
         </label>
-        <textarea id={fieldId} rows={3} maxLength={MAX_CHARS} value={text} onChange={(e) => setText(e.target.value)} placeholder="A sentence or two is plenty." />
+        <textarea id={fieldId} rows={3} maxLength={MAX_CHARS} value={text} onChange={(e) => setText(e.target.value)} placeholder="A sentence or two is plenty." aria-describedby={noteId} />
+        <AiNote id={noteId} />
         <button className="btn primary wide" type="submit" disabled={check.tooShort}>
           {check.tooShort ? `A few more words (${MIN_WORDS - check.words} to go)` : 'Check my answer'}
         </button>

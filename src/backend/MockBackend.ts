@@ -163,6 +163,9 @@ function markDeployed(id: string) {
   }
 }
 
+/** Where the demo's practice setup links point: nowhere real (a reserved .invalid host), and never opened. */
+export const PRACTICE_LINK = 'https://practice.invalid/cloudformation/home';
+
 export class MockBackend implements AgentBackend {
   readonly kind = 'mock' as const;
   private events = new Listeners<ServerEvent>();
@@ -172,7 +175,10 @@ export class MockBackend implements AgentBackend {
   private remembered = new Set<string>();
   private jobs = new Map<string, number>();
   private deploys = new Map<string, string>();
-  private account?: { accountId: string; region: string };
+  /** The linked practice account; `fixes`: whether its pretend role allows small fixes (account.status `fixes`). */
+  private account?: { accountId: string; region: string; fixes: boolean };
+  /** The last practice setup link (account.link): the Region it was made for and whether Allow small fixes was ticked. */
+  private practiceLink?: { region: string; allowFixes: boolean };
   private copilot = new ConsoleMock((e) => this.emit(e));
   /** City care: the demo account's findings, and the fix previews waiting for approval. */
   private findings = new Map<string, CityFinding>();
@@ -193,7 +199,7 @@ export class MockBackend implements AgentBackend {
   private flowTimer?: ReturnType<typeof setInterval>;
   /** v2.19: practice resources taken down (resource.remove), by ARN, and the removals waiting for approval. */
   private removed = new Set<string>();
-  private removals = new Map<string, { arn: string; name: string }>();
+  private removals = new Map<string, { arn: string; name: string; confirmText: string }>();
   /** The last progress the runtime saved (putProgress): what "Download my data" gives in the demo. */
   private lastProgress?: Progress;
 
@@ -320,7 +326,8 @@ export class MockBackend implements AgentBackend {
         deployId,
         templateId: fix.fixId,
         stackName: f.resource.name,
-        region: this.account?.region ?? DEMO.region,
+        // The demo account's findings are about its own Region's resources, wherever the practice role was made.
+        region: DEMO.region,
         changes: [{ action: 'Modify', logicalId: f.resource.name, resourceType: demoResourceType(f) }],
         findingId,
         rollback: fix.rollback,
@@ -512,10 +519,17 @@ export class MockBackend implements AgentBackend {
       case 'progress.put':
         return this.putProgress(cmd.progress);
       case 'account.link': {
+        // The practice setup link rehearses the real one (server/src/accounts/link.ts): the Region picked, stack AWSCity,
+        // ConnectsPlayer, AllowFixes only when ticked. It's no console address: the Deploy tab opens nothing in the demo.
         const externalId = `aws-city-${Math.random().toString(36).slice(2, 12)}`;
-        const url =
-          `https://${cmd.region}.console.aws.amazon.com/cloudformation/home?region=${cmd.region}#/stacks/quickcreate` +
-          `?stackName=aws-city-player&templateURL=${encodeURIComponent('https://example.invalid/player-role.yaml')}&param_ExternalId=${externalId}`;
+        this.practiceLink = { region: cmd.region, allowFixes: !!cmd.allowFixes };
+        const params: [string, string][] = [
+          ['stackName', 'AWSCity'],
+          ['param_ExternalId', externalId],
+          ['param_ConnectsPlayer', 'Practice Mayor'],
+          ...(cmd.allowFixes ? ([['param_AllowFixes', 'true']] as [string, string][]) : []),
+        ];
+        const url = `${PRACTICE_LINK}?region=${cmd.region}#/stacks/quickcreate?${params.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&')}`;
         return this.emit({ type: 'account.linkUrl', requestId: cmd.requestId, url, externalId });
       }
       case 'account.verify':
@@ -523,23 +537,30 @@ export class MockBackend implements AgentBackend {
           // Like the server (v2.19): a refusal is an error for the request, never an account.status.
           const id = /^\s*(\d{12})\s*$/.exec(cmd.roleArn)?.[1] ?? /:(\d{12}):/.exec(cmd.roleArn)?.[1];
           if (!id) return this.emit({ type: 'error', requestId: cmd.requestId, message: 'Paste your 12-digit AWS account id (or the RoleArn from the AWSCity stack).' });
-          this.account = { accountId: id, region: 'us-west-2' };
-          // v2.19: the practice account allows fixes; it has no real role, so no role version.
-          this.emit({ type: 'account.status', requestId: cmd.requestId, linked: true, ...this.account, message: 'Practice account linked.', fixes: true });
+          // Where the role was made: the Region it's named for ("Use the practice account" names this city's own:
+          // AWSCityPlayerRole-<Region>), else the practice link's, else the demo account's.
+          const named = /:role\/AWSCityPlayerRole-([a-z0-9-]+)$/.exec(cmd.roleArn)?.[1];
+          const region = named ?? this.practiceLink?.region ?? DEMO.region;
+          // Verified from a practice setup link: small fixes only if it was made with them (off by default, like the real
+          // AllowFixes). The one-press practice account allows them. It has no real role, so no role version.
+          const fixes = named || !this.practiceLink ? true : this.practiceLink.allowFixes;
+          this.account = { accountId: id, region, fixes };
+          this.emit({ type: 'account.status', requestId: cmd.requestId, linked: true, ...this.account, message: 'Practice account linked.' });
           // Linked: the practice account's replication to other Regions shows now (world map arcs, highway tankers).
           this.emit(demoInventory(new Date(), { crossRegion: true, without: this.removed }));
         });
       case 'account.recheck':
-        // v2.19 "Check again", like the server: read-only, answered on account.status (the practice account allows fixes).
+        // v2.19 "Check again", like the server: read-only, answered on account.status (fixes as the practice account was linked).
         return void this.sleep(400).then(() => {
           if (!this.account) return this.emit({ type: 'error', requestId: cmd.requestId, code: 'unlinked', message: 'Connect your AWS account first.' });
-          this.emit({ type: 'account.status', requestId: cmd.requestId, linked: true, ...this.account, message: 'Practice account linked.', fixes: true });
+          this.emit({ type: 'account.status', requestId: cmd.requestId, linked: true, ...this.account, message: 'Practice account linked.' });
         });
       case 'account.unlink':
         // v2.19: the practice account disconnects (no MFA, like the server); its links to other Regions go with it.
         return void this.sleep(400).then(() => {
+          const region = this.account?.region ?? DEMO.region;
           this.account = undefined;
-          this.emit({ type: 'account.status', requestId: cmd.requestId, linked: false, region: DEMO.region, message: 'Practice account disconnected. Nothing in it changed.' });
+          this.emit({ type: 'account.status', requestId: cmd.requestId, linked: false, region, message: 'Practice account disconnected. Nothing in it changed.' });
           this.emit(demoInventory(new Date(), { crossRegion: false, without: this.removed }));
         });
       case 'resource.remove':
@@ -550,7 +571,7 @@ export class MockBackend implements AgentBackend {
         return void this.planDeploy(cmd);
       case 'deploy.approve':
         if (this.care.has(cmd.deployId)) return void this.runCare(cmd);
-        if (this.removals.has(cmd.deployId)) return void this.runRemoval(cmd.deployId);
+        if (this.removals.has(cmd.deployId)) return void this.runRemoval(cmd);
         return void this.runDeploy(cmd.deployId);
       case 'deploy.reject':
         this.deploys.delete(cmd.deployId);
@@ -636,7 +657,8 @@ export class MockBackend implements AgentBackend {
     if (!item.managedByGame) return this.emit({ type: 'error', requestId, message: `“${item.name}” wasn’t built by the city, so the city won’t remove it.` });
     await this.sleep(400);
     const deployId = `rm-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-    this.removals.set(deployId, { arn: item.arn, name: item.name });
+    // Like the server: a take-down wants the resource's id typed before Approve (confirmText).
+    this.removals.set(deployId, { arn: item.arn, name: item.name, confirmText: id });
     const action = { instance: 'terminate_instance', table: 'delete_table', bucket: 'delete_bucket' }[kind];
     this.emit({
       type: 'deploy.preview',
@@ -644,15 +666,17 @@ export class MockBackend implements AgentBackend {
       deployId,
       templateId: action,
       stackName: `Remove ${item.name}`,
-      region: this.account.region,
+      region: item.region ?? DEMO.region,
       changes: [{ action: 'Remove', logicalId: item.name, resourceType: item.type }],
       costNote: 'Practice: nothing real is removed. In your own account this stops its charges, permanently.',
+      confirmText: id,
     });
   }
 
-  private async runRemoval(deployId: string) {
+  private async runRemoval({ deployId, confirm }: DeployDecision) {
     const r = this.removals.get(deployId)!;
     this.removals.delete(deployId);
+    if (confirm?.trim() !== r.confirmText) return this.emit({ type: 'deploy.status', deployId, status: 'rejected', message: 'The name you typed didn’t match, so nothing was changed.' });
     this.emit({ type: 'deploy.status', deployId, status: 'creating' });
     await this.work('builder', 'cloudformation', `Removing ${r.name}`, 1200);
     this.removed.add(r.arn);
@@ -666,7 +690,7 @@ export class MockBackend implements AgentBackend {
       exportedAt: new Date().toISOString(),
       contract: CONTRACT_VERSION,
       progress: this.lastProgress ?? null,
-      ...(this.account ? { account: { status: 'linked' as const, region: this.account.region, accountId: this.account.accountId, fixes: true } } : {}),
+      ...(this.account ? { account: { status: 'linked' as const, region: this.account.region, accountId: this.account.accountId, fixes: this.account.fixes } } : {}),
       social: [],
       practice: true,
     };

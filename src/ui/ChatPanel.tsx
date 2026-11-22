@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { askDistrict } from '@/app/runtime';
 import { agentName, useCity } from '@/state/store';
 import { districtById, servicesIn, type DistrictId } from '@/world/taxonomy';
 import { placeFor } from '@/world/places';
+import { AiNote } from './AiNote';
 import { ChipRow } from './ChipRow';
 import { feel } from './feedback';
 import { districtStyle, offlineReason } from './logic';
@@ -21,6 +22,7 @@ export function ChatPanel({ districtId }: { districtId: string }) {
   const focus = useCity((s) => s.focus);
   const offline = useCity((s) => offlineReason(s.backendKind, s.backendStatus));
   const [text, setText] = useState('');
+  const noteId = useId();
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end' });
@@ -114,11 +116,12 @@ export function ChatPanel({ districtId }: { districtId: string }) {
           if (text.trim()) send();
         }}
       >
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder={`Ask ${d.hq}…`} aria-label="Question" disabled={!!offline} title={offline} />
+        <input value={text} onChange={(e) => setText(e.target.value)} placeholder={`Ask ${d.hq}…`} aria-label="Question" aria-describedby={noteId} disabled={!!offline} title={offline} />
         <button className="btn primary" type="submit" disabled={!text.trim() || !!offline} title={offline}>
           Ask ➤
         </button>
       </form>
+      <AiNote id={noteId} />
     </div>
   );
 }

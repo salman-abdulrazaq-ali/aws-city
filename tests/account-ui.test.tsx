@@ -275,4 +275,20 @@ describe('City care when the role doesn’t allow fixes', () => {
     expect(within(note).queryByRole('button', { name: 'Check again' })).toBeNull();
     expect(within(note).queryByRole('list')).toBeNull();
   });
+
+  it('in the demo it never shows the local-server restart hint', () => {
+    const f = demoFindings().find((x) => !!x.fix)!;
+    useCity.setState({
+      backendKind: 'mock',
+      hosted: false,
+      account: { linked: true, accountId: '111122223333', region: 'eu-west-1', fixes: false },
+      progress: { ...player(), citizens: { [f.citizenId]: { xp: 10_000 } } } as Progress,
+      findings: { [f.id]: { ...f, seenAt: 1 } },
+      findingOpen: f.id,
+    });
+    render(<FindingCard openTab={() => {}} />);
+    const note = screen.getByRole('note');
+    expect(note.textContent).not.toMatch(/local server|--allow-fixes/);
+    expect(note.textContent).toMatch(/Practice account/);
+  });
 });

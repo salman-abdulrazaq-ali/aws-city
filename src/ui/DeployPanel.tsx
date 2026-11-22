@@ -22,7 +22,20 @@ import {
   unlinkAccount,
   verifyAccount,
 } from '@/app/runtime';
-import { connectsPlayer, defaultLinkRegion, gameBuilds, isLinkRegion, LINK_REGIONS, regionName, removeTarget, roleUpdate } from '@/state/account';
+import {
+  connectsPlayer,
+  defaultLinkRegion,
+  FIX_GRANTS,
+  FIX_GRANTS_CAVEAT,
+  gameBuilds,
+  isLinkRegion,
+  LINK_REGIONS,
+  regionName,
+  removeTarget,
+  ROLE_CAN,
+  roleUpdate,
+  templateLink,
+} from '@/state/account';
 import { arrangeBuilds, statusWord } from '@/state/builds';
 import { useCity, type DeployView } from '@/state/store';
 import { ReauthPrompt } from './ReauthPrompt';
@@ -83,8 +96,7 @@ const STATUS_TEXT: Record<DeployView['status'], string> = {
 };
 
 /** A button that shows a spinner + busy label while its request is in flight. */
-function PendingButton({ pending, busyLabel, children, className = 'btn', disabled, onClick, title, buttonRef }: {
-  buttonRef?: (el: HTMLButtonElement | null) => void;
+function PendingButton({ pending, busyLabel, children, className = 'btn', disabled, onClick, title }: {
   pending: boolean;
   busyLabel: string;
   children: ReactNode;
@@ -96,7 +108,7 @@ function PendingButton({ pending, busyLabel, children, className = 'btn', disabl
   return (
     // type="button": inside the account-number form a default (submit) button ran verify twice per click (onClick and
     // the form's submit). Enter in the form's one text field still submits it.
-    <button ref={buttonRef} type="button" className={className} disabled={disabled || pending} aria-busy={pending} onClick={onClick} title={title}>
+    <button type="button" className={className} disabled={disabled || pending} aria-busy={pending} onClick={onClick} title={title}>
       {pending ? (
         <>
           <span className="spinner" aria-hidden="true" /> {busyLabel}
@@ -248,6 +260,34 @@ function AuthenticatorRow() {
 }
 
 /**
+ * What the AWSCity role really allows, before the player creates it: what's account-wide, which promises AWS City's
+ * server keeps rather than IAM, and the exact template (the address account.status or the setup link names; nothing
+ * else is opened).
+ */
+function RolePermissions() {
+  const tpl = useCity((s) => templateLink(s.account));
+  return (
+    <details className="why role-can">
+      <summary>What the role can do</summary>
+      <ul>
+        {ROLE_CAN.map((line) => (
+          <li key={line}>
+            <Plain text={line} />
+          </li>
+        ))}
+      </ul>
+      {tpl ? (
+        <a className="btn tiny" href={tpl} target="_blank" rel="noreferrer">
+          See the exact permissions ↗
+        </a>
+      ) : (
+        <p className="muted small">Your setup link names the role template, with the exact permissions.</p>
+      )}
+    </details>
+  );
+}
+
+/**
  * Real deploys to the player's own AWS account: link via a CloudFormation quick-create role (ExternalId) in the Region
  * the player picks, preview a change set, approve it, tear it down; check the link, update the role, disconnect.
  * Curated templates only.
@@ -328,19 +368,20 @@ export function DeployPanel() {
     }
   }, [deployMap, clear]);
 
-  // A new approval (or the one "Approve in Deploy" named) is brought into view with focus on Approve, whether this tab
-  // was already open or just opened for it (the store's deployFocus waits for the card to render).
-  const approveRefs = useRef(new Map<string, HTMLButtonElement>());
+  // A new approval (or the one "Approve in Deploy" named) is brought into view with focus on its heading, never on
+  // Approve, so one stray Enter or Space can't approve it; whether this tab was already open or just opened for it (the
+  // store's deployFocus waits for the card to render).
+  const headingRefs = useRef(new Map<string, HTMLElement>());
   const focusId = useCity((s) => s.deployFocus);
   const previewKey = stacks
     .filter((d) => d.status === 'preview')
     .map((d) => d.deployId)
     .join(',');
   useEffect(() => {
-    const btn = focusId ? approveRefs.current.get(focusId) : undefined;
-    if (!focusId || !btn) return;
-    btn.closest('.card')?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
-    btn.focus({ preventScroll: true });
+    const heading = focusId ? headingRefs.current.get(focusId) : undefined;
+    if (!focusId || !heading) return;
+    heading.closest('.card')?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    heading.focus({ preventScroll: true });
     useCity.getState().clearDeployFocus();
   }, [focusId, previewKey]);
 
@@ -386,9 +427,12 @@ export function DeployPanel() {
             ))}
           </select>
           <p className="muted">
-            <Plain text={`Your key will be made in ${regionName(region)}; the city reads that Region.`} />
+            <Plain
+              text={`AWS City’s role will be made in ${regionName(region)}. The city builds and checks for issues there; a few reads cover your whole account (see “What the role can do”).`}
+            />
             {LINK_REGIONS.find((r) => r.code === region)?.optIn && <Plain text=" It's an opt-in Region: turn it on in your account first (Account → AWS Regions)." />}
           </p>
+          <RolePermissions />
           <PendingButton
             className="btn primary"
             pending={pending.is('link')}
@@ -400,10 +444,11 @@ export function DeployPanel() {
             Get my setup link
           </PendingButton>
         </Step>
-        <Step n={2} state={!account.linkUrl ? 'todo' : stackMade ? 'done' : 'now'} title="Create AWS City’s key in your AWS account">
+        <Step n={2} state={!account.linkUrl ? 'todo' : stackMade ? 'done' : 'now'} title="Create AWS City’s role in your AWS account">
           <p className="muted">
-            <Plain text="A CloudFormation stack makes an IAM role: a key that only opens what the quests need." />
+            <Plain text="A CloudFormation stack makes one IAM role. Only AWS City’s server can use it, with the ExternalId in your setup link. It reads your account and builds only small things the city made, each after you approve it." />
           </p>
+          <RolePermissions />
           <label className="check-row">
             <input
               type="checkbox"
@@ -414,6 +459,19 @@ export function DeployPanel() {
             />
             <span>Allow small fixes (you still approve each one)</span>
           </label>
+          <details className="why fix-grants">
+            <summary>What small fixes allow</summary>
+            <ul>
+              {FIX_GRANTS.map((g) => (
+                <li key={g}>
+                  <Plain text={g} />
+                </li>
+              ))}
+            </ul>
+            <p className="muted">
+              <Plain text={FIX_GRANTS_CAVEAT} />
+            </p>
+          </details>
           {linkFor && (
             <p className="connects-player">
               The stack page will say <b>ConnectsPlayer: {linkFor}</b>. Don’t create the stack if that isn’t you.
@@ -437,20 +495,26 @@ export function DeployPanel() {
               Wait about a minute, until the stack says <b>CREATE_COMPLETE</b>. Then press <b>Done</b> here and <b>Verify</b> your account number.
             </li>
           </ol>
+          {/* The demo's practice link rehearses these steps but opens nothing: there's no real console behind it. */}
+          {kind === 'mock' && <p className="muted practice-link">Practice: nothing opens here. In your own account, Open CloudFormation shows the stack with these settings filled in.</p>}
           <div className="row">
-            <PendingButton className="btn primary" pending={pending.is('link')} busyLabel="Making your link…" onClick={() => openUrl(account.linkUrl!)}>
-              Open CloudFormation ↗
-            </PendingButton>
-            {/* Signed in to AWS in another browser (or a passkey that only works there): open the same link there. */}
-            <button className="btn" disabled={pending.is('link')} onClick={() => copyLink(account.linkUrl!)}>
-              {linkCopied ? 'Copied ✓' : 'Copy link'}
-            </button>
+            {kind !== 'mock' && (
+              <>
+                <PendingButton className="btn primary" pending={pending.is('link')} busyLabel="Making your link…" onClick={() => openUrl(account.linkUrl!)}>
+                  Open CloudFormation ↗
+                </PendingButton>
+                {/* Signed in to AWS in another browser (or a passkey that only works there): open the same link there. */}
+                <button className="btn" disabled={pending.is('link')} onClick={() => copyLink(account.linkUrl!)}>
+                  {linkCopied ? 'Copied ✓' : 'Copy link'}
+                </button>
+              </>
+            )}
             <button className="btn" onClick={() => setStackMade(true)}>
               Done: it says CREATE_COMPLETE
             </button>
           </div>
-          <p className="muted">Signed in to AWS in another browser? Copy the link and open it there.</p>
-          <p className="muted small">This link works for a day. After that, get a new one: the key you made keeps working.</p>
+          {kind !== 'mock' && <p className="muted">Signed in to AWS in another browser? Copy the link and open it there.</p>}
+          <p className="muted small">This link works for a day. After that, get a new one: the role you made keeps working.</p>
           <p className="muted">
             Hosting AWS City yourself? Use a different AWS account from the one it runs in. The city refuses that one, so it can never act inside the account
             that holds everyone’s data.
@@ -458,7 +522,8 @@ export function DeployPanel() {
           <details className="why">
             <summary>Details</summary>
             <div className="muted">
-              ExternalId (a secret only AWS City knows): <code>{account.externalId}</code>
+              ExternalId: <code>{account.externalId}</code>. It ties the role to your AWS City sign-in, so another player can’t point the city at your account. It
+              isn’t a password: AWS doesn’t treat it as a secret.
             </div>
           </details>
         </Step>
@@ -589,12 +654,17 @@ export function DeployPanel() {
                 {account.fixes ? ' (you approve each one)' : ' (City care explains what it finds, but changes nothing)'}
               </p>
             )}
-            {account.fixes === false && account.region && (
-              <details className="why">
-                <summary>Turn small fixes on</summary>
-                <FixesOn region={account.region} />
-              </details>
-            )}
+            {account.fixes === false &&
+              account.region &&
+              (kind === 'mock' ? (
+                // The practice account has no stack to update: a new practice link with the box ticked.
+                <p className="muted">Practice account: press Use another Region or account, tick Allow small fixes, then Verify again.</p>
+              ) : (
+                <details className="why">
+                  <summary>Turn small fixes on</summary>
+                  <FixesOn region={account.region} />
+                </details>
+              ))}
             {update && account.region && <RoleUpdate region={account.region} {...update} />}
             {canUnlink && !wantsLink && (
               <div className="row account-actions">
@@ -662,7 +732,8 @@ export function DeployPanel() {
                   busyLabel="Linking…"
                   title="Link a pretend account (the demo creates nothing real)"
                   onClick={() => {
-                    const requestId = verifyAccount('arn:aws:iam::123456789012:role/aws-city-player');
+                    // Named like the real role (AWSCityPlayerRole-<Region>), in this city's own Region.
+                    const requestId = verifyAccount(`arn:aws:iam::123456789012:role/AWSCityPlayerRole-${defaultLinkRegion({}, cityRegion)}`);
                     if (requestId) pending.start('verify', requestId);
                   }}
                 >
@@ -672,9 +743,7 @@ export function DeployPanel() {
                 <details className="why">
                   <summary>How real accounts connect</summary>
                   <p>
-                    You create one IAM role in your account with a CloudFormation quick-create link. It trusts AWS City only with a secret ExternalId, can use
-                    only the quest services in one Region, and tags everything it makes <code>aws-city</code>. Hosted players turn on an authenticator app (MFA)
-                    before linking. Delete the AWSCity stack to remove it at any time.
+                    <Plain text="You create one IAM role in your account with a CloudFormation quick-create link. Only AWS City’s server can use it, with an ExternalId tied to you. It builds only small things the city made, in the Region you pick, after you approve each one; a few reads cover your whole account. Hosted players turn on an authenticator app (MFA) before linking. Delete the AWSCity stack to remove it at any time." />
                   </p>
                   {linkSteps}
                 </details>
@@ -688,8 +757,7 @@ export function DeployPanel() {
                 </p>
                 <details className="why">
                   <summary>Why is this safe?</summary>
-                  The role trusts AWS City only with a secret ExternalId. It can use only the quest services, in one Region, and everything it makes is tagged{' '}
-                  <code>aws-city</code>. Delete the AWSCity stack to remove it at any time.
+                  <Plain text="Only AWS City’s server can use the role, with an ExternalId tied to you, and you approve every change. It builds only small things the city made, in the Region you pick; a few reads cover your whole account (the linking steps list them). Delete the AWSCity stack to remove it at any time." />
                 </details>
                 {!mfaFirst && linkSteps}
               </>
@@ -769,7 +837,16 @@ export function DeployPanel() {
         const history = group?.history.filter((h) => h.status === 'complete') ?? [];
         return (
           <div key={group?.key ?? d.deployId} className={`card stack ${d.status}`}>
-            <b>{group?.title ?? d.stackName}</b>{' '}
+            <b
+              className="stack-title"
+              tabIndex={d.status === 'preview' ? -1 : undefined}
+              ref={(el) => {
+                if (el && d.status === 'preview') headingRefs.current.set(d.deployId, el);
+                else headingRefs.current.delete(d.deployId);
+              }}
+            >
+              {group?.title ?? d.stackName}
+            </b>{' '}
             <span className="muted">
               · {d.region} ·{' '}
               {isPracticeDeploy(d.deployId) && d.status === 'complete' ? 'practice: nothing was created' : group ? statusWord(d) : (STATUS_TEXT[d.status] ?? d.status)}
@@ -781,10 +858,6 @@ export function DeployPanel() {
                 grouped={!!group}
                 offline={offline}
                 deciding={deciding}
-                buttonRef={(el) => {
-                  if (el) approveRefs.current.set(d.deployId, el);
-                  else approveRefs.current.delete(d.deployId);
-                }}
                 onDecide={(approve, typed) => {
                   decideDeploy(d.deployId, approve, typed);
                   pending.start(`decide:${d.deployId}`);
@@ -893,13 +966,12 @@ export function DeployPanel() {
  * A build's preview, approved here: what's added or removed, the server's own lines in words ("Safety check: …"), what
  * it costs, and the typed name when the server asks for one (the same rule as a fix's Approve in City care).
  */
-function BuildPreview({ d, grouped, offline, deciding, buttonRef, onDecide }: {
+function BuildPreview({ d, grouped, offline, deciding, onDecide }: {
   d: DeployView;
   /** One resource's card (src/state/builds.ts): the approval's own words say what this change does. */
   grouped: boolean;
   offline?: string;
   deciding: boolean;
-  buttonRef: (el: HTMLButtonElement | null) => void;
   onDecide: (approve: boolean, typed?: string) => void;
 }) {
   const [typed, setTyped] = useState('');
@@ -957,7 +1029,6 @@ function BuildPreview({ d, grouped, offline, deciding, buttonRef, onDecide }: {
       )}
       <div className="actions">
         <PendingButton
-          buttonRef={buttonRef}
           className="btn primary"
           pending={deciding}
           busyLabel="Starting…"

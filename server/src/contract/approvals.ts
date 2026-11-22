@@ -52,7 +52,7 @@ const ownName = (a: ApprovalRequest['action']): string | undefined => {
 const labelOf = (a: ApprovalRequest['action'], accountId?: string): string =>
   'suffix' in a ? `aws-city-${accountId ?? '…'}-${String(a.suffix)}` : (ownName(a) ?? a.type);
 
-/** What the player types when a write gets a second look: the resource's own name or id (never empty, never "…"). */
+/** What the player types before a destructive write or one a second look flagged: the resource's own name or id (never empty, never "…"). */
 const typedName = (a: ApprovalRequest['action']): string => ownName(a)?.trim() || a.type;
 
 /** What a preview cancelled because its account went away says (the world's retire reason, when it gives one). */
@@ -104,8 +104,9 @@ export const createApprovals = (opts: { region: string | (() => string); account
         logicalId: labelOf(req.action, opts.accountId?.()),
         resourceType: RESOURCE_TYPE[t],
       };
-      // A second look (Jev) asked for care: the player types the name (v2.3 confirmText) and reads why on a 'detail' line.
-      const confirmText = req.check ? typedName(req.action) : undefined;
+      // The player types the name (v2.3 confirmText) before a destructive write (terminate, delete, a take-down), so one
+      // stray Enter or Space can never approve it; and when a second look (Jev) asked for care, with why on a 'detail' line.
+      const confirmText = req.check || req.destructive ? typedName(req.action) : undefined;
       const why: DeployChange[] = req.check ? [{ action: 'Modify', logicalId: `Safety check: ${req.check.reason}`, resourceType: 'detail' }] : [];
       emit({
         type: 'deploy.preview',
@@ -157,7 +158,7 @@ export const createApprovals = (opts: { region: string | (() => string); account
       });
       return { deployId, approved };
     },
-    /** From the client: returns false if the id is unknown/expired. `confirm` must match the preview's confirmText (a fix, or a write the second look flagged). */
+    /** From the client: returns false if the id is unknown/expired. `confirm` must match the preview's confirmText (a fix, a destructive write, or a write the second look flagged). */
     answer(deployId: string, ok: boolean, confirm?: string): boolean {
       const p = pending.get(deployId);
       if (p && ok && p.confirmText && confirm?.trim() !== p.confirmText) return settle(deployId, false, 'The name you typed didn’t match, so nothing was changed.');

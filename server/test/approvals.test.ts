@@ -48,6 +48,29 @@ describe('per-socket approvals (contract v2 deploy.preview → deploy.approve)',
     a.cancelAll();
   });
 
+  it('a destructive write always wants the name typed (no second look needed): Approve alone, or a wrong name, changes nothing', async () => {
+    const events: ServerEvent[] = [];
+    const a = createApprovals({ region: 'us-west-2' });
+    const previewOf = (i: number) => events.filter((e): e is Extract<ServerEvent, { type: 'deploy.preview' }> => e.type === 'deploy.preview')[i]!;
+    const terminate = { action: { type: 'terminate_instance', instanceId: 'i-0123456789abcdef0' } as never, summary: 'Terminate', destructive: true };
+    const bare = a.request('t1', terminate, (e) => events.push(e));
+    expect(previewOf(0)).toMatchObject({ confirmText: 'i-0123456789abcdef0', changes: [{ action: 'Remove', logicalId: 'i-0123456789abcdef0' }] });
+    expect(previewOf(0).changes).toHaveLength(1); // no Safety check line: Jev didn't ask
+    a.answer(previewOf(0).deployId, true); // one stray Enter on Approve
+    expect(await bare).toBe(false);
+    const wrong = a.request('t2', { action: { type: 'delete_table', name: 'city-quest' } as never, summary: 'Delete', destructive: true }, (e) => events.push(e));
+    expect(previewOf(1).confirmText).toBe('city-quest');
+    a.answer(previewOf(1).deployId, true, 'city-ques');
+    expect(await wrong).toBe(false);
+    const typed = a.request('t3', { action: { type: 'delete_bucket', name: 'aws-city-047463438585-photos' } as never, summary: 'Delete', destructive: true }, (e) => events.push(e));
+    a.answer(previewOf(2).deployId, true, ' aws-city-047463438585-photos ');
+    expect(await typed).toBe(true);
+    // A write that isn't destructive, with no second look, still approves with one press.
+    void a.request('t4', req, (e) => events.push(e));
+    expect(previewOf(3)).not.toHaveProperty('confirmText');
+    a.cancelAll();
+  });
+
   it('v2.18: each card names the account and Region read when it is made (a re-link mid-socket shows the new ones)', () => {
     const events: ServerEvent[] = [];
     const where = { region: 'us-west-2', accountId: '047463438585' as string | undefined };

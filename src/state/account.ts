@@ -82,7 +82,25 @@ export function connectsPlayer(linkUrl: string | undefined): string | undefined 
   return new URLSearchParams(query).get('param_ConnectsPlayer')?.trim() || undefined;
 }
 
-/** What the CloudFormation console asks while the key is made (step 2 of linking). */
+/**
+ * The role template to read before linking ("See the exact permissions"): the one account.status names, else the one the
+ * setup link carries (`templateURL` in its hash query). Only an https address on an AWS host (the template is published to
+ * S3), so a link never opens anywhere else; undefined when neither has one.
+ */
+export function templateLink(a: Pick<AccountLike, 'templateUrl' | 'linkUrl'>): string | undefined {
+  const query = a.linkUrl?.split('#')[1]?.split('?').slice(1).join('?');
+  for (const raw of [a.templateUrl, query ? new URLSearchParams(query).get('templateURL') : undefined]) {
+    try {
+      const u = raw ? new URL(raw) : undefined;
+      if (u?.protocol === 'https:' && !u.username && !u.password && u.hostname.endsWith('.amazonaws.com')) return u.toString();
+    } catch {
+      /* not a URL */
+    }
+  }
+  return undefined;
+}
+
+/** What the CloudFormation console asks while the role is made (step 2 of linking). */
 export const linkChecklist = (region: string) => [
   `Sign in to the AWS account you want to connect, with ${regionName(region)} picked in the console’s Region menu.`,
   'Use a sign-in that may create IAM roles and CloudFormation stacks (workshop accounts can’t).',
@@ -111,6 +129,28 @@ export const FIXES_ON_STEPS = [
   'Press Next and set AllowFixes to true. Keep the ExternalId as it is.',
   'Press Next, then tick “I acknowledge that AWS CloudFormation might create IAM resources with custom names.”',
   'Press Update (or Submit). When it says UPDATE_COMPLETE, press Check again.',
+];
+
+/**
+ * What "Allow small fixes" adds to the role (infra/player-role/player-role.yaml, aws-city-fix), said before the player
+ * ticks it, and who holds each to tightening: IAM can for the last two, only AWS City's server for the first three.
+ */
+export const FIX_GRANTS = [
+  'Turn on S3 Block Public Access on any bucket in that Region.',
+  'Remove an inbound rule from any security group.',
+  'Turn on DynamoDB point-in-time recovery on any table.',
+  'Require IMDSv2 on an instance.',
+  'Turn on EBS encryption by default.',
+];
+export const FIX_GRANTS_CAVEAT =
+  'IAM holds the last two to tightening. It can’t for the first three: the same permissions could also turn Block Public Access or backups off, or remove any rule. AWS City’s server holds those to tightening: it only turns them on, and removes only the SSH or RDP rules you approved.';
+
+/** What the AWSCity role allows (player-role.yaml v5), read before linking: what's account-wide, and which promises the server keeps rather than IAM. */
+export const ROLE_CAN = [
+  'Read, in the Region you pick: your servers, security groups, disks, tables, Lambda functions, databases, APIs, CloudTrail trails, each bucket’s Block Public Access and the resource list. Once you turn live traffic on, a few request counts from CloudWatch too. Never what’s inside your buckets or tables, your logs or your secrets.',
+  'Read, account-wide: the list of all your buckets, the Availability Zones of every Region and which Regions are turned on. Also your month-to-date bill: the role allows that read at any time, but AWS City’s server reads it only after you turn the bill on.',
+  'Build, in that Region only: small t4g servers, tables named city-* and buckets named aws-city-<your account>-*. It stops, starts and deletes only servers and tables tagged as the city’s, and buckets with that name.',
+  'Never: IAM, billing settings or passing roles.',
 ];
 
 /** The local server reads the developer's own profile: fixes are a start option there, never a CloudFormation update. */

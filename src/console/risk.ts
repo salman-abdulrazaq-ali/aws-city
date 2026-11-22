@@ -143,13 +143,20 @@ export const isSecretPage = (url: string | undefined) => !!consolePage(SECRET_PA
 /** 12 digits, bare (an ARN's account part) or in groups of four split by one kind of -, . or space. */
 const ACCOUNT_ID = /\b\d{4}([-. ]?)\d{4}\1\d{4}\b/g;
 
-/** Strip things that must not leave the page: account IDs, access keys, emails, ARNs' account part, long tokens. */
+/**
+ * Strip things that must not leave the page: account IDs, access keys, emails, ARNs' account part, long tokens. An access
+ * key id is caught in any case (akia…) and, in capitals, typed in groups of four (AKIA IOSF ODNN 7EXA MPLE). Lowercase
+ * groups aren't: "Asia have some data from" would read as one. A long token isn't an AWS managed policy's name
+ * (AWSLambdaManagedEC2ResourceOperator, AmazonEC2ContainerServiceforEC2Role): a workshop step's Copilot goal and an IAM
+ * page name them, and the Copilot needs the name.
+ */
 export function redact(text: string): string {
   return text
-    .replace(/\b(AKIA|ASIA|AROA|AIDA)[A-Z0-9]{12,}\b/g, '[key]')
+    .replace(/\b(AKIA|ASIA|AROA|AIDA)[A-Z0-9]{12,}\b/gi, '[key]')
+    .replace(/\b(AKIA|ASIA|AROA|AIDA)([ -][A-Z0-9]{4}){4}\b/g, '[key]')
     .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email]')
     .replace(ACCOUNT_ID, '[account]')
-    .replace(/\b[A-Za-z0-9+/_-]{32,}={0,2}/g, '[token]');
+    .replace(/\b(?!AWS|Amazon)[A-Za-z0-9+/_-]{32,}={0,2}/g, '[token]');
 }
 
 /**

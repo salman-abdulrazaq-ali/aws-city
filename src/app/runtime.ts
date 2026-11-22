@@ -18,7 +18,7 @@ import { shows } from '@/state/simple';
 import { consoleUrl, DEFAULT_CONSOLE_SERVICE, matchText, matchUrl } from '@/world/taxonomy';
 import { isPracticeService, isPracticeUrl, PRACTICE_PATH, practiceRoute, practiceUrl } from '@/console/practice';
 import type { CopilotMessage } from '@/console/agent';
-import { isSecretPage, redactConsoleUrl } from '@/console/risk';
+import { isSecretPage, redact, redactConsoleUrl } from '@/console/risk';
 import { isReadingUrl } from '@/world/reading';
 import { isEventUrl } from '@/world/liveEvents';
 import { isWorkshopUrl } from '@/world/workshops';
@@ -1228,10 +1228,11 @@ async function startPracticeCopilot(text: string, opts: { serviceId?: string; on
  * Start a Copilot task on the console tab the player is looking at (from the side panel / Firefox sidebar). `serviceId`
  * names the task's own service (a workshop step's), which picks the agent and the offline demo's flow; without it, the
  * page's service does. `onStart` gets the new task's id before anything is sent, so a caller links only the task it
- * started. Returns that id, or undefined when no task started.
+ * started. Returns that id, or undefined when no task started. The goal leaves redacted (account ids, access keys,
+ * emails, long tokens: `redact`, as the privacy policy says), and the task card shows it as it was sent.
  */
 export async function startConsoleCopilot(goal: string, opts: { serviceId?: string; onStart?: (taskId: string) => void } = {}): Promise<string | undefined> {
-  const text = goal.trim();
+  const text = redact(goal.trim());
   if (!text || !backend) return;
   if (backend.kind === 'mock') return startPracticeCopilot(text, opts);
   const f = store().focus;

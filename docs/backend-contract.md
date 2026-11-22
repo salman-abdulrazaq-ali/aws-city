@@ -120,7 +120,7 @@ Client-internal, not on the wire: `storage.local` keeps `progress.parked` (a sig
 - `finding.undo {requestId, findingId}`: answered with how to undo the fix in the AWS console (fixes only tighten things).
 - `finding.fix {requestId, findingId}`: nothing changes yet. The server
   re-reads the resource, then sends a `deploy.preview` with `findingId`, `rollback`, `costNote?` and, for a resource the
-  city didn't build or an account-wide setting, `confirmText` (the resource id or ARN, which is unique). Approve with `deploy.approve {deployId, confirm}`; the
+  city didn't build, an account-wide setting or any destructive write (terminate, delete, a take-down; Jev's "ask" adds it to others), `confirmText` (the resource id or ARN, which is unique). Approve with `deploy.approve {deployId, confirm}`; the
   server compares `confirm` to `confirmText`. Fixes are a fixed allowlist of reversible changes (`server/src/agents/fixes.ts`).
 - `Progress.citizens` (`{id: {xp}}`) and `Progress.fixes` (`{findingId: iso}`).
 - v2.4: `Progress.streak` (`{days, last: 'YYYY-MM-DD' local date, best}`), merged by the later `last` with `best` = max.

@@ -219,8 +219,11 @@ When a change touches a decision, update its entry and run its Proof.
 - **Every AWS write needs the player's approval** (contract v2 `deploy.preview` → `deploy.approve`).
   With no approval channel, writes are refused (only reads run). v2.19 `resource.remove` (no model) goes the same way:
   `ActionService.submit` with the socket's approvals, so policy, Jev, the preview, MFA on approve and the gate all apply.
+  A destructive write (terminate, delete, a take-down) always carries `confirmText`, the resource's name or id, whether
+  or not Jev asks (`server/src/contract/approvals.ts`); the demo's take-downs too. A new preview focuses its card's title
+  (`.stack-title`), never Approve, so a stray Enter or Space approves nothing.
   Proof: `server/test/approvals.test.ts`, `server/test/service.test.ts` ("refuses every write without an approval channel"),
-  `cd server && npx vitest run test/tenants.test.ts -t "resource.remove"`.
+  `cd server && npx vitest run test/tenants.test.ts -t "resource.remove"`, `npx vitest run tests/trust.test.tsx tests/ui.test.tsx`.
 - **A deterministic gate sits between the server and AWS** (`server/src/guard/`). One SDK middleware on every client with a
   player's credentials (`clientsFor`, lazy ones too; link.ts's STS) refuses, before signing: a command not in `RULES`
   (`guard/rules.ts`: as the SDK names it, `read`/`write`/`fix`, its IAM actions; the parsed role, `yaml` with CFN short tags as
@@ -251,7 +254,7 @@ When a change touches a decision, update its entry and run its Proof.
   `destructive`, with 12-digit ids and ARNs redacted; nothing from AWS. Questions: `intent` (`noul`, only with the player's
   words) and `risk` (`score`, 3 levels, lowest first); the thresholds are code (`verdictFor`: block < 0.2 intent; ask < 0.6
   or risk ≥ 1.2; `AWS_CITY_JEV_*`). Block refuses with a plain sentence; ask adds a "Safety check" detail line and the
-  preview's v2.3 `confirmText` (the resource's name; `approvals.answer` refuses a mismatch); it never skips or answers
+  preview's v2.3 `confirmText` (the resource's name; `approvals.answer` refuses a mismatch; a destructive write has one anyway); it never skips or answers
   the approval. A timeout (3 s), non-2xx, a reply over 32 KB, a redirect or a reply off the documented shape is ask. The
   model is pinned (`AWS_CITY_JEV_MODEL`, default `jev-1.13.0`); each decision is logged (id, model, scores, verdict, ms,
   tokens), never the state or the key. Injected text can sway Jev, so it can never loosen anything.
@@ -356,8 +359,14 @@ When a change touches a decision, update its entry and run its Proof.
   build needs it, and `npm run setup` asks for it and builds the store zips only with it).
   The To-do row, the shift's line (Everything) and ⋯ open Deploy with the steps unfolded (`openAccountCard`; the City
   tab's `ConnectCard` opens Deploy, which unfolds them for a player who can connect). Step 1 picks the Region by name (`LINK_REGIONS`, the commercial partition only; it starts on the
-  Region asked for last, the linked one, else the city's) and says "Your key will be made in <Region>; the city reads
-  that Region"; step 2 has "Allow small fixes" (a new link with `allowFixes`; the box follows the link that arrived), who
+  Region asked for last, the linked one, else the city's) and says "AWS City’s role will be made in <Region>. The city
+  builds and checks for issues there; a few reads cover your whole account", and "What the role can do" (`ROLE_CAN`: in-Region
+  reads, the account-wide bucket list, AZs and bill (the role allows it any time, the server reads it only once it's on), what
+  it builds, never IAM) with "See the exact permissions ↗" (`templateLink`: account.status's `templateUrl`, else the setup
+  link's `templateURL`, https on *.amazonaws.com only); step 2 has "Allow small fixes" (a new link with `allowFixes`; the box
+  follows the link that arrived) with "What small fixes allow" (`FIX_GRANTS`: BPA on any bucket, any SG rule, PITR on any
+  table, IMDSv2, EBS by default; IAM holds only the last two to tightening, the server the rest), the ExternalId under
+  Details said plainly (not a password: AWS doesn't treat it as a secret), who
   the stack serves (`connectsPlayer`: the link's `param_ConnectsPlayer`, "don't create the stack if that isn't you"),
   one list of what the console will ask (your own account, the Region to keep by name, `linkRegion` from the link's
   `?region=`; a sign-in that may create IAM roles and stacks, which workshop accounts can't; the IAM acknowledgement;
@@ -375,7 +384,10 @@ When a change touches a decision, update its entry and run its Proof.
   role is asked again whether it allows fixes, read-only. The role update ends with "I've updated the stack"
   (`confirmRoleUpdate`: a fresh link, then `account.verify {updated: true}`), and its card says the city goes by the version
   installed from its link (it can't read the stack). The local server shows the restart hint instead of the CloudFormation
-  steps (`FixesOn`, `LOCAL_FIXES_COMMAND`). A broken link shows its message with Link again (a
+  steps (`FixesOn`, `LOCAL_FIXES_COMMAND`; the demo shows a practice line instead). In the demo, step 2 opens nothing (a
+  practice link, `PRACTICE_LINK`, `practice.invalid`). The practice account links in the city's own Region
+  (`AWSCityPlayerRole-<cityRegion>`). Verified from a practice link, its small fixes follow the box (off by default); the
+  one-press practice account allows them. A broken link shows its message with Link again (a
   new link in its Region at once) and Disconnect. Only a reply to this tab's own request is toasted (a reply carries the
   requestId of the tab that asked; `src/app/runtime.ts` drops it in the others): a welcome or a broken link updates the
   card quietly, and the unlinked hint is a muted line, never an alert. City care says up front
@@ -457,8 +469,11 @@ When a change touches a decision, update its entry and run its Proof.
   (`publicError` in `server/src/log.ts`); Bedrock's AccessDenied (the budget's deny policy) reads as the city's AI resting (code `paused`).
   A WebSocket frame the server can't read is answered "Bad command: this server didn’t understand that request.", never the
   schema's own words, and the socket stays open.
+  Every box whose words go to the city's AI (the prompt bar and Copilot, HQ chat, Explain it back, a job's Explain, a
+  workshop's pasted error) shows `AiNote` (`src/ui/AiNote.tsx`, one line, `aria-describedby`): it goes to the city's AI,
+  so share no passwords, keys or address.
   Proof: `cd server && npx vitest run test/log.test.ts`, `cd server && npx vitest run test/hosted.test.ts -t "metered"`,
-  `cd server && npx vitest run test/http.test.ts -t "version handshake"`.
+  `cd server && npx vitest run test/http.test.ts -t "version handshake"`, `npx vitest run tests/trust.test.tsx`.
 - **Shared AI calls can't be farmed with free sign-ups** (`server/src/agents/metered.ts`). A player first seen within the last
   `NEW_PLAYER_DAYS` (3) days (`QuotaStore.firstSeen`, the `USER#<sub> SEEN` row's first day)
   gets a fifth of `DAILY_MODEL_CALLS` (100 → 20), and those players together at most a quarter of `GLOBAL_DAILY_MODEL_CALLS`
@@ -1160,11 +1175,11 @@ When a change touches a decision, update its entry and run its Proof.
   a 12-digit account number, an ARN). A refused step is the player's turn. The server marks `confirm` wherever either
   rule says so (`server/src/contract/console.ts`: `isCommit` by name and `lang`, since it can't see the variant;
   `isCommitControl` on a click or a select, by the model's name or the page's; `isRisky`/`isRiskyValue` values; the player-only pages), and its prompt says page text is data
-  (`<console_page>`), never instructions. Text leaving the page is redacted (`redact`: keys, emails, tokens, 12-digit account ids bare or split by
+  (`<console_page>`), never instructions. Text leaving the page is redacted, the typed goal included (`startConsoleCopilot`; the task card shows it redacted) (`redact`: keys in any case, or typed in groups of four in capitals, emails, tokens other than AWS/Amazon managed policy names, 12-digit account ids bare or split by
   `-`, `.` or a space), and the Lookout never auto-snaps a page that can show a secret (`autoSnaps`: an AWS page that's
   neither `SECRET_PAGES`, the real console's access keys, secret values, Parameter Store, KMS and CloudShell, nor
   `isSensitivePage`, which adds Cognito app clients and Identity Center credentials), only when the player asks. Proof: `npx vitest run tests/console.test.ts
-  tests/console-cloudscape.test.ts tests/practice-console.test.ts tests/console-clarity.test.tsx`, `cd server && npx
+  tests/console-cloudscape.test.ts tests/practice-console.test.ts tests/console-clarity.test.tsx tests/trust-copilot.test.ts tests/trust.test.tsx`, `cd server && npx
   vitest run test/console.test.ts`, `npm run smoke:copilot`.
 - **Three browsers, one codebase.** WXT `-b firefox|safari` with `manifestVersion: 3` (WXT defaults those to MV2).
   Firefox has a fixed add-on id (its sign-in redirect is derived from it); Safari signs in through a relay page

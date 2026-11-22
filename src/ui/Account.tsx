@@ -122,6 +122,13 @@ export function CheckAgain() {
  */
 export function FixesOn({ region }: { region: string }) {
   const hosted = useCity((s) => s.hosted);
+  const demo = useCity((s) => s.backendKind === 'mock');
+  if (demo)
+    return (
+      <div className="account-howto">
+        <p className="muted">Practice account: in Deploy, press Use another Region or account, tick Allow small fixes, then Verify again.</p>
+      </div>
+    );
   if (!hosted)
     return (
       <div className="account-howto">

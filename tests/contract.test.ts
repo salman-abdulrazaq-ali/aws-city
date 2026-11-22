@@ -607,10 +607,11 @@ describe('The account lifecycle (v2.19)', () => {
     mock.send({ action: 'resource.remove', requestId: 'r1', kind: 'table', id: 'city-quest-library' });
     await sleep(20);
     const preview = events.find((e) => e.type === 'deploy.preview') as Extract<ServerEvent, { type: 'deploy.preview' }>;
-    expect(preview).toMatchObject({ requestId: 'r1', templateId: 'delete_table', changes: [{ action: 'Remove', logicalId: 'city-quest-library' }] });
+    // Like the server, a take-down wants its name typed before Approve.
+    expect(preview).toMatchObject({ requestId: 'r1', templateId: 'delete_table', changes: [{ action: 'Remove', logicalId: 'city-quest-library' }], confirmText: 'city-quest-library' });
     const arn = 'arn:aws:dynamodb:us-west-2:123456789012:table/city-quest-library';
     expect(inventories(events).at(-1)!.items.some((i) => i.arn === arn)).toBe(true);
-    mock.send({ action: 'deploy.approve', deployId: preview.deployId });
+    mock.send({ action: 'deploy.approve', deployId: preview.deployId, confirm: 'city-quest-library' });
     await sleep(50);
     expect(events.filter((e) => e.type === 'deploy.status').map((e) => (e.type === 'deploy.status' ? e.status : ''))).toEqual(['creating', 'complete']);
     expect(inventories(events).at(-1)!.items.some((i) => i.arn === arn)).toBe(false);

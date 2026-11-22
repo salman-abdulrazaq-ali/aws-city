@@ -13,7 +13,7 @@ The order for every agent write is unchanged, with one step added:
 3. **Jev** answers two questions about the write, and code turns the answers into a verdict:
    - **allow**: the player sees the ordinary preview (`deploy.preview`) and approves or rejects it.
    - **ask**: the player sees the preview with a "Safety check: …" line and must type the resource's name to approve
-     (the preview's `confirmText`, contract v2.3). The server refuses an approval whose typed name doesn't match.
+     (the preview's `confirmText`, contract v2.3; a destructive write always carries one, whatever Jev says). The server refuses an approval whose typed name doesn't match.
    - **block**: the write is refused with a plain sentence ("The city's safety check stopped this…"); the player isn't
      asked and nothing reaches AWS.
 4. The player's approval (`deploy.approve`, with MFA step-up when hosted).

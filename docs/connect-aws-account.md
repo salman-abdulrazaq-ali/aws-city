@@ -5,20 +5,24 @@ resources**, lets the citizens **spot real issues**, and lets agents **build sma
 each one. This guide is for players on the hosted game. The last section is for running AWS City on your own computer
 against your own account.
 
-In the demo there is nothing to connect: "Use the practice account" pretends, and nothing real is created.
+In the demo there is nothing to connect: "Use the practice account" pretends (in your city's own Region), and nothing
+real is created. "How real accounts connect" rehearses the steps below with a practice setup link that opens nothing;
+like the real one, it allows small fixes only if you tick the box.
 
 ## What connecting does, and what it doesn't
 
 Connecting means creating **one IAM role** in your account with a CloudFormation stack named `AWSCity`. The role is called
 `AWSCityPlayerRole-<Region>` and its permissions are written in
-[`infra/player-role/player-role.yaml`](../infra/player-role/player-role.yaml) (version 5). You never give AWS City a
-password or an access key. It only ever holds short-lived credentials (up to an hour) for that role.
+[`infra/player-role/player-role.yaml`](../infra/player-role/player-role.yaml) (version 5). The Deploy tab lists what
+the role can do before you create it, and **See the exact permissions** opens the template your setup link uses. You
+never give AWS City a password or an access key. It only ever holds short-lived credentials (up to an hour) for that role.
 
-**Who can use the role.** Only AWS City's own service role, in AWS City's own account, and only together with a secret
-ExternalId that belongs to you. Those are fixed in the published template, so a setup link can't be edited to trust
-anybody else.
+**Who can use the role.** Only AWS City's own service role, in AWS City's own account, and only together with the
+ExternalId that ties the role to your AWS City sign-in, so another player can't point the city at your account. The
+ExternalId isn't a password (AWS doesn't treat it as a secret), so the game shows it under Details. The trusted account
+and role are fixed in the published template, so a setup link can't be edited to trust anybody else.
 
-**What it can read** (in the Region you pick, unless it says "any Region"):
+**What it can read** (in the Region you pick, unless it says "account-wide"):
 
 - EC2 instances, security groups and their rules, volumes, machine images, and whether EBS encryption is on by default.
 - DynamoDB table names and settings, their tags, and whether point-in-time recovery is on.
@@ -26,9 +30,13 @@ anybody else.
 - Lambda function names, RDS database instances, API Gateway HTTP API names.
 - CloudTrail trails and their status, and the resource list (Resource Explorer and the tagging API) so the city can mirror
   your account.
-- Any Region: your Availability Zone names and IDs, and which Regions are turned on, so the world map shows your real one.
-- Only if you turn it on, and only then: your **month-to-date bill** (Cost Explorer: totals by service and Region, no
-  invoices or payment details), and a few **request counts** from CloudWatch for live traffic.
+- Account-wide: the list of all your buckets (S3 lists buckets account-wide), your Availability Zone names and IDs in
+  every Region, and which Regions are turned on, so the world map shows your real one.
+- Account-wide: your **month-to-date bill** (Cost Explorer: totals by service and Region, no invoices or payment
+  details). IAM can't see the game's switch, so the role allows this read at any time; AWS City's server reads it only
+  after you turn the bill on, at most once a day.
+- In the Region you pick: a few **request counts** from CloudWatch for live traffic. Again the role allows the read, and
+  the server makes it only after you turn live traffic on.
 
 It has no permission to read what is *inside* your buckets or tables, your logs, your secrets or your invoices.
 
@@ -37,26 +45,36 @@ It has no permission to read what is *inside* your buckets or tables, your logs,
 - EC2 `t4g.nano` or `t4g.micro` instances (IMDSv2 required, an encrypted disk, Amazon-owned images only), tagged
   `managed-by=aws-city`. It can stop, start and terminate only instances carrying that tag.
 - DynamoDB tables named `city-*`, tagged `managed-by=aws-city`, and delete only tagged ones.
-- S3 buckets named `aws-city-<your account id>-*`.
+- S3 buckets named `aws-city-<your account id>-*` (the name is what makes a bucket the city's: the role checks the name,
+  not a tag).
 - At most 3 live houses (instances), 5 tables and 3 buckets at a time (`server/src/agents/policy.ts`).
 
 **What it can never do:** touch IAM, change billing, or pass roles. Nothing in the role allows it.
 
-**Small fixes are separate and off unless you ask.** If you tick **Allow small fixes** the role also gets the exact
-fixes the citizens know: Block Public Access on a bucket, closing SSH/RDP open to the internet, requiring IMDSv2, turning
-on EBS encryption by default, and DynamoDB point-in-time recovery. Each one is shown to you first and runs only after you
-approve it. AWS itself can hold the IMDS change to `required` and EBS encryption to "enable", but it can't limit the
-other three to "tightening": there the city's code does (it only turns Block Public Access and backups on, and only
-removes the SSH/RDP rules you approved). You undo a fix yourself in the AWS console.
+**Small fixes are separate and off unless you ask.** If you tick **Allow small fixes** (the Deploy tab lists what it
+adds under **What small fixes allow**) the role may also, in the Region you pick:
+
+- turn on S3 Block Public Access on **any** bucket (`s3:PutBucketPublicAccessBlock`),
+- remove an inbound rule from **any** security group (`ec2:RevokeSecurityGroupIngress`),
+- turn on DynamoDB point-in-time recovery on **any** table (`dynamodb:UpdateContinuousBackups`),
+- require IMDSv2 on an instance (`ec2:ModifyInstanceMetadataOptions`),
+- turn on EBS encryption by default (`ec2:EnableEbsEncryptionByDefault`).
+
+IAM holds the last two to tightening (`HttpTokens` must be `required`; there's no permission to turn EBS encryption by
+default off). It can't for the first three: the same permissions could also turn Block Public Access or backups off, or
+remove any rule. AWS City's server holds those to tightening: it only turns them on, and only removes the SSH/RDP rules
+you approved. Each fix is shown to you first and runs only after you approve it. You undo a fix yourself in the AWS
+console.
 
 **One caveat the template spells out.** DynamoDB can't limit "tag a table" to new tables, so the role could in principle
 tag an existing table named `city-*` and then delete it. Only AWS City's server can use the role, and it never does that.
 
 **Every change needs your approval, with MFA.** An agent's write becomes a preview in the Deploy tab and runs only after
 you press **Approve** (it expires after 5 minutes with no answer, and nothing changes). On the hosted game you also need
-an authenticator app (TOTP) turned on to link an account, to approve a change and to apply a fix. Some previews ask
-you to type the resource's name first: a fix on something the city didn't build, and any write the optional second-opinion
-check flagged. Google sign-ins are exempt from the app because MFA is at Google.
+an authenticator app (TOTP) turned on to link an account, to approve a change and to apply a fix. A new preview puts
+the focus on its title, never on **Approve**, so a stray Enter or Space approves nothing. Some previews ask you to type
+the resource's name first: every take-down (terminate, delete), a fix on something the city didn't build, and any write
+the optional second-opinion check flagged. Google sign-ins are exempt from the app because MFA is at Google.
 
 **A safety gate sits in front of AWS.** Besides the role, the server checks every call to your account before it signs
 it: only the commands it knows, only the Region you picked (the Availability Zone and Region lists, and Cost Explorer,
@@ -78,11 +96,13 @@ company accounts can't: see Troubleshooting), and an authenticator app.
    to your app, enter a code, then **sign in again** with the code: turning it on ends every session, and a sign-in from
    before it doesn't count. If the city didn't hear about your authenticator in time (the game says so), it may ask you to
    sign in once more.
-3. **Pick a Region and press Get my setup link.** The Region is where the key is made and the only one the city reads.
+3. **Pick a Region and press Get my setup link.** The Region is where the role is made, where the city builds, and where
+   it checks for issues. A few reads cover the whole account: your bucket list, every Region's Availability Zones and
+   which Regions are on, and (once you turn it on) your bill.
    Only AWS's standard Regions are listed (GovCloud and China can't link). An opt-in Region must be turned on in your
    account first. It starts on the Region you asked for last, your linked one, or your city's.
-4. **Decide on small fixes.** Tick **Allow small fixes (you still approve each one)** now if you want them. Ticking it
-   makes a new setup link.
+4. **Decide on small fixes.** Tick **Allow small fixes (you still approve each one)** now if you want them (**What small
+   fixes allow** lists them). Ticking it makes a new setup link.
 5. **Check who the link is for.** The card says "The stack page will say ConnectsPlayer: ...". That is your public
    Mayor name, or your email masked (like `a***@e***.com`), or "Player " plus 8 characters of your sign-in id. On the
    CloudFormation page the `ConnectsPlayer` parameter must match. **If it isn't you, don't create the stack:** someone

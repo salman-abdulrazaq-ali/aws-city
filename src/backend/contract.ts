@@ -525,7 +525,7 @@ interface DeployPreviewEvent {
   /** v2.3: a fix for this finding (shown with its rollback; approve runs it). */
   findingId?: string;
   rollback?: string;
-  /** v2.3: the player must type this exactly (a resource the city didn't build, or an account-wide change). */
+  /** v2.3: the player must type this exactly (a resource the city didn't build, an account-wide change, or any destructive write: terminate, delete, a take-down). */
   confirmText?: string;
 }
 

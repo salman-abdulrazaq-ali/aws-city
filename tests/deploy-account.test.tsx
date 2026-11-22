@@ -86,16 +86,16 @@ describe('the Deploy tab’s account cards', () => {
 });
 
 describe('linking (v2.19)', () => {
-  it('step 1 picks the Region by name, starting on this city’s, and says where the key is made', () => {
+  it('step 1 picks the Region by name, starting on this city’s, and says where the role is made (and that a few reads are account-wide)', () => {
     useCity.setState({ account: { linked: false, wantsLink: true } });
     render(<DeployPanel />);
     const select = screen.getByLabelText('Region') as HTMLSelectElement;
     expect(select.value).toBe('eu-west-2');
     expect(within(select).getByRole('option', { name: /US West \(Oregon\) · us-west-2/ })).toBeTruthy();
     expect(within(select).queryByRole('option', { name: /GovCloud/ })).toBeNull();
-    expect(screen.getByText(/Your key will be made in/).textContent).toMatch(/Europe \(London\); the city reads that/);
+    expect(screen.getByText(/role will be made in/).textContent).toMatch(/AWS City’s role will be made in Europe \(London\)\. The city builds and checks for issues there; a few reads cover your whole account/);
     fireEvent.change(select, { target: { value: 'ap-southeast-2' } });
-    expect(screen.getByText(/Your key will be made in/).textContent).toMatch(/Asia Pacific \(Sydney\)/);
+    expect(screen.getByText(/role will be made in/).textContent).toMatch(/Asia Pacific \(Sydney\)/);
     fireEvent.click(screen.getByRole('button', { name: 'Get my setup link' }));
     expect(rt.linkAccount).toHaveBeenCalledWith('ap-southeast-2', { allowFixes: false });
   });
