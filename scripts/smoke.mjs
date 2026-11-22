@@ -360,7 +360,9 @@ await page.locator('.account-map .seg button', { hasText: 'Services' }).click();
 await page.locator('.account-map .seg button', { hasText: 'Diagram' }).click();
 await wait(300);
 if (await page.locator('.account-map animateMotion').count()) errors.push('my aws diagram: dots move under reduced motion');
-await page.emulateMedia({ reducedMotion: null });
+// Motion back on for the rest of the run: `reducedMotion: null` leaves 'reduce' in place (Playwright 1.63 + Chromium),
+// and under reduced motion the city parks its traffic and sends no learning couriers (src/game/Ambient.ts `still`).
+await page.emulateMedia({ reducedMotion: 'no-preference' });
 await page.getByRole('button', { name: 'Close the map' }).click();
 await city(() => (window.awsCity.setBill(false), window.awsCity.setFlow(false)));
 await wait(200);
