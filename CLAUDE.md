@@ -267,7 +267,9 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   `server/src/contract/aws-feed.ts`), then just the change. HQ chat on the CPU model names servers the player made
   themselves (`otherServers` in `snapshotSummary`), and every chat answer knows it can't change AWS and that the city
   only changes what it built (`CHAT_CAN_DO`, `server/src/contract/orchestrator.ts`; seen 22 Nov 2026: asked to delete a
-  console-made server, Eddie said he couldn't see it). An audit line names a new bucket's real name.
+  console-made server, Eddie said he couldn't see it). An audit line names a new bucket's real name. A plain request's
+  task ends at `task.done`: the agent's few words after it run on their own (`explainAfter`), so the task's slot (two a
+  socket) is free at once (seen 22 Nov 2026: "Two tasks are already running" right after a card said done).
   Proof: `cd server && npx vitest run test/bill.test.ts test/care.test.ts test/player-role.test.ts`, `cd server && npx vitest
   run test/care.test.ts -t "DescribeInstances|bucket or table" test/diff.test.ts test/poller.test.ts test/contract.test.ts -t "lesson|chat answers" test/runner.test.ts`, `npx vitest run tests/contract.test.ts`.
 - **Street plans come from OpenStreetMap, baked.** A Region with `shared/city-maps/<region>.json` (v1, ODbL, © OpenStreetMap

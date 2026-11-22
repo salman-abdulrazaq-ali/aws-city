@@ -229,12 +229,21 @@ describe('a plain request goes straight to its agent’s action: the card in sec
     expect(events).toContainEqual(expect.objectContaining({ type: 'task.step', index: 1, status: 'done' }));
     const done = events.findIndex((e) => e.type === 'task.done');
     expect(events[done]).toMatchObject({ ok: true, result: expect.stringContaining('Created bucket'), xp: [{ serviceId: 's3', amount: 20 }] });
-    // The agent's explanation comes after the task is done (one tool-less call).
-    expect(events.slice(done)).toContainEqual(expect.objectContaining({ type: 'agent.message', from: 's3', text: 'A bucket keeps files. Try uploading one.' }));
+    // The agent's explanation comes after the task is done (one tool-less call), on its own.
+    await vi.waitFor(() => expect(events.slice(done)).toContainEqual(expect.objectContaining({ type: 'agent.message', from: 's3', text: 'A bucket keeps files. Try uploading one.' })));
     expect(llm.stream).toHaveBeenCalledTimes(1);
     // Every working state is followed by idle for the same agent.
     const states = events.filter((e) => e.type === 'agent.state' && e.agentId === 's3');
     expect(states.at(-1)).toMatchObject({ state: 'idle' });
+  });
+
+  // Seen 22 Nov 2026: the card said done, but the slot (two a socket) stayed held ~30 s by the explanation's model call,
+  // so the next request got "Two tasks are already running".
+  it('the task ends at task.done: the explanation after it never holds the task open', async () => {
+    const { orchestrator, events, emit, approvals, llm } = withApprovals();
+    (llm.stream as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise(() => {})); // a model that never answers
+    await orchestrator.submitTask({ taskId: 'd9', prompt: 'Create a bucket called holiday-123', context: {} }, emit, approvals);
+    expect(events.find((e) => e.type === 'task.done')).toMatchObject({ taskId: 'd9', ok: true });
   });
 
   it('the player says no: nothing changes, the step says why, the task is not ok, no explanation', async () => {

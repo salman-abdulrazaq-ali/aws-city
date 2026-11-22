@@ -248,11 +248,17 @@ export const createOrchestrator = (deps: {
     emit({ type: 'task.step', taskId, index: 1, text: ok ? summary : `${summary} — ${call.message}`, status: ok ? 'done' : 'failed' });
     emit({ type: 'task.done', taskId, ok, result: call.message.slice(0, 400), xp: [{ serviceId: agentId, amount: ok ? XP.task + XP.perWrite : XP.attempted }] });
     if (!ok || signal?.aborted) return;
-    // A few words on what was just built, from the agent (its persona, no tools). The change is done either way.
+    // A few words on what was just built, from the agent (its persona, no tools). The change is done either way, so this
+    // runs on its own: the task (and its slot, two a socket) ends at task.done. Seen 22 Nov 2026: a card said done while
+    // its slot was held ~30 s by this call on the CPU model, and the next request got "Two tasks are already running".
+    void explainAfter(cmd.prompt, call.message, agentId, taskId, emit, signal);
+  };
+
+  const explainAfter = async (prompt: string, done: string, agentId: string, taskId: string, emit: Emit, signal?: AbortSignal) => {
     let text = '';
     await speak(
       `${agentSystemPrompt(agentId)}\n\nThe change below was just made in the player's AWS account. In plain text, under 50 words: what it is, and one thing to try next.`,
-      `The player asked: ${neutralise(cmd.prompt)}\nDone: ${neutralise(call.message)}`,
+      `The player asked: ${neutralise(prompt)}\nDone: ${neutralise(done)}`,
       (d) => void (text += d),
       600,
     ).catch((err) => log.warn('explain after a change skipped', { taskId, err: (err as Error).name })); // the AI resting, a quota
