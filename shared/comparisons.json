@@ -72,12 +72,12 @@
       "simple": "EC2 is a whole server you run. Lambda runs a function for each event. Fargate runs containers with no servers.",
       "options": [
         { "serviceId": "ec2", "pick": "Pick it when you need full control of the machine, or software that must run all the time." },
-        { "serviceId": "lambda", "pick": "Pick it for short, event-driven code (up to 15 minutes), paying only while it runs." },
+        { "serviceId": "lambda", "pick": "Pick it for short, event-driven code (up to 30 minutes), paying only while it runs." },
         { "serviceId": "fargate", "pick": "Pick it for long-running containers when you don't want to manage the servers under them." }
       ],
       "rows": [
         { "label": "You manage", "values": { "ec2": "The OS, patches and scaling", "lambda": "Only your code", "fargate": "Your container image" } },
-        { "label": "Longest run", "values": { "ec2": "As long as you like", "lambda": "15 minutes per call", "fargate": "As long as you like" } },
+        { "label": "Longest run", "values": { "ec2": "As long as you like", "lambda": "30 minutes per call", "fargate": "As long as you like" } },
         { "label": "You pay for", "values": { "ec2": "Every second it's on", "lambda": "Requests and run time", "fargate": "The task's CPU and memory while it runs" } }
       ],
       "source": "https://docs.aws.amazon.com/lambda/latest/dg/welcome.html"
@@ -235,7 +235,7 @@
       "rows": [
         { "label": "You hand over", "values": { "beanstalk": "Your code, or a Docker image", "ecs": "Container images", "lambda": "Functions" }},
         { "label": "AWS handles", "values": { "beanstalk": "Servers, load balancing, scaling, health", "ecs": "Where containers run, restarts", "lambda": "Servers, patching, scaling, logging" }},
-        { "label": "Runs for", "values": { "beanstalk": "As long as you like", "ecs": "As long as you like", "lambda": "Up to 15 minutes a run" }},
+        { "label": "Runs for", "values": { "beanstalk": "As long as you like", "ecs": "As long as you like", "lambda": "Up to 30 minutes a run" }},
         { "label": "Extra charge", "values": { "beanstalk": "None: you pay for what it creates", "ecs": "None: you pay for EC2 or Fargate", "lambda": "Per request and run time" }}
       ],
       "source": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/choosing-aws-compute-service.html"
@@ -356,10 +356,10 @@
       "simple": "Lambda runs short bits of code the moment something happens. Batch queues long jobs and runs them on capacity it scales.",
       "options": [
         { "serviceId": "batch", "pick": "Pick it for long, heavy jobs, like rendering or simulations, that can wait in a queue." },
-        { "serviceId": "lambda", "pick": "Pick it for short tasks, up to 15 minutes each, that run as soon as an event happens." }
+        { "serviceId": "lambda", "pick": "Pick it for short tasks, up to 30 minutes each, that run as soon as an event happens." }
       ],
       "rows": [
-        { "label": "Longest run", "values": { "batch": "As long as the job needs", "lambda": "15 minutes per invocation" } },
+        { "label": "Longest run", "values": { "batch": "As long as the job needs", "lambda": "30 minutes per invocation" } },
         { "label": "Starts", "values": { "batch": "When capacity fits the queued job", "lambda": "On each event, in moments" } },
         { "label": "Runs on", "values": { "batch": "Containers on EC2, Spot or Fargate", "lambda": "Managed functions" } },
         { "label": "Extra charge", "values": { "batch": "None: you pay for the compute", "lambda": "Per request and per millisecond" } }

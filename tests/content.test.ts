@@ -382,4 +382,18 @@ describe('content freshness', () => {
       expect(Date.parse(d.asOf!) <= Date.now() + 86_400_000, f).toBe(true);
     }
   });
+
+  it('a Lambda run lasts up to 30 minutes (since November 2026), wherever a card, a comparison or the stall says so', async () => {
+    const conference = (await import('../shared/conference.json', { with: { type: 'json' } })).default;
+    const card = CARDS.lambda.find((c) => c.id === 'lambda-02')!;
+    expect(card.a).toMatch(/^30 minutes \(1,800 seconds\)/);
+    const said = [
+      card,
+      COMPARISONS.filter((c) => JSON.stringify(c).includes('"lambda"')),
+      world.services.find((s) => s.id === 'lambda'),
+      conference.talks.filter((t) => t.serviceIds.includes('lambda')),
+      workshopById('durable-first-function'),
+    ];
+    for (const s of said) expect(JSON.stringify(s)).not.toMatch(/\b15 minutes|\b900 seconds|stop at 15/);
+  });
 });

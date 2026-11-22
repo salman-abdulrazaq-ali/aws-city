@@ -90,13 +90,16 @@
         {
           "id": "create",
           "title": "Create the bucket",
-          "body": "Each bucket must have a globally unique name across all of AWS, such as amzn-s3-demo- plus random letters. In us-east-1 leave the location constraint out; in every other Region, name your Region in it.",
-          "cli": "aws s3api create-bucket --bucket <bucket> [--create-bucket-configuration LocationConstraint=<region>]",
+          "body": "Pick a name: 3 to 63 lowercase letters, numbers, dots and hyphens (no underscores), not starting amzn-s3-demo- or xn--, unique across all of AWS: add random letters, like city-photos-4f9c2a. Name your Region with --region; outside us-east-1, in the location constraint too.",
+          "cli": "aws s3api create-bucket --bucket <bucket> --region <region> [--create-bucket-configuration LocationConstraint=<region>]",
           "output": "{\n    \"Location\": \"http://{{bucket}}.s3.amazonaws.com/\"\n}",
           "errors": [
-            { "code": "BucketAlreadyExists", "message": "An error occurred (BucketAlreadyExists) when calling the CreateBucket operation: The requested bucket name is not available. The bucket namespace is shared by all users of the system. Please select a different name and try again.", "when": { "flag": "--bucket", "value": "^(test|my-bucket|amzn-s3-demo-bucket)$" }, "explain": "Bucket names are shared by every AWS account in the world, and someone already has this one.", "fix": "Add something random to the name, like amzn-s3-demo-4f9c2a." },
-            { "code": "InvalidLocationConstraint", "message": "An error occurred (InvalidLocationConstraint) when calling the CreateBucket operation: The specified location constraint is not valid", "when": { "flag": "--create-bucket-configuration", "value": "LocationConstraint=us-east-1$" }, "explain": "us-east-1 is where buckets go by default, so it takes no location constraint.", "fix": "In us-east-1, leave out --create-bucket-configuration." },
-            { "code": "IllegalLocationConstraintException", "message": "An error occurred (IllegalLocationConstraintException) when calling the CreateBucket operation: The unspecified location constraint is incompatible for the region specific endpoint this request was sent to.", "explain": "Outside us-east-1, S3 needs to be told the bucket's Region.", "fix": "Add --create-bucket-configuration LocationConstraint= followed by your Region, for example eu-west-1." }
+            { "code": "BucketAlreadyExists", "message": "An error occurred (BucketAlreadyExists) when calling the CreateBucket operation: The requested bucket name is not available. The bucket namespace is shared by all users of the system. Please select a different name and try again.", "when": { "flag": "--bucket", "value": "^(test|my-bucket)$" }, "explain": "Bucket names are shared by every AWS account in the world, and someone already has this one.", "fix": "Add something random to the name, like city-photos-4f9c2a." },
+            { "code": "InvalidBucketName", "message": "An error occurred (InvalidBucketName) when calling the CreateBucket operation: The specified bucket is not valid.", "when": { "flag": "--bucket", "value": "^(?=[A-Za-z0-9._-]{1,255}$)(?:(?![a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$)|.*\\.\\.|xn--|sthree-|amzn-s3-demo-|.*(?:-s3alias|--ol-s3|\\.mrap|--x-s3|--table-s3)$|\\d+\\.\\d+\\.\\d+\\.\\d+$)" }, "explain": "A bucket name is 3 to 63 lowercase letters, numbers, dots and hyphens, starting and ending with a letter or number. No capitals or underscores, and the prefixes amzn-s3-demo-, xn-- and sthree- are reserved.", "fix": "Pick a name like city-photos-4f9c2a." },
+            { "code": "You must specify a region", "message": "Practice terminal: which Region? This terminal has no default Region (CloudShell uses your console's), so name it with --region.", "when": { "missing": "--region" }, "explain": "S3 makes the bucket in the Region the request goes to. Outside us-east-1 it also wants that Region in the location constraint, or it refuses.", "fix": "Add --region us-east-1, or your own Region (like eu-west-1) plus --create-bucket-configuration LocationConstraint= and the same Region." },
+            { "code": "The unspecified location constraint", "message": "An error occurred (IllegalLocationConstraintException) when calling the CreateBucket operation: The unspecified location constraint is incompatible for the region specific endpoint this request was sent to.", "when": { "missing": "--create-bucket-configuration", "flag": "--region", "value": "^(?!us-east-1$)" }, "explain": "Outside us-east-1, S3 needs to be told the bucket's Region.", "fix": "Add --create-bucket-configuration LocationConstraint= followed by the same Region as --region, for example eu-west-1." },
+            { "code": "IllegalLocationConstraintException", "message": "An error occurred (IllegalLocationConstraintException) when calling the CreateBucket operation: The {{region}} location constraint is incompatible for the region specific endpoint this request was sent to.", "when": { "flag": "--region", "value": "^(?!us-east-1$)", "mismatch": "region" }, "explain": "The request went to the --region endpoint, but the location constraint names another Region. A Regional endpoint only makes buckets in its own Region.", "fix": "Use the same Region in --region and in LocationConstraint=." },
+            { "code": "InvalidLocationConstraint", "message": "An error occurred (InvalidLocationConstraint) when calling the CreateBucket operation: The specified location constraint is not valid", "when": { "flag": "--create-bucket-configuration", "value": "LocationConstraint=us-east-1$" }, "explain": "us-east-1 is where buckets go by default, so it takes no location constraint.", "fix": "In us-east-1, leave out --create-bucket-configuration." }
           ],
           "verify": { "check": "bucket-exists", "value": "bucket" }
         },
@@ -115,6 +118,7 @@
           "cli": "aws s3api put-object --bucket <bucket> --key sample.txt --body sample.txt",
           "output": "{\n    \"ETag\": \"\\\"5d41402abc4b2a76b9719d911017c592\\\"\",\n    \"VersionId\": \"3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY\"\n}",
           "errors": [
+            { "code": "d41d8cd98f00b204e9800998ecf8427e", "message": "Practice terminal: stopped. Without --body the real CLI still answers, but it stores an empty object: sample.txt with nothing in it (its ETag, d41d8cd98f00b204e9800998ecf8427e, is the MD5 of no data).", "when": { "missing": "--body" }, "explain": "--body is optional: it names the local file whose contents go up. Leave it out and S3 stores the key with 0 bytes.", "fix": "Add --body sample.txt." },
             { "code": "NoSuchBucket", "message": "An error occurred (NoSuchBucket) when calling the PutObject operation: The specified bucket does not exist", "explain": "The bucket name doesn't match one you own, or it was made in another Region.", "fix": "Copy the exact name from the first step." }
           ],
           "verify": { "manual": true }
@@ -144,6 +148,9 @@
           "body": "In a versioned bucket a plain delete only adds a delete marker; the old version stays. Delete the version itself by its id (from the upload, or aws s3api list-object-versions).",
           "cli": "aws s3api delete-object --bucket <bucket> --key sample.txt --version-id <version>",
           "output": "{\n    \"VersionId\": \"{{version}}\"\n}",
+          "errors": [
+            { "code": "DeleteMarker", "message": "Practice terminal: stopped. Without --version-id this only adds a delete marker (the answer says \"DeleteMarker\": true): sample.txt looks gone, but its version is still stored, and still billed.", "when": { "missing": "--version-id" }, "explain": "In a versioned bucket a delete without a version id hides the object behind a delete marker and keeps every version: that's the undo versioning gives you.", "fix": "Add --version-id with the VersionId from the upload (or from aws s3api list-object-versions)." }
+          ],
           "cleanup": true,
           "verify": { "manual": true }
         },
@@ -294,7 +301,7 @@
         {
           "id": "invoke",
           "title": "Run it",
-          "body": "The function runs its step, pauses 10 seconds, resumes and returns. A synchronous call waits for the result (up to 15 minutes). Add --durable-execution-name to make the run safe to retry.",
+          "body": "The function runs its step, pauses 10 seconds, resumes and returns. A synchronous call waits for the result (up to 30 minutes). Add --durable-execution-name to make the run safe to retry.",
           "cli": "aws lambda invoke --function-name <function>:1 --cli-binary-format raw-in-base64-out --payload '{}' [--durable-execution-name <execution>] response.json",
           "output": "{\n    \"StatusCode\": 200,\n    \"ExecutedVersion\": \"1\"\n}",
           "errors": [
@@ -691,6 +698,9 @@
           "body": "--force deletes the objects first, then the bucket. You can delete the origin access control in the CloudFront console too.",
           "cli": "aws s3 rb s3://<bucket> --force",
           "output": "delete: s3://{{bucket}}/index.html\nremove_bucket: {{bucket}}",
+          "errors": [
+            { "code": "BucketNotEmpty", "message": "remove_bucket failed: s3://{{bucket}} An error occurred (BucketNotEmpty) when calling the DeleteBucket operation: The bucket you tried to delete is not empty", "when": { "missing": "--force" }, "explain": "index.html is still in the bucket, and S3 only deletes an empty bucket. --force deletes the objects first, then the bucket.", "fix": "Add --force, or empty the bucket first (aws s3 rm with --recursive)." }
+          ],
           "cleanup": true,
           "verify": { "check": "bucket-gone", "value": "bucket" }
         }

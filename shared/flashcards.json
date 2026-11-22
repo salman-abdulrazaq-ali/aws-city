@@ -96,8 +96,8 @@
       {
         "id": "lambda-02",
         "q": "How long can one Lambda run last (the maximum timeout)?",
-        "a": "15 minutes (900 seconds) per run, called an invocation. For longer multi-step work, use Lambda durable functions (up to a year) or Step Functions workflows, or run it as a container on ECS or Fargate.",
-        "simple": "One run can last up to 15 minutes. Longer jobs need a different tool, like Step Functions or a container.",
+        "a": "30 minutes (1,800 seconds) per run, called an invocation (an asynchronous run on Lambda Managed Instances can last 90). For longer multi-step work, use Lambda durable functions (up to a year) or Step Functions workflows, or run it as a container on ECS or Fargate.",
+        "simple": "One run can last up to 30 minutes. Longer jobs need a different tool, like Step Functions or a container.",
         "tier": 1,
         "source": "https://docs.aws.amazon.com/lambda/latest/dg/welcome.html"
       },

@@ -18,9 +18,9 @@
       ],
       "serviceIds": ["agentcore", "bedrock", "apigateway", "lambda"],
       "check": [
-        {"q": "Which protocol lets one agent call another agent hosted on AgentCore Runtime?", "options": ["A2A (Agent2Agent)", "Email", "A shared spreadsheet"], "answer": 0, "why": "AgentCore Runtime can host A2A servers, so agents call each other over the Agent2Agent protocol."},
-        {"q": "What does AgentCore Gateway do?", "options": ["Turns APIs and Lambda functions into MCP tools agents can call", "Trains new foundation models", "Hosts static websites"], "answer": 0, "why": "Gateway turns Lambda functions, OpenAPI or Smithy APIs and API Gateway REST stages into MCP tools."},
-        {"q": "Why split one agent with dozens of tools into several smaller agents?", "options": ["With fewer tools, each agent picks the right one more reliably", "It removes the need for a model", "An agent can only hold three tools"], "answer": 0, "why": "A long tool list dilutes the model's choices. Specialised agents that hand work to each other stay focused."}
+        {"q": "Which protocol lets one agent call another agent hosted on AgentCore Runtime?", "options": ["AMQP, a message queue protocol", "A2A (Agent2Agent)", "SNMP, a network monitoring protocol"], "answer": 1, "why": "AgentCore Runtime can host A2A servers, so agents call each other over the Agent2Agent protocol."},
+        {"q": "What does AgentCore Gateway do?", "options": ["Keeps an agent's memory between sessions", "Runs each agent session in its own microVM", "Turns APIs and Lambda functions into MCP tools agents can call"], "answer": 2, "why": "Gateway turns Lambda functions, OpenAPI or Smithy APIs and API Gateway REST stages into MCP tools."},
+        {"q": "Why split one agent with dozens of tools into several smaller agents?", "options": ["With fewer tools, each agent picks the right one more reliably", "Several small agents always use fewer tokens than one", "An agent with many tools can't reach them over MCP"], "answer": 0, "why": "A long tool list dilutes the model's choices. Specialised agents that hand work to each other stay focused."}
       ],
       "workshopIds": [],
       "sources": [
@@ -45,9 +45,9 @@
       ],
       "serviceIds": ["bedrock"],
       "check": [
-        {"q": "In domain-driven design, what does a bounded context do?", "options": ["Draws a boundary around one business area and its language", "Limits how much a service may cost", "Sets an AI model's longest answer"], "answer": 0, "why": "Microservices use bounded contexts to draw service boundaries along business boundaries, so each part can change on its own."},
-        {"q": "Why delete data you no longer need?", "options": ["Less to store, protect and process, which also helps sustainability", "Old data makes every query return wrong answers", "Deleting data makes a database faster to create"], "answer": 0, "why": "The Well-Architected sustainability pillar advises removing unneeded data: less storage, less risk, less energy."},
-        {"q": "How should a team pick a foundation model?", "options": ["Compare models on its own task for quality, speed and cost", "Always use the newest model", "Use the largest model for everything"], "answer": 0, "why": "Bedrock offers many models. Testing them on your own examples shows which one fits the task and the budget."}
+        {"q": "In domain-driven design, what does a bounded context do?", "options": ["Puts every service on one shared data model", "Runs each service in its own Availability Zone", "Draws a boundary around one business area and its language"], "answer": 2, "why": "Microservices use bounded contexts to draw service boundaries along business boundaries, so each part can change on its own."},
+        {"q": "Why delete data you no longer need?", "options": ["AWS charges extra for data older than a year", "Less to store, protect and process, which also helps sustainability", "Backups can't include data older than 90 days"], "answer": 1, "why": "The Well-Architected sustainability pillar advises removing unneeded data: less storage, less risk, less energy."},
+        {"q": "How should a team pick a foundation model?", "options": ["Always use the newest model", "Use the largest model for everything", "Compare models on its own task for quality, speed and cost"], "answer": 2, "why": "Bedrock offers many models. Testing them on your own examples shows which one fits the task and the budget."}
       ],
       "workshopIds": [],
       "sources": [
@@ -71,9 +71,9 @@
       ],
       "serviceIds": ["cognito", "apigateway", "iam", "dynamodb"],
       "check": [
-        {"q": "In the pool model, how do tenants share one DynamoDB table safely?", "options": ["Keys start with the tenant id, and credentials only reach that tenant's keys", "Each tenant uses a different AWS Region", "Tenants take turns using the table"], "answer": 0, "why": "Pooled rows are keyed by tenant. A session policy on dynamodb:LeadingKeys limits each request to its own tenant's items."},
-        {"q": "What can an API Gateway Lambda authorizer return besides allow or deny?", "options": ["A context map, such as the tenant id, passed on to the backend", "A new database table", "A copy of the user's password"], "answer": 0, "why": "The authorizer returns a principal, a policy document and an optional context of strings, numbers or booleans."},
-        {"q": "Are API Gateway usage plan throttles and quotas hard limits?", "options": ["No, they're applied on a best-effort basis", "Yes, never exceeded by a single request", "Only on weekends"], "answer": 0, "why": "AWS says usage plan limits are best effort. Don't use API keys for authorization or to control cost."}
+        {"q": "In the pool model, how do tenants share one DynamoDB table safely?", "options": ["Each tenant gets its own table in the same account", "Keys start with the tenant id, and credentials only reach that tenant's keys", "Each tenant uses a different AWS Region"], "answer": 1, "why": "Pooled rows are keyed by tenant. A session policy on dynamodb:LeadingKeys limits each request to its own tenant's items."},
+        {"q": "What can an API Gateway Lambda authorizer return besides allow or deny?", "options": ["A rewritten request body for the backend", "A cached copy of the backend's last response", "A context map, such as the tenant id, passed on to the backend"], "answer": 2, "why": "The authorizer returns a principal, a policy document and an optional context of strings, numbers or booleans."},
+        {"q": "Are API Gateway usage plan throttles and quotas hard limits?", "options": ["No, they're applied on a best-effort basis", "Yes, a quota is never exceeded by even one request", "Only when the API uses a Lambda authorizer"], "answer": 0, "why": "AWS says usage plan limits are best effort. Don't use API keys for authorization or to control cost."}
       ],
       "workshopIds": ["saas-tenant-isolation"],
       "sources": [
@@ -98,9 +98,9 @@
       ],
       "serviceIds": ["q", "bedrock"],
       "check": [
-        {"q": "What are the three phases of AWS's AI-DLC?", "options": ["Inception, Construction and Operations", "Plan, Code and Forget", "Design, Test and Launch"], "answer": 0, "why": "AI-DLC runs through Inception, Construction and Operations, with the team validating the AI's work at each step."},
-        {"q": "In AI-DLC, what replaces sprints?", "options": ["Bolts: short cycles of hours or days", "Quarterly releases", "Hackathons"], "answer": 0, "why": "Bolts are shorter, more intense cycles than sprints, and units of work replace epics."},
-        {"q": "Why write skills and rules before asking AI to build?", "options": ["AI only knows what's in its context, so the team's know-how must be written down", "It makes the model bigger", "Rules make AI answers free"], "answer": 0, "why": "Tacit knowledge lives in people's heads. Written skills, rules and specs give the AI the context it lacks."}
+        {"q": "What are the three phases of AWS's AI-DLC?", "options": ["Design, Test and Launch", "Discovery, Delivery and Support", "Inception, Construction and Operations"], "answer": 2, "why": "AI-DLC runs through Inception, Construction and Operations, with the team validating the AI's work at each step."},
+        {"q": "In AI-DLC, what replaces sprints?", "options": ["Bolts: short cycles of hours or days", "Epics planned a quarter ahead", "Quarterly releases"], "answer": 0, "why": "Bolts are shorter, more intense cycles than sprints, and units of work replace epics."},
+        {"q": "Why write skills and rules before asking AI to build?", "options": ["So the model can be retrained on the team's code", "AI only knows what's in its context, so the team's know-how must be written down", "So the AI's work no longer needs the team to review it"], "answer": 1, "why": "Tacit knowledge lives in people's heads. Written skills, rules and specs give the AI the context it lacks."}
       ],
       "workshopIds": [],
       "sources": [
@@ -113,24 +113,24 @@
       "title": "Lambda Managed Instances",
       "theme": "serverless",
       "simple": "Run Lambda functions on bigger, always-on EC2 servers that Lambda looks after for you.",
-      "summary": "Lambda Managed Instances runs your functions on current-generation EC2 instances in your own account and VPC, while Lambda patches, routes and scales them. A capacity provider sets the subnets, an operator role and the instance types (C, M or R families). Each environment serves many requests at once, sized by a memory to vCPU ratio of 2:1, 4:1 or 8:1. There are no cold starts: it scales on CPU use, not per request, and keeps a minimum running. You pay the EC2 price plus a 15% fee. It suits steady, heavy or CPU-bound traffic; spiky work stays on standard Lambda.",
+      "summary": "Lambda Managed Instances runs your functions on current-generation EC2 instances in your account and VPC, while Lambda patches, routes and scales them. A capacity provider sets the subnets, an operator role and the instance types (C, M, R or GPU G families). Each environment serves many requests at once, sized by a memory to vCPU ratio of 2:1, 4:1 or 8:1. There are no cold starts: it scales on CPU use, not per request, and keeps a minimum running. You pay $0.20 per million requests, the EC2 price and a 15% fee (9.75% on G). It suits steady, heavy traffic; spiky work stays on standard Lambda.",
       "keyIdeas": [
         "A capacity provider picks the subnets, operator role, instance types and scaling, and is the security boundary.",
         "One execution environment handles many invocations at once (multi-concurrency).",
         "No cold starts: it scales on CPU use, ahead of demand, and never down to zero.",
-        "You pay the EC2 instance price plus a 15% management fee; EC2 discounts cover the instance part.",
-        "Asynchronous invokes can run for up to 90 minutes; synchronous calls still stop at 15."
+        "You pay $0.20 per million requests, the EC2 price and a fee (15%, 9.75% on G GPUs); EC2 discounts cover the instance part.",
+        "Synchronous calls can run for up to 30 minutes; asynchronous and event source mapping ones for up to 90."
       ],
       "serviceIds": ["lambda", "ec2", "vpc"],
       "check": [
-        {"q": "What does Lambda Managed Instances cost?", "options": ["The EC2 instance price plus a 15% management fee", "Per request only, like standard Lambda", "Nothing until the first cold start"], "answer": 0, "why": "You pay for the EC2 instances plus a 15% fee. EC2 discounts apply to the compute, not to the fee."},
-        {"q": "How does Lambda Managed Instances scale?", "options": ["On CPU use, in the background, with no cold starts", "By starting a new environment for every request", "It never scales"], "answer": 0, "why": "It scales on CPU use and concurrency, not when a request arrives, so requests never wait for a cold start."},
-        {"q": "Which workload suits Managed Instances better than standard Lambda?", "options": ["Steady, high, CPU-heavy traffic", "A function called twice a day", "A job that must scale to zero overnight"], "answer": 0, "why": "Steady load keeps the instances busy. Rare calls are cheaper on standard Lambda, which scales to zero."}
+        {"q": "What does Lambda Managed Instances cost?", "options": ["Per request and per GB-second of run time, like standard Lambda", "The EC2 instance price only, with no extra fee", "The EC2 instance price, a management fee and $0.20 per million requests"], "answer": 2, "why": "You pay for the EC2 instances, a 15% fee (9.75% on GPU G instances) and $0.20 per million requests. EC2 discounts cover only the instances."},
+        {"q": "How does Lambda Managed Instances scale?", "options": ["By starting a new environment for every request", "On CPU use, in the background, with no cold starts", "Only when you change the instance count by hand"], "answer": 1, "why": "It scales on CPU use and concurrency, not when a request arrives, so requests never wait for a cold start."},
+        {"q": "Which workload suits Managed Instances better than standard Lambda?", "options": ["A function called twice a day", "Steady, high, CPU-heavy traffic", "A job that must scale to zero overnight"], "answer": 1, "why": "Steady load keeps the instances busy. Rare calls are cheaper on standard Lambda, which scales to zero."}
       ],
       "workshopIds": ["lmi-capacity-provider"],
       "sources": [
         "https://docs.aws.amazon.com/lambda/latest/dg/lambda-managed-instances.html",
-        "https://docs.aws.amazon.com/lambda/latest/dg/lambda-managed-instances-scaling.html",
+        "https://aws.amazon.com/lambda/pricing/",
         "https://docs.aws.amazon.com/lambda/latest/dg/lambda-managed-instances-capacity-providers.html",
         "https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html"
       ]
@@ -150,8 +150,8 @@
       ],
       "serviceIds": ["lambda", "bedrock"],
       "check": [
-        {"q": "When a durable function resumes, what happens to steps that already finished?", "options": ["They're skipped, and their saved results are reused", "They all run again from scratch", "The execution fails"], "answer": 0, "why": "Replay starts from the top but skips completed checkpoints, reusing their stored results."},
-        {"q": "What happens if you reuse an execution name with a different payload?", "options": ["Lambda refuses it with DurableExecutionAlreadyStartedException", "A second execution starts", "The old execution is overwritten"], "answer": 0, "why": "Execution names are idempotency keys. The same payload returns the existing execution; a different one is refused."},
+        {"q": "When a durable function resumes, what happens to steps that already finished?", "options": ["They all run again from scratch", "They're skipped, and their saved results are reused", "The execution fails and must be started again"], "answer": 1, "why": "Replay starts from the top but skips completed checkpoints, reusing their stored results."},
+        {"q": "What happens if you reuse an execution name with a different payload?", "options": ["A second execution starts", "The old execution is overwritten", "Lambda refuses it with DurableExecutionAlreadyStartedException"], "answer": 2, "why": "Execution names are idempotency keys. The same payload returns the existing execution; a different one is refused."},
         {"q": "When does Step Functions fit better than durable functions?", "options": ["Orchestrating a visual workflow across many AWS services", "Writing app logic in your own language inside Lambda", "Making one function run faster"], "answer": 0, "why": "AWS's guidance: durable functions for app logic in code, Step Functions for visual orchestration across 220+ services."}
       ],
       "workshopIds": ["durable-first-function"],

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { openDocs } from '@/app/runtime';
-import { waReview } from '@/state/review';
+import { risksLine, waReview } from '@/state/review';
 import { useCity } from '@/state/store';
 import { PILLAR_LABEL } from '@/world/citizens';
 import { feel } from './feedback';
@@ -25,10 +25,7 @@ export function WaReview() {
         <section key={p.pillar} className="wa-pillar" aria-label={PILLAR_LABEL[p.pillar]}>
           <div className="wa-pillar-head">
             <b>{PILLAR_LABEL[p.pillar]}</b>
-            <span className="muted">{p.score}/100</span>
-          </div>
-          <div className="meter" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={p.score} aria-label={`${PILLAR_LABEL[p.pillar]} score`}>
-            <i style={{ width: `${Math.max(4, p.score)}%` }} />
+            <span className="muted">{risksLine(p.risks)}</span>
           </div>
           <ul className="wa-checks">
             {p.checks.map(({ rule, open }) => (

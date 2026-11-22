@@ -817,7 +817,10 @@ When a change touches a decision, update its entry and run its Proof.
   command for the practice terminal (`src/learning/terminal.ts`: shell-style parsing, flags in any order, `<placeholders>`,
   the real CLI's other spellings (`sameAsCli`: `./file`, a copy to `s3://bucket` or `s3://bucket/` keeps the file name as
   its key), Hint never stops at a placeholder (`hintWord`: asked again there it types an example name), taught errors with
-  the real CLI text; nothing touches AWS) or AWS CloudShell, where `workshop.verify` checks it with a
+  the real CLI text (a taught error's `when` conditions all hold at once: `missing`, `flag`+`value`, `mismatch`, a `<name>`
+  given two values; its message takes `{{name}}`); only an argument the real CLI requires (`CLI_REQUIRED`: its synopsis'
+  unbracketed options, and `outfile`) prints its ParamValidation error, all at once; any other flag the step uses gets a
+  coaching line ("Practice terminal: this step also sets …"), never a made-up CLI error; nothing touches AWS) or AWS CloudShell, where `workshop.verify` checks it with a
   read-only look at the poller's snapshot (`server/src/workshops/checks.ts`: a fixed registry, no SDK calls of its own, no
   new IAM). Pasted errors match the step's known ones first, then go to the building's agent as quoted, redacted data.
   Steps pay stars once per mode, ever (`src/learning/workshopRewards.ts`, real > practice; no daily ledger, so a
@@ -836,7 +839,8 @@ When a change touches a decision, update its entry and run its Proof.
   1400×880 and in the 400 px panel).
 - **AWS North Hall** (campus, `shared/conference.json`, `src/ui/NorthHall.tsx`): the AWS North conference's talks in our
   own words, speakers unnamed, every fact from AWS docs (unverifiable claims dropped). Passing a talk's three questions
-  grows its buildings once (`Progress.talks`, v2.10). Proof: `npx vitest run tests/conference.test.ts`.
+  grows its buildings once (`Progress.talks`, v2.10). Each attempt deals the options in a new order (`choiceOrder`,
+  `<talk>#<question>#<attempt>`), and wrong options are plausible, never jokes. Proof: `npx vitest run tests/conference.test.ts tests/north-hall-ui.test.tsx`.
 - **Drawing → stack.** Each deploy template has real CloudFormation (`shared/templates/<id>.yaml`, cfn-lint clean): shown,
   copied or downloaded (a local Blob) in the Deploy tab and after a passed drawing (`templateForPuzzle`): every drawing has
   one, its quest's deploy step or its own `templateId`. Proof (and `cfn-lint shared/templates/*.yaml`):
@@ -974,8 +978,9 @@ When a change touches a decision, update its entry and run its Proof.
   18 businesses: wave 1 (Amazon Air hub, bank, stadium, hospital, shop, school) and wave 2 (streaming studio, game studio,
   news site, port, energy utility, factory, farm co-op, car maker, phone network, town council, hotel, charity), three
   levels of 4 to 6 jobs; facts only from each business's fetched AWS pages or cited flashcards, source titles name no
-  customer, and every CLI error text is checked against the AWS API reference or the aws-cli source (missing flags print
-  `aws: [ERROR]: An error occurred (ParamValidation): the following arguments are required: …`, `src/learning/terminal.ts`). A job is done at a named station of the business's site (Kai walks
+  customer, and every CLI error text is checked against the AWS API reference or the aws-cli source (a missing argument
+  the CLI requires prints `aws: [ERROR]: An error occurred (ParamValidation): the following arguments are required: …`,
+  `CLI_REQUIRED` in `src/learning/terminal.ts`; a flag it doesn't require gets a coaching line). A job is done at a named station of the business's site (Kai walks
   there with `walkToStation`, the job opens on arrival; a ring site is reached at the city gate, a sleeping city opens it
   at once) and reuses a part: the architecture board (`Builder` with `job`, `src/learning/jobPuzzle.ts`; never
   `Progress.puzzles`), the practice terminal, a choose card, the practice console's Copilot, a settings checklist,
@@ -1050,7 +1055,8 @@ When a change touches a decision, update its entry and run its Proof.
   `npx vitest run tests/scale.test.ts`.
 - **Well-Architected, cited.** Every rule and every drawing tip names its best practice (`bp`, read from the framework
   pages), every drawing links its AWS reference architecture, and City care has a Well-Architected review of the
-  account (`src/state/review.ts`, `src/ui/WaReview.tsx`; "no issue found", never "passed"). Proof:
+  account (`src/state/review.ts`, `src/ui/WaReview.tsx`; "no issue found", never "passed"; a pillar says the risks found,
+  `risksLine` "1 risk found", never a score: the WA Tool scores nothing). Proof:
   `npx vitest run tests/wa-bp.test.ts tests/review.test.ts`, `cd server && npx vitest run test/care.test.ts`.
 - **The Drawing board** (Learn → Drawing board, once "the sandbox", `src/ui/diagram/Sandbox.tsx`): an intro card (a blank
   page for your own ideas, where Puzzles give you a brief) and a short first-time guide in the buttons' own words (➜ Draw an

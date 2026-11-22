@@ -43,7 +43,7 @@
       "place": "Lambda Food Stall", "kind": "stall", "agentName": "Lola the Chef", "activity": "cook",
       "blurb": "The grill only fires up when an order arrives. You pay per dish, never for an idle kitchen.",
       "simple": "Lambda Food Stall: Lola cooks your code only when an order comes in. You pay per dish.",
-      "teaches": ["Functions run on events, up to 15 minutes each", "Triggers from S3, API Gateway, SQS and EventBridge", "Memory, concurrency, cold starts and retries", "Event-driven architectures with destinations and layers"],
+      "teaches": ["Functions run on events, up to 30 minutes each", "Triggers from S3, API Gateway, SQS and EventBridge", "Memory, concurrency, cold starts and retries", "Event-driven architectures with destinations and layers"],
       "tiers": ["You know serverless means no servers to manage", "You wire triggers from S3 and API Gateway", "You tune memory, concurrency and error handling", "You design event-driven systems"],
       "game": "lambda"
     },

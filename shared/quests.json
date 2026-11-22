@@ -744,7 +744,7 @@
           "question": "Each video frame takes about an hour to render, and there are 5,000 of them. Which service fits best?",
           "options": [
             { "text": "AWS Batch", "why": "An array job fans out into thousands of child jobs on capacity that scales to the queue.", "correct": true },
-            { "text": "AWS Lambda", "why": "One run stops after 15 minutes, and each frame takes an hour." },
+            { "text": "AWS Lambda", "why": "One run stops after 30 minutes, and each frame takes an hour." },
             { "text": "Amazon Lightsail", "why": "Fixed-price servers you'd share the frames out to by hand, paid for busy or idle." }
           ]
         },

@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { openDocs } from '@/app/runtime';
 import { useCity } from '@/state/store';
 import { EVENT, TALK_PASS, TALK_XP, TALKS, type Talk } from '@/world/conference';
+import { choiceOrder } from '@/world/content';
 import { placeFor } from '@/world/places';
 import { AwsIcon } from './AwsIcon';
 import { feel } from './feedback';
@@ -49,6 +50,10 @@ export function NorthHall() {
 function TalkStage({ talk, done, onBack }: { talk: Talk; done: boolean; onBack: () => void }) {
   const [answers, setAnswers] = useState<(number | undefined)[]>(() => talk.check.map(() => undefined));
   const [result, setResult] = useState<string>();
+  // Each attempt deals every question's options in a new order (the same for that attempt), so where an answer sits
+  // never gives it away. Answers keep the data's index.
+  const [attempt, setAttempt] = useState(0);
+  const orders = useMemo(() => talk.check.map((c, i) => choiceOrder(`${talk.id}#${i}#${attempt}`, c.options.length)), [talk, attempt]);
   const right = talk.check.filter((c, i) => answers[i] === c.answer).length;
   const all = answers.every((a) => a !== undefined);
   const check = () => {
@@ -90,7 +95,8 @@ function TalkStage({ talk, done, onBack }: { talk: Talk; done: boolean; onBack: 
           <li key={c.q}>
             <p>{c.q}</p>
             <div className="chips" role="group" aria-label={c.q}>
-              {c.options.map((o, k) => {
+              {orders[i].map((k) => {
+                const o = c.options[k];
                 const shown = result !== undefined;
                 const cls = shown ? (k === c.answer ? 'good' : answers[i] === k ? 'bad' : '') : answers[i] === k ? 'primary' : '';
                 return (
@@ -117,7 +123,7 @@ function TalkStage({ talk, done, onBack }: { talk: Talk; done: boolean; onBack: 
       ) : (
         <>
           <p className={right >= TALK_PASS ? 'ok-note' : 'muted'}>{result}</p>
-          <button className="btn wide" onClick={() => (setAnswers(talk.check.map(() => undefined)), setResult(undefined))}>
+          <button className="btn wide" onClick={() => (setAnswers(talk.check.map(() => undefined)), setResult(undefined), setAttempt((a) => a + 1))}>
             Try the questions again
           </button>
         </>
