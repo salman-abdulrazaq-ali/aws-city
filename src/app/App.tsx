@@ -8,6 +8,7 @@ import { ChatPanel } from '@/ui/ChatPanel';
 import { Hud } from '@/ui/Hud';
 import { Workshop } from '@/ui/Workshop';
 import { Collection } from '@/ui/Collection';
+import { AccountMap } from '@/ui/AccountMap';
 import { CoinFly } from '@/ui/CoinFly';
 import { Leaderboard } from '@/ui/Leaderboard';
 import { LaunchDay } from '@/ui/launch/LaunchDay';
@@ -369,6 +370,7 @@ export function App({ layout }: { layout: Layout }) {
         <ClientTask />
         <ClientDone />
         <Collection />
+        <AccountMap />
         <CoinFly />
         <Leaderboard />
         <LaunchDay />

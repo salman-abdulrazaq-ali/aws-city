@@ -431,6 +431,9 @@ export interface CityState {
   openLaunch(open: boolean): void;
   /** My City (src/ui/Collection.tsx): everything earned, open or closed. */
   collectionOpen: boolean;
+  /** "My AWS, live" (src/ui/AccountMap.tsx): the linked account as one map. */
+  accountMapOpen: boolean;
+  openAccountMap(open: boolean): void;
   openCollection(open: boolean): void;
   /** A Console Copilot task started from a workshop step: when it finishes well, the step is done for real. */
   copilotFor?: { taskId: string; workshopId: string; stepId: string };
@@ -761,6 +764,7 @@ export const useCity = create<CityState>()((set, get) => ({
   explanations: {},
   workshopChecks: {},
   collectionOpen: false,
+  accountMapOpen: false,
   launchOpen: false,
   openLaunch: (launchOpen) => set({ launchOpen }),
   boards: {},
@@ -780,6 +784,7 @@ export const useCity = create<CityState>()((set, get) => ({
     set({ progress: { ...p, profile: { public: on, name }, updatedAt: new Date().toISOString() } });
   },
   openCollection: (collectionOpen) => set({ collectionOpen }),
+  openAccountMap: (accountMapOpen) => set({ accountMapOpen }),
   openWorkshop: (workshopOpen) => set({ workshopOpen }),
   openClients: (id) => set(id ? { clientsOpen: id, clientFocus: id } : { clientsOpen: id }),
   setBuild: (on) => set({ build: on ? (get().build ?? { tool: 'place', undo: [] }) : undefined, ...(on ? { selected: undefined } : {}) }),

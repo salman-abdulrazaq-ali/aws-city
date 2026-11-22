@@ -170,6 +170,7 @@ function MoreMenu({ layout }: { layout: Layout }) {
   // A postcard is of the city: not offered on the world map (the caption names the city).
   const inCity = useCity((s) => s.view.name !== 'world');
   const cityView = useCity((s) => s.view.name === 'city');
+  const linked = useCity((s) => s.account.linked);
   const textSize = useCity((s) => s.prefs.textSize ?? 100);
   const contrast = useCity((s) => !!s.prefs.contrast);
   const easyFont = useCity((s) => !!s.prefs.easyFont);
@@ -289,6 +290,11 @@ function MoreMenu({ layout }: { layout: Layout }) {
           <button role="menuitem" onClick={run(() => useCity.getState().openCollection(true))}>
             🏙️ My City: everything you've earned
           </button>
+          {linked && (
+            <button role="menuitem" title="What runs where, data that moves, live traffic and this month's cost" onClick={run(() => useCity.getState().openAccountMap(true))}>
+              🗺️ My AWS, live: your account as a map
+            </button>
+          )}
           <button role="menuitem" title="Weekly leaderboards, and whether other players can see you" onClick={run(() => openLeaderboard(`mayors:${useCity.getState().cityRegion}`))}>
             🏆 Leaderboards and live city
           </button>

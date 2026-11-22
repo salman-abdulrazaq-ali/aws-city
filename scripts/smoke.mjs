@@ -300,6 +300,14 @@ await shot('17-deploy-preview');
 await page.getByText('Approve & deploy').click();
 await wait(8000);
 await shot('18-deploy-done');
+// "My AWS, live": the linked account as one map (src/ui/AccountMap.tsx), opened from the account card.
+await page.getByRole('button', { name: '🗺️ My AWS, live' }).click();
+await wait(400);
+if (!(await page.locator('.account-map .map-node').count())) errors.push('my aws map: no services on the map of the practice account');
+await shot('18b-my-aws-map');
+await audit('my aws map');
+await page.getByRole('button', { name: 'Close the map' }).click();
+await wait(200);
 
 // City care: teach Noor to Fixer (as 20 flashcards would), open the city-built table's finding, and approve its fix in the card.
 await city(() => window.awsCity.useCity.getState().awardCitizens([{ citizenId: 'citizen:reliability', amount: 20, reason: 'you reviewed 20 reliability flashcards' }]));
