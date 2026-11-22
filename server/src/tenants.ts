@@ -23,7 +23,7 @@ import { log, who } from './log.js';
 import type { NewsFeed } from './news/feed.js';
 import { type Bill, createBill } from './state/bill.js';
 import { createFlow, type Flow } from './state/flow.js';
-import { diffSnapshots } from './state/diff.js';
+import { diffSnapshots, movesInventory } from './state/diff.js';
 import { SERVICES, type WorldSnapshot } from './state/model.js';
 import { createPoller, type Poller } from './state/poller.js';
 import type { AccountRecord, PutResult, Stores } from './store/types.js';
@@ -190,8 +190,16 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         region: aws.region,
         intervalMs: deps.config.pollIntervalMs,
         onSnapshot(prev, next) {
-          for (const event of diffSnapshots(prev, next)) broadcast(feedEvents(event));
-          if (care) broadcast(care.update(next));
+          const events = diffSnapshots(prev, next);
+          for (const event of events) broadcast(feedEvents(event));
+          if (!care) return;
+          broadcast(care.update(next));
+          // A server appeared, went or changed state (an agent's write re-polls at once and after 4 s): the map follows
+          // within a poll, from the last listing and this snapshot, with no AWS call.
+          if (!retired && events.some(movesInventory)) {
+            const inventory = care.reconcile(next);
+            if (inventory) broadcast([inventory]);
+          }
         },
       });
       const snapshot = async () => poller.current() ?? poller.refresh();

@@ -34,3 +34,9 @@ export const diffSnapshots = (prev: WorldSnapshot | null, next: WorldSnapshot): 
 
   return events;
 };
+
+/**
+ * A poll change that moves the account mirror: a server appeared, went or changed state. The mirror is rebuilt from
+ * its last listing against the new snapshot (care.reconcile), so the map follows an agent's write within a poll.
+ */
+export const movesInventory = (e: AwsEvent) => (e.type === 'created' || e.type === 'deleted' || e.type === 'stateChanged') && e.resource.kind === 'instance';

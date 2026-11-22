@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { diffSnapshots } from '../src/state/diff.js';
+import { diffSnapshots, movesInventory } from '../src/state/diff.js';
 import { instance, snapshot, table } from './fixtures.js';
 
 describe('diffSnapshots', () => {
@@ -35,5 +35,25 @@ describe('diffSnapshots', () => {
     const expired = snapshot([], { credentials: 'expired' });
     expect(diffSnapshots(ok, expired)).toEqual([{ type: 'credentialsExpired' }]);
     expect(diffSnapshots(expired, ok)).toEqual([{ type: 'credentialsRestored' }]);
+  });
+});
+
+describe('movesInventory: a poll change that moves the account mirror', () => {
+  it('is a server appearing, going or changing state', () => {
+    const prev = snapshot([instance('i-1', 'running'), instance('i-2', 'running'), table('city-a')]);
+    const next = snapshot([instance('i-1', 'stopped'), instance('i-3', 'pending'), table('city-a', 'UPDATING')]);
+    const events = diffSnapshots(prev, next);
+    expect(events.filter(movesInventory).map((e) => [e.type, 'resource' in e ? e.resource.id : ''])).toEqual([
+      ['stateChanged', 'i-1'],
+      ['created', 'i-3'],
+      ['deleted', 'i-2'],
+    ]);
+  });
+
+  it('is not a table change or a security group rule change', () => {
+    const sg = (state: string) => ({ id: 'sg-1', service: 'ec2' as const, kind: 'security-group' as const, name: 'sg-1', state, managedByGame: false, meta: {} });
+    const events = diffSnapshots(snapshot([table('city-a'), sg('1 inbound rule')]), snapshot([table('city-a', 'UPDATING'), sg('2 inbound rules')]));
+    expect(events).toHaveLength(2);
+    expect(events.some(movesInventory)).toBe(false);
   });
 });

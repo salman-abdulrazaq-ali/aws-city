@@ -252,8 +252,17 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
 - **The city mirrors the account's map; the bill is opt-in.** `city.inventory.zones`/`regionStatus` come from
   `ec2:DescribeAvailabilityZones`/`DescribeRegions`, cached a day; a Region that can't be read is left out. `city.bill`
   (`ce:GetCostAndUsage`, $0.01 a request) is read only after `bill.enable {on:true}`, then at most once a day per player;
-  `shared/ce-services.json` maps only verified Cost Explorer service names (the rest show as "other").
-  Proof: `cd server && npx vitest run test/bill.test.ts test/care.test.ts test/player-role.test.ts`, `npx vitest run tests/contract.test.ts`.
+  `shared/ce-services.json` maps only verified Cost Explorer service names (the rest show as "other"). The home Region's
+  servers follow DescribeInstances, not the listing (Resource Explorer lags by minutes: on 22 Nov 2026 a terminated
+  server stayed on the map and a new one called demo didn't appear): `enrich` (`server/src/state/inventory.ts`) drops
+  servers shutting down or terminated, adds ones the listing hasn't caught up with (first, under the frame's item cap) and
+  names them from their Name tag; a listed server EC2 doesn't show is dropped only when EC2 was read in full (ok, under
+  `MAX_PER_SERVICE`). A poll that creates, removes or changes a server (`movesInventory`, `server/src/state/diff.ts`)
+  re-sends the mirror from the last listing (`care.reconcile`, no AWS call), and the mirror's "changed?" signature
+  includes the items, so a terminate plus a launch with the same counts is still sent. An agent's write re-polls at once
+  and after 4 s, so the map follows it within seconds.
+  Proof: `cd server && npx vitest run test/bill.test.ts test/care.test.ts test/player-role.test.ts`, `cd server && npx vitest
+  run test/care.test.ts -t "DescribeInstances" test/diff.test.ts`, `npx vitest run tests/contract.test.ts`.
 - **Street plans come from OpenStreetMap, baked.** A Region with `shared/city-maps/<region>.json` (v1, ODbL, © OpenStreetMap
   contributors) gets a 64×64 core of its real downtown's streets: `src/world/citymap.ts` decodes and validates it,
   `src/world/zoning.ts` zones it (superblocks keep today's insides, blocks → water/park/building, 3×3 lots fronting a
