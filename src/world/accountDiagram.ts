@@ -37,8 +37,18 @@ export interface AccountDiagram {
   costed: boolean;
 }
 
-export function accountDiagram(map: AccountMap, inv: Inventory | undefined, opts: { flows: readonly Flow[]; bill?: CityBillEvent; flow?: CityFlowEvent }): AccountDiagram {
-  const bill = opts.bill && opts.bill.unavailable === undefined ? opts.bill : undefined;
+/**
+ * `builtOnly`: only what the city built (the player's own project, asked for on 22 Nov 2026): services with a resource
+ * the city built, each counted by those, and the links between them. No cost lines there: the bill is per service for
+ * the whole account, not per resource.
+ */
+export function accountDiagram(
+  map: AccountMap,
+  inv: Inventory | undefined,
+  opts: { flows: readonly Flow[]; bill?: CityBillEvent; flow?: CityFlowEvent; builtOnly?: boolean },
+): AccountDiagram {
+  const builtOnly = !!opts.builtOnly;
+  const bill = !builtOnly && opts.bill && opts.bill.unavailable === undefined ? opts.bill : undefined;
   const days = bill ? billDays(bill) : undefined;
   const currency = bill?.currency ?? 'USD';
   const region = map.region;
@@ -48,6 +58,9 @@ export function accountDiagram(map: AccountMap, inv: Inventory | undefined, opts
   const rateOf = new Map<string, number>();
   for (const t of map.tiers)
     for (const n of t.nodes) {
+      const built = n.items.filter((i) => i.managedByGame).length;
+      if (builtOnly && !built) continue;
+      const count = builtOnly ? built : n.count;
       present.add(n.serviceId);
       const perMin = n.rates.reduce((m, r) => Math.max(m, r.perMin), 0);
       if (perMin > 0) rateOf.set(n.serviceId, perMin);
@@ -58,12 +71,12 @@ export function accountDiagram(map: AccountMap, inv: Inventory | undefined, opts
         column: t.id,
         label: short(n.serviceId),
         icon: { kind: 'service', id: n.serviceId },
-        badge: `×${n.count}`,
+        badge: `×${count}`,
         ...(lines ? { lines } : {}),
-        aria: [n.name, `${n.count} ${n.count === 1 ? 'resource' : 'resources'}`, ...(lines ?? []), ...(perMin > 0 ? [`${perMin} a minute`] : [])].join(', '),
+        aria: [n.name, `${count} ${count === 1 ? 'resource' : 'resources'}${builtOnly ? ' built by the city' : ''}`, ...(lines ?? []), ...(perMin > 0 ? [`${perMin} a minute`] : [])].join(', '),
       });
     }
-  if (map.unmapped > 0) nodes.push({ id: 'unmapped', column: 'other', label: 'No building yet', glyph: '?', badge: `×${map.unmapped}`, aria: `No building yet: ${map.unmapped} ${map.unmapped === 1 ? 'resource' : 'resources'} in your account the city has no building for` });
+  if (!builtOnly && map.unmapped > 0) nodes.push({ id: 'unmapped', column: 'other', label: 'No building yet', glyph: '?', badge: `×${map.unmapped}`, aria: `No building yet: ${map.unmapped} ${map.unmapped === 1 ? 'resource' : 'resources'} in your account the city has no building for` });
 
   // Real links: from the service to where its data goes (a Region, or a lettered Zone), as AWS reports them.
   const azs = (inv?.zones?.[region] ?? []).map((z) => z.name);
