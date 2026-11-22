@@ -345,6 +345,15 @@ if (!(await page.locator('.account-map', { hasText: 'a day est.' }).count())) er
 if (!(await page.locator('.account-map animateMotion').count())) errors.push('my aws diagram: no moving dots');
 await shot('18c-my-aws-diagram');
 await audit('my aws diagram');
+// Built by the city: only what the city built (the player's own project), or a note when there's nothing yet.
+await page.locator('.account-map .arch-view .seg button', { hasText: 'Built by the city' }).click();
+await wait(400);
+if (!(await page.locator('.account-map .arch-diagram').count()) && !(await page.locator('.account-map', { hasText: 'Nothing built by the city yet' }).count()))
+  errors.push('my aws diagram: "Built by the city" shows neither a drawing nor its empty note');
+await shot('18c2-built-by-the-city');
+await audit('my aws diagram (built by the city)');
+await page.locator('.account-map .arch-view .seg button', { hasText: 'Everything' }).click();
+await wait(200);
 // "No building yet" lists what it holds (seen 22 Nov 2026: "×15" said nothing about what they were).
 await page.locator('.account-map .arch-hit button[aria-label^="No building yet"]').click();
 await wait(200);

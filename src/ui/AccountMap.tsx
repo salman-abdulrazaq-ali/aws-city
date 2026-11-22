@@ -95,19 +95,42 @@ function DiagramView({ map, layout }: { map: Map; layout: Layout }) {
   const bill = useCity((s) => s.bill);
   const flow = useCity((s) => s.flow);
   const [picked, setPicked] = useState<string>();
-  const d = accountDiagram(map, inventory, { flows: FLOWS, bill, flow });
+  // Everything in the account, or only what the city built (the player's own project).
+  const [builtOnly, setBuiltOnly] = useState(false);
+  const d = accountDiagram(map, inventory, { flows: FLOWS, bill, flow, builtOnly });
   const drawn = layoutArch(d.columns, d.nodes, d.links, layout === 'panel' ? 'tb' : 'lr');
-  const node = map.tiers.flatMap((t) => t.nodes).find((n) => n.serviceId === picked);
+  const node = map.tiers.flatMap((t) => t.nodes).find((n) => n.serviceId === picked && (!builtOnly || n.items.some((i) => i.managedByGame)));
+  const nodeItems = node ? (builtOnly ? node.items.filter((i) => i.managedByGame) : node.items) : [];
   const unmappedPicked = picked === 'unmapped' && map.unmappedItems.length > 0;
   const pickedLinks = d.links.filter((l) => l.title && (l.from === picked || l.to === picked));
   return (
     <div className="arch-view">
+      <div className="seg" role="group" aria-label="What to draw">
+        <button aria-pressed={!builtOnly} onClick={() => (setBuiltOnly(false), setPicked(undefined))}>
+          Everything
+        </button>
+        <button aria-pressed={builtOnly} onClick={() => (setBuiltOnly(true), setPicked(undefined))}>
+          Built by the city
+        </button>
+      </div>
+      {builtOnly && !d.nodes.length && (
+        <p className="muted">
+          <Plain text="Nothing built by the city yet. Ask an agent to build something (try “Create a bucket called photos-1”), then look again." />
+        </p>
+      )}
       {d.total && (
         <p className="map-total">
           💲 <Plain text={totalLine(d.total)} />
         </p>
       )}
-      <ArchDiagram layout={drawn} label={`Diagram of your AWS services in ${map.region}`} selected={picked} onSelect={(id) => setPicked((p) => (p === id ? undefined : id))} />
+      {d.nodes.length > 0 && (
+        <ArchDiagram
+          layout={drawn}
+          label={builtOnly ? `Diagram of what the city built in ${map.region}` : `Diagram of your AWS services in ${map.region}`}
+          selected={picked}
+          onSelect={(id) => setPicked((p) => (p === id ? undefined : id))}
+        />
+      )}
       <ul className="arch-legend small">
         <li>
           <Sample kind="real" /> Solid line: data AWS reports moving (copies to another Region, a standby in another Zone).
@@ -116,7 +139,13 @@ function DiagramView({ map, layout }: { map: Map; layout: Layout }) {
           <Sample kind="typical" /> Dashed line: how these services usually connect (AWS examples), not read from your account.
         </li>
         <li>● Dots move along the path; quicker where your account reports live traffic.</li>
-        <li>{d.costed ? 'est.: worked out from AWS’s figure for this month so far (a day = so far ÷ days so far).' : 'Turn on Show my bill above to see what each service costs a day and a month.'}</li>
+        <li>
+          {builtOnly
+            ? 'No costs here: AWS bills each service for the whole account, not each thing the city built (see Everything).'
+            : d.costed
+              ? 'est.: worked out from AWS’s figure for this month so far (a day = so far ÷ days so far).'
+              : 'Turn on Show my bill above to see what each service costs a day and a month.'}
+        </li>
       </ul>
       {node && (
         <section className="arch-picked" aria-label={node.name}>
@@ -134,11 +163,11 @@ function DiagramView({ map, layout }: { map: Map; layout: Layout }) {
             </p>
           ))}
           <ul className="map-items">
-            {node.items.slice(0, ITEMS_SHOWN).map((it) => (
+            {nodeItems.slice(0, ITEMS_SHOWN).map((it) => (
               <li key={it.arn}>{itemLine(it)}</li>
             ))}
-            {node.items.length > ITEMS_SHOWN && <li className="muted">and {node.items.length - ITEMS_SHOWN} more</li>}
-            {node.items.length === 0 && <li className="muted">Counted in your account; not listed one by one.</li>}
+            {nodeItems.length > ITEMS_SHOWN && <li className="muted">and {nodeItems.length - ITEMS_SHOWN} more</li>}
+            {nodeItems.length === 0 && <li className="muted">Counted in your account; not listed one by one.</li>}
           </ul>
           {pickedLinks.length > 0 && (
             <ul className="small">
