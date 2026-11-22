@@ -653,8 +653,8 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   beside it (`itemLine`: "server demo2 (i-0d3e…)", to copy for "Terminate i-…"); months read "November 2026"
   (`monthName`, `src/world/accountCost.ts`: "2026-11: $0.00" read like $2,026,110); Show my bill / Show live traffic
   are real buttons. Sign out is in the ⋯ menu too (signed in and able to sign out), not only Deploy → Your data.
-  Proof: `npx vitest run tests/account-map.test.tsx tests/account-diagram.test.ts tests/menu-signout.test.tsx`. Proof:
-  `npx vitest run tests/account-map.test.tsx tests/account-diagram.test.ts`, `npm run smoke` (`18b-my-aws-map`,
+  Proof:
+  `npx vitest run tests/account-map.test.tsx tests/account-diagram.test.ts tests/menu-signout.test.tsx`, `npm run smoke` (`18b-my-aws-map`,
   `18c-my-aws-diagram`, `18e-my-aws-diagram-panel`, axe, still dots under reduced motion). A third view, **How AWS City
   runs** (`shared/city-architecture.json`, `src/world/cityArchitecture.ts`), draws the city's own hosted parts the same
   way (blue lines, in request order, from `infra/lib`); its only prices are Fargate's, worked out from the task sizes and
