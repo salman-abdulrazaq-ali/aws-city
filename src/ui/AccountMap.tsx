@@ -4,6 +4,7 @@ import { useCity } from '@/state/store';
 import { accountDiagram, totalLine } from '@/world/accountDiagram';
 import { accountMap, itemLine, type AccountMap as Map, type MapNode } from '@/world/accountMap';
 import { layoutArch } from '@/world/archDiagram';
+import { CITY_ARCH, cityArchitecture, cityCostLine } from '@/world/cityArchitecture';
 import { FLOWS } from '@/world/culture';
 import { ArchDiagram } from './ArchDiagram';
 import { AwsIcon } from './AwsIcon';
@@ -57,10 +58,11 @@ function Node({ node, currency }: { node: MapNode; currency?: string }) {
   );
 }
 
-type View = 'services' | 'diagram';
+type View = 'services' | 'diagram' | 'city';
 const VIEWS: { id: View; label: string }[] = [
   { id: 'services', label: 'Services' },
   { id: 'diagram', label: 'Diagram' },
+  { id: 'city', label: 'How AWS City runs' },
 ];
 
 /** A line sample for the legend (decorative: the words say what it means). */
@@ -159,6 +161,43 @@ function DiagramView({ map, layout }: { map: Map; layout: Layout }) {
 }
 
 /**
+ * My AWS → How AWS City runs (src/world/cityArchitecture.ts): the city's own hosted architecture, drawn the same way,
+ * with the only prices it can stand behind (Fargate's) and the README's own idle estimate.
+ */
+function CityView({ layout }: { layout: Layout }) {
+  const [picked, setPicked] = useState<string>();
+  const a = cityArchitecture();
+  const drawn = layoutArch(a.columns, a.nodes, a.links, layout === 'panel' ? 'tb' : 'lr');
+  const part = CITY_ARCH.components.find((c) => c.id === picked);
+  return (
+    <div className="arch-view">
+      <p className="muted small">How this city reaches you, and your account, when it’s hosted on AWS (from its infrastructure code).</p>
+      <ArchDiagram layout={drawn} label="Diagram of how AWS City runs on AWS" selected={picked} onSelect={(id) => setPicked((p) => (p === id ? undefined : id))} />
+      <p className="map-total">
+        💲 <Plain text={cityCostLine(a)} />
+      </p>
+      <ul className="arch-legend small">
+        <li>● Dots follow a request: in through the front door, to the server, to the data, the AI and your account.</li>
+        <li>Prices are list prices for the servers on Fargate; everything else costs only what the players use.</li>
+      </ul>
+      {part && (
+        <section className="arch-picked" aria-label={part.name}>
+          <h4>{part.name}</h4>
+          <p className="small">
+            <Plain text={part.simple} />
+          </p>
+          {part.optional && (
+            <p className="muted small">
+              <Plain text={part.optional} />
+            </p>
+          )}
+        </section>
+      )}
+    </div>
+  );
+}
+
+/**
  * "My AWS, live": the linked account as one map (src/world/accountMap.ts): what runs where, real data links, live
  * traffic and the month's cost, from what the server already reads. Opened from Deploy's account card and ⋯.
  */
@@ -213,7 +252,9 @@ export function AccountMap({ layout = 'full' }: { layout?: Layout }) {
           ))}
         </div>
 
-        {!inventory ? (
+        {view === 'city' ? (
+          <CityView layout={layout} />
+        ) : !inventory ? (
           <p className="muted">Reading your account… (it’s read when you link it, then every few minutes).</p>
         ) : map.empty ? (
           <p>
@@ -221,6 +262,7 @@ export function AccountMap({ layout = 'full' }: { layout?: Layout }) {
           </p>
         ) : view === 'diagram' ? (
           <DiagramView map={map} layout={layout} />
+
         ) : (
           <>
             <p className="muted small">Left to right, the way a request usually travels: in through the front door, to your code, to your data.</p>
@@ -282,10 +324,12 @@ export function AccountMap({ layout = 'full' }: { layout?: Layout }) {
           </>
         )}
 
-        <p className="map-note muted small">
+{view !== 'city' && (
+                  <p className="map-note muted small">
           This map shows what AWS lists in your account. Which resource talks to which comes next: it needs a small, read-only update to your AWS City role.
           {map.partial ? ' Turn on AWS Resource Explorer to see untagged resources too.' : ''}
         </p>
+        )}
       </section>
     </div>
   );

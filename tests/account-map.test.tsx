@@ -99,6 +99,7 @@ describe('the map on screen', () => {
     expect([...views.querySelectorAll('button')].map((b) => [b.textContent, b.getAttribute('aria-pressed')])).toEqual([
       ['Services', 'true'],
       ['Diagram', 'false'],
+      ['How AWS City runs', 'false'],
     ]);
     fireEvent.click(screen.getByRole('button', { name: 'Diagram' }));
     expect(screen.getByRole('img', { name: /Diagram of your AWS services in us-west-2/ })).toBeTruthy();
@@ -109,6 +110,18 @@ describe('the map on screen', () => {
     // Picking a service shows its resources.
     fireEvent.click(screen.getByRole('button', { name: /^Amazon S3/ }));
     expect(screen.getByRole('region', { name: 'Amazon S3' }).textContent).toMatch(/bucket aws-city-047463438585-holiday-123/);
+  });
+
+  it('How AWS City runs: the city’s own parts and links, the Fargate prices, and the README’s idle estimate', () => {
+    useCity.setState({ inventory: undefined });
+    const { container } = render(<AccountMap />);
+    fireEvent.click(screen.getByRole('button', { name: 'How AWS City runs' }));
+    expect(screen.getByRole('img', { name: 'Diagram of how AWS City runs on AWS' })).toBeTruthy();
+    expect(container.querySelectorAll('.arch-link.design').length).toBeGreaterThan(10);
+    expect(container.querySelector('.map-total')?.textContent).toMatch(/The servers: \$1\.09 a day, \$33\.16 a month.*about \$60–85 a month/);
+    fireEvent.click(screen.getByRole('button', { name: /^AWS City server/ }));
+    expect(screen.getByRole('region', { name: 'AWS City server' }).textContent).toMatch(/Runs the agents/);
+    expect(screen.queryByText(/Which resource talks to which comes next/)).toBeNull();
   });
 
   it('Diagram: dots move along the links, and sit still under reduced motion', () => {

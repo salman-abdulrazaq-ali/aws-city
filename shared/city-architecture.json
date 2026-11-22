@@ -1,0 +1,54 @@
+{
+  "source": "infra/lib (the CDK stacks: service-stack.ts, data-stack.ts, auth-stack.ts, edge-stack.ts) and README.md",
+  "asOf": "2026-11-22",
+  "note": "How AWS City itself runs when it's hosted (npm run setup): its published defaults, not anyone's private config. The only prices are Fargate's, worked out from the task sizes here and FARGATE_ARM_PRICE; infra/test/city-architecture.test.ts checks both against the synthesized stacks. Everything else is pay per use, and the idle total is the README's own estimate.",
+  "price": {
+    "region": "eu-west-2",
+    "vcpuHour": 0.03725,
+    "gbHour": 0.00409,
+    "source": "AWS Price List API, Nov 2026 (infra/lib/models.ts FARGATE_ARM_PRICE)"
+  },
+  "idle": { "env": "prod", "low": 60, "high": 85, "source": "README.md (Cost while idle)" },
+  "columns": [
+    { "id": "players", "label": "Players" },
+    { "id": "edge", "label": "Front door" },
+    { "id": "server", "label": "The server" },
+    { "id": "data", "label": "Data" },
+    { "id": "ai", "label": "The city's AI" },
+    { "id": "outside", "label": "Outside the city" }
+  ],
+  "components": [
+    { "id": "extension", "column": "players", "name": "The AWS City extension", "icon": { "kind": "actor", "id": "client" }, "simple": "The city you play in, in your browser.", "cost": "none" },
+    { "id": "waf", "column": "edge", "name": "AWS WAF", "icon": { "kind": "product", "id": "waf" }, "simple": "Turns away bad traffic before it reaches the city.", "cost": "per-use" },
+    { "id": "cloudfront", "column": "edge", "name": "Amazon CloudFront", "icon": { "kind": "service", "id": "cloudfront" }, "simple": "The front door: one safe address for every player.", "cost": "per-use" },
+    { "id": "alb", "column": "edge", "name": "Load balancer", "icon": { "kind": "product", "id": "alb" }, "simple": "Shares players between the servers. Private: only CloudFront reaches it.", "cost": "not-priced" },
+    { "id": "cognito", "column": "edge", "name": "Amazon Cognito", "icon": { "kind": "service", "id": "cognito" }, "simple": "Sign-in, and a code from your phone before any change.", "cost": "per-use" },
+    { "id": "server", "column": "server", "name": "AWS City server", "icon": { "kind": "service", "id": "fargate" }, "simple": "Runs the agents, the city's rules and your approvals.", "fargate": { "cpu": 512, "memoryMiB": 1024, "tasks": 2 }, "cost": "fargate", "stack": "service-stack.ts" },
+    { "id": "logs", "column": "server", "name": "Amazon CloudWatch", "icon": { "kind": "service", "id": "cloudwatch" }, "simple": "Logs, alarms, and a line for every change to your account.", "cost": "per-use" },
+    { "id": "dynamodb", "column": "data", "name": "Amazon DynamoDB", "icon": { "kind": "service", "id": "dynamodb" }, "simple": "Every player's progress and linked account.", "cost": "per-use", "stack": "data-stack.ts" },
+    { "id": "s3", "column": "data", "name": "Amazon S3", "icon": { "kind": "service", "id": "s3" }, "simple": "Uploads, and the template that links your account.", "cost": "per-use" },
+    { "id": "kms", "column": "data", "name": "AWS KMS", "icon": { "kind": "service", "id": "kms" }, "simple": "The keys that lock the city's data.", "cost": "not-priced" },
+    { "id": "backup", "column": "data", "name": "AWS Backup", "icon": { "kind": "service", "id": "backup" }, "simple": "A copy of the progress table, every day.", "cost": "per-use" },
+    { "id": "bedrock", "column": "ai", "name": "Amazon Bedrock", "icon": { "kind": "service", "id": "bedrock" }, "simple": "Amazon Nova or Claude, once the account's Bedrock answers.", "cost": "per-use" },
+    { "id": "ai", "column": "ai", "name": "The city's own AI (Qwen3 4B)", "icon": { "kind": "service", "id": "ecs" }, "simple": "An open model on Fargate, while Bedrock is held. Only the server can reach it.", "optional": "Only while it's switched on (npm run ai).", "fargate": { "cpu": 8192, "memoryMiB": 16384, "tasks": 1 }, "cost": "fargate-while-on", "stack": "service-stack.ts" },
+    { "id": "knowledge", "column": "outside", "name": "AWS Knowledge", "icon": { "kind": "actor", "id": "internet" }, "simple": "Read-only AWS docs the agents quote.", "cost": "none" },
+    { "id": "feeds", "column": "outside", "name": "AWS status and news", "icon": { "kind": "actor", "id": "sources" }, "simple": "AWS's public Health Dashboard and What's New.", "cost": "none" },
+    { "id": "player", "column": "outside", "name": "Your AWS account", "icon": { "kind": "service", "id": "iam" }, "simple": "Reached through your AWS City role, and every change waits for your Approve.", "cost": "none" }
+  ],
+  "links": [
+    ["extension", "waf"],
+    ["waf", "cloudfront"],
+    ["cloudfront", "alb"],
+    ["alb", "server"],
+    ["extension", "cognito"],
+    ["server", "dynamodb"],
+    ["server", "s3"],
+    ["server", "bedrock"],
+    ["server", "ai"],
+    ["server", "knowledge"],
+    ["server", "feeds"],
+    ["server", "player"],
+    ["server", "logs"],
+    ["backup", "dynamodb"]
+  ]
+}

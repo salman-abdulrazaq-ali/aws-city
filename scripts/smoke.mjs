@@ -345,6 +345,15 @@ if (!(await page.locator('.account-map', { hasText: 'a day est.' }).count())) er
 if (!(await page.locator('.account-map animateMotion').count())) errors.push('my aws diagram: no moving dots');
 await shot('18c-my-aws-diagram');
 await audit('my aws diagram');
+// How AWS City runs: the city's own parts and links, with the Fargate prices and the README's idle estimate.
+await page.locator('.account-map .seg button', { hasText: 'How AWS City runs' }).click();
+await wait(600);
+if ((await page.locator('.account-map .arch-hit button').count()) < 10) errors.push('how AWS City runs: fewer than ten parts drawn');
+if (!(await page.locator('.account-map .map-total', { hasText: '$60–85' }).count())) errors.push('how AWS City runs: no idle estimate');
+await shot('18d-city-architecture');
+await audit('how AWS City runs');
+await page.locator('.account-map .seg button', { hasText: 'Diagram' }).click();
+await wait(300);
 // Reduced motion: the dots sit still.
 await page.emulateMedia({ reducedMotion: 'reduce' });
 await page.locator('.account-map .seg button', { hasText: 'Services' }).click();
