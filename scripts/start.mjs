@@ -96,7 +96,11 @@ async function awsTools() {
     sceneDirty = true;
     const s = p.spinner();
     s.start('Getting the AWS tools ready (one time, about a minute)…');
-    const ok = await runQuiet('npm', ['--prefix', 'server', 'ci', '--no-audit', '--no-fund', '--loglevel=error']);
+    const quiet = ['--no-audit', '--no-fund', '--loglevel=error'];
+    let ok = await runQuiet('npm', ['--prefix', 'server', 'ci', ...quiet]);
+    // npm before 11.12 (Node 24.0–24.14 ships 11.6) reads the lockfile newer npm writes as out of sync (EUSAGE), and a
+    // lockfile old npm writes is refused by new npm, so no one file suits both: one plain install fixes it, as boot.mjs does.
+    if (!ok) ok = await runQuiet('npm', ['--prefix', 'server', 'install', ...quiet]);
     if (!ok) {
       s.stop('Couldn’t install the server’s packages.', 1);
       bye(`Run ${pc.cyan('cd server && npm ci')} to see why, then ${pc.cyan('npm start')} again.`);
