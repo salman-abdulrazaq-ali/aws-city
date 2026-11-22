@@ -525,7 +525,9 @@ When a change touches a decision, update its entry and run its Proof.
   Sounds answer the player: the city is silent while it sleeps (world map, HQs, games: `CityScene.play`), agents talking
   among themselves never blip (`silent`), one blip at a time in each speaker's fixed note, the work sound only for the
   player's own task, AWS status chimes follow the news rung, and the demo's chatter is talk only (no `agent.state`).
-  Mini-game rounds start from a synced clock (`syncClock`), keep their end card on resize, and build combos (`combo.ts`).
+  Mini-game rounds start from a synced clock (`syncClock`), are laid out at the stage's current size (`fitParent`,
+  `src/game/scenes/games/column.ts`: the side panel's stage grows for a game before Phaser's 500 ms size check), keep
+  their end card on resize, and build combos (`combo.ts`).
   Proof: `npx vitest run tests/audio.test.ts tests/game-clock.test.ts tests/contract.test.ts`.
 - **Each AWS Region is its own city, built from real facts.** A first run opens on the world map (`WorldScene`); picking a
   Region dives into its city (remembered in prefs). Each of the Region's real AZs is an island across the river that rings
@@ -1102,11 +1104,11 @@ When a change touches a decision, update its entry and run its Proof.
   labels scale with the text size. Games without a clock (`prefs.relaxed`, `src/game/pace.ts`) end rounds on Done and stretch
   reaction windows and spawns (Rush Hour's day, which is the game, runs at half speed instead); Sound captions
   (`prefs.captions`) show a word pill for each meaningful sound (`CAPTIONS` in `src/game/audio.ts`, not steps or blips).
-  Every mini-game plays from the keyboard (`onKeys`, or in Fishing and Edge Cache the maps in `src/game/scenes/games/gameKeys.ts`: Space casts and hooks, 1–3 pick a bucket; 1–4 pick a cache slot, I invalidates, C caches; `tests/game-keyboard.test.ts`). Keyboard: arrows walk, E talks, `]` / `[` step through buildings (announced to screen readers), `+` / `−` zoom. Keys go
+  Every mini-game plays from the keyboard (`onKeys`, or in Fishing and Edge Cache the maps in `src/game/scenes/games/gameKeys.ts`: Space casts and hooks, 1–3 pick a bucket; 1–4 pick a cache slot, I invalidates, C caches; `tests/game-keyboard.test.ts`), its end card too (`endCardKey`: Enter plays again, X the Expert round when open, Escape back to the city, after 800 ms; fishing: Space/Enter, X, Escape). Mini-games speak through App's one polite live region (`announce`, `src/state/announce.ts`: one update per line, ≥ 150 ms apart, `replace` keeps the newest): the goal and keys first (`startLine`, a game's `keysHelp` when its title doesn't name them), each prompt (fishing's fish and buckets, the sorting office's parcel, the Dance Hall's question, the gate's request), every verdict and the player's own score changes in one line a frame (`MiniGame.speak`), and the end card in words (`endLine`, `src/game/scenes/games/say.ts`); the canvas is named for the game while it runs. Sound captions stay `aria-hidden` (the live region already says it). Keyboard: arrows walk, E talks, `]` / `[` step through buildings (announced by their sign's name, never an id: `stepLine`), `+` / `−` zoom. ⋯ is a menu: opening it focuses its first item, arrows/Home/End move (never reaching the game), Escape returns to ⋯; its sections are labelled groups and the street-maps credit is an item. A glossary definition opens in the top layer (popover API, `popPlace` keeps it in view); a flashcard's hidden face is `inert` and `aria-hidden`, and its small print is ≥ 4.5:1 on both papers (7:1 high contrast). Keys go
   to the canvas when a game or the city starts, unless the player is in the UI (`keysBelongToUi`, `mayFocusGame`,
   `src/game/keys.ts`).
   Arriving in a city announces its summary (`citySummary`: buildings, issues, AWS status, live traffic). The smoke runs
-  axe-core (WCAG 2.2 AA) on the world map, a building's card, the tab and the panel; serious or critical violations fail it. Proof: `npx vitest run tests/a11y-prefs.test.ts tests/game-keys.test.ts`, `npm run smoke`.
+  axe-core (WCAG 2.2 AA) on the world map, a building's card, the tab and the panel; serious or critical violations fail it. Proof: `npx vitest run tests/a11y-prefs.test.ts tests/game-keys.test.ts tests/game-say.test.ts tests/announce.test.ts tests/a11y-menu.test.tsx tests/term-popover.test.tsx tests/ui.test.tsx`, `npm run smoke`.
 - **Kai wears the team's gold jacket.** Always, everywhere (`KAI_SHEET` = the `player-gold` sheet, `src/world/culture.ts`).
   Golden Jacket Hall tracks the certification trophies (`hasGoldenJacket`: every one lit, a moment the first time). The real
   Golden Jacket recognises holders of every current AWS Certification; `shared/certifications.json` is that list.
