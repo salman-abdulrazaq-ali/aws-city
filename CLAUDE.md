@@ -647,7 +647,9 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   more and quicker at a service's `city.flow` rate, `dotPlan`), sit still under reduced motion and pause while the page is
   hidden. Costs (`src/world/accountCost.ts`): AWS's month so far per service; a day = that ÷ UTC days so far, a month = a
   day × the month's days, both marked est. There's no list-price estimate: the client doesn't know a server's size or
-  whether it's running. Each box is a real button (arrow keys move, `nextSlot`) labelled with its name and figures. Proof:
+  whether it's running. Each box is a real button (arrow keys move, `nextSlot`) labelled with its name and figures.
+  What the city has no building for is listed, not just counted (`unmappedItems`: tap "No building yet" in the Diagram,
+  or open "N more…" under Services; seen 22 Nov 2026: "×15" said nothing). Proof:
   `npx vitest run tests/account-map.test.tsx tests/account-diagram.test.ts`, `npm run smoke` (`18b-my-aws-map`,
   `18c-my-aws-diagram`, `18e-my-aws-diagram-panel`, axe, still dots under reduced motion). A third view, **How AWS City
   runs** (`shared/city-architecture.json`, `src/world/cityArchitecture.ts`), draws the city's own hosted parts the same

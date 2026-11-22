@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { openDocs, type Layout } from '@/app/runtime';
+import type { InventoryItem } from '@/backend/contract';
 import { useCity } from '@/state/store';
 import { accountDiagram, totalLine } from '@/world/accountDiagram';
 import { accountMap, itemLine, type AccountMap as Map, type MapNode } from '@/world/accountMap';
@@ -17,6 +18,18 @@ import { useDialog } from './useDialog';
 const ITEMS_SHOWN = 12;
 
 const money = (n: number, currency: string) => `${currency === 'USD' ? '$' : `${currency} `}${n.toFixed(2)}`;
+
+/** What the listing saw that the city has no building for, by name (the types read like "guardduty:detector"). */
+function UnmappedList({ items }: { items: InventoryItem[] }) {
+  return (
+    <ul className="map-items">
+      {items.slice(0, ITEMS_SHOWN).map((it) => (
+        <li key={it.arn}>{itemLine(it)}</li>
+      ))}
+      {items.length > ITEMS_SHOWN && <li className="muted">and {items.length - ITEMS_SHOWN} more</li>}
+    </ul>
+  );
+}
 
 /** One service on the map: its icon, how many, what it cost this month, and its live rate; tap for its resources. */
 function Node({ node, currency }: { node: MapNode; currency?: string }) {
@@ -84,6 +97,7 @@ function DiagramView({ map, layout }: { map: Map; layout: Layout }) {
   const d = accountDiagram(map, inventory, { flows: FLOWS, bill, flow });
   const drawn = layoutArch(d.columns, d.nodes, d.links, layout === 'panel' ? 'tb' : 'lr');
   const node = map.tiers.flatMap((t) => t.nodes).find((n) => n.serviceId === picked);
+  const unmappedPicked = picked === 'unmapped' && map.unmappedItems.length > 0;
   const pickedLinks = d.links.filter((l) => l.title && (l.from === picked || l.to === picked));
   return (
     <div className="arch-view">
@@ -135,6 +149,15 @@ function DiagramView({ map, layout }: { map: Map; layout: Layout }) {
               ))}
             </ul>
           )}
+        </section>
+      )}
+      {unmappedPicked && (
+        <section className="arch-picked" aria-label="No building yet">
+          <h4>
+            No building yet <span className="muted small">×{map.unmapped}</span>
+          </h4>
+          <p className="small">In your account, but not one of the city’s buildings yet:</p>
+          <UnmappedList items={map.unmappedItems} />
         </section>
       )}
       {d.legs.length > 0 && (
@@ -276,7 +299,14 @@ export function AccountMap({ layout = 'full' }: { layout?: Layout }) {
                     {t.nodes.map((n) => (
                       <Node key={n.serviceId} node={n} currency={map.total?.currency} />
                     ))}
-                    {t.id === 'other' && map.unmapped > 0 && <li className="muted small">{map.unmapped} more the city has no building for yet</li>}
+                    {t.id === 'other' && map.unmapped > 0 && (
+                      <li className="muted small">
+                        <details className="map-unmapped">
+                          <summary>{map.unmapped} more the city has no building for yet</summary>
+                          <UnmappedList items={map.unmappedItems} />
+                        </details>
+                      </li>
+                    )}
                   </ul>
                 </section>
               ))}

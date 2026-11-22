@@ -110,3 +110,11 @@
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 35%, transparent);
   }
 }
+/* "N more the city has no building for yet": opens the list (24 px target, WCAG 2.2). */
+.map-unmapped > summary {
+  cursor: pointer;
+  min-height: 24px;
+  padding-block: 3px;
+  box-sizing: border-box;
+  color: var(--ink-soft);
+}
