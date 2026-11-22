@@ -28,7 +28,7 @@ globalThis.ResizeObserver ??= class {
 } as unknown as typeof ResizeObserver;
 
 const { useCity } = await import('@/state/store');
-const { failedReason, thinkingLine, watchLine } = await import('@/state/watch');
+const { bubbleText, failedBubble, failedReason, thinkingLine, watchLine } = await import('@/state/watch');
 const { TaskCard } = await import('@/ui/ActivityFeed');
 const { ChatPanel } = await import('@/ui/ChatPanel');
 const send = (e: Parameters<ReturnType<typeof useCity.getState>['applyServerEvent']>[0]) => act(() => useCity.getState().applyServerEvent(e));
@@ -69,6 +69,39 @@ describe('a task says where it is', () => {
     send({ type: 'agent.state', agentId: 'dynamodb', state: 'working', service: 'bedrock', detail: 'InvokeModel — thinking' });
     send({ type: 'agent.state', agentId: 'dynamodb', state: 'working', service: 'dynamodb', detail: 'CreateTable — Create DynamoDB table "city-scores"' });
     expect(useCity.getState().tasks.t2!.calls).toEqual(['dynamodb:CreateTable']);
+  });
+});
+
+// Seen live, 22 Nov 2026: "Launch a server called big m5.large" was refused at once with a reason, but the city's
+// bubbles ended on "That didn't work…" (the reason was cut at its aside, then replaced), so it looked like nothing happened.
+const M5 = 'The city only builds small servers: t4g.nano or t4g.micro (Graviton, a fraction of a cent an hour), not m5.large. Try "Launch a server called big".';
+describe('a refused request says why in the city', () => {
+  it('the bubble keeps whole sentences that fit, drops asides, and cuts a long one with …', () => {
+    expect(bubbleText(M5)).toBe('The city only builds small servers: t4g.nano or t4g.micro, not m5.large.');
+    expect(bubbleText('Task failed: The city’s AI took too long (it may be busy with another request). Try again in a minute.')).toBe('The city’s AI took too long. Try again in a minute.');
+    const long = bubbleText(`${'word '.repeat(40)}end.`);
+    expect(long.length).toBeLessThanOrEqual(90);
+    expect(long.endsWith('…')).toBe(true);
+    expect(bubbleText('Done. Next.', 5)).toBe('Done.');
+  });
+
+  it('the agent’s last bubble says why; with no reason it says it didn’t work', () => {
+    expect(failedBubble(M5)).toBe('✗ The city only builds small servers: t4g.nano or t4g.micro, not m5.large.');
+    expect(failedBubble(undefined)).toBe('That didn’t work…');
+    expect(failedBubble('')).toBe('That didn’t work…');
+  });
+
+  it('the refusal’s events give a card that says it didn’t work, and why', () => {
+    useCity.getState().addTask('r1', 'Launch a server called big m5.large');
+    send({ type: 'agent.message', from: 'concierge', to: 'user', text: M5 });
+    send({ type: 'task.plan', taskId: 'r1', agentId: 'ec2', targetServiceId: 'ec2', steps: ['Check your request'] });
+    send({ type: 'task.step', taskId: 'r1', index: 0, text: `Check your request — ${M5}`, status: 'failed' });
+    send({ type: 'task.done', taskId: 'r1', ok: false, result: M5, xp: [] });
+    const t = useCity.getState().tasks.r1!;
+    expect(t).toMatchObject({ status: 'failed', result: M5 });
+    render(<TaskCard task={t} />);
+    expect(screen.getByText(/Didn’t work/)).toBeTruthy();
+    expect(screen.getAllByText(/not m5\.large/).length).toBeGreaterThan(0);
   });
 });
 

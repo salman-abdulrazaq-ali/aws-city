@@ -119,6 +119,30 @@ export function thinkingLine(agent: { state: string; service?: string; detail?: 
 /** A failed task's reason, without the server's "Task failed: " lead. */
 export const failedReason = (message: string) => message.replace(/^Task failed:\s*/, '').trim();
 
+/**
+ * A message as one speech bubble: "(…)" asides dropped, whole sentences while they fit in `max`, and a first sentence
+ * that's too long on its own cut with "…". Seen 22 Nov 2026: a refused m5.large read "That didn't work…" in the city
+ * (the reason was cut at its aside, then replaced), so the player thought nothing happened.
+ */
+export function bubbleText(text: string, max = 90): string {
+  const plain = failedReason(text).replace(/\s*\([^()]*\)/g, '').replace(/\s+/g, ' ').trim();
+  const sentences = plain.split(/(?<=[.!?])\s+/).filter(Boolean);
+  const first = sentences[0] ?? '';
+  if (first.length > max) return `${first.slice(0, max - 1).trimEnd()}…`;
+  let out = first;
+  for (const s of sentences.slice(1)) {
+    if (out.length + 1 + s.length > max) break;
+    out = `${out} ${s}`;
+  }
+  return out;
+}
+
+/** The agent's last bubble on a task that didn't work: why, never only "That didn't work…" when there's a reason. */
+export function failedBubble(result?: string): string {
+  const why = result ? bubbleText(result) : '';
+  return why ? `✗ ${why}` : 'That didn’t work…';
+}
+
 /** Where a task is: before it starts (framing), while it runs (live), or finished (result). */
 export type TaskPhase = 'framing' | 'live' | 'result' | 'failed';
 export function taskPhase(task: Pick<TaskView, 'status' | 'steps'>): TaskPhase {
