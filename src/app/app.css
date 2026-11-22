@@ -30,5 +30,6 @@
 @import './styles/28-simple.css';
 @import './styles/29-events.css';
 @import './styles/30-account-map.css';
+@import './styles/31-arch-diagram.css';
 /* Accessibility overrides stay last. */
 @import './styles/22-access.css';

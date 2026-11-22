@@ -1,0 +1,138 @@
+/* My AWS → Diagram and How AWS City runs (src/ui/ArchDiagram.tsx): boxes, links and moving dots. Real links are solid
+   green, typical links dashed and quiet, AWS City's own links solid blue. Muted text uses --ink-soft (axe: 4.5:1). */
+.arch-view {
+  margin: var(--s-2) 0;
+}
+.arch-diagram {
+  position: relative;
+  width: 100%;
+  margin: var(--s-2) 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-deep);
+}
+.arch-diagram svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.arch-col {
+  fill: var(--ink-soft);
+  font: 700 10px var(--font-ui);
+}
+.arch-box {
+  fill: var(--panel-hi);
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+}
+.arch-node.selected .arch-box {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+.arch-glyph {
+  fill: var(--ink);
+  font: 800 12px var(--font-ui);
+}
+.arch-label {
+  fill: var(--ink);
+  font: 700 10px var(--font-ui);
+}
+.arch-cost {
+  fill: var(--good-ink);
+  font: 600 9px var(--font-ui);
+}
+.arch-badge rect {
+  fill: var(--panel);
+  stroke: var(--line-strong);
+}
+.arch-badge text {
+  fill: var(--ink);
+  font: 700 8px var(--font-ui);
+}
+.arch-link path {
+  stroke-width: 1.5;
+}
+.arch-link.real path {
+  stroke: var(--good);
+  stroke-width: 2;
+}
+.arch-link.real polygon,
+.arch-link.real .arch-dot {
+  fill: var(--good);
+}
+.arch-link.typical path {
+  stroke: var(--ink-soft);
+  opacity: 0.7;
+}
+.arch-link.typical polygon {
+  fill: var(--ink-soft);
+}
+.arch-link.typical .arch-dot {
+  fill: var(--highlight);
+}
+.arch-link.design path {
+  stroke: var(--info);
+}
+.arch-link.design polygon,
+.arch-link.design .arch-dot {
+  fill: var(--info);
+}
+/* The real buttons over the drawing: invisible until focused or picked. */
+.arch-hit {
+  position: absolute;
+  inset: 0;
+}
+.arch-hit button {
+  position: absolute;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+.arch-hit button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.arch-legend {
+  list-style: none;
+  margin: var(--s-2) 0;
+  padding: 0;
+  color: var(--ink-soft);
+}
+.arch-legend li + li {
+  margin-top: var(--s-1);
+}
+.arch-sample {
+  vertical-align: middle;
+  margin-right: var(--s-1);
+}
+.arch-picked {
+  margin: var(--s-2) 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: var(--s-2);
+}
+.arch-picked h4 {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  margin: 0 0 var(--s-1);
+}
+.arch-legs > summary {
+  cursor: pointer;
+  min-height: 24px;
+  padding-block: 3px;
+  box-sizing: border-box;
+  color: var(--ink-soft);
+  font-weight: 700;
+}
+.arch-legs ul {
+  margin: var(--s-2) 0 0;
+  padding-left: var(--s-3);
+}
+.arch-legs li + li {
+  margin-top: var(--s-2);
+}

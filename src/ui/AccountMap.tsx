@@ -1,6 +1,11 @@
 import { useRef, useState } from 'react';
+import { openDocs, type Layout } from '@/app/runtime';
 import { useCity } from '@/state/store';
-import { accountMap, itemLine, type MapNode } from '@/world/accountMap';
+import { accountDiagram, totalLine } from '@/world/accountDiagram';
+import { accountMap, itemLine, type AccountMap as Map, type MapNode } from '@/world/accountMap';
+import { layoutArch } from '@/world/archDiagram';
+import { FLOWS } from '@/world/culture';
+import { ArchDiagram } from './ArchDiagram';
 import { AwsIcon } from './AwsIcon';
 import { BillLine } from './BillLine';
 import { FlowLine } from './FlowLine';
@@ -52,11 +57,112 @@ function Node({ node, currency }: { node: MapNode; currency?: string }) {
   );
 }
 
+type View = 'services' | 'diagram';
+const VIEWS: { id: View; label: string }[] = [
+  { id: 'services', label: 'Services' },
+  { id: 'diagram', label: 'Diagram' },
+];
+
+/** A line sample for the legend (decorative: the words say what it means). */
+const Sample = ({ kind }: { kind: 'real' | 'typical' }) => (
+  <svg className={`arch-sample arch-link ${kind}`} width="28" height="8" aria-hidden="true">
+    <path d="M1 4 L27 4" fill="none" strokeDasharray={kind === 'typical' ? '5 4' : undefined} />
+  </svg>
+);
+
+/**
+ * My AWS → Diagram (src/world/accountDiagram.ts): the services as a drawing, the dots moving along the links, each
+ * service's cost a day and a month (est., from the real bill), and a legend that says which lines are real.
+ */
+function DiagramView({ map, layout }: { map: Map; layout: Layout }) {
+  const inventory = useCity((s) => s.inventory);
+  const bill = useCity((s) => s.bill);
+  const flow = useCity((s) => s.flow);
+  const [picked, setPicked] = useState<string>();
+  const d = accountDiagram(map, inventory, { flows: FLOWS, bill, flow });
+  const drawn = layoutArch(d.columns, d.nodes, d.links, layout === 'panel' ? 'tb' : 'lr');
+  const node = map.tiers.flatMap((t) => t.nodes).find((n) => n.serviceId === picked);
+  const pickedLinks = d.links.filter((l) => l.title && (l.from === picked || l.to === picked));
+  return (
+    <div className="arch-view">
+      {d.total && (
+        <p className="map-total">
+          💲 <Plain text={totalLine(d.total)} />
+        </p>
+      )}
+      <ArchDiagram layout={drawn} label={`Diagram of your AWS services in ${map.region}`} selected={picked} onSelect={(id) => setPicked((p) => (p === id ? undefined : id))} />
+      <ul className="arch-legend small">
+        <li>
+          <Sample kind="real" /> Solid line: data AWS reports moving (copies to another Region, a standby in another Zone).
+        </li>
+        <li>
+          <Sample kind="typical" /> Dashed line: how these services usually connect (AWS examples), not read from your account.
+        </li>
+        <li>● Dots move along the path; quicker where your account reports live traffic.</li>
+        <li>{d.costed ? 'est.: worked out from AWS’s figure for this month so far (a day = so far ÷ days so far).' : 'Turn on Show my bill above to see what each service costs a day and a month.'}</li>
+      </ul>
+      {node && (
+        <section className="arch-picked" aria-label={node.name}>
+          <h4>
+            <AwsIcon serviceId={node.serviceId} size={20} /> {node.name} <span className="muted small">×{node.count}</span>
+          </h4>
+          {node.cost !== undefined && d.total && (
+            <p className="small">
+              {money(node.cost, d.total.currency)} so far this month (AWS’s estimate, all Regions).
+            </p>
+          )}
+          {node.rates.map((r) => (
+            <p key={r.label} className="small">
+              {r.perMin} {r.label.toLowerCase()} a minute
+            </p>
+          ))}
+          <ul className="map-items">
+            {node.items.slice(0, ITEMS_SHOWN).map((it) => (
+              <li key={it.arn}>{itemLine(it)}</li>
+            ))}
+            {node.items.length > ITEMS_SHOWN && <li className="muted">and {node.items.length - ITEMS_SHOWN} more</li>}
+            {node.items.length === 0 && <li className="muted">Counted in your account; not listed one by one.</li>}
+          </ul>
+          {pickedLinks.length > 0 && (
+            <ul className="small">
+              {pickedLinks.map((l) => (
+                <li key={l.id}>
+                  {l.style === 'real' ? 'Real: ' : 'Usually: '}
+                  <Plain text={l.title!} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+      {d.legs.length > 0 && (
+        <details className="arch-legs">
+          <summary>How these usually connect ({d.legs.length})</summary>
+          <ul>
+            {d.legs.map((leg) => (
+              <li key={`${leg.from}>${leg.to}`}>
+                <b>
+                  <Plain text={leg.title} />
+                </b>
+                <br />
+                <Plain text={leg.text} />{' '}
+                <button className="btn tiny ghost" onClick={() => openDocs(leg.source)}>
+                  AWS source ↗
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
 /**
  * "My AWS, live": the linked account as one map (src/world/accountMap.ts): what runs where, real data links, live
  * traffic and the month's cost, from what the server already reads. Opened from Deploy's account card and ⋯.
  */
-export function AccountMap() {
+export function AccountMap({ layout = 'full' }: { layout?: Layout }) {
   const open = useCity((s) => s.accountMapOpen);
   const inventory = useCity((s) => s.inventory);
   const bill = useCity((s) => s.bill);
@@ -66,6 +172,7 @@ export function AccountMap() {
   const close = () => useCity.getState().openAccountMap(false);
   const box = useRef<HTMLElement>(null);
   const closeBtn = useRef<HTMLButtonElement>(null);
+  const [view, setView] = useState<View>('services');
   useDialog(open, box, close, closeBtn);
   if (!open) return null;
   const map = accountMap(inventory, { region, bill, flow });
@@ -91,11 +198,19 @@ export function AccountMap() {
         <div className="map-switches">
           <BillLine region={region} />
           <FlowLine />
-          {map.total && (
+          {map.total && view === 'services' && (
             <p className="map-total">
               💲 <b>{money(map.total.amount, map.total.currency)}</b> so far in {map.total.month} (all Regions, estimated)
             </p>
           )}
+        </div>
+
+        <div className="seg" role="group" aria-label="Views">
+          {VIEWS.map((v) => (
+            <button key={v.id} aria-pressed={v.id === view} onClick={() => setView(v.id)}>
+              {v.label}
+            </button>
+          ))}
         </div>
 
         {!inventory ? (
@@ -104,6 +219,8 @@ export function AccountMap() {
           <p>
             <Plain text={`Nothing in ${region} yet. Ask an agent to build something (try “Create a bucket called photos-1”), then look again.`} />
           </p>
+        ) : view === 'diagram' ? (
+          <DiagramView map={map} layout={layout} />
         ) : (
           <>
             <p className="muted small">Left to right, the way a request usually travels: in through the front door, to your code, to your data.</p>

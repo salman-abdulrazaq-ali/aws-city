@@ -89,4 +89,47 @@ describe('the map on screen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close the map' }));
     expect(useCity.getState().accountMapOpen).toBe(false);
   });
+
+  // Asked for on 22 Nov 2026: the account as an architecture drawing, with data moving and each service's cost.
+  it('Diagram: the services drawn with their cost a day and a month (est.), moving dots and a legend that says which lines are real', () => {
+    // A bill read on the 22nd: the per-day figure divides by 22 days.
+    useCity.setState({ bill: { ...bill, takenAt: '2026-11-22T10:00:00Z' } });
+    const { container } = render(<AccountMap />);
+    const views = screen.getByRole('group', { name: 'Views' });
+    expect([...views.querySelectorAll('button')].map((b) => [b.textContent, b.getAttribute('aria-pressed')])).toEqual([
+      ['Services', 'true'],
+      ['Diagram', 'false'],
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: 'Diagram' }));
+    expect(screen.getByRole('img', { name: /Diagram of your AWS services in us-west-2/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Amazon EC2, 1 resource, \$0\.01 a day est\., \$0\.16 a month est\./ })).toBeTruthy();
+    expect(screen.getByText(/Dashed line: how these services usually connect/)).toBeTruthy();
+    expect(screen.getByText(/Solid line: data AWS reports moving/)).toBeTruthy();
+    expect(container.querySelector('.map-total')?.textContent).toMatch(/So far in 2026-11: \$0\.42 .* a day est\./);
+    // Picking a service shows its resources.
+    fireEvent.click(screen.getByRole('button', { name: /^Amazon S3/ }));
+    expect(screen.getByRole('region', { name: 'Amazon S3' }).textContent).toMatch(/bucket aws-city-047463438585-holiday-123/);
+  });
+
+  it('Diagram: dots move along the links, and sit still under reduced motion', () => {
+    const typed: Inventory = { ...inventory, items: [...inventory.items, { ...inventory.items[0]!, arn: 'arn:fn', name: 'fn', type: 'AWS::Lambda::Function', serviceId: 'lambda', az: undefined }], counts: { ...inventory.counts, lambda: 1 } };
+    useCity.setState({ inventory: typed });
+    const moving = render(<AccountMap />);
+    fireEvent.click(screen.getByRole('button', { name: 'Diagram' }));
+    // Lambda → DynamoDB is an AWS example flow (stream processing, serverless API): one dashed line, one dot moving.
+    expect(moving.container.querySelectorAll('.arch-link.typical').length).toBeGreaterThan(0);
+    expect(moving.container.querySelectorAll('animateMotion').length).toBeGreaterThan(0);
+    cleanup();
+
+    const real = globalThis.matchMedia;
+    globalThis.matchMedia = ((q: string) => ({ matches: q.includes('reduce'), media: q, addEventListener() {}, removeEventListener() {} })) as unknown as typeof matchMedia;
+    try {
+      const still = render(<AccountMap />);
+      fireEvent.click(screen.getByRole('button', { name: 'Diagram' }));
+      expect(still.container.querySelectorAll('animateMotion').length).toBe(0);
+      expect(still.container.querySelectorAll('.arch-dot').length).toBeGreaterThan(0);
+    } finally {
+      globalThis.matchMedia = real;
+    }
+  });
 });

@@ -632,8 +632,20 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   data, security & operations, other), each with its count, this month's cost and live rate, tap for its resources;
   servers and databases in their lettered Zone; the only lines are the data links AWS reports (replication, standby).
   Which resource talks to which isn't read yet (it needs read-only player-role permissions: API Gateway integrations,
-  Lambda event sources, load-balancer targets, CloudFront origins), and the map says so rather than guessing. Proof:
-  `npx vitest run tests/account-map.test.tsx`, `npm run smoke` (`18b-my-aws-map`, axe).
+  Lambda event sources, load-balancer targets, CloudFront origins), and the map says so rather than guessing. Two views
+  (an `aria-pressed` group): Services (the columns) and **Diagram** (asked for on 22 Nov 2026: the account drawn, data
+  moving, each service's cost by day and month): `layoutArch` (`src/world/archDiagram.ts`, pure: lanes per column,
+  right-angle links whose last segment is straight, left to right in the tab and top to bottom in the 400 px panel) and
+  `accountDiagram` (`src/world/accountDiagram.ts`). Its solid lines are the data links AWS reports (replicas, standbys,
+  load-balancer traffic) to where the data goes; its dashed lines are how those services usually connect (`courierLegs`
+  over `shared/flows.json`, adjacent pairs, `FAN_IN` flows left out, each with its AWS source in "How these usually
+  connect"): they teach, they don't report, and the legend says so. Dots move with SVG `animateMotion` (`src/ui/ArchDiagram.tsx`;
+  more and quicker at a service's `city.flow` rate, `dotPlan`), sit still under reduced motion and pause while the page is
+  hidden. Costs (`src/world/accountCost.ts`): AWS's month so far per service; a day = that ÷ UTC days so far, a month = a
+  day × the month's days, both marked est. There's no list-price estimate: the client doesn't know a server's size or
+  whether it's running. Each box is a real button (arrow keys move, `nextSlot`) labelled with its name and figures. Proof:
+  `npx vitest run tests/account-map.test.tsx tests/account-diagram.test.ts`, `npm run smoke` (`18b-my-aws-map`,
+  `18c-my-aws-diagram`, `18e-my-aws-diagram-panel`, axe, still dots under reduced motion).
 - **City Clients: side jobs for real kinds of business** (`shared/clients.json`, `src/world/clients.ts`, `src/ui/clients/`).
   18 businesses: wave 1 (Amazon Air hub, bank, stadium, hospital, shop, school) and wave 2 (streaming studio, game studio,
   news site, port, energy utility, factory, farm co-op, car maker, phone network, town council, hotel, charity), three
