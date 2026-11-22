@@ -20,8 +20,10 @@ dir="$1"
 manifest="$2"
 shift 2
 
+# Hashed from stdin, so no file name is printed: GNU sha256sum escapes a name with a backslash (a Windows path) and
+# prefixes the whole line with "\", which would read as part of the digest.
 sha256() {
-  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum < "$1" | cut -d' ' -f1; else shasum -a 256 < "$1" | cut -d' ' -f1; fi
 }
 blob() {
   printf '%s/blobs/%s' "$dir" "$(printf '%s' "$1" | tr ':' '-')"

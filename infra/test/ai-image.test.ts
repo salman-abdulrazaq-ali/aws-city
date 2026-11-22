@@ -77,7 +77,13 @@ describe('verify-model.sh', () => {
     const elsewhere = join(n.dir, 'elsewhere');
     writeFileSync(elsewhere, readFileSync(n.blob(n.digests[2]!)));
     rmSync(n.blob(n.digests[2]!));
-    symlinkSync(elsewhere, n.blob(n.digests[2]!));
+    try {
+      symlinkSync(elsewhere, n.blob(n.digests[2]!));
+    } catch (e) {
+      // Windows refuses symlinks without Developer Mode or admin rights; CI (Linux) checks the link case.
+      if (process.platform === 'win32' && (e as NodeJS.ErrnoException).code === 'EPERM') return;
+      throw e;
+    }
     expect(run(n.dir, n.manifest, ...n.digests).status).not.toBe(0);
   });
 
