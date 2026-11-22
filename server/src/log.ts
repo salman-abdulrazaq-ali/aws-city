@@ -1,5 +1,4 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { PermissionDeniedError } from '@anthropic-ai/sdk';
 
 /**
  * Structured JSON logs (one line each) for CloudWatch, and metrics in Embedded Metric Format.
@@ -41,11 +40,12 @@ export const publicErrors = () => hosted;
 export const PAUSED_MESSAGE = 'The city’s AI is resting right now. Learning, cards and games still work.';
 
 /**
- * Bedrock refused the model call with AccessDenied: the budget action's deny policy on the task role (or model access
- * not granted). Our Bedrock client is the Anthropic SDK's, which turns a 403 into PermissionDeniedError; AWS SDK errors
- * from the player's account never are one. Strands may wrap it (`cause`).
+ * Whether an error means Bedrock refused the city's AI (shown as PAUSED_MESSAGE). agents/metered.ts sets it to its
+ * isModelDenied when it loads. This file never imports the Anthropic SDK itself: the extension's typecheck reaches it
+ * (tests import server/src/config.ts) without server/node_modules, so an import here fails CI's `npm run check`.
  */
-export const isModelDenied = (err: unknown): boolean => err instanceof PermissionDeniedError || (err instanceof Error && err.cause instanceof PermissionDeniedError);
+let modelDenied: (err: unknown) => boolean = () => false;
+export const setModelDenied = (check: (err: unknown) => boolean) => void (modelDenied = check);
 
 /**
  * Logs a failure and returns what the player may see. AWS and Bedrock errors can carry our account id,
@@ -59,7 +59,7 @@ export const publicError = (scope: string, err: unknown, fields: Fields = {}): s
   const ref = randomBytes(3).toString('hex');
   write('error', scope, { ref, err: e?.name ?? 'Error', status: e?.status, detail: e?.message?.slice(0, 300), ...fields });
   if (!hosted) return e?.message ?? String(err);
-  if (isModelDenied(err)) return PAUSED_MESSAGE;
+  if (modelDenied(err)) return PAUSED_MESSAGE;
   if (e?.status === 429 || e?.name === 'ThrottlingException') return 'The city’s AI is busy right now. Try again in a minute.';
   if (e?.name === 'TimeoutError' || /timed? ?out/i.test(e?.message ?? '')) return 'The city’s AI took too long (it may be busy with another request). Try again in a minute.';
   return `Something went wrong on our side (ref ${ref}). Try again.`;

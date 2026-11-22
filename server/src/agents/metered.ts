@@ -1,11 +1,20 @@
 import { GetParameterCommand, type SSMClient } from '@aws-sdk/client-ssm';
-import { APIUserAbortError } from '@anthropic-ai/sdk';
-import { isModelDenied, log, PAUSED_MESSAGE, publicErrors } from '../log.js';
+import { APIUserAbortError, PermissionDeniedError } from '@anthropic-ai/sdk';
+import { log, PAUSED_MESSAGE, publicErrors, setModelDenied } from '../log.js';
 import { type QuotaStore, today } from '../store/types.js';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { Llm } from './llm.js';
 
 export { PAUSED_MESSAGE };
+
+/**
+ * Bedrock refused the model call with AccessDenied: the budget action's deny policy on the task role (or model access
+ * not granted). Our Bedrock client is the Anthropic SDK's, which turns a 403 into PermissionDeniedError; AWS SDK errors
+ * from the player's account never are one. Strands may wrap it (`cause`).
+ */
+export const isModelDenied = (err: unknown): boolean => err instanceof PermissionDeniedError || (err instanceof Error && err.cause instanceof PermissionDeniedError);
+// publicError (log.ts) says the same for a denial that reaches it some other way.
+setModelDenied(isModelDenied);
 
 /** Thrown instead of calling Bedrock. The message is shown to the player as-is. */
 export class ModelLimitError extends Error {
