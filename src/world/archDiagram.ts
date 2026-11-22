@@ -28,6 +28,8 @@ export interface ArchNodeIn {
   badge?: string;
   /** Up to two short lines under the label (a cost per day and per month). */
   lines?: string[];
+  /** Shown in the box when there's no icon: a Zone's letter, or "?". */
+  glyph?: string;
   /** Read aloud for the node's button: its name and every figure on it. */
   aria?: string;
 }
@@ -135,8 +137,9 @@ export function layoutArch(columns: readonly ArchColumn[], nodes: readonly ArchN
         const mid = Math.round(b.p - before - gap / 2);
         flow = a.q === b.q ? [start, end] : [start, { x: mid, y: a.q }, { x: mid, y: b.q }, end];
       } else {
-        // Across lanes in between: out, along the channel between rows, then in, so no box is crossed.
-        const channel = Math.round(Math.max(a.q, b.q) + step.across / 2);
+        // Across lanes in between: out, along the channel between rows, then in, so no box is crossed. Left to right the
+        // channel runs under the row's label and costs (they sit below each box); top to bottom, between the columns.
+        const channel = Math.round(Math.max(a.q, b.q) + (orientation === 'lr' ? BOX / 2 + TEXT + 6 : step.across / 2));
         const out = a.p + after + 8;
         const into = Math.round(b.p - before - gap / 2);
         flow = [start, { x: out, y: a.q }, { x: out, y: channel }, { x: into, y: channel }, { x: into, y: b.q }, end];

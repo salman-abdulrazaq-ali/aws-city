@@ -31,7 +31,7 @@
 }
 .arch-glyph {
   fill: var(--ink);
-  font: 800 12px var(--font-ui);
+  font: 800 15px var(--font-ui);
 }
 .arch-label {
   fill: var(--ink);

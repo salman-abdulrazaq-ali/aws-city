@@ -63,7 +63,7 @@ export function accountDiagram(map: AccountMap, inv: Inventory | undefined, opts
         aria: [n.name, `${n.count} ${n.count === 1 ? 'resource' : 'resources'}`, ...(lines ?? []), ...(perMin > 0 ? [`${perMin} a minute`] : [])].join(', '),
       });
     }
-  if (map.unmapped > 0) nodes.push({ id: 'unmapped', column: 'other', label: 'No building yet', badge: `×${map.unmapped}`, aria: `${map.unmapped} resources the city has no building for yet` });
+  if (map.unmapped > 0) nodes.push({ id: 'unmapped', column: 'other', label: 'No building yet', glyph: '?', badge: `×${map.unmapped}`, aria: `${map.unmapped} resources the city has no building for yet` });
 
   // Real links: from the service to where its data goes (a Region, or a lettered Zone), as AWS reports them.
   const azs = (inv?.zones?.[region] ?? []).map((z) => z.name);
@@ -80,7 +80,8 @@ export function accountDiagram(map: AccountMap, inv: Inventory | undefined, opts
     const id = `place:${place}`;
     if (!places.has(id)) {
       places.add(id);
-      nodes.push({ id, column: 'elsewhere', label: place, ...(away.az ? {} : { icon: { kind: 'group' as const, id: 'region' } }), aria: `${place}: where this data goes` });
+      // A Region has its group icon; a Zone shows its letter, as the city's islands are lettered.
+      nodes.push({ id, column: 'elsewhere', label: place, ...(away.az ? { glyph: place.replace(/^Zone /, '') } : { icon: { kind: 'group' as const, id: 'region' } }), aria: `${place}: where this data goes` });
     }
     links.push({ id: `real:${l.id}`, from: l.serviceId, to: id, style: 'real', twoWay: l.twoWay, title: l.label });
   }

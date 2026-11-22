@@ -101,7 +101,7 @@ describe('the account as a diagram', () => {
       ['rds', 'place:Zone B', false],
     ]);
     expect(d.nodes.find((n) => n.id === 'place:eu-west-1')).toMatchObject({ column: 'elsewhere', label: 'eu-west-1', icon: { kind: 'group', id: 'region' } });
-    expect(d.nodes.find((n) => n.id === 'place:Zone B')).toMatchObject({ column: 'elsewhere', label: 'Zone B' });
+    expect(d.nodes.find((n) => n.id === 'place:Zone B')).toMatchObject({ column: 'elsewhere', label: 'Zone B', glyph: 'B' });
     expect(d.columns.at(-1)).toEqual({ id: 'elsewhere', label: 'Where data goes' });
   });
 });

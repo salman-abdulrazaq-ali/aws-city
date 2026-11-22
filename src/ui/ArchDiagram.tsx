@@ -83,8 +83,8 @@ export function ArchDiagram({ layout, label, selected, onSelect }: { layout: Arc
               {href ? (
                 <image href={href} x={x + 4} y={y + 4} width={box - 8} height={box - 8} />
               ) : (
-                <text className="arch-glyph" x={n.x} y={n.y + 4} textAnchor="middle">
-                  {n.label.slice(0, 2)}
+                <text className="arch-glyph" x={n.x} y={n.y + 5} textAnchor="middle">
+                  {n.glyph ?? '?'}
                 </text>
               )}
               {n.badge && (
