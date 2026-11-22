@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
-import { canReconnect, canSignIn, openFullCity, openLeaderboard, reconnect, setAutoSnap, signIn, type Layout } from '@/app/runtime';
+import { canReconnect, canSignIn, openFullCity, openLeaderboard, reconnect, setAutoSnap, signIn, signOut, type Layout } from '@/app/runtime';
 import { chime, isMuted, onMuteChange, setMuted } from '@/game/audio';
 import { isRushNow, subscribeRush } from '@/game/rush';
 import { bus } from '@/state/bus';
@@ -180,6 +180,7 @@ function MoreMenu({ layout }: { layout: Layout }) {
   const setPref = useCity((s) => s.setPref);
   const setTourOpen = useCity((s) => s.setTourOpen);
   const inDemo = useCity((s) => s.backendKind) === 'mock' && isDemo();
+  const signedIn = useCity((s) => s.backendKind !== 'mock' && s.backendStatus !== 'signed-out');
   const locked = useLocked();
   const simple = useCity((s) => isSimple(s.prefs));
   const box = useRef<HTMLDivElement>(null);
@@ -321,6 +322,12 @@ function MoreMenu({ layout }: { layout: Layout }) {
           {inDemo && (
             <button role="menuitem" onClick={() => switchDemo(false)}>
               Sign in to save your city
+            </button>
+          )}
+          {/* Where players look for it first (seen 22 Nov 2026); Deploy → Your data keeps it too. */}
+          {signedIn && canSignIn() && (
+            <button role="menuitem" onClick={run(signOut)}>
+              Sign out
             </button>
           )}
           <hr />

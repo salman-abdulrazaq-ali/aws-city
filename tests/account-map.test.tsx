@@ -65,6 +65,8 @@ describe('accountMap', () => {
       'edge', 'edge', 'compute', 'compute', 'data', 'data', 'ops', 'ops', 'other',
     ]);
     expect(itemLine(inventory.items[0]!)).toBe('server i-03e06cc3ce2a69cfe');
+    // A server named from its Name tag keeps its id beside it, to copy for "Terminate i-…".
+    expect(itemLine({ ...inventory.items[0]!, arn: 'arn:aws:ec2:us-west-2:047463438585:instance/i-0d3ee009687a7434c', name: 'demo2' })).toBe('server demo2 (i-0d3ee009687a7434c)');
   });
 
   it('nothing read yet, or nothing there: empty, never invented', () => {
@@ -81,7 +83,7 @@ describe('the map on screen', () => {
     const { container } = render(<AccountMap />);
     expect(screen.getByRole('dialog', { name: 'My AWS, live' })).toBeTruthy();
     expect(screen.getByText(/Account 0474-6343-8585/)).toBeTruthy();
-    expect(container.querySelector('.map-total')?.textContent).toMatch(/\$0\.42 so far in 2026-11/);
+    expect(container.querySelector('.map-total')?.textContent).toMatch(/\$0\.42 so far in November 2026/);
     expect(screen.getByText(/\$0\.12 this month/)).toBeTruthy();
     expect(screen.getByText(/3 table writes a minute/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Amazon S3|S3/ }));
@@ -107,7 +109,7 @@ describe('the map on screen', () => {
     expect(screen.getByRole('button', { name: /Amazon EC2, 1 resource, \$0\.01 a day est\., \$0\.16 a month est\./ })).toBeTruthy();
     expect(screen.getByText(/Dashed line: how these services usually connect/)).toBeTruthy();
     expect(screen.getByText(/Solid line: data AWS reports moving/)).toBeTruthy();
-    expect(container.querySelector('.map-total')?.textContent).toMatch(/So far in 2026-11: \$0\.42 .* a day est\./);
+    expect(container.querySelector('.map-total')?.textContent).toMatch(/So far in November 2026: \$0\.42 .* a day est\./);
     // Picking a service shows its resources.
     fireEvent.click(screen.getByRole('button', { name: /^Amazon S3/ }));
     expect(screen.getByRole('region', { name: 'Amazon S3' }).textContent).toMatch(/bucket aws-city-047463438585-holiday-123/);

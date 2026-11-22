@@ -12,7 +12,7 @@ export function FlowLine() {
   if (!on)
     return (
       <div className="bill-line muted small">
-        <button className="btn ghost tiny" onClick={() => setFlow(true)}>
+        <button className="btn small" onClick={() => setFlow(true)}>
           🚗 Show live traffic
         </button>{' '}
         Request cars follow your real request counts from CloudWatch, read every few minutes while the city is open
