@@ -71,6 +71,8 @@ export interface AccountMap {
   links: { id: string; kind: DataLink['kind']; text: string }[];
   /** Resources the listing saw that the city has no building for. */
   unmapped: number;
+  /** Those resources, so the player can see what they are (seen 22 Nov 2026: "No building yet ×15" said nothing). */
+  unmappedItems: InventoryItem[];
   /** Other Regions with resources (the world map shows them as cities). */
   elsewhere: { region: string; count: number }[];
   total?: { amount: number; currency: string; month: string };
@@ -93,10 +95,10 @@ export function accountMap(inv: Inventory | undefined, opts: { region: string; b
   const isHome = region === home;
 
   const byService = new Map<string, InventoryItem[]>();
-  let unmapped = 0;
+  const unmappedItems: InventoryItem[] = [];
   for (const it of items) {
     if (!it.serviceId || !serviceById(it.serviceId)) {
-      unmapped++;
+      unmappedItems.push(it);
       continue;
     }
     byService.set(it.serviceId, [...(byService.get(it.serviceId) ?? []), it]);
@@ -129,7 +131,7 @@ export function accountMap(inv: Inventory | undefined, opts: { region: string; b
     }));
 
   const tiers = TIERS.map((t) => ({ ...t, nodes: nodes.filter((n) => tierOf(n.serviceId) === t.id).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)) })).filter(
-    (t) => t.nodes.length || (t.id === 'other' && unmapped),
+    (t) => t.nodes.length || (t.id === 'other' && unmappedItems.length),
   );
   const elsewhere = Object.entries(inv?.regions ?? {})
     .filter(([r, n]) => r !== region && r !== 'global' && n > 0)
@@ -141,10 +143,11 @@ export function accountMap(inv: Inventory | undefined, opts: { region: string; b
     tiers,
     zones,
     links,
-    unmapped,
+    unmapped: unmappedItems.length,
+    unmappedItems,
     elsewhere,
     ...(bill ? { total: { amount: bill.total, currency: bill.currency, month: bill.month } } : {}),
     partial: !!inv && !inv.complete,
-    empty: !nodes.length && !unmapped,
+    empty: !nodes.length && !unmappedItems.length,
   };
 }

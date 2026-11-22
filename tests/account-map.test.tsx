@@ -41,6 +41,7 @@ describe('accountMap', () => {
     expect(m.tiers[1]!.nodes.map((n) => n.serviceId).sort()).toEqual(['dynamodb', 's3']);
     expect(m.tiers[1]!.nodes.find((n) => n.serviceId === 'dynamodb')!.rates).toEqual([{ label: 'Table writes', perMin: 3 }]);
     expect(m.unmapped).toBe(1);
+    expect(m.unmappedItems.map((i) => i.name)).toEqual(['alerts']);
     expect(m.total).toEqual({ amount: 0.42, currency: 'USD', month: '2026-11' });
     expect(m.elsewhere).toEqual([{ region: 'eu-west-2', count: 2 }]);
     expect(m.empty).toBe(false);
@@ -110,6 +111,16 @@ describe('the map on screen', () => {
     // Picking a service shows its resources.
     fireEvent.click(screen.getByRole('button', { name: /^Amazon S3/ }));
     expect(screen.getByRole('region', { name: 'Amazon S3' }).textContent).toMatch(/bucket aws-city-047463438585-holiday-123/);
+  });
+
+  // Seen 22 Nov 2026: "No building yet ×15" said nothing about what the 15 were.
+  it('what has no building yet is listed: tap it in the Diagram, or open it under Services', () => {
+    const { container } = render(<AccountMap />);
+    fireEvent.click(screen.getByText('1 more the city has no building for yet'));
+    expect(container.querySelector('.map-unmapped')?.textContent).toMatch(/sns:topic alerts/);
+    fireEvent.click(screen.getByRole('button', { name: 'Diagram' }));
+    fireEvent.click(screen.getByRole('button', { name: /^No building yet: 1 resource in your account/ }));
+    expect(screen.getByRole('region', { name: 'No building yet' }).textContent).toMatch(/not one of the city’s buildings yet.*sns:topic alerts/);
   });
 
   it('How AWS City runs: the city’s own parts and links, the Fargate prices, and the README’s idle estimate', () => {

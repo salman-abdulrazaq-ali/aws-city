@@ -63,7 +63,7 @@ export function accountDiagram(map: AccountMap, inv: Inventory | undefined, opts
         aria: [n.name, `${n.count} ${n.count === 1 ? 'resource' : 'resources'}`, ...(lines ?? []), ...(perMin > 0 ? [`${perMin} a minute`] : [])].join(', '),
       });
     }
-  if (map.unmapped > 0) nodes.push({ id: 'unmapped', column: 'other', label: 'No building yet', glyph: '?', badge: `×${map.unmapped}`, aria: `${map.unmapped} resources the city has no building for yet` });
+  if (map.unmapped > 0) nodes.push({ id: 'unmapped', column: 'other', label: 'No building yet', glyph: '?', badge: `×${map.unmapped}`, aria: `No building yet: ${map.unmapped} ${map.unmapped === 1 ? 'resource' : 'resources'} in your account the city has no building for` });
 
   // Real links: from the service to where its data goes (a Region, or a lettered Zone), as AWS reports them.
   const azs = (inv?.zones?.[region] ?? []).map((z) => z.name);
