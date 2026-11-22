@@ -290,8 +290,10 @@ function Shift({ openTab, care, openCare }: { openTab: OpenTab; care: boolean; o
       {/* Done for the day, and still keen: one optional overtime goal, with a bonus crate of its own. */}
       {summary.overtime && <OvertimeChip goal={summary.overtime} openTab={openTab} game={today.game} />}
       {summary.overtimeDone && <SupplyDrop shiftDone overtime />}
-      {/* A finished task's card holds the floor: its next step is this same action, so the shift's button waits. */}
-      {taskUp ? <TaskCard key={latest!.taskId} task={latest!} openTab={openTab} /> : <NextButton action={action} calm={summary.done} />}
+      {/* A finished task's card holds the floor: its next step is this same action, so the shift's button waits. A task
+          that didn't work has no next step (Try again would say the same), so the shift's button stays, under its card. */}
+      {taskUp && <TaskCard key={latest!.taskId} task={latest!} openTab={openTab} />}
+      {(!taskUp || latest!.status === 'failed') && <NextButton action={action} calm={summary.done} />}
       {ladder.clients && <OrderBoard max={3} skip={action.kind === 'job' ? action.taskId : undefined} />}
       {ready.length > 0 && (
         <section className="ready" aria-label="Ready to upgrade">

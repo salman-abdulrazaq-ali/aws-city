@@ -170,6 +170,32 @@ await wait(300);
 if (!(await page.locator('.task.done .watch-teaches').count())) errors.push('Watch it done: the result card has no "What it teaches"');
 await shot('06-task-done');
 
+// A request refused at once (the hosted server's events for "Launch a server called big m5.large", replayed the way
+// runtime.ts delivers them): the card and the city's bubbles say why (seen 22 Nov 2026: it read as nothing happening).
+await city(() => {
+  const reason = 'The city only builds small servers: t4g.nano or t4g.micro (Graviton, a fraction of a cent an hour), not m5.large. Try "Launch a server called big".';
+  const s = window.awsCity.useCity.getState();
+  s.addTask('smoke-refused', 'Launch a server called big m5.large');
+  for (const e of [
+    { type: 'agent.message', from: 'concierge', to: 'user', text: reason },
+    { type: 'task.plan', taskId: 'smoke-refused', agentId: 'ec2', targetServiceId: 'ec2', steps: ['Check your request'] },
+    { type: 'task.step', taskId: 'smoke-refused', index: 0, text: `Check your request — ${reason}`, status: 'failed' },
+    { type: 'task.done', taskId: 'smoke-refused', ok: false, result: reason, xp: [] },
+  ]) {
+    window.awsCity.useCity.getState().applyServerEvent(e);
+    window.awsCity.bus.emit('server', e);
+  }
+});
+await wait(600);
+await page.evaluate(() => {
+  const card = [...document.querySelectorAll('.task.failed')].find((c) => c.textContent?.includes('m5.large'));
+  card?.closest('details')?.setAttribute('open', '');
+  card?.scrollIntoView({ block: 'center' });
+});
+await wait(300);
+if (!(await page.locator('.task.failed', { hasText: 'not m5.large' }).count())) errors.push('a refused request: the card does not say why ("not m5.large")');
+await shot('06b-task-refused');
+
 // level everything up a bit for a fuller city
 await city(() => {
   const s = window.awsCity.useCity.getState();

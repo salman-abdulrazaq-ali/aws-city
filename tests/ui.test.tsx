@@ -385,4 +385,23 @@ describe('the City tab: today’s shift', () => {
     expect(container.querySelector('.ready')).toBeNull();
     expect(screen.queryByRole('button', { name: /^Go\b/ })).toBeNull();
   });
+
+  // Seen 22 Nov 2026 (smoke, a refused m5.large): a task that didn't work took the big button's place and offered only
+  // Try again, so the City tab had no primary button. Its card stays (it says why) and the shift's button stays under it.
+  it('a task that didn’t work keeps its card and the one big button', async () => {
+    const { Home } = await import('@/ui/Home');
+    const { QUESTS } = await import('@/world/content');
+    const region = useCity.getState().cityRegion;
+    const q = QUESTS[0];
+    useCity.setState({
+      view: { name: 'city' },
+      prefs: { ...useCity.getState().prefs, region, simple: false },
+      progress: { version: 2, landmarks: {}, updatedAt: '', quests: { [q.id]: { status: 'active', step: 1, count: 0 } }, cities: { [region]: { landmarks: { s3: { discovered: true, xp: 0 } } } } },
+      tasks: { r1: { taskId: 'r1', prompt: 'Launch a server called big m5.large', agentId: 'ec2', steps: [{ text: 'Check your request', status: 'failed' }], status: 'failed', result: 'The city only builds small servers: t4g.nano or t4g.micro, not m5.large.' } },
+      taskOrder: ['r1'],
+    } as never);
+    const { container } = render(<Home openTab={() => {}} />);
+    expect(container.querySelector('.task.failed')?.textContent).toMatch(/not m5\.large/);
+    expect(container.querySelectorAll('.btn.primary')).toHaveLength(1);
+  });
 });

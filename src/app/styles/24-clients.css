@@ -153,10 +153,11 @@
 .job-need {
   color: var(--warn);
 }
-/* "How? Tap Show me…": the how, in plain ink under the warning. */
+/* "How? Tap Show me…": the how, in plain ink under the warning. --ink-soft, not --muted: CI's smoke (Linux) found it
+   under 4.5:1 on the order board in My City and the workshop card (22 Nov 2026). */
 .job-how {
   display: block;
-  color: var(--muted, inherit);
+  color: var(--ink-soft);
 }
 .job-starter {
   color: var(--good);

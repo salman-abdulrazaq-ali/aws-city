@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import type { AwsNewsItem, Progress, ServerEvent } from '@/backend/contract';
 import { bus } from '@/state/bus';
 import { agentName, isDiscovered, openFindings, severityRank, taskRunning, tierOf, useCity, type Inventory } from '@/state/store';
-import { failedReason } from '@/state/watch';
+import { bubbleText, failedBubble } from '@/state/watch';
 import { dueFor } from '@/state/srs';
 import { citizenLevel, levelName } from '@/state/citizens';
 import { CITIZENS, citizenById } from '@/world/citizens';
@@ -117,11 +117,8 @@ const UNKNOWN_SIGN_DEPTH = 40_050;
 /** Lock and future-plot signs: above the cranes, lamps and trees standing on the plot (props are 10,000 + y). */
 const PLOT_SIGN_DEPTH = 40_040;
 
-/** The first sentence of a message, capped, for a speech bubble. */
-const firstLine = (text: string, max = 90) => {
-  const first = text.split(/(?<=[.!?])\s|\s\(/)[0] ?? text;
-  return first.length > max ? `${first.slice(0, max - 1).trimEnd()}…` : first;
-};
+/** A message as one speech bubble: whole sentences while they fit, asides dropped (src/state/watch.ts bubbleText). */
+const firstLine = (text: string, max = 90) => bubbleText(text, max);
 
 const KEYS = { W: [0, -1], UP: [0, -1], S: [0, 1], DOWN: [0, 1], A: [-1, 0], LEFT: [-1, 0], D: [1, 0], RIGHT: [1, 0] } as const;
 type KeyName = keyof typeof KEYS | 'E' | 'OPEN_BRACKET' | 'CLOSED_BRACKET' | 'PLUS' | 'MINUS';
@@ -204,7 +201,7 @@ export class CityScene extends Phaser.Scene {
   private focusRing!: Phaser.GameObjects.Graphics;
   private focusedId?: string;
   private offs: (() => void)[] = [];
-  private tasks = new Map<string, { agentId: string; total: number }>();
+  private tasks = new Map<string, { agentId: string; total: number; handedOff: boolean }>();
   private dragging = false;
   /** scene time of the player's last pan, zoom, tap or handled key: the camera won't move on its own for a while after. */
   private lastInputAt = -Infinity;
@@ -1888,8 +1885,9 @@ export class CityScene extends Phaser.Scene {
     switch (e.type) {
       case 'task.plan': {
         const a = this.agents.get(e.agentId);
-        this.tasks.set(e.taskId, { agentId: e.agentId, total: e.steps.length });
-        this.agents.get('concierge')?.say(`${agentName(e.agentId)}, you're up!`, { caption: 'Dispatching' });
+        // "X, you're up!" waits for the first step that runs: a request refused at once never runs one, so the
+        // concierge's reason stays on screen (seen 22 Nov 2026: it was replaced, and an m5.large read as nothing happening).
+        this.tasks.set(e.taskId, { agentId: e.agentId, total: e.steps.length, handedOff: false });
         if (!a) return;
         a.pin(true);
         if (this.mayAutoPan()) this.follow(a);
@@ -1902,6 +1900,10 @@ export class CityScene extends Phaser.Scene {
         const t = this.tasks.get(e.taskId);
         const a = t && this.agents.get(t.agentId);
         if (!a || e.status === 'pending') return;
+        if (e.status === 'running' && !t.handedOff) {
+          t.handedOff = true;
+          this.agents.get('concierge')?.say(`${agentName(t.agentId)}, you're up!`, { caption: 'Dispatching' });
+        }
         if (e.status === 'running') a.say(e.text, { caption: `Step ${e.index + 1}/${t.total}`, tone: 'step', holdMs: 6000 });
         if (e.status === 'skipped') a.say(`⤼ ${e.text}`, { tone: 'done', holdMs: 2500 });
         if (e.status === 'failed') a.say(`✗ ${e.text}`, { tone: 'alert' });
@@ -1942,8 +1944,8 @@ export class CityScene extends Phaser.Scene {
         if (!t || !a) return;
         this.tasks.delete(e.taskId!);
         // The server's reason, short (seen 21 Nov 2026: a timeout and a refusal both read "Something went wrong").
-        const why = failedReason(e.message);
-        a.say(why ? (why.length > 90 ? `${why.slice(0, 89)}…` : why) : 'Something went wrong…', { tone: 'alert', caption: 'Task stopped' });
+        const why = bubbleText(e.message);
+        a.say(why || 'Something went wrong…', { tone: 'alert', caption: 'Task stopped' });
         a.setDetail(undefined);
         a.setWorking(false);
         a.pin(false);
@@ -1956,7 +1958,8 @@ export class CityScene extends Phaser.Scene {
         this.tasks.delete(e.taskId);
         if (!a) return;
         const xp = e.xp.reduce((n, x) => n + x.amount, 0);
-        a.say(e.ok ? `Done! ${stars(xp)}` : 'That didn’t work…', { tone: e.ok ? 'done' : 'alert', caption: 'Task complete' });
+        // A task that didn't work says why (the server's result), not only "That didn't work…".
+        a.say(e.ok ? `Done! ${stars(xp)}` : failedBubble(e.result), { tone: e.ok ? 'done' : 'alert', caption: 'Task complete' });
         a.pin(false);
         if (e.ok) {
           a.emote('jump', 1000);

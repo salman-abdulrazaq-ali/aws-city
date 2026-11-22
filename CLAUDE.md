@@ -615,9 +615,13 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   walk there", then "Sally is there and on it" once she's arrived (`watchLine`), "💭 thinking… up to a minute" while her
   model call runs (`thinkingLine`, from `agent.state`), and a failed task its reason (`failedReason`) with ↻ Try again;
   the city's bubble says the reason too, and "Real AWS calls" lists the hosted server's calls (`s3:CreateBucket` from
-  service + "CreateBucket — …", never its model calls). Proof: `cd server && npx vitest run
+  service + "CreateBucket — …", never its model calls). A request refused at once keeps the concierge's reason on screen
+  ("X, you're up!" waits for the first step that runs), and the agent's last bubble says why (`bubbleText`, whole
+  sentences that fit, asides dropped; `failedBubble`, `src/state/watch.ts`), never only "That didn't work…" (seen 22 Nov
+  2026: a refused m5.large read as nothing happening). Proof: `cd server && npx vitest run
   test/contract.test.ts test/commands.test.ts test/service.test.ts test/approvals.test.ts test/care.test.ts`; `npx vitest
-  run tests/approval-target.test.tsx tests/builds.test.ts tests/approve-flow.test.tsx tests/ui.test.tsx tests/progress-chat.test.tsx`.
+  run tests/approval-target.test.tsx tests/builds.test.ts tests/approve-flow.test.tsx tests/ui.test.tsx tests/progress-chat.test.tsx`,
+  `npm run smoke` (`06b-task-refused`).
 - **HQ chat answers every question, one at a time** (`src/ui/ChatPanel.tsx`). The answer's bubble shows at once,
   thinking (`addUserChat`); a question asked while one is answering waits in `chatQueue` ("· next") and goes when the
   answer ends, never dropped; the agent in the HQ only points to the chat ("Answered in the chat ↓", not the answer a
