@@ -218,6 +218,74 @@ describe('inventory: the real AZ map and Region opt-ins (v2.5)', () => {
   });
 });
 
+describe('the mirror follows DescribeInstances, not the lagging listing (22 Nov 2026)', () => {
+  const ARN = (id: string, region = 'us-west-2') => `arn:aws:ec2:${region}:${ACCOUNT}:instance/${id}`;
+  const listed = (...arns: string[]) => ({ source: 'resource-explorer' as const, complete: true, items: arns.map((arn) => ({ ...serviceForArn(arn), arn, districtId: 'compute', managedByGame: false, region: arn.split(':')[3] })) });
+  const placed = (r: Resource, az: string): Resource => ({ ...r, meta: { ...r.meta, availabilityZone: az } });
+
+  it('drops a server that is shutting down or terminated (DescribeInstances keeps it for an hour)', () => {
+    const inv = listed(ARN('i-old'), ARN('i-going'));
+    const { items } = enrich(inv, snapshot([instance('i-old', 'terminated'), instance('i-going', 'shutting-down')]), 'us-west-2');
+    expect(items).toEqual([]);
+    expect(inventoryEvent({ ...inv, items }, 'us-west-2').counts).toEqual({});
+  });
+
+  it('adds a running server the listing has not caught up with, first, named from its Name tag', () => {
+    const inv = listed('arn:aws:s3:::aws-city-1-photos');
+    const { items } = enrich(inv, snapshot([placed(instance('i-new', 'running', true, 'demo'), 'us-west-2b')]), 'us-west-2');
+    expect(items[0]).toEqual({ arn: ARN('i-new'), type: 'AWS::EC2::Instance', name: 'demo', serviceId: 'ec2', districtId: 'compute', managedByGame: true, region: 'us-west-2', az: 'us-west-2b' });
+    expect(items.map((i) => i.serviceId)).toEqual(['ec2', 's3']);
+  });
+
+  it('a listed server takes its Name tag and keeps its AZ', () => {
+    const { items } = enrich(listed(ARN('i-1')), snapshot([placed(instance('i-1', 'stopped', false, 'web'), 'us-west-2a')]), 'us-west-2');
+    expect(items).toEqual([expect.objectContaining({ arn: ARN('i-1'), name: 'web', az: 'us-west-2a', managedByGame: false })]);
+  });
+
+  it('drops a listed server EC2 no longer shows only when EC2 was read in full', () => {
+    const inv = listed(ARN('i-gone'));
+    expect(enrich(inv, snapshot([]), 'us-west-2').items).toEqual([]);
+    // A failed or denied read keeps the last known list: the map is never emptied by an error.
+    expect(enrich(inv, snapshot([], { services: { ec2: 'error', dynamodb: 'ok', s3: 'ok', lambda: 'ok', rds: 'ok', apigateway: 'ok' } }), 'us-west-2').items).toHaveLength(1);
+    expect(enrich(inv, snapshot([], { services: { ec2: 'locked', dynamodb: 'ok', s3: 'ok', lambda: 'ok', rds: 'ok', apigateway: 'ok' } }), 'us-west-2').items).toHaveLength(1);
+    // At the poller's cap the snapshot isn't the whole list either.
+    const many = Array.from({ length: 200 }, (_, i) => instance(`i-${i}`, 'running'));
+    expect(enrich(inv, snapshot(many), 'us-west-2').items.filter((i) => i.arn === ARN('i-gone'))).toHaveLength(1);
+  });
+
+  it('leaves other Regions as listed (the poller reads the home Region only)', () => {
+    const { items } = enrich(listed(ARN('i-eu', 'eu-west-1')), snapshot([]), 'us-west-2');
+    expect(items).toEqual([expect.objectContaining({ arn: ARN('i-eu', 'eu-west-1'), name: 'i-eu' })]);
+  });
+
+  it('caps a Name tag at 64 characters', () => {
+    const { items } = enrich(listed(), snapshot([instance('i-long', 'running', true, 'x'.repeat(200))]), 'us-west-2');
+    expect(items[0]!.name).toHaveLength(64);
+  });
+
+  it('reconcile re-sends the mirror when a terminate and a launch keep the counts the same, with no AWS call', async () => {
+    const send = vi.fn(async (cmd: unknown) => (cmd instanceof ListIndexesCommand ? { Indexes: [{ Region: 'us-west-2', Type: 'LOCAL' }] } : cmd instanceof SearchCommand ? { Resources: [{ Arn: ARN('i-old'), Region: 'us-west-2' }] } : { AvailabilityZones: [], Regions: [] }));
+    const clients = { ec2: { send }, ec2For: () => ({ send }), explorer: { send } } as unknown as AwsClients;
+    let current = snapshot([instance('i-old', 'running', true, 'web')]);
+    const care = createCityCare({ clients, region: 'us-west-2', accountId: ACCOUNT, runner: { turn: vi.fn(), reset: () => undefined } as unknown as AgentRunner, withLock: (fn) => fn(), refresh: async () => undefined, progress: async () => null, snapshot: () => current, fixesEnabled: false });
+
+    // Nothing to rebuild before the first listing.
+    expect(care.reconcile(current)).toBeUndefined();
+    const first = (await care.refreshInventory())!;
+    expect(first.items.map((i) => i.name)).toEqual(['web']);
+
+    const calls = send.mock.calls.length;
+    current = snapshot([instance('i-old', 'terminated', true, 'web'), instance('i-new', 'running', true, 'demo')]);
+    const next = care.reconcile(current)!;
+    expect(next.counts).toEqual(first.counts);
+    expect(next.items.map((i) => i.name)).toEqual(['demo']);
+    expect(send.mock.calls.length).toBe(calls);
+    // Unchanged: nothing to send. A socket that connects now gets the rebuilt mirror.
+    expect(care.reconcile(current)).toBeUndefined();
+    expect(care.welcome()[0]).toMatchObject({ type: 'city.inventory', items: [{ name: 'demo' }] });
+  });
+});
+
 describe('city care: fixes with the player in charge', () => {
   const dynamodb = mockClient(DynamoDBClient);
   const ec2 = mockClient(EC2Client);

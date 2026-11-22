@@ -25,7 +25,7 @@ type Collector = (clients: AwsClients, accountId: string) => Promise<Resource[]>
 const tagValue = (tags: Tag[] | undefined, key: string) => tags?.find((t) => t.Key === key)?.Value;
 
 /** Listings stop here: the city shows a learner's account, not a fleet (and every poll stays cheap). */
-const MAX_PER_SERVICE = 200;
+export const MAX_PER_SERVICE = 200;
 /** At most this many per-table calls in flight: DescribeTable/ListTagsOfResource have low per-account rates. */
 const TABLE_CONCURRENCY = 5;
 /**

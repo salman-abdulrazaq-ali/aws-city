@@ -2,7 +2,7 @@ import citizensJson from '../../../shared/citizens.json' with { type: 'json' };
 import { classifyAwsError, type AwsClients } from '../aws.js';
 import type { Approvals } from '../contract/approvals.js';
 import { log } from '../log.js';
-import { enrich, inventoryEvent, readGeo, readInventory } from '../state/inventory.js';
+import { enrich, type Inventory, inventoryEvent, readGeo, readInventory } from '../state/inventory.js';
 import { forgetSetting } from '../state/poller.js';
 import type { WorldSnapshot } from '../state/model.js';
 import { LockLostError } from '../store/types.js';
@@ -50,6 +50,22 @@ export const createCityCare = (deps: {
 }) => {
   let open = new Map<string, CityFinding>();
   let inventory: CityInventoryEvent | undefined;
+  /** The last account listing (Resource Explorer or tagging) and its geo, rebuilt against each snapshot. */
+  let listing: { inv: Inventory; geo: Pick<CityInventoryEvent, 'zones' | 'regionStatus'> } | undefined;
+  const build = (l: NonNullable<typeof listing>, snapshot: WorldSnapshot | undefined) => {
+    const { items, links } = enrich(l.inv, snapshot, deps.region);
+    return inventoryEvent({ ...l.inv, items }, deps.region, undefined, links, l.geo);
+  };
+  // Which items (by ARN, name and AZ), not only how many: a terminate and a launch in one window keep the counts the
+  // same (seen 22 Nov 2026), and the map still has to change.
+  const sig = (e?: CityInventoryEvent) =>
+    JSON.stringify([e?.counts, e?.regions, e?.links?.map((l) => l.id), e?.source, e?.zones, e?.regionStatus, e?.items.map((i) => `${i.arn}|${i.name}|${i.az ?? ''}|${i.managedByGame ? 1 : 0}`).sort()]);
+  /** Keep the event for sockets that connect later; return it when it differs from what was last sent. */
+  const publish = (event: CityInventoryEvent) => {
+    const changed = sig(event) !== sig(inventory);
+    inventory = event;
+    return changed ? event : undefined;
+  };
   const ctx: FixContext = { accountId: deps.accountId };
   /** One fix per finding at a time, across every socket of this player (no duplicate approval cards). */
   const fixing = new Set<string>();
@@ -162,18 +178,24 @@ export const createCityCare = (deps: {
     welcome(): ServerEvent[] {
       return [...(inventory ? [inventory] : []), ...[...open.values()].map((finding) => ({ type: 'city.finding' as const, finding }))];
     },
-    /** Read the account's resource list; returns the event when the counts changed. */
+    /** Read the account's resource list; returns the event when the mirror changed. */
     async refreshInventory(): Promise<CityInventoryEvent | undefined> {
       const inv = await readInventory(deps.clients, deps.region);
       if (!inv) return undefined;
-      const { items, links } = enrich(inv, deps.snapshot?.() ?? undefined, deps.region);
+      const snapshot = deps.snapshot?.() ?? undefined;
       // v2.5: the real AZ map and Region opt-ins (cached a day; a Region that can't be read is left out).
-      const geo = await readGeo(deps.clients, deps.region, items);
-      const event = inventoryEvent({ ...inv, items }, deps.region, undefined, links, geo);
-      const sig = (e?: CityInventoryEvent) => JSON.stringify([e?.counts, e?.regions, e?.links?.map((l) => l.id), e?.source, e?.zones, e?.regionStatus]);
-      const changed = sig(event) !== sig(inventory);
-      inventory = event;
-      return changed ? event : undefined;
+      const geo = await readGeo(deps.clients, deps.region, enrich(inv, snapshot, deps.region).items);
+      listing = { inv, geo };
+      return publish(build(listing, snapshot));
+    },
+
+    /**
+     * After a poll that created, removed or changed a server: the mirror again from the last listing and this
+     * snapshot, with no AWS call (the listing lags by minutes; the snapshot is DescribeInstances, now). Returns the
+     * event when the mirror changed; nothing before the first listing.
+     */
+    reconcile(snapshot: WorldSnapshot): CityInventoryEvent | undefined {
+      return listing ? publish(build(listing, snapshot)) : undefined;
     },
 
     /** The finding's citizen explains it (one metered model turn, read-only tools). */
