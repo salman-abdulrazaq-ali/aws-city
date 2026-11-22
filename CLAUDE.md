@@ -772,6 +772,9 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
 
 Node 24 (`engines` `>=24` in `package.json`; proof: `npm pkg get engines.node`). 24.15+ is recommended: the launcher
 (`scripts/launcher/require-node.mjs`) stops below 24 and prints a one-line note on 24.0–24.14, which still works.
+npm before 11.12 (Node 24.9 ships 11.6) refuses the server's lockfile as out of sync, and a lockfile it writes is refused
+by npm 12, so `npm run live`'s server install (`awsTools`, `scripts/start.mjs`) falls back to one `npm install`, as
+`boot.mjs` does for the root. Proof: on Node 24.9, `npm --prefix server ci` fails (EUSAGE) and `npm --prefix server install` works.
 
 ```
 npm start         # the guided launcher: demo / real AWS / deploy (scripts/launcher/boot.mjs → scripts/start.mjs)
