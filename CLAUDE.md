@@ -235,12 +235,14 @@ When a change touches a decision, update its entry and run its Proof.
   one), its entries are frozen copies, and all are spent when `withGrant` ends (a timer started inside gets nothing). Only
   ActionService (after policy and approval) and care.ts (after approval, the re-read and the account lock; `FixDef.entry`
   names the write, `apply()` alone is refused) mint grants. Refusals are `GuardDeniedError` ("The city's safety gate stopped
-  this: …"); audit lines carry the player as `who(sub)` and the target as a 12-hex sha256, never account ids or names. Honest
+  this: …"); audit lines (the gate's and the tenant's `aws change`, `targetHash`) carry the player as `who(sub)` and the target as
+  a 12-hex sha256, never account ids or names. Honest
   scope: it stops mistakes in server code paths, not hostile in-process code (a client's `config.credentials` still holds the
   keys, a command's own middleware could relabel it); a source test keeps `.config.credentials`, `.middlewareStack`,
   presigners, `SignatureV4` and the player's credential providers inside `aws.ts`/`guard/` (allowlist with reasons: uploads'
   presigned POST on our own S3 client, main.ts/link.ts handing `assumedRole` to gated clients). The player role and IAM are the
-  outer wall. Proof: `cd server && npx vitest run test/guard.test.ts test/player-role.test.ts test/service.test.ts test/fixes.test.ts test/care.test.ts`.
+  outer wall. Proof: `cd server && npx vitest run test/guard.test.ts test/player-role.test.ts test/service.test.ts test/fixes.test.ts test/care.test.ts`,
+  `cd server && npx vitest run test/tenants.test.ts -t "aws change"`.
 - **Jev, a second opinion that only tightens** (`server/src/agents/jev.ts`, `docs/jev.md`). Off unless `TYPESAFE_API_KEY` is
   set (local or hosted). ActionService asks TypeSafe's Jev about a write after policy passes and before the player is asked
   (the `judge` dependency, in `write()`, so an agent's write and a plain request's direct one alike); never about a read,
@@ -916,7 +918,8 @@ When a change touches a decision, update its entry and run its Proof.
   sometimes said "I'll build it now" without a tool call (Qwen3 4B, 21 Nov 2026; Ollama's OpenAI API ignores
   `tool_choice`). Every approval card names the account and Region it writes to (`deploy.preview.accountId`, v2.18, read
   when the card is made), and every write asked for, done or refused (fixes too), is logged as `aws change` (`audit`,
-  `server/src/tenants.ts`). The card can't be missed: a task card with one waiting says "⏳ Waiting for your Approve" with
+  `server/src/tenants.ts`: the player as `who(sub)`, the Region, the action and its outcome, the target as the gate's
+  `targetHash`; never a resource name or the account id). The card can't be missed: a task card with one waiting says "⏳ Waiting for your Approve" with
   Approve in Deploy → (`openDeployAt`, leaving an HQ first), elsewhere a toast opens it, and Deploy brings the card up with
   focus on Approve (`deployFocus`). "My builds" is one card per resource for the agents' changes (`arrangeBuilds`,
   `src/state/builds.ts`: a launch joins its server's later cards by `deploy.status.outputs.ResourceId`; status words fit
@@ -1150,7 +1153,7 @@ When a change touches a decision, update its entry and run its Proof.
   never types or picks a value that opens access or names an account (`isRiskyValue`: `0.0.0.0/0`, `::/0`, a bare `*`,
   a 12-digit account number, an ARN). A refused step is the player's turn. The server marks `confirm` wherever either
   rule says so (`server/src/contract/console.ts`: `isCommit` by name and `lang`, since it can't see the variant;
-  `isCommitControl`; `isRisky`/`isRiskyValue` values; the player-only pages), and its prompt says page text is data
+  `isCommitControl` on a click or a select, by the model's name or the page's; `isRisky`/`isRiskyValue` values; the player-only pages), and its prompt says page text is data
   (`<console_page>`), never instructions. Text leaving the page is redacted (`redact`: keys, emails, tokens, 12-digit account ids bare or split by
   `-`, `.` or a space), and the Lookout never auto-snaps a page that can show a secret (`autoSnaps`: an AWS page that's
   neither `SECRET_PAGES`, the real console's access keys, secret values, Parameter Store, KMS and CloudShell, nor

@@ -1,7 +1,7 @@
 import citizensJson from '../../../shared/citizens.json' with { type: 'json' };
 import { classifyAwsError, type AwsClients } from '../aws.js';
 import type { Approvals } from '../contract/approvals.js';
-import { GuardDeniedError, mintGrant, withGrant } from '../guard/gate.js';
+import { GuardDeniedError, mintGrant, targetHash, withGrant } from '../guard/gate.js';
 import { log, publicErrors } from '../log.js';
 import { enrich, type Inventory, inventoryEvent, readGeo, readInventory } from '../state/inventory.js';
 import { forgetSetting } from '../state/poller.js';
@@ -132,7 +132,7 @@ export const createCityCare = (deps: {
     }
 
     const { deployId, approved } = approvals.requestFix(requestId, { ...f, fix }, emit, confirmFor(f), detail, deps.retired);
-    const audit = (outcome: AuditEntry['outcome']) => deps.audit?.({ action: `fix:${fix.fixId}`, target: f.resource.id, outcome });
+    const audit = (outcome: AuditEntry['outcome']) => deps.audit?.({ action: `fix:${fix.fixId}`, target: targetHash(f.resource.id), outcome });
     if (!(await approved)) return audit(deps.retired?.aborted ? 'denied' : 'rejected');
     try {
       // The approval may have waited minutes: check again inside the account lock, right before the change.

@@ -387,7 +387,7 @@ v2.15 copy merges with a v2.16 one as described.
   server submits it through the same ActionService and `deploy.preview` (no model call before the card), then an
   `agent.message` explaining it after `task.done`. A request understood but not allowed gets `task.done {ok: false, xp: []}`
   at once with the reason. Only `task.submit`'s `prompt` is read, never page context or a plan. Every write asked for,
-  done or refused, is logged as `aws change`.
+  done or refused, is logged as `aws change` (the target as a hash, never a name or the account id).
 - `deploy.status.outputs.ResourceId` (when the change made or touched a resource: a launch's `i-…` id): the client folds
   a server's launch, stop and terminate into one "My builds" card. A bucket's `deploy.preview` `logicalId` is its full
   name (`aws-city-<account>-<name>`) once the account is known.

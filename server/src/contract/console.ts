@@ -235,8 +235,10 @@ export const createConsoleCopilot = (deps: { llm: Llm; now?: () => number; /** S
     // …and so is the real console's commit button (isCommit; by the page's own name for that id, or the model's), and on
     // a console that isn't in English (the snapshot's lang) every button press.
     if ((step.action === 'click' || step.action === 'select') && step.target && [step.target.name, item?.name].some((n) => n !== undefined && isCommit(snapshot.url, item?.role ?? 'button', n, false, snapshot.lang))) step.risk = 'confirm';
-    // …and anything that commits a change on any page, or a value that opens access or names an account (risk.ts).
-    if (step.action === 'click' && step.target && isCommitControl(item?.role ?? 'button', step.target.name)) step.risk = 'confirm';
+    // …and anything that commits a change on any page (a click, or a select aimed at a button, link or menu item, which
+    // ends in the same press; a real dropdown is a combobox, so its picks stay), by either name, or a value that opens
+    // access or names an account (risk.ts).
+    if ((step.action === 'click' || step.action === 'select') && step.target && [step.target.name, item?.name].some((n) => n !== undefined && isCommitControl(item?.role ?? 'button', n))) step.risk = 'confirm';
     if ((step.action === 'select' || step.action === 'type') && isRiskyValue(step.value ?? '')) step.risk = 'confirm';
     const index = t.index++;
     t.history.push(`${index + 1}. ${step.action} ${step.target?.name ?? ''}${step.target?.id ? ` [${step.target.id}]` : ''} — ${step.say}`);

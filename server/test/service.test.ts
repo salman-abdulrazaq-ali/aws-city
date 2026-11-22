@@ -4,6 +4,7 @@ import type { AwsClients } from '../src/aws.js';
 import type { Poller } from '../src/state/poller.js';
 import type { Judgement, WriteReview } from '../src/agents/jev.js';
 import type { ApprovalRequest } from '../src/agents/service.js';
+import { targetHash } from '../src/guard/gate.js';
 import { instance, snapshot } from './fixtures.js';
 
 const { executeAction } = vi.hoisted(() => {
@@ -120,12 +121,19 @@ describe('action service', () => {
     await service.submit('launch_instance', { name: 'house' }); // no Approve button
     await service.submit('describe_resource', { id: mine.id });
     await service.submit('create_bucket', { suffix: 'X' }, { approve: async () => true });
+    const bucket = 'aws-city-123456789012-photos'; // not the city's: refused, and its name carries the account id
+    await service.submit('delete_bucket', { name: bucket }, { approve: async () => true });
+    // The target as the gate hashes it (its audit line beside this one): never the name, never an account id.
     expect(audit.mock.calls.map(([e]) => [e.action, e.target, e.outcome])).toEqual([
-      ['create_table', 'city-quest', 'done'],
-      ['terminate_instance', mine.id, 'rejected'],
-      ['stop_instance', 'i-00000000000000bad', 'denied'],
-      ['launch_instance', 'house', 'denied'],
+      ['create_table', targetHash('city-quest'), 'done'],
+      ['terminate_instance', targetHash(mine.id), 'rejected'],
+      ['stop_instance', targetHash('i-00000000000000bad'), 'denied'],
+      ['launch_instance', targetHash('house'), 'denied'],
+      ['delete_bucket', targetHash(bucket), 'denied'],
     ]);
+    const logged = JSON.stringify(audit.mock.calls);
+    expect(logged).not.toMatch(/\d{12}/);
+    for (const raw of ['city-quest', mine.id, 'i-00000000000000bad', '"house"', bucket]) expect(logged).not.toContain(raw);
   });
 });
 

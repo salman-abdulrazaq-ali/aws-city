@@ -7,7 +7,7 @@ import { checkAction, describeAction } from './policy.js';
 import { memoryLocks } from '../store/local.js';
 import type { AccountLocks } from '../store/types.js';
 import { log } from '../log.js';
-import { withGrant } from '../guard/gate.js';
+import { targetHash, withGrant } from '../guard/gate.js';
 import { actionGrant } from '../guard/grants.js';
 import { BLOCKED_REASON, type Judge, type Judgement, UNCHECKED_REASON } from './jev.js';
 
@@ -44,10 +44,11 @@ export interface ApprovalRequest {
 /** Asks the player (contract v2 deploy.preview); resolves true only on an explicit deploy.approve. */
 export type Approve = (req: ApprovalRequest) => Promise<boolean>;
 
-/** One AWS change asked for, done or refused (the tenant adds who, which account and which Region, and logs it). */
+/** One AWS change asked for, done or refused (the tenant adds who, as who(sub), and the Region, and logs it). */
 export interface AuditEntry {
   /** An action name (create_bucket) or a citizen's fix (fix:s3-block-public-access). */
   action: string;
+  /** What it changes, as the gate's `targetHash` of its name or id: never the name itself (bucket names carry the account id). */
   target: string;
   outcome: 'done' | 'failed' | 'denied' | 'rejected';
 }
@@ -161,7 +162,7 @@ export const createActionService = (deps: {
       const outcome = await write(action, opts.approve, opts.intent);
       deps.audit?.({
         action: action.type,
-        target: actionTarget(action),
+        target: targetHash(actionTarget(action)),
         outcome: outcome.status === 'denied' && outcome.reason === REJECTED_REASON ? 'rejected' : (outcome.status as 'done' | 'failed' | 'denied'),
       });
       return outcome;

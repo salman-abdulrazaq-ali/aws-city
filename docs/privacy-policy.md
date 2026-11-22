@@ -92,7 +92,9 @@ Neither one deletes what the game built in your AWS account: take those down fir
 - **Maps:** the city's streets (from OpenStreetMap) are bundled with the extension. It makes no map requests, so no map
   service learns where you are or which city you're playing.
 - **Server logs** record errors and counts, never your questions, page contents, tokens or keys;
-  players appear only as a one-way hash. Logs are kept for 30 days.
+  players appear only as a one-way hash. Each change asked for in your linked AWS account (made, refused or failed) is
+  logged with its kind, Region and outcome; the resource it touches appears only as a one-way hash, never its name or
+  your AWS account id. Logs are kept for 30 days.
 
 ## Network and security logs (your IP address)
 

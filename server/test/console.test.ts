@@ -237,6 +237,28 @@ describe('Console Copilot — hardening (deterministic, whatever the model says)
     expect(await first(practice, click('x', 'Next'))).toMatchObject({ risk: 'safe' });
   });
 
+  it('a select aimed at a commit control is the learner’s on any page, by the page’s name or the model’s; a real dropdown’s pick stays the Copilot’s', async () => {
+    const practice = {
+      url: 'chrome-extension://abcdefghijklmnop/practice.html#/s3/create',
+      title: 'Create bucket',
+      items: [
+        { id: 'e', role: 'button', name: 'Add tag', context: 'Tags' },
+        { id: 'k', role: 'link', name: 'Create bucket' },
+        { id: 'd', role: 'combobox', name: 'Update frequency' },
+      ],
+    };
+    const select = (id: string, name: string, value = 'x') => ({ action: 'select', target: { id, name }, value, say: 'Choosing it', risk: 'safe' });
+    // The practice console has no form-commit rule (isCommit), so only isCommitControl catches these: a select on
+    // anything that isn't a dropdown ends in the same press as a click.
+    expect(await first(practice, select('e', 'Add tag'))).toMatchObject({ risk: 'confirm' });
+    expect(await first(practice, select('k', 'Create bucket'))).toMatchObject({ risk: 'confirm' });
+    // The page's own name for that id decides, however the model names it (a click and a select alike).
+    expect(await first(practice, select('e', 'Tags'))).toMatchObject({ risk: 'confirm' });
+    expect(await first(practice, { action: 'click', target: { id: 'e', name: 'Tags' }, say: 'Pressing it', risk: 'safe' })).toMatchObject({ risk: 'confirm' });
+    // A real dropdown (the snapshot's combobox) picks a value: that stays the Copilot's, whatever its label says.
+    expect(await first(practice, select('d', 'Update frequency', 'Daily'))).toMatchObject({ risk: 'safe' });
+  });
+
   it('on a console that isn’t in English (or doesn’t say), every button or menu item press goes back to the learner', async () => {
     const de = {
       url: 'https://eu-central-1.console.aws.amazon.com/ec2/home?region=eu-central-1#Instances:',

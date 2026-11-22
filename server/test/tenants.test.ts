@@ -7,6 +7,8 @@ import { type AwsClients, clientsFor, REFUSAL_WINDOW_MS } from '../src/aws.js';
 import { loadConfig } from '../src/config.js';
 import { createApprovals } from '../src/contract/approvals.js';
 import { createUploadStore } from '../src/contract/uploads.js';
+import { targetHash } from '../src/guard/gate.js';
+import { log, who } from '../src/log.js';
 import { BROKEN_AFTER, emptyWorld } from '../src/tenants.js';
 import { localStores } from '../src/store/local.js';
 import { today } from '../src/store/types.js';
@@ -390,11 +392,31 @@ describe('resource.remove (v2.19): no model, the ActionService, the gate and the
     const preview = events.find((e) => e.type === 'deploy.preview') as Extract<ServerEvent, { type: 'deploy.preview' }>;
     expect(preview).toMatchObject({ requestId: 'rm1', templateId: 'delete_table', changes: [expect.objectContaining({ action: 'Remove', logicalId: 'city-quest' })] });
     expect(writes()).toEqual([]); // nothing goes out before the player says yes
-    approvals.answer(preview.deployId, true);
+    approvals.answer(preview.deployId, true, preview.confirmText); // a take-down wants its name typed
     await job;
     expect(writes()).toEqual(['DeleteTable']);
     expect(events.filter((e) => e.type === 'deploy.status').map((e) => (e as { status: string }).status)).toEqual(['creating', 'complete']);
     tenants.closeAll();
+  });
+
+  it('its "aws change" audit line follows the gate’s rule: the player as who(sub), the target as its hash, no account id', async () => {
+    const info = vi.spyOn(log, 'info');
+    try {
+      const { tenants, tenant, events, emit, approvals } = await setupRemove();
+      const job = tenant.remove({ requestId: 'rm6', kind: 'table', id: 'city-quest' }, emit, approvals);
+      await vi.waitFor(() => expect(events.some((e) => e.type === 'deploy.preview')).toBe(true));
+      const preview = events.find((e) => e.type === 'deploy.preview') as Extract<ServerEvent, { type: 'deploy.preview' }>;
+      approvals.answer(preview.deployId, true, preview.confirmText);
+      await job;
+      const lines = info.mock.calls.filter(([msg]) => msg === 'aws change');
+      expect(lines).toEqual([['aws change', { who: who('u1'), region: 'us-west-2', action: 'delete_table', target: targetHash('city-quest'), outcome: 'done' }]]);
+      const logged = JSON.stringify(lines);
+      expect(logged).not.toMatch(/\d{12}/);
+      expect(logged).not.toContain('city-quest');
+      tenants.closeAll();
+    } finally {
+      info.mockRestore();
+    }
   });
 
   it('reject: nothing sent, and the preview says so', async () => {
@@ -414,7 +436,7 @@ describe('resource.remove (v2.19): no model, the ActionService, the gate and the
     const job = tenant.remove({ requestId: 'rm5', kind: 'table', id: 'city-quest' }, emit, approvals);
     await vi.waitFor(() => expect(events.some((e) => e.type === 'deploy.preview')).toBe(true));
     await tenant.deleteMe(); // the account link is gone (as after account.unlink) while the card was open
-    approvals.answer((events.find((e) => e.type === 'deploy.preview') as { deployId: string }).deployId, true);
+    approvals.answer((events.find((e) => e.type === 'deploy.preview') as { deployId: string }).deployId, true, 'city-quest');
     await job;
     expect(writes()).toEqual([]);
     // The card was cancelled the moment the account went away: its own deploy.status says why, and nothing else follows.
@@ -529,7 +551,7 @@ describe('a disconnected or changed account changes nothing (v2.19)', () => {
     const job = tenant.remove({ requestId: 'rm1', kind: 'table', id: 'city-quest' }, (e) => events.push(e), approvals);
     await vi.waitFor(() => expect(previews(events)).toHaveLength(1));
     await elsewhere.unlink('r-unlink', () => {}); // the other task: this one's world doesn't know yet
-    approvals.answer(previews(events)[0]!.deployId, true);
+    approvals.answer(previews(events)[0]!.deployId, true, previews(events)[0]!.confirmText);
     await job;
     expect(writes()).toEqual([]);
     expect(statusOf(events, previews(events)[0]!.deployId)).toMatchObject({ status: 'failed', message: expect.stringMatching(/disconnected or changed meanwhile/) });
@@ -689,7 +711,7 @@ describe('a disconnected or changed account changes nothing (v2.19)', () => {
     const release = hold();
     const job = tenant.remove({ requestId: 'rm1', kind: 'table', id: 'city-quest' }, (e) => events.push(e), approvals);
     await vi.waitFor(() => expect(previews(events)).toHaveLength(1));
-    approvals.answer(previews(events)[0]!.deployId, true);
+    approvals.answer(previews(events)[0]!.deployId, true, previews(events)[0]!.confirmText);
     await vi.waitFor(() => expect(writes()).toEqual(['DeleteTable'])); // in flight
     let unlinked = false;
     const unlinking = tenant.unlink('r-unlink', () => {}).then(() => void (unlinked = true));

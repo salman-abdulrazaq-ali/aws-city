@@ -364,8 +364,9 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         },
       });
       const snapshot = async () => poller.current() ?? poller.refresh();
-      // Every AWS change asked for, done or refused: who (hashed), where and what. Server logs are kept 30 days.
-      const audit: Audit = (e) => log.info('aws change', { who: who(sub), account: aws.accountId, region: aws.region, ...e });
+      // Every AWS change asked for, done or refused: who (hashed), the Region, the action and its outcome. Like the gate's
+      // lines, the target is a hash and the account id is never written (resource names carry it). Kept 30 days.
+      const audit: Audit = (e) => log.info('aws change', { who: who(sub), region: aws.region, ...e });
       const actions = createActionService({ clients: aws.clients, poller, region: aws.region, locks, accountKey: () => aws.accountId, judge, live, retired: retired.signal, audit });
       const runnerDeps = { llm, actions, snapshot, knowledge: deps.knowledge };
       const strands = createStrandsRunner(runnerDeps);

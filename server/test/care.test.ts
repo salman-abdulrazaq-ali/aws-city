@@ -8,6 +8,7 @@ import { citizenLevel, createCityCare } from '../src/agents/care.js';
 import { diffFindings, findingId, findingsFor } from '../src/agents/findings.js';
 import type { AgentRunner } from '../src/agents/runner.js';
 import type { AwsClients } from '../src/aws.js';
+import { targetHash } from '../src/guard/gate.js';
 import { setPublicErrors } from '../src/log.js';
 import { RETIRED_REASON } from '../src/agents/service.js';
 import { createApprovals } from '../src/contract/approvals.js';
@@ -357,7 +358,9 @@ describe('city care: fixes with the player in charge', () => {
     expect(dynamodb.commandCalls(UpdateContinuousBackupsCommand)).toHaveLength(1);
     expect(resolved(events, pitr)).toBe(true);
     expect(events).toContainEqual(expect.objectContaining({ type: 'deploy.status', status: 'complete' }));
-    expect(audit).toHaveBeenCalledWith({ action: `fix:${pitr.fix!.fixId}`, target: pitr.resource.id, outcome: 'done' });
+    // The target as the gate hashes it, never the resource's name (names can carry the account id).
+    expect(audit).toHaveBeenCalledWith({ action: `fix:${pitr.fix!.fixId}`, target: targetHash(pitr.resource.id), outcome: 'done' });
+    expect(JSON.stringify(audit.mock.calls)).not.toContain(pitr.resource.id);
   });
 
   it('a fix the player says no to changes nothing and is audited as rejected', async () => {
@@ -367,7 +370,7 @@ describe('city care: fixes with the player in charge', () => {
     approvals.answer(preview(events)!.deployId, false);
     await job;
     expect(dynamodb.commandCalls(UpdateContinuousBackupsCommand)).toHaveLength(0);
-    expect(audit.mock.calls).toEqual([[{ action: `fix:${pitr.fix!.fixId}`, target: pitr.resource.id, outcome: 'rejected' }]]);
+    expect(audit.mock.calls).toEqual([[{ action: `fix:${pitr.fix!.fixId}`, target: targetHash(pitr.resource.id), outcome: 'rejected' }]]);
   });
 
   it('re-checks after the approval, inside the lock, and never runs the same fix twice at once', async () => {

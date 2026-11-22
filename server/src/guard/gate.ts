@@ -149,18 +149,22 @@ export const decide = (req: GateRequest, ctx: GateContext, grant: Grant | undefi
   return { allow: true, kind: rule.kind, input, target };
 };
 
-/** A short hash of a target for the audit log: never the raw name (bucket names carry the account id). */
-const targetHash = (target: string | undefined) => (target === undefined ? undefined : createHash('sha256').update(target).digest('hex').slice(0, 12));
+/**
+ * A short hash of a target for the audit logs (this gate's and the tenant's `aws change` line): never the raw name
+ * (bucket names carry the account id).
+ */
+export const targetHash = (target: string) => createHash('sha256').update(target).digest('hex').slice(0, 12);
 
 const audit = (req: GateRequest, d: Decision, grant: Grant | undefined, ctx: GateContext) => {
   if (d.allow && d.kind === 'read') return;
+  const target = 'target' in d ? d.target : undefined;
   const fields = {
     decision: d.allow ? 'allow' : 'refuse',
     player: ctx.player ?? 'unknown',
     client: req.client,
     command: req.command,
     kind: d.kind ?? 'unlisted',
-    target: targetHash('target' in d ? d.target : undefined),
+    target: target === undefined ? undefined : targetHash(target),
     grant: d.allow && d.kind === 'probe' ? 'none' : (grant?.id ?? 'none'),
     reason: d.allow ? (d.kind === 'probe' ? 'dry run' : grant?.reason) : d.reason,
     detail: d.allow ? undefined : d.detail,
