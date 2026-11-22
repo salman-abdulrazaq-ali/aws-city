@@ -511,7 +511,12 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   its key), Hint never stops at a placeholder (`hintWord`: asked again there it types an example name), taught errors with
   the real CLI text; nothing touches AWS) or AWS CloudShell, where `workshop.verify` checks it with a
   read-only look at the poller's snapshot (`server/src/workshops/checks.ts`: a fixed registry, no SDK calls of its own, no
-  new IAM). Pasted errors match the step's known ones first, then go to the building's agent as quoted, redacted data.
+  new IAM). For real, each name a command needs is typed once in a box that fills both the command and the check;
+  `<region>` is the linked account's Region, and optional parts are kept once filled (`commandFor`,
+  `src/world/workshops.ts`), so S3 keeps `LocationConstraint` outside us-east-1 and Copy waits until nothing is left as
+  `<x>` (seen 22 Nov 2026: Oregon got `--bucket <bucket>` with no constraint, and CloudShell refused it). Pasted errors
+  match the step's known ones first, then go to the building's agent as quoted, redacted data, and its answer shows under
+  the step, not only in the HQ chat.
   Steps pay stars once per mode, ever (`src/learning/workshopRewards.ts`, real > practice; no daily ledger, so a
   workshop done in one sitting pays in full). The terminal helps like a shell: Tab finishes a word, ↑ recalls lines,
   💡 Hint types the next word for −1⭐ on that step (a paying step still pays one), and Fill my names swaps `<table>` for

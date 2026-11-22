@@ -11,7 +11,7 @@ import { useCity } from '@/state/store';
 import { questById } from '@/world/content';
 import { placeFor } from '@/world/places';
 import { serviceById } from '@/world/taxonomy';
-import { isChecked, terminalStep, workshopById, WORKSHOPS, type Workshop as WorkshopDef, type WorkshopStep } from '@/world/workshops';
+import { commandFor, isChecked, placeholdersIn, terminalStep, workshopById, WORKSHOPS, type Workshop as WorkshopDef, type WorkshopStep } from '@/world/workshops';
 import { AwsIcon } from './AwsIcon';
 import { feel, useCopy } from './feedback';
 import { GrowLine } from './Flashcards';
@@ -28,7 +28,6 @@ function questsWaitingOn(progress: Progress, workshopId: string): string[] {
     return step?.kind === 'workshop' && step.workshopId === workshopId ? [id] : [];
   });
 }
-const placeholders = (cli = '') => [...new Set([...cli.matchAll(/<([a-z0-9-]+)>/gi)].map((m) => m[1]))];
 
 /**
  * A hands-on workshop, step by step: practise each command in the simulated terminal, or run it for real in AWS
@@ -226,7 +225,10 @@ function StepView(props: {
   const term = terminalStep(step);
   // The check reads only the name it looks for (the table, the bucket): the form asks for that one, filled in already.
   const asks = isChecked(step) ? [step.verify.value] : [];
-  const [form, setForm] = useState<Record<string, string>>(() => Object.fromEntries(asks.map((n) => [n, names[n] ?? ''])));
+  // For real, the Region is the linked account's (the city checks that Region); every other name is typed once, below.
+  const linkedRegion = useCity((s) => s.account.region);
+  const typed = placeholdersIn(step.cli).filter((n) => n !== 'region');
+  const [form, setForm] = useState<Record<string, string>>(() => Object.fromEntries([...new Set([...typed, ...asks])].map((n) => [n, names[n] ?? ''])));
   const [copied, copyText] = useCopy();
   const remember = (patch: { names?: Record<string, string>; line?: string }) => useCity.getState().rememberWorkshop(w.id, patch);
   const pass = (m: Mode, typed: Record<string, string> = {}, hints = 0) => {
@@ -240,18 +242,12 @@ function StepView(props: {
   useEffect(() => {
     if (answered && !check?.ok) feel.bad();
   }, [answered, check?.ok]);
-  // Shown and copied without the optional parts (`[--region <region>]`): the command as you'd type it.
-  const filled = useMemo(
-    () =>
-      (step.cli ?? '')
-        .replace(/\[[^\]]*\]/g, '')
-        .replace(/<([a-z0-9-]+)>/gi, (m, k: string) => names[k] || m)
-        .replace(/\s+/g, ' ')
-        .trim(),
-    [step.cli, names],
+  // The command as you'd type it. Practice: without the optional parts (the terminal takes either). For real: with the
+  // optional parts the Region needs (S3's LocationConstraint outside us-east-1), and the names typed in the boxes.
+  const { text: filled, unfilled } = useMemo(
+    () => commandFor(step.cli ?? '', realHere ? { ...names, ...form, ...(linkedRegion ? { region: linkedRegion } : {}) } : names, realHere),
+    [step.cli, names, form, realHere, linkedRegion],
   );
-  // Placeholders with no name typed yet in this workshop stay as `<x>`, and the player is told to swap them.
-  const unfilled = placeholders(filled);
   const g = growthOf(progress, w.serviceId, region);
   return (
     <section className="workshop-step" aria-label={step.title}>
@@ -277,6 +273,16 @@ function StepView(props: {
           <Plain text={step.body} />
         </p>
       )}
+      {step.cli && realHere && typed.length > 0 && (
+        <div className="workshop-names">
+          {typed.map((n) => (
+            <label key={n}>
+              <span className="label">{n === 'bucket' || n === 'table' || n === 'function' ? `Your ${n} name` : `Your ${n}`}</span>
+              <input value={form[n] ?? ''} onChange={(e) => setForm((v) => ({ ...v, [n]: e.target.value }))} spellCheck={false} autoCapitalize="off" placeholder={n} />
+            </label>
+          ))}
+        </div>
+      )}
       {step.cli && (
         <div className="code-row">
           {/* A long command wraps and scrolls in its box; the keyboard can reach it to scroll (axe scrollable-region-focusable). */}
@@ -284,20 +290,26 @@ function StepView(props: {
           <code className="workshop-cmd" tabIndex={0}>
             {filled}
           </code>
-          <button className="btn tiny" onClick={() => copyText(filled)}>
+          <button
+            className="btn tiny"
+            disabled={realHere && unfilled.length > 0}
+            title={realHere && unfilled.length > 0 ? 'Type the names above first' : undefined}
+            onClick={() => (realHere && remember({ names: form }), copyText(filled))}
+          >
             {copied ? 'Copied' : 'Copy'}
           </button>
         </div>
       )}
       {step.cli && unfilled.length > 0 && (
         <p className="muted small">
-          Replace {unfilled.map((n, i) => (
+          {realHere ? 'Type' : 'Replace'}{' '}
+          {unfilled.map((n, i) => (
             <span key={n}>
               {i > 0 && ', '}
               <code>{`<${n}>`}</code>
             </span>
           ))}{' '}
-          before running it.
+          {realHere ? 'in the boxes above, then copy it.' : 'before running it.'}
         </p>
       )}
       {step.consolePath && (
@@ -360,13 +372,16 @@ function StepView(props: {
                 verifyWorkshopStep(w.id, step.id, form);
               }}
             >
-              {asks.map((n) => (
-                <label key={n}>
-                  <span className="label">The {n} name you used</span>
-                  <input value={form[n] ?? ''} onChange={(e) => setForm((v) => ({ ...v, [n]: e.target.value }))} spellCheck={false} autoCapitalize="off" required />
-                </label>
-              ))}
-              <button className="btn primary" disabled={check?.pending}>
+              {/* A name already typed in the box above the command isn't asked twice (the same value). */}
+              {asks
+                .filter((n) => !typed.includes(n))
+                .map((n) => (
+                  <label key={n}>
+                    <span className="label">The {n} name you used</span>
+                    <input value={form[n] ?? ''} onChange={(e) => setForm((v) => ({ ...v, [n]: e.target.value }))} spellCheck={false} autoCapitalize="off" required />
+                  </label>
+                ))}
+              <button className="btn primary" disabled={check?.pending || asks.some((n) => !form[n]?.trim())}>
                 {check?.pending ? 'Checking…' : 'Check my account'}
               </button>
               {answered && <p className={check.ok ? 'ok-note' : 'muted'}>{check.ok ? `✓ ${check.detail}` : check.detail}</p>}
@@ -398,8 +413,10 @@ function StepView(props: {
 function ErrorHelp({ w, errors }: { w: WorkshopDef; errors?: TerminalError[] }) {
   const [text, setText] = useState('');
   const [known, setKnown] = useState<TerminalError | null>();
-  const [asked, setAsked] = useState(false);
+  const [asked, setAsked] = useState<{ districtId: string; requestId: string }>();
   const agent = placeFor(w.serviceId)?.agentName.split(' the ')[0] ?? 'the agent';
+  // The agent's answer, here under the step (seen 22 Nov 2026: it went only to the HQ chat, and the player was lost).
+  const answer = useCity((s) => (asked ? s.chats[asked.districtId]?.find((m) => m.id === `a-${asked.requestId}`) : undefined));
   const help = () => {
     const t = text.trim();
     if (!t) return;
@@ -411,8 +428,8 @@ function ErrorHelp({ w, errors }: { w: WorkshopDef; errors?: TerminalError[] }) 
     // The pasted text is data for the agent, not instructions: quoted, trimmed, with keys and emails taken out, and
     // no < or > so it can't close the <error> fence.
     const clean = redact(t).replace(/[<>]/g, ' ').slice(0, 1200);
-    askDistrict(svc.districtId, `I'm doing the "${w.title}" workshop and got this error. What does it mean and how do I fix it?\n<error>\n${clean}\n</error>`, `I got an error in ${w.title}`);
-    setAsked(true);
+    const requestId = askDistrict(svc.districtId, `I'm doing the "${w.title}" workshop and got this error. What does it mean and how do I fix it?\n<error>\n${clean}\n</error>`, `I got an error in ${w.title}`);
+    setAsked(requestId ? { districtId: svc.districtId, requestId } : undefined);
     feel.send();
   };
   return (
@@ -427,7 +444,17 @@ function ErrorHelp({ w, errors }: { w: WorkshopDef; errors?: TerminalError[] }) 
           💡 <Plain text={known.explain} /> <b>{known.fix}</b>
         </p>
       )}
-      {known === null && asked && <p className="muted">I've asked {agent}. The answer comes up in the Feed.</p>}
+      {known === null && asked && (
+        <div className="workshop-answer" aria-live="polite">
+          {!answer || (answer.pending && !answer.text) ? (
+            <p className="muted">💭 {agent} is looking at it… this can take up to a minute.</p>
+          ) : (
+            <p>
+              <b>{agent}:</b> <Plain text={answer.text} />
+            </p>
+          )}
+        </div>
+      )}
     </details>
   );
 }

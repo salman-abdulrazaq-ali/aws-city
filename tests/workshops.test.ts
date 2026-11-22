@@ -5,7 +5,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { run, tokenize } from '@/learning/terminal';
 import { honestMode, PRACTICE_STEP_XP, REAL_STEP_XP, stepReward } from '@/learning/workshopRewards';
-import { LICENSES, WORKSHOPS, isChecked, isWorkshopUrl, terminalStep } from '@/world/workshops';
+import { LICENSES, WORKSHOPS, isChecked, isWorkshopUrl, terminalStep, commandFor, placeholdersIn } from '@/world/workshops';
 import { SERVICES } from '@/world/taxonomy';
 import conference from '../shared/conference.json' with { type: 'json' };
 
@@ -145,5 +145,21 @@ describe('workshops', () => {
     expect(stepReward(undefined, 'a', 'real', 2)).toBe(REAL_STEP_XP - 2);
     expect(honestMode('real', true)).toBe('practice');
     expect(honestMode('real', false)).toBe('real');
+  });
+});
+
+describe('commandFor: the command as typed (practice) or run (real AWS)', () => {
+  const S3 = 'aws s3api create-bucket --bucket <bucket> [--create-bucket-configuration LocationConstraint=<region>]';
+  it('for real, keeps an optional part once its names are filled: S3 needs its Region outside us-east-1', () => {
+    expect(commandFor(S3, { bucket: 'b1', region: 'us-west-2' }, true)).toEqual({ text: 'aws s3api create-bucket --bucket b1 --create-bucket-configuration LocationConstraint=us-west-2', unfilled: [] });
+    expect(commandFor(S3, { bucket: 'b1', region: 'us-east-1' }, true)).toEqual({ text: 'aws s3api create-bucket --bucket b1', unfilled: [] });
+  });
+  it('a name not typed yet stays as <x> and is listed; an optional part with a gap stays out', () => {
+    expect(commandFor(S3, { region: 'eu-west-2' }, true)).toEqual({ text: 'aws s3api create-bucket --bucket <bucket> --create-bucket-configuration LocationConstraint=eu-west-2', unfilled: ['bucket'] });
+    expect(commandFor(S3, { bucket: 'b1' }, true)).toEqual({ text: 'aws s3api create-bucket --bucket b1', unfilled: [] });
+  });
+  it('practice drops the optional parts, as before', () => {
+    expect(commandFor(S3, { bucket: 'b1', region: 'us-west-2' }, false).text).toBe('aws s3api create-bucket --bucket b1');
+    expect(placeholdersIn(S3)).toEqual(['bucket', 'region']);
   });
 });
