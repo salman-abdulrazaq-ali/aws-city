@@ -583,14 +583,21 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   `planForAgent`, `server/src/contract/orchestrator.ts`: the concierge reads page context, which anyone can word), and
   a plan step that changes AWS (`isActionStep`: its first verb) but that no tool call made shows `failed`, "not done: no
   change was made", and the task isn't ok; only explanation steps walk through as done. A plain request in the player's
-  own words ("Create a bucket called holiday-123", "Stop i-0123…": `parseCommand`, `server/src/agents/commands.ts`) that
-  the agent's turn made no tool call for is submitted by the server through the same ActionService and approval card,
-  when that agent owns the action (`directRequest`): only `task.submit`'s prompt is read, never page context or the plan,
-  never after a refusal; a small model sometimes says "I'll build it now" and doesn't (Qwen3 4B, 21 Nov 2026; Ollama's
-  OpenAI API ignores `tool_choice`). Every approval card names the account and Region it writes to (`deploy.preview.accountId`,
-  v2.18, read when the card is made), and every write asked for, done or refused (fixes too), is logged as `aws change`
-  (`audit`, `server/src/tenants.ts`). Proof: `cd server && npx vitest run test/contract.test.ts test/commands.test.ts
-  test/service.test.ts test/approvals.test.ts test/care.test.ts`; `npx vitest run tests/approval-target.test.tsx`.
+  own words ("Create a bucket called holiday-123", "Terminate i-0123…": `parseCommand`, `server/src/agents/commands.ts`)
+  skips the model: its own agent (`ownerOf`) walks there and the server submits it through the same ActionService and
+  approval card at once (`direct`, `server/src/contract/orchestrator.ts`), then the agent explains it in a few words
+  after `task.done`; a request understood but not allowed (an m5.large) is answered at once with why (`ok: false`). Only
+  `task.submit`'s prompt is read, never page context or a plan; a small CPU model took 1–3 minutes before the card and
+  sometimes said "I'll build it now" without a tool call (Qwen3 4B, 21 Nov 2026; Ollama's OpenAI API ignores
+  `tool_choice`). Every approval card names the account and Region it writes to (`deploy.preview.accountId`, v2.18, read
+  when the card is made), and every write asked for, done or refused (fixes too), is logged as `aws change` (`audit`,
+  `server/src/tenants.ts`). The card can't be missed: a task card with one waiting says "⏳ Waiting for your Approve" with
+  Approve in Deploy → (`openDeployAt`, leaving an HQ first), elsewhere a toast opens it, and Deploy brings the card up with
+  focus on Approve (`deployFocus`). "My builds" is one card per resource for the agents' changes (`arrangeBuilds`,
+  `src/state/builds.ts`: a launch joins its server's later cards by `deploy.status.outputs.ResourceId`; status words fit
+  the action; Tear down only while it exists, sent as a plain request). Proof: `cd server && npx vitest run
+  test/contract.test.ts test/commands.test.ts test/service.test.ts test/approvals.test.ts test/care.test.ts`; `npx vitest
+  run tests/approval-target.test.tsx tests/builds.test.ts tests/approve-flow.test.tsx tests/ui.test.tsx`.
 - **City Clients: side jobs for real kinds of business** (`shared/clients.json`, `src/world/clients.ts`, `src/ui/clients/`).
   18 businesses: wave 1 (Amazon Air hub, bank, stadium, hospital, shop, school) and wave 2 (streaming studio, game studio,
   news site, port, energy utility, factory, farm co-op, car maker, phone network, town council, hotel, charity), three

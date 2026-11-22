@@ -37,8 +37,12 @@ const FIX_RESOURCE_TYPE: Record<string, string> = {
   dynamodb: 'AWS::DynamoDB::Table',
 };
 
-const labelOf = (a: ApprovalRequest['action']): string =>
-  'name' in a ? String(a.name) : 'instanceId' in a ? String(a.instanceId) : 'suffix' in a ? `aws-city-…-${String(a.suffix)}` : a.type;
+/**
+ * What a change touches, as the card's resource name: a bucket's full name once the account is known (so Tear down can
+ * name it), else its suffix after "aws-city-…-".
+ */
+const labelOf = (a: ApprovalRequest['action'], accountId?: string): string =>
+  'name' in a ? String(a.name) : 'instanceId' in a ? String(a.instanceId) : 'suffix' in a ? `aws-city-${accountId ?? '…'}-${String(a.suffix)}` : a.type;
 
 /**
  * Per-socket player approvals (contract v2): a guarded write becomes deploy.preview; the player answers
@@ -69,7 +73,7 @@ export const createApprovals = (opts: { region: string | (() => string); account
       const t = req.action.type;
       const change: DeployChange = {
         action: req.destructive ? 'Remove' : t === 'stop_instance' || t === 'start_instance' ? 'Modify' : 'Add',
-        logicalId: labelOf(req.action),
+        logicalId: labelOf(req.action, opts.accountId?.()),
         resourceType: RESOURCE_TYPE[t],
       };
       emit({ type: 'deploy.preview', deployId, taskId, templateId: t, stackName: req.summary, ...where(), changes: [change], costNote: COST[t] });
@@ -122,7 +126,8 @@ export const createApprovals = (opts: { region: string | (() => string); account
       if (!deployId) return;
       awaitingResult.delete(taskId);
       const ok = call.outcome === 'done';
-      emit({ type: 'deploy.status', deployId, status: ok ? 'complete' : 'failed', message: call.message, outputs: ok ? { Result: call.message } : undefined });
+      // ResourceId: what a launch made (its i-… id), so the card joins the later stop/terminate cards of the same server.
+      emit({ type: 'deploy.status', deployId, status: ok ? 'complete' : 'failed', message: call.message, outputs: ok ? { Result: call.message, ...(call.resourceId ? { ResourceId: call.resourceId } : {}) } : undefined });
     },
     cancelAll() {
       for (const id of [...pending.keys()]) settle(id, false, 'Connection closed, so nothing was changed.');

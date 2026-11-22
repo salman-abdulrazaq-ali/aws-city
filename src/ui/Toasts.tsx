@@ -15,8 +15,11 @@ export function Toasts() {
           key={t.id}
           className={`toast ${t.kind === 'error' ? 'error' : ''} ${t.serviceId ? 'building' : ''} ${t.leaving ? 'leaving' : ''}`}
           style={{ '--toast-ms': `${t.ms}ms` } as CSSProperties}
-          onClick={() => dismiss(t.id)}
-          title="Dismiss"
+          onClick={() => {
+            t.action?.();
+            dismiss(t.id);
+          }}
+          title={t.action ? 'Open' : 'Dismiss'}
         >
           {t.serviceId ? (
             // A building's moment: its service icon pops up like the building it stands for.

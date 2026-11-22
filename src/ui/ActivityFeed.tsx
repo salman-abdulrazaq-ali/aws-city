@@ -59,6 +59,8 @@ export function TaskCard({ task, openTab, quiet = false }: { task: TaskView; ope
   const progress = useCity((s) => s.progress);
   const cityRegion = useCity((s) => s.cityRegion);
   const clientFocus = useCity((s) => s.clientFocus);
+  // A change this task asked for, waiting for the player's OK in Deploy (the card says so and takes them there).
+  const waiting = useCity((s) => Object.values(s.deploys).find((d) => d.taskId === task.taskId && d.status === 'preview'));
   // The one next step (src/state/next.ts), read once the task is done.
   const next = useMemo(() => (phase === 'result' && !quiet ? nextAction({ progress, cityRegion, clientFocus }) : undefined), [phase, quiet, progress, cityRegion, clientFocus]);
   const now = liveStep(task);
@@ -119,6 +121,14 @@ export function TaskCard({ task, openTab, quiet = false }: { task: TaskView; ope
           </span>{' '}
           <Plain text={now.text} />
         </p>
+      )}
+      {!finished && waiting && (
+        <div className="task-approve" role="status">
+          <span>⏳ Waiting for your Approve</span>
+          <button className="btn tiny" onClick={() => (feel.tap(), useCity.getState().openDeployAt(waiting.deployId))} title="Opens the Deploy tab at this change's card">
+            Approve in Deploy →
+          </button>
+        </div>
       )}
       {phase === 'result' && (
         <div className="watch-result">

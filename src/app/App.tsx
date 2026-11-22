@@ -169,11 +169,21 @@ export function App({ layout }: { layout: Layout }) {
           if (s.findingOpen !== fix.findingId) s.openFinding(fix.findingId);
           if (added.every((d) => d.findingId)) return;
         }
-        if (tabNow.current === 'home') setTab('deploy');
-        else if (tabNow.current !== 'deploy') setDeployBadge(true);
+        // From City the tab opens; anywhere else (an HQ's chat hides the tabs, Learn, Jobs) a toast says so and opens it.
+        const waiting = added.find((d) => !d.findingId && d.status === 'preview');
+        if (s.view.name !== 'interior' && tabNow.current === 'home') setTab('deploy');
+        else if (s.view.name === 'interior' || tabNow.current !== 'deploy') {
+          setDeployBadge(true);
+          if (waiting) s.toast('🛡️', 'Your approval is waiting in Deploy. Tap here to open it.', 'info', undefined, undefined, { first: true, action: () => useCity.getState().openDeployAt(waiting.deployId) });
+        }
       }),
     [],
   );
+  // "Approve in Deploy" (a task card, a toast): open the tab; DeployPanel brings the card up.
+  const deployOpenSeq = useCity((s) => s.deployOpenSeq);
+  useEffect(() => {
+    if (deployOpenSeq) setTabNow.current('deploy');
+  }, [deployOpenSeq]);
   // A prompt sent (or a reply to the player) while another tab is open: flag Home, where the answer shows.
   useEffect(
     () =>
