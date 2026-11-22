@@ -168,6 +168,27 @@ describe('server speaks the frontend contract', () => {
     for (const e of feed) if (e.type === 'agent.message') expect(ids.has(e.from)).toBe(true);
     expect(feed.at(-1)).toMatchObject({ type: 'agent.message', from: 'concierge', text: expect.stringContaining('1 EC2 instance') });
   });
+
+  // Seen 22 Nov 2026: every console change repeated "An EC2 instance is a virtual computer…".
+  it('each lesson is said once per session, then just the change', () => {
+    const said = new Set<string>();
+    const text = (e: Parameters<typeof feedEvents>[0]) => (feedEvents(e, said)[0] as { text: string }).text;
+    expect(text({ type: 'created', resource: instance('i-1', 'pending') })).toMatch(/virtual computer/);
+    expect(text({ type: 'created', resource: instance('i-2', 'pending') })).toBe('New in your account: instance "i-2".');
+    expect(text({ type: 'stateChanged', resource: instance('i-1', 'running'), from: 'pending', to: 'running' })).toMatch(/billing by the second/);
+    expect(text({ type: 'stateChanged', resource: instance('i-2', 'running'), from: 'pending', to: 'running' })).toBe('"i-2" went pending → running.');
+    // Without a session, each message keeps its lesson.
+    expect((feedEvents({ type: 'created', resource: instance('i-3', 'pending') })[0] as { text: string }).text).toMatch(/virtual computer/);
+  });
+
+  // Seen 22 Nov 2026: asked in chat to delete a server made in the console, Eddie said he couldn't see it.
+  it('chat answers know chat can’t change AWS, and that the city only changes what it built', async () => {
+    const { orchestrator, calls, emit } = setup([]);
+    await orchestrator.ask({ requestId: 'r9', districtId: 'compute', question: 'Delete test-console', context: {} }, emit);
+    const system = JSON.stringify(calls.at(-1)?.system ?? '');
+    expect(system).toContain("This chat can't change AWS");
+    expect(system).toContain('The city only changes what it built');
+  });
 });
 
 describe('a plain request goes straight to its agent’s action: the card in seconds, no model call before it', () => {

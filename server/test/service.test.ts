@@ -108,4 +108,12 @@ describe('action service', () => {
       ['launch_instance', 'house', 'denied'],
     ]);
   });
+
+  // Seen 22 Nov 2026: the audit line for a new bucket said aws-city-<account>-photos-1.
+  it('a bucket’s audit line names the real bucket, with the account', async () => {
+    const audit = vi.fn();
+    const service = createActionService({ clients: {} as AwsClients, poller: pollerFor(snapshot([])), region: 'us-west-2', audit, accountKey: () => '047463438585' });
+    await service.submit('create_bucket', { suffix: 'photos-1' }, { approve: async () => false });
+    expect(audit.mock.calls[0]![0]).toMatchObject({ action: 'create_bucket', target: 'aws-city-047463438585-photos-1', outcome: 'rejected' });
+  });
 });

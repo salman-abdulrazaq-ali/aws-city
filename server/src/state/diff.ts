@@ -35,8 +35,10 @@ export const diffSnapshots = (prev: WorldSnapshot | null, next: WorldSnapshot): 
   return events;
 };
 
+/** The kinds the map mirrors live from the poller (inventory.ts reconcileLive). */
+const LIVE_KINDS = new Set(['instance', 'table', 'bucket']);
 /**
- * A poll change that moves the account mirror: a server appeared, went or changed state. The mirror is rebuilt from
- * its last listing against the new snapshot (care.reconcile), so the map follows an agent's write within a poll.
+ * A poll change that moves the account mirror: a server, table or bucket appeared, went or changed state. The mirror is
+ * rebuilt from its last listing against the new snapshot (care.reconcile), so the map follows a write within a poll.
  */
-export const movesInventory = (e: AwsEvent) => (e.type === 'created' || e.type === 'deleted' || e.type === 'stateChanged') && e.resource.kind === 'instance';
+export const movesInventory = (e: AwsEvent) => (e.type === 'created' || e.type === 'deleted' || e.type === 'stateChanged') && LIVE_KINDS.has(e.resource.kind);

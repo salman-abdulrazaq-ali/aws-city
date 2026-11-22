@@ -135,4 +135,11 @@ describe('untrusted names in the model prompt', () => {
     expect(cityFor({ small: true }, s)).toBe(text);
     expect(cityFor({ small: false }, s)).toBe(snapshotForModel(s));
   });
+
+  it('servers the player made themselves are named too, so an agent can say it sees them (not terminated ones)', async () => {
+    const { snapshotSummary } = await import('../src/agents/runner.js');
+    const { snapshot, instance } = await import('./fixtures.js');
+    const s = snapshot([{ ...instance('i-0abc', 'running', false), name: 'test-console' }, { ...instance('i-0old', 'terminated', false), name: 'gone' }]);
+    expect(JSON.parse(snapshotSummary(s)).otherServers).toEqual([{ id: 'i-0abc', name: 'test-console', state: 'running' }]);
+  });
 });

@@ -34,6 +34,14 @@ const SERVICE_IDS = SERVICES.map((s) => s.id) as [string, ...string[]];
 const XP = { task: 15, perWrite: 5, attempted: 3, classify: 3 } as const;
 
 /**
+ * What a chat answer may promise. Seen 22 Nov 2026: asked in chat to delete a server made in the console, Eddie said he
+ * couldn't see it. Chat never changes AWS (a change is a request in the city's box, with the player's Approve), and the
+ * city only changes what it built (the player role allows only its own tagged resources).
+ */
+export const CHAT_CAN_DO =
+  "This chat can't change AWS: to build, stop or remove something, the player types it in the city's request box and approves the card. The city only changes what it built; if asked to change something else you can see (otherServers), say you can see it and that the player changes it in the AWS console.";
+
+/**
  * The landmark agent's words to act on: the player's request (first, unchanged), then the concierge's plan as fenced data
  * (<concierge_plan>), so the agent does what the city just showed the player it would. A small model left with only
  * "Store my holiday photos cheaply" answered with advice and made no change (21 Nov 2026).
@@ -354,7 +362,7 @@ export const createOrchestrator = (deps: {
     let sent = false;
     try {
       const [snapshot, docs] = await Promise.all([deps.snapshot(), deps.knowledge?.search(`${svc.name} ${cmd.question}`, deps.llm.small ? 1 : 3) ?? []]);
-      const system = `${agentSystemPrompt(agentId)}\n\nYou are answering a question at ${district.hq}. Reply in plain text (no markdown headings), under 120 words.`;
+      const system = `${agentSystemPrompt(agentId)}\n\nYou are answering a question at ${district.hq}. Reply in plain text (no markdown headings), under 120 words. ${CHAT_CAN_DO}`;
       const question = `${docsBlock(docs)}<city_snapshot>${cityFor(deps.llm, snapshot)}</city_snapshot>\n${describeContext(cmd.context)}\n\nQuestion: ${cmd.question}`;
       const onText = (delta: string) => {
         sent = true;

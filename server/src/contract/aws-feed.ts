@@ -13,7 +13,14 @@ const say = (from: string, text: string): ServerEvent => ({ type: 'agent.message
  * with a short lesson. (Contract rule: agent.state is reserved for calls made on an agent's behalf,
  * so console changes are messages, not work animations.)
  */
-export const feedEvents = (event: AwsEvent): ServerEvent[] => {
+export const feedEvents = (event: AwsEvent, said?: Set<string>): ServerEvent[] => {
+  // Each lesson once per session (`said` is the world's): seen 22 Nov 2026, every change repeated "An EC2 instance is
+  // a virtual computer…". Without `said`, every message carries its lesson.
+  const lesson = (key: string, text: string | undefined) => {
+    if (!text || said?.has(key)) return '';
+    said?.add(key);
+    return ` ${text}`;
+  };
   switch (event.type) {
     case 'created':
     case 'deleted':
@@ -23,10 +30,10 @@ export const feedEvents = (event: AwsEvent): ServerEvent[] => {
       if (!from) return [];
       const text =
         event.type === 'created'
-          ? `New in your account: ${r.kind} "${r.name}". ${KIND_LESSONS[r.kind]}`
+          ? `New in your account: ${r.kind} "${r.name}".${lesson(`kind:${r.kind}`, KIND_LESSONS[r.kind])}`
           : event.type === 'deleted'
             ? `"${r.name}" (${r.kind}) is gone from your account.`
-            : `"${r.name}" went ${event.from} → ${event.to}. ${STATE_LESSONS[event.to] ?? ''}`.trim();
+            : `"${r.name}" went ${event.from} → ${event.to}.${lesson(`state:${event.to}`, STATE_LESSONS[event.to])}`;
       return [say(from, text)];
     }
     case 'serviceLocked':

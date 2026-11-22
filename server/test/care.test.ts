@@ -141,14 +141,15 @@ describe('inventory: the account mirrored as city buildings', () => {
       { id: 'shop', service: 'rds', kind: 'db-instance', name: 'shop', state: 'available', managedByGame: false, meta: { multiAz: true, availabilityZone: 'us-west-2a', secondaryAz: 'us-west-2b' } },
     ]);
     const { items, links } = enrich(inv, world, 'us-west-2');
-    expect(items[0]).toMatchObject({ region: 'us-west-2', az: 'us-west-2a' });
+    expect(items.find((i) => i.serviceId === 'ec2')).toMatchObject({ region: 'us-west-2', az: 'us-west-2a' });
     expect(links.map((l) => [l.kind, l.from, l.to])).toEqual([
       ['replication', { region: 'us-west-2' }, { region: 'eu-west-1' }],
       ['standby', { region: 'us-west-2', az: 'us-west-2a' }, { region: 'us-west-2', az: 'us-west-2b' }],
     ]);
     const e = inventoryEvent({ ...inv, items }, 'us-west-2', undefined, links);
-    expect(e.regions).toEqual({ 'us-west-2': 1, 'eu-west-1': 1 });
-    expect(e.counts).toEqual({ ec2: 1 }); // the home city counts only its own Region
+    // The poller also reads the global table's Oregon side, which the listing hadn't caught up with: it's added.
+    expect(e.regions).toEqual({ 'us-west-2': 2, 'eu-west-1': 1 });
+    expect(e.counts).toEqual({ ec2: 1, dynamodb: 1 }); // the home city counts only its own Region
   });
 });
 
@@ -232,7 +233,7 @@ describe('the mirror follows DescribeInstances, not the lagging listing (22 Nov 
 
   it('adds a running server the listing has not caught up with, first, named from its Name tag', () => {
     const inv = listed('arn:aws:s3:::aws-city-1-photos');
-    const { items } = enrich(inv, snapshot([placed(instance('i-new', 'running', true, 'demo'), 'us-west-2b')]), 'us-west-2');
+    const { items } = enrich(inv, snapshot([placed(instance('i-new', 'running', true, 'demo'), 'us-west-2b'), bucket('aws-city-1-photos')]), 'us-west-2');
     expect(items[0]).toEqual({ arn: ARN('i-new'), type: 'AWS::EC2::Instance', name: 'demo', serviceId: 'ec2', districtId: 'compute', managedByGame: true, region: 'us-west-2', az: 'us-west-2b' });
     expect(items.map((i) => i.serviceId)).toEqual(['ec2', 's3']);
   });
@@ -256,6 +257,22 @@ describe('the mirror follows DescribeInstances, not the lagging listing (22 Nov 
   it('leaves other Regions as listed (the poller reads the home Region only)', () => {
     const { items } = enrich(listed(ARN('i-eu', 'eu-west-1')), snapshot([]), 'us-west-2');
     expect(items).toEqual([expect.objectContaining({ arn: ARN('i-eu', 'eu-west-1'), name: 'i-eu' })]);
+  });
+
+  // Seen 22 Nov 2026: a bucket and a table an agent built took minutes to show on My AWS (the listing lags).
+  it('a bucket or table the listing has not caught up with is added; one that is gone is dropped (a full read only)', () => {
+    const tableArn = `arn:aws:dynamodb:us-west-2:${ACCOUNT}:table/city-old`;
+    const inv = listed('arn:aws:s3:::aws-city-1-old', tableArn);
+    const world = snapshot([bucket('aws-city-1-photos'), { ...table('city-scores-1'), meta: { arn: `arn:aws:dynamodb:us-west-2:${ACCOUNT}:table/city-scores-1` } }]);
+    const { items } = enrich(inv, world, 'us-west-2');
+    expect(items.map((i) => [i.type, i.name]).sort()).toEqual([
+      ['AWS::DynamoDB::Table', 'city-scores-1'],
+      ['AWS::S3::Bucket', 'aws-city-1-photos'],
+    ]);
+    // A table being deleted is gone already; a failed DynamoDB read keeps the last list.
+    expect(enrich(inv, snapshot([{ ...table('city-old'), state: 'DELETING' }]), 'us-west-2').items.some((i) => i.name === 'city-old')).toBe(false);
+    const failed = snapshot([], { services: { ec2: 'ok', dynamodb: 'error', s3: 'error', lambda: 'ok', rds: 'ok', apigateway: 'ok' } });
+    expect(enrich(inv, failed, 'us-west-2').items.map((i) => i.name).sort()).toEqual(['aws-city-1-old', 'city-old']);
   });
 
   it('caps a Name tag at 64 characters', () => {
