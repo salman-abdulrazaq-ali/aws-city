@@ -653,9 +653,12 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   beside it (`itemLine`: "server demo2 (i-0d3e…)", to copy for "Terminate i-…"); months read "November 2026"
   (`monthName`, `src/world/accountCost.ts`: "2026-11: $0.00" read like $2,026,110); Show my bill / Show live traffic
   are real buttons. Sign out is in the ⋯ menu too (signed in and able to sign out), not only Deploy → Your data.
-  Proof:
+  The Diagram draws Everything or **Built by the city** (`accountDiagram(…, { builtOnly })`, asked for on 22 Nov 2026:
+  your own project): only services with something the city built, counted by those, with the usual links between them,
+  and no cost lines (AWS bills a service for the whole account, not each thing the city built); nothing built yet says
+  so. Proof:
   `npx vitest run tests/account-map.test.tsx tests/account-diagram.test.ts tests/menu-signout.test.tsx`, `npm run smoke` (`18b-my-aws-map`,
-  `18c-my-aws-diagram`, `18e-my-aws-diagram-panel`, axe, still dots under reduced motion). A third view, **How AWS City
+  `18c-my-aws-diagram`, `18c2-built-by-the-city`, `18e-my-aws-diagram-panel`, axe, still dots under reduced motion). A third view, **How AWS City
   runs** (`shared/city-architecture.json`, `src/world/cityArchitecture.ts`), draws the city's own hosted parts the same
   way (blue lines, in request order, from `infra/lib`); its only prices are Fargate's, worked out from the task sizes and
   `FARGATE_ARM_PRICE` (servers $1.09 a day, the AI $8.72 a day while on), the rest is pay per use, and the idle total is

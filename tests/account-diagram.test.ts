@@ -110,6 +110,35 @@ describe('the account as a diagram', () => {
   });
 });
 
+// Asked for on 22 Nov 2026: a drawing of only what you've built (your project), and whether it's connected.
+describe('built by the city only', () => {
+  const mixed = inv([
+    item('lambda', 'resize', { managedByGame: true }),
+    item('dynamodb', 'city-orders', { managedByGame: true }),
+    item('dynamodb', 'company-ledger'),
+    item('ec2', 'their-server'),
+    item('', 'alerts', { serviceId: null }),
+  ]);
+  it('only services with something the city built, counted by those, with the usual links between them and no costs', () => {
+    const d = diagramOf(mixed, bill({ lambda: 1, dynamodb: 2, ec2: 3 }));
+    const built = accountDiagram(accountMap(mixed, { region: 'us-west-2', bill: bill({ lambda: 1, dynamodb: 2, ec2: 3 }) }), mixed, { flows: FLOWS, bill: bill({ lambda: 1 }), builtOnly: true });
+    expect(d.nodes.map((n) => n.id)).toEqual(expect.arrayContaining(['ec2', 'unmapped']));
+    expect(built.nodes.map((n) => [n.id, n.badge]).sort()).toEqual([
+      ['dynamodb', '×1'],
+      ['lambda', '×1'],
+    ]);
+    expect(built.links.filter((l) => l.style === 'typical').map((l) => `${l.from}>${l.to}`)).toEqual(['lambda>dynamodb']);
+    expect(built.nodes.every((n) => !n.lines)).toBe(true);
+    expect(built.total).toBeUndefined();
+    expect(built.costed).toBe(false);
+    expect(built.nodes.find((n) => n.id === 'lambda')!.aria).toMatch(/1 resource built by the city/);
+  });
+  it('nothing built yet: an empty drawing', () => {
+    const none = inv([item('ec2', 'their-server')]);
+    expect(accountDiagram(accountMap(none, { region: 'us-west-2' }), none, { flows: FLOWS, builtOnly: true }).nodes).toEqual([]);
+  });
+});
+
 describe('the drawing’s layout', () => {
   const columns: ArchColumn[] = [
     { id: 'a', label: 'A' },
