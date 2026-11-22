@@ -2,6 +2,7 @@
 // $0.01 per request, so it's read only after the player turns it on, then at most once a day.
 import { setBill } from '@/app/runtime';
 import { useCity } from '@/state/store';
+import { monthName } from '@/world/accountCost';
 import { usd } from '@/world/regions';
 
 /** The bill for a Region (`region`) or one service (`serviceId`), with the on/off switch. */
@@ -13,7 +14,8 @@ export function BillLine({ region, serviceId }: { region?: string; serviceId?: s
   if (!on)
     return (
       <div className="bill-line muted small">
-        <button className="btn ghost tiny" onClick={() => setBill(true)}>
+        {/* A real button, not a link-like one (seen 22 Nov 2026: "I never knew you can actually click this"). */}
+        <button className="btn small" onClick={() => setBill(true)}>
           🧾 Show my bill
         </button>{' '}
         Reads this month's costs from Cost Explorer once a day (AWS charges $0.01 a read).
@@ -27,7 +29,7 @@ export function BillLine({ region, serviceId }: { region?: string; serviceId?: s
     <div className="bill-line small">
       🧾 This month {what}: <b>{usd(amount)}</b>{' '}
       <span className="muted">
-        of {usd(bill.total)} ({bill.month} so far, estimated).{' '}
+        of {usd(bill.total)} ({monthName(bill.month)} so far, estimated).{' '}
         <button className="btn ghost tiny" onClick={() => setBill(false)}>
           Hide
         </button>

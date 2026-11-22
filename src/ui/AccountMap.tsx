@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { openDocs, type Layout } from '@/app/runtime';
 import type { InventoryItem } from '@/backend/contract';
 import { useCity } from '@/state/store';
+import { monthName } from '@/world/accountCost';
 import { accountDiagram, totalLine } from '@/world/accountDiagram';
 import { accountMap, itemLine, type AccountMap as Map, type MapNode } from '@/world/accountMap';
 import { layoutArch } from '@/world/archDiagram';
@@ -262,7 +263,7 @@ export function AccountMap({ layout = 'full' }: { layout?: Layout }) {
           <FlowLine />
           {map.total && view === 'services' && (
             <p className="map-total">
-              💲 <b>{money(map.total.amount, map.total.currency)}</b> so far in {map.total.month} (all Regions, estimated)
+              💲 <b>{money(map.total.amount, map.total.currency)}</b> so far in {monthName(map.total.month)} (all Regions, estimated)
             </p>
           )}
         </div>

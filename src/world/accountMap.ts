@@ -83,8 +83,17 @@ export interface AccountMap {
 
 const where = (end: { region: string; az?: string }, letterOf: (az: string) => string | undefined) => (end.az ? (letterOf(end.az) ?? end.az) : end.region);
 
-/** A resource in words: "server web-1", "bucket aws-city-…" (the props' nouns), else its type. */
-export const itemLine = (it: InventoryItem) => `${PROPS[it.type]?.noun ?? it.type.replace(/^AWS::/, '').replace(/::/g, ' ')} ${it.name}`;
+/** The id at the end of an ARN (a server's i-…). */
+const arnId = (arn: string) => arn.split(/[:/]/).pop() ?? '';
+/**
+ * A resource in words: "server web-1 (i-0abc…)", "bucket aws-city-…" (the props' nouns), else its type. A server named
+ * from its Name tag keeps its id beside it, to copy for "Terminate i-…" (seen 22 Nov 2026: only the name showed).
+ */
+export const itemLine = (it: InventoryItem) => {
+  const id = arnId(it.arn);
+  const withId = /^i-[0-9a-f]{8,17}$/.test(id) && id !== it.name ? ` (${id})` : '';
+  return `${PROPS[it.type]?.noun ?? it.type.replace(/^AWS::/, '').replace(/::/g, ' ')} ${it.name}${withId}`;
+};
 
 export function accountMap(inv: Inventory | undefined, opts: { region: string; bill?: CityBillEvent; flow?: CityFlowEvent }): AccountMap {
   const region = opts.region;

@@ -649,7 +649,11 @@ The frontend is complete against a mock backend; the AWS backend plugs in throug
   day × the month's days, both marked est. There's no list-price estimate: the client doesn't know a server's size or
   whether it's running. Each box is a real button (arrow keys move, `nextSlot`) labelled with its name and figures.
   What the city has no building for is listed, not just counted (`unmappedItems`: tap "No building yet" in the Diagram,
-  or open "N more…" under Services; seen 22 Nov 2026: "×15" said nothing). Proof:
+  or open "N more…" under Services; seen 22 Nov 2026: "×15" said nothing). A server named from its Name tag shows its id
+  beside it (`itemLine`: "server demo2 (i-0d3e…)", to copy for "Terminate i-…"); months read "November 2026"
+  (`monthName`, `src/world/accountCost.ts`: "2026-11: $0.00" read like $2,026,110); Show my bill / Show live traffic
+  are real buttons. Sign out is in the ⋯ menu too (signed in and able to sign out), not only Deploy → Your data.
+  Proof: `npx vitest run tests/account-map.test.tsx tests/account-diagram.test.ts tests/menu-signout.test.tsx`. Proof:
   `npx vitest run tests/account-map.test.tsx tests/account-diagram.test.ts`, `npm run smoke` (`18b-my-aws-map`,
   `18c-my-aws-diagram`, `18e-my-aws-diagram-panel`, axe, still dots under reduced motion). A third view, **How AWS City
   runs** (`shared/city-architecture.json`, `src/world/cityArchitecture.ts`), draws the city's own hosted parts the same

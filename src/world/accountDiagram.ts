@@ -1,6 +1,6 @@
 import type { CityBillEvent, CityFlowEvent } from '@/backend/contract';
 import type { Inventory } from '@/state/store';
-import { billDays, costLines, costView, dollars, type CostView } from './accountCost';
+import { billDays, costLines, costView, dollars, monthName, type CostView } from './accountCost';
 import { TIERS, type AccountMap } from './accountMap';
 import type { ArchColumn, ArchLinkIn, ArchNodeIn } from './archDiagram';
 import { courierLegs, type CourierLeg } from './couriers';
@@ -104,6 +104,6 @@ export function accountDiagram(map: AccountMap, inv: Inventory | undefined, opts
   };
 }
 
-/** "So far in 2026-11: $11.55 (AWS's estimate, all Regions) · $0.53 a day est. · $15.75 for the month est." */
+/** "So far in November 2026: $11.55 (AWS's estimate, all Regions) · $0.53 a day est. · $15.75 for the month est." */
 export const totalLine = (t: NonNullable<AccountDiagram['total']>) =>
-  `So far in ${t.month}: ${dollars(t.soFar, t.currency)} (AWS’s estimate, all Regions) · ${dollars(t.perDay, t.currency)} a day est. · ${dollars(t.perMonth, t.currency)} for the month est.`;
+  `So far in ${monthName(t.month)}: ${dollars(t.soFar, t.currency)} (AWS’s estimate, all Regions) · ${dollars(t.perDay, t.currency)} a day est. · ${dollars(t.perMonth, t.currency)} for the month est.`;
