@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { canDeleteAccount, canSetUpMfa, confirmMfaSetup, decideDeploy, deleteAccount, isSafeAwsUrl, linkAccount, openUrl, planDeploy, signIn, signOut, startMfaSetup, teardownDeploy, verifyAccount } from '@/app/runtime';
+import { canDeleteAccount, canSetUpMfa, confirmMfaSetup, decideDeploy, deleteAccount, isSafeAwsUrl, linkAccount, openUrl, planDeploy, signIn, signOut, startMfaSetup, submitPrompt, teardownDeploy, verifyAccount } from '@/app/runtime';
+import { arrangeBuilds, statusWord } from '@/state/builds';
 import { useCity, type DeployView } from '@/state/store';
 import { ReauthPrompt } from './ReauthPrompt';
 import { GUARDED_BLUEPRINTS } from '@/backend/ServerBackend';
@@ -209,6 +210,8 @@ export function DeployPanel() {
   const findings = useCity((s) => s.findings);
   // Fixes are approved in their finding's card; here they're only a history, never next to Tear down.
   const stacks = deploys.filter((d) => !d.findingId);
+  // One card per resource for the agents' changes; waiting approvals first (src/state/builds.ts).
+  const builds = arrangeBuilds(stacks);
   const fixes = deploys.filter((d) => d.findingId && d.status !== 'preview' && d.status !== 'rejected');
   const [confirmDelete, setConfirmDelete] = useState(false);
   /** The linking steps stay folded until the player asks for them (this whole tab is optional). */
@@ -240,23 +243,21 @@ export function DeployPanel() {
     }
   }, [deployMap, clear]);
 
-  // A new preview opens below the blueprints, off-screen in the panel: bring it up and put focus on Approve.
+  // A new approval (or the one "Approve in Deploy" named) is brought into view with focus on Approve, whether this tab
+  // was already open or just opened for it (the store's deployFocus waits for the card to render).
   const approveRefs = useRef(new Map<string, HTMLButtonElement>());
-  const seenPreviews = useRef<Set<string> | null>(null);
-  const previewIds = stacks.filter((d) => d.status === 'preview').map((d) => d.deployId);
-  const previewKey = previewIds.join(',');
+  const focusId = useCity((s) => s.deployFocus);
+  const previewKey = stacks
+    .filter((d) => d.status === 'preview')
+    .map((d) => d.deployId)
+    .join(',');
   useEffect(() => {
-    const ids = previewKey ? previewKey.split(',') : [];
-    const seen = seenPreviews.current;
-    seenPreviews.current = new Set(ids);
-    if (!seen) return; // the first render: previews already waiting aren't news
-    const fresh = ids.find((id) => !seen.has(id));
-    const btn = fresh && approveRefs.current.get(fresh);
-    if (btn) {
-      btn.closest('.card')?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
-      btn.focus({ preventScroll: true });
-    }
-  }, [previewKey]);
+    const btn = focusId ? approveRefs.current.get(focusId) : undefined;
+    if (!focusId || !btn) return;
+    btn.closest('.card')?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    btn.focus({ preventScroll: true });
+    useCity.getState().clearDeployFocus();
+  }, [focusId, previewKey]);
 
   const verify = () => {
     const requestId = verifyAccount(accountInput(role));
@@ -469,16 +470,20 @@ export function DeployPanel() {
       ))}
 
       {stacks.length > 0 && <h4>My builds</h4>}
-      {stacks.map((d) => {
+      {builds.map(({ d, group }) => {
         const deciding = pending.is(`decide:${d.deployId}`);
+        const history = group?.history.filter((h) => h.status === 'complete') ?? [];
         return (
-          <div key={d.deployId} className={`card stack ${d.status}`}>
-            <b>{d.stackName}</b>{' '}
+          <div key={group?.key ?? d.deployId} className={`card stack ${d.status}`}>
+            <b>{group?.title ?? d.stackName}</b>{' '}
             <span className="muted">
-              · {d.region} · {STATUS_TEXT[d.status] ?? d.status}
+              · {d.region} · {group ? statusWord(d) : (STATUS_TEXT[d.status] ?? d.status)}
             </span>
+            {group && history.length > 1 && <div className="muted small build-history">{history.map((h) => statusWord(h)).join(' → ')}</div>}
             {d.status === 'preview' && (
               <>
+                {/* What this approval changes, in words ("Permanently terminate EC2 instance i-…"). */}
+                {group && <div className="build-change">{d.stackName}</div>}
                 <ChangeTarget d={d} />
                 <table className="changes">
                   <tbody>
@@ -556,7 +561,18 @@ export function DeployPanel() {
                 ))}
               </ul>
             )}
-            {d.status === 'complete' && (
+            {/* An agent's change: Tear down asks for the removal in plain words, so its own card shows in seconds. */}
+            {group?.teardown && d.status !== 'preview' && d.status !== 'creating' && (
+              <button
+                className="btn warn"
+                disabled={!!offline}
+                title={offline ?? `Asks: “${group.teardown}”. You approve it like any change.`}
+                onClick={() => submitPrompt(group.teardown!)}
+              >
+                🧹 Tear down (remove it)
+              </button>
+            )}
+            {!group && d.status === 'complete' && (
               <PendingButton
                 className="btn warn"
                 pending={pending.is(`teardown:${d.deployId}`)}

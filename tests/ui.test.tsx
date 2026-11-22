@@ -186,10 +186,22 @@ describe('the Build tab', () => {
     const { container } = render(<DeployPanel />);
     for (const tpl of container.querySelectorAll('.tpl')) expect(tpl.querySelector('.for-learners')?.textContent).toMatch(/💰/);
     expect(scrolled).not.toHaveBeenCalled();
-    const preview = { deployId: 'd1', templateId: 'static-site', stackName: 'aws-city-site', region: 'us-west-2', changes: [], status: 'preview' as const };
-    act(() => useCity.setState({ deploys: { d1: preview } }));
+    act(() => useCity.getState().applyServerEvent({ type: 'deploy.preview', deployId: 'd1', templateId: 'static-site', stackName: 'aws-city-site', region: 'us-west-2', changes: [] }));
     const approve = screen.getByRole('button', { name: /Approve & deploy/ });
     expect(document.activeElement).toBe(approve);
+    expect(scrolled).toHaveBeenCalled();
+    expect(useCity.getState().deployFocus).toBeUndefined(); // brought up once
+  });
+
+  it('a card that arrived while Deploy was closed is brought up when the tab opens for it', async () => {
+    const { DeployPanel } = await import('@/ui/DeployPanel');
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    useCity.setState({ account: { linked: true, accountId: '047463438585', region: 'us-west-2' }, deploys: {} });
+    // The card lands first (the player is in an HQ, or on Learn); the tab mounts afterwards.
+    useCity.getState().applyServerEvent({ type: 'deploy.preview', deployId: 'a-1', taskId: 't1', templateId: 'create_bucket', stackName: 'Create S3 bucket with suffix "holiday-123"', region: 'us-west-2', accountId: '047463438585', changes: [{ action: 'Add', logicalId: 'aws-city-047463438585-holiday-123', resourceType: 'AWS::S3::Bucket' }] });
+    render(<DeployPanel />);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: /Approve & deploy/ }));
     expect(scrolled).toHaveBeenCalled();
   });
 });

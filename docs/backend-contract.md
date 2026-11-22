@@ -312,9 +312,14 @@ Everything here is earned and cosmetic: no coins or stars inside, nothing bought
   reads "Changes AWS account 0474-6343-8585 · us-west-2". The server reads the account and Region when each card is
   made, so a re-link on an open socket never shows the old ones. An older client ignores the field.
 - Server only, no wire change: a plain request in the player's own words ("Create a bucket called holiday-123", "Stop
-  i-0123…", `server/src/agents/commands.ts`) that the agent's turn made no tool call for is submitted by the server
-  through the same ActionService and `deploy.preview`, when that agent owns the action. Only `task.submit`'s `prompt`
-  is read, never page context or the plan. Every write asked for, done or refused, is logged as `aws change`.
+  i-0123…", `server/src/agents/commands.ts`) goes straight to its own agent: `task.plan` with two steps, then the
+  server submits it through the same ActionService and `deploy.preview` (no model call before the card), then an
+  `agent.message` explaining it after `task.done`. A request understood but not allowed gets `task.done {ok: false, xp: []}`
+  at once with the reason. Only `task.submit`'s `prompt` is read, never page context or a plan. Every write asked for,
+  done or refused, is logged as `aws change`.
+- `deploy.status.outputs.ResourceId` (when the change made or touched a resource: a launch's `i-…` id): the client folds
+  a server's launch, stop and terminate into one "My builds" card. A bucket's `deploy.preview` `logicalId` is its full
+  name (`aws-city-<account>-<name>`) once the account is known.
 
 **v2.17 additions, step-up on an open socket:**
 

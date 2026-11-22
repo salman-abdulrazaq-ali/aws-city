@@ -99,6 +99,9 @@ export const AWS_API: Record<ActionName, string> = {
   review_architecture: 'wellarchitected:Review',
 };
 
+/** The city agent (service id) whose job an action is: a plain request for it goes to that agent. Read-only actions: none. */
+export const ownerOf = (name: ActionName): string | null => ACTION_SERVICE[name];
+
 /** Actions an agent may use: its own service's actions plus read-only ones (least privilege per agent). */
 export const actionsForAgent = (agentId: string): ActionName[] =>
   (Object.keys(ACTION_SCHEMAS) as ActionName[]).filter((name) => ACTION_SERVICE[name] === null || ACTION_SERVICE[name] === agentId);

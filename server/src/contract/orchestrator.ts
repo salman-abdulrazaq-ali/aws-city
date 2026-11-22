@@ -4,9 +4,9 @@ import { z } from 'zod';
 import type { Llm } from '../agents/llm.js';
 import { pick, say } from '../agents/once.js';
 import { agentSystemPrompt, CONCIERGE_PROMPT, lookoutPrompt } from '../agents/personas.js';
-import { type AgentRunner, outcomeMessage, snapshotForModel, type ToolCallReport } from '../agents/runner.js';
-import { type ActionName, actionsForAgent, AWS_API, READ_ONLY } from '../agents/actions.js';
-import { parseCommand } from '../agents/commands.js';
+import { type AgentRunner, snapshotForModel, type ToolCallReport, toolReport } from '../agents/runner.js';
+import { type ActionName, AWS_API, ownerOf, READ_ONLY } from '../agents/actions.js';
+import { type Command, parseCommand } from '../agents/commands.js';
 import type { ActionService, ApprovalRequest } from '../agents/service.js';
 import type { Approvals } from './approvals.js';
 import type { WorldSnapshot } from '../state/model.js';
@@ -25,7 +25,7 @@ import {
   type TaskSubmit,
 } from '../world.js';
 import type { UploadStore } from './uploads.js';
-import { publicError } from '../log.js';
+import { log, publicError } from '../log.js';
 import { isCommit } from '../../../src/console/risk.js';
 
 export type Emit = (event: ServerEvent) => void;
@@ -66,15 +66,6 @@ const REMOVES = /^(delete|terminate|demolish|remove|make|build|put|turn)$/;
 export const isActionStep = (step: string) => {
   const verb = leadingVerb(step);
   return isCommit(verb) || REMOVES.test(verb);
-};
-
-/**
- * The one change a plain request asks for, when the agent it went to owns that action ("Create a bucket called
- * holiday-123" at the S3 Warehouse). Read from the player's own words only: never page context, never the plan.
- */
-export const directRequest = (agentId: string, prompt: string) => {
-  const command = parseCommand(prompt);
-  return command && actionsForAgent(agentId).includes(command.name) ? command : undefined;
 };
 
 const PLAN_TOOL = {
@@ -141,8 +132,8 @@ export const createOrchestrator = (deps: {
   /** Whose screenshots this orchestrator may read (the signed-in player; 'local' for the local server). */
   owner?: string;
   /**
-   * The tenant's ActionService (the same one the agents' tools use): a plain request the agent's turn didn't act on
-   * goes through it, with the same policy, approval card and MFA. Omitted = no fallback.
+   * The tenant's ActionService (the same one the agents' tools use): a plain request goes straight through it, with the
+   * same policy, approval card and MFA, and no model call before the card. Omitted = every request goes to the agents.
    */
   actions?: Pick<ActionService, 'submit' | 'describe'>;
   /** Time the agent gets to walk to its landmark before work starts (mock uses ~4.5 s). */
@@ -192,10 +183,81 @@ export const createOrchestrator = (deps: {
     return { agentId, steps: ['Taking a look at your request'], reply: `Sounds like a job for ${placeFor(agentId)?.agentName ?? agentId}!` };
   };
 
+  /** One short answer with no tools, streamed to `onText`: `say` on Converse (Nova, the local model), the Messages API otherwise. */
+  const speak = async (system: string, prompt: string, onText: (delta: string) => void, maxTokens: number) =>
+    deps.llm.family === 'converse'
+      ? (await say(deps.llm, { system, prompt, model: { light: true, maxTokens }, onText })).refused
+      : (await deps.llm.stream({ max_tokens: 16000, output_config: { effort: 'low' }, system, messages: [{ role: 'user', content: prompt }] }, onText)).stop_reason === 'refusal';
+
+  /**
+   * A plain request in the player's own words ("Create a bucket called holiday-123"): no concierge or agent model call
+   * before the change. The action's own agent walks to its building and the server submits exactly what was typed through
+   * the ActionService, so the approval card shows seconds after the player asks (a small CPU model took 1-3 minutes
+   * before, and sometimes promised the change without making it: seen live, 21 Nov 2026). Policy, the server-written
+   * card, MFA and the recent sign-in all still apply. Only the player's request text is read: never page context or a plan.
+   * A request that was understood but isn't allowed (an m5.large) is answered at once with why. After the change, the
+   * agent explains it in a few words (one model call, after task.done, skipped when the AI is off).
+   */
+  const direct = async (cmd: Omit<TaskSubmit, 'action'>, command: Command, emit: Emit, approvals: Approvals, actions: NonNullable<typeof deps.actions>, signal?: AbortSignal) => {
+    const { taskId } = cmd;
+    const agentId = ownerOf(command.name) ?? 'bedrock';
+    const spot = placeFor(agentId);
+    const place = spot?.place ?? serviceById(agentId)?.name ?? agentId;
+    if (!command.ok) {
+      emit({ type: 'agent.message', from: 'concierge', to: 'user', text: command.reason });
+      emit({ type: 'task.plan', taskId, agentId, targetServiceId: agentId, steps: ['Check your request'] });
+      emit({ type: 'task.step', taskId, index: 0, text: `Check your request — ${command.reason}`, status: 'failed' });
+      emit({ type: 'task.done', taskId, ok: false, result: command.reason, xp: [] });
+      return;
+    }
+    const summary = actions.describe(command.name, command.input);
+    emit({ type: 'agent.message', from: 'concierge', to: 'user', text: `That's a job for ${spot?.agentName ?? agentId} at ${place}!` });
+    emit({ type: 'agent.message', from: 'concierge', to: agentId, text: `New request: “${cmd.prompt.slice(0, 60)}”` });
+    const steps = [`Heading to ${place}`, summary];
+    emit({ type: 'task.plan', taskId, agentId, targetServiceId: agentId, steps });
+    emit({ type: 'task.step', taskId, index: 0, text: steps[0]!, status: 'running' });
+    await sleep(walkMs);
+    if (signal?.aborted) return;
+    emit({ type: 'task.step', taskId, index: 0, text: `Arrived at ${place}`, status: 'done' });
+    emit({ type: 'task.step', taskId, index: 1, text: summary, status: 'running' });
+    const api = AWS_API[command.name];
+    emit({ type: 'agent.state', agentId, state: 'working', service: api.split(':')[0], detail: `${api.split(':')[1] ?? api} — ${summary}` });
+    let call: ToolCallReport;
+    try {
+      const outcome = await actions.submit(command.name, command.input, {
+        // Said when the card is really shown: policy is checked first, and a refused change says why instead.
+        approve: (req) => {
+          emit({ type: 'agent.message', from: agentId, to: 'user', text: `I'll do exactly what you asked: ${req.summary}. Your approval card is waiting in Deploy.` });
+          return approvals.request(taskId, req, emit);
+        },
+      });
+      call = toolReport(command.name, command.input, outcome);
+    } finally {
+      emit({ type: 'agent.state', agentId, state: 'idle' });
+    }
+    approvals.reportResult(taskId, call, emit);
+    const ok = call.outcome === 'done';
+    emit({ type: 'task.step', taskId, index: 1, text: ok ? summary : `${summary} — ${call.message}`, status: ok ? 'done' : 'failed' });
+    emit({ type: 'task.done', taskId, ok, result: call.message.slice(0, 400), xp: [{ serviceId: agentId, amount: ok ? XP.task + XP.perWrite : XP.attempted }] });
+    if (!ok || signal?.aborted) return;
+    // A few words on what was just built, from the agent (its persona, no tools). The change is done either way.
+    let text = '';
+    await speak(
+      `${agentSystemPrompt(agentId)}\n\nThe change below was just made in the player's AWS account. In plain text, under 50 words: what it is, and one thing to try next.`,
+      `The player asked: ${neutralise(cmd.prompt)}\nDone: ${neutralise(call.message)}`,
+      (d) => void (text += d),
+      600,
+    ).catch((err) => log.warn('explain after a change skipped', { taskId, err: (err as Error).name })); // the AI resting, a quota
+    if (text.trim() && !signal?.aborted) emit({ type: 'agent.message', from: agentId, to: 'user', text: text.trim().slice(0, 600) });
+  };
+
   /** `signal`: aborted when the socket that asked closes, so the agent stops making model calls for nobody. */
   const submitTask = async (cmd: Omit<TaskSubmit, 'action'>, emit: Emit, approvals?: Approvals, signal?: AbortSignal) => {
     const { taskId } = cmd;
     try {
+      // A plain request goes straight to its agent's action; anything else is planned by the concierge.
+      const command = approvals && deps.actions ? parseCommand(cmd.prompt) : undefined;
+      if (command && approvals && deps.actions) return await direct(cmd, command, emit, approvals, deps.actions, signal);
       const p = await working(emit, 'concierge', 'bedrock', 'InvokeModel — routing your request', () => plan(cmd));
       if (signal?.aborted) return;
       const agentId = serviceById(p.agentId) ? p.agentId : 'bedrock';
@@ -244,29 +306,7 @@ export const createOrchestrator = (deps: {
       });
       if (signal?.aborted) return;
 
-      // A plain request ("Create a bucket called holiday-123") the agent's turn made no tool call for: a small model
-      // sometimes says "I'll build it now" and doesn't (seen live, 21 Nov 2026). The server submits exactly what the
-      // player typed through the same ActionService and approval card (policy, MFA and the recent sign-in all apply).
-      // Never after a refusal, and never from page context or the plan: only the player's own words.
-      const toolCalls = [...result.toolCalls];
-      let reply = result.reply;
-      const direct = !result.refused && !toolCalls.length && approve && deps.actions ? directRequest(agentId, cmd.prompt) : undefined;
-      if (direct && approve && deps.actions) {
-        onToolStart({ name: direct.name, api: AWS_API[direct.name], summary: deps.actions.describe(direct.name, direct.input) });
-        // Said when the card is really shown (policy is checked first: a refused change says why instead).
-        const outcome = await deps.actions.submit(direct.name, direct.input, {
-          approve: (req) => {
-            emit({ type: 'agent.message', from: agentId, to: 'user', text: `I'll do exactly what you asked: ${req.summary}. It waits for your Approve.` });
-            return approve(req);
-          },
-        });
-        const call: ToolCallReport = { name: direct.name, input: direct.input, outcome: outcome.status, message: outcomeMessage(outcome) };
-        toolCalls.push(call);
-        onToolEnd(call);
-        reply = call.message;
-        if (signal?.aborted) return;
-      }
-
+      const { toolCalls, reply } = result;
       let ok = !result.refused && toolCalls.every((c) => c.outcome === 'done');
       if (ok) {
         // The steps the agent's tool calls didn't cover: explanations walk through as done, but a step that changes AWS
@@ -320,21 +360,8 @@ export const createOrchestrator = (deps: {
         sent = true;
         emit({ type: 'chat.answer', requestId, districtId, agentId, delta, done: false });
       };
-      const refused =
-        deps.llm.family === 'converse'
-          ? // Amazon Nova (Converse) on Strands Agents, on the light model, streamed.
-            (await say(deps.llm, { system, prompt: question, model: { light: true, maxTokens: 1500 }, onText })).refused
-          : (
-              await deps.llm.stream(
-                {
-                  max_tokens: 16000,
-                  output_config: { effort: 'low' }, // a short spoken answer
-                  system,
-                  messages: [{ role: 'user', content: question }],
-                },
-                onText,
-              )
-            ).stop_reason === 'refusal';
+      // On the light model, streamed: a short spoken answer.
+      const refused = await speak(system, question, onText, 1500);
       if (!sent) {
         const text = refused ? "Sorry, I can't answer that one." : 'Hmm, I have nothing to add.';
         emit({ type: 'chat.answer', requestId, districtId, agentId, delta: text, done: false });

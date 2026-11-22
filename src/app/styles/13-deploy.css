@@ -232,3 +232,11 @@
   padding-left: var(--s-6);
   font-size: var(--fs-sm);
 }
+/* One card per resource (src/state/builds.ts): what changed over time, and what this approval would change. */
+.build-history {
+  margin-top: var(--s-1);
+}
+.build-change {
+  margin-top: var(--s-2);
+  font-weight: 600;
+}

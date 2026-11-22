@@ -15,7 +15,15 @@ export interface ToolCallReport {
   input: unknown;
   outcome: SubmitOutcome['status'];
   message: string;
+  /** The AWS resource the call made or changed (an instance id, a bucket or table name), when it ran. */
+  resourceId?: string;
 }
+
+/** A tool call's report: the outcome in words, and the resource it touched. */
+export const toolReport = (name: string, input: unknown, o: SubmitOutcome): ToolCallReport => {
+  const resourceId = o.status === 'done' || o.status === 'failed' ? o.result.resourceId : undefined;
+  return { name, input, outcome: o.status, message: outcomeMessage(o), ...(resourceId ? { resourceId } : {}) };
+};
 
 export interface TurnResult {
   agentId: string;
@@ -198,7 +206,7 @@ export const createAgentRunner = (deps: { llm: Llm; actions: ActionService; snap
           const outcome: SubmitOutcome = known
             ? await (hooks.approve ? deps.actions.submit(use.name, use.input, { approve: hooks.approve }) : deps.actions.submit(use.name, use.input))
             : { status: 'invalid', error: `"${use.name}" isn't one of this agent's tools.` };
-          const report = { name: use.name, input: use.input, outcome: outcome.status, message: outcomeMessage(outcome) };
+          const report = toolReport(use.name, use.input, outcome);
           toolCalls.push(report);
           hooks.onToolEnd?.(report);
           results.push({

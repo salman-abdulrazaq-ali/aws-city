@@ -217,6 +217,19 @@ code.api {
   color: var(--ink);
   font-weight: 600;
 }
+.task-approve {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+  margin: var(--s-3) 0 0;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-weight: 700;
+}
 .watch-live {
   margin: var(--s-3) 0 0;
   color: var(--highlight);
