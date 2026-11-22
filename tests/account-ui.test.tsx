@@ -9,10 +9,12 @@ import type { Progress } from '@/backend/contract';
 vi.mock('@/ui/Portrait', () => ({ Portrait: () => <span data-testid="portrait" /> }));
 const rt = vi.hoisted(() => ({ signOut: vi.fn(), signIn: vi.fn(), downloadMyData: vi.fn(async () => {}), deleteAccount: vi.fn(async () => {}), fixFinding: vi.fn(), openPrivacyPolicy: vi.fn(), reconnect: vi.fn() }));
 const privacy = vi.hoisted(() => ({ url: undefined as string | undefined }));
+// The local server has no sign-in, so its backend says no (runtime.canSignIn); every other case here can sign in.
+const signIn = vi.hoisted(() => ({ can: true }));
 vi.mock('@/app/runtime', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/app/runtime')>()),
   ...rt,
-  canSignIn: () => true,
+  canSignIn: () => signIn.can,
   canDownloadData: () => true,
   canDeleteAccount: () => true,
   canReconnect: () => true,
@@ -131,10 +133,15 @@ describe('⋯ → Account (the hosted server)', () => {
 
   it('the demo and the local server have no Account section', () => {
     useCity.setState({ hosted: false });
-    render(<Hud layout="panel" />);
-    openMenu();
-    expect(within(screen.getByRole('menu')).queryByText('Account')).toBeNull();
-    expect(screen.queryByRole('menuitem', { name: /Connect your AWS account/ })).toBeNull();
+    signIn.can = false;
+    try {
+      render(<Hud layout="panel" />);
+      openMenu();
+      expect(within(screen.getByRole('menu')).queryByText('Account')).toBeNull();
+      expect(screen.queryByRole('menuitem', { name: /Connect your AWS account/ })).toBeNull();
+    } finally {
+      signIn.can = true;
+    }
   });
 });
 

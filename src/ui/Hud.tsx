@@ -351,7 +351,8 @@ function MoreMenu({ layout }: { layout: Layout }) {
         </button>
         {open && (
           <div className="menu" role="menu" aria-label="More" ref={list} tabIndex={-1} onKeyDown={onMenuKey}>
-            {hosted && <AccountItems run={run} askDelete={() => setConfirmDelete(true)} />}
+            {/* Where players look for Sign out first (seen 22 Nov 2026): any build that can sign in, once signed in. */}
+            {(hosted || (signedIn && canSignIn())) && <AccountItems run={run} askDelete={() => setConfirmDelete(true)} />}
             <button
               role="menuitemcheckbox"
               aria-checked={!muted}

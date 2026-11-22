@@ -352,7 +352,8 @@ When a change touches a decision, update its entry and run its Proof.
   never an EC2 house. Proof: `cd server && npx vitest run test/tenants.test.ts test/hosted.test.ts test/poller.test.ts test/guard.test.ts test/player-role.test.ts test/care.test.ts test/service.test.ts`,
   `npx vitest run tests/server-backend.test.ts tests/contract.test.ts tests/runtime-session.test.ts`, `cfn-lint` on the template (CI).
 - **The player's own AWS account: easy to find, linked where they choose, easy to let go** (contract v2.19; rules pure in
-  `src/state/account.ts`, `src/ui/Account.tsx`, the card in `src/ui/DeployPanel.tsx`). On the hosted server ⋯ → Account
+  `src/state/account.ts`, `src/ui/Account.tsx`, the card in `src/ui/DeployPanel.tsx`). On the hosted server (and on any build that can sign in, once signed in: `hosted || signedIn && canSignIn()` in
+  `src/ui/Hud.tsx`, so Sign out is where players look first) ⋯ → Account
   has the AWS account (its card in Deploy), Sign in or out, Download my data (`exportMe`, saved as a local JSON file) and
   Delete my account… (asked first, in a dialog), and Privacy policy ↗ when the build has its address (`WXT_PRIVACY_URL`,
   https only, `privacyPolicyUrl`/`openPrivacyPolicy` in `src/app/runtime.ts`; also on Deploy's sign-in card; a hosted store
@@ -398,7 +399,7 @@ When a change touches a decision, update its entry and run its Proof.
   'detail' lines in words ("Safety check: …") and the name typed before Approve. A practice build (`isPracticeDeploy`)
   says it made nothing in the AWS account and has no Tear down. Proof: `npx vitest run
   tests/account.test.ts tests/account-ui.test.tsx tests/deploy-account.test.tsx tests/runtime-session.test.ts
-  tests/session.test.ts tests/finding-pacing.test.ts tests/release-check.test.ts tests/link-steps.test.tsx`.
+  tests/session.test.ts tests/finding-pacing.test.ts tests/release-check.test.ts tests/link-steps.test.tsx tests/menu-signout.test.tsx`.
 - **Red-team pass, 21 Nov 2026: what an attacker with a page, a token or a laptop process can't do.**
   - The Console Copilot fills fields and points; the player presses anything that commits (a button, link or menu item
     with a commit word anywhere in its name: create, save, launch, add, attach…; any form submit control but
