@@ -333,6 +333,8 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
       /** Polls in a row on which STS refused the role, and when the first of them was (BROKEN_AFTER: what breaks the link). */
       let refusedPolls = 0;
       let firstRefusedAt = 0;
+      /** A markBroken in flight (refused polls arriving meanwhile don't start another). */
+      let marking = false;
       /** The feed's lessons already said to this player (each once per session, not on every change). */
       const lessonsSaid = new Set<string>();
       const poller = createPoller({
@@ -345,9 +347,13 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
             // Refusals the breaker took for our side (many players at once: aws.ts) never count against this link, and
             // never mark it: only a poll the breaker still takes for the player's own does, a breaker window after the first.
             if (!next.refusedOurSide && refusedPolls++ === 0) firstRefusedAt = Date.now();
-            if (!next.refusedOurSide && refusedPolls >= BROKEN_AFTER && Date.now() - firstRefusedAt >= REFUSAL_WINDOW_MS && self) {
-              poller.stop();
-              void markBroken(self).catch((err) => log.warn('marking the link broken failed', { who: who(sub), err: (err as Error).name }));
+            if (!next.refusedOurSide && refusedPolls >= BROKEN_AFTER && Date.now() - firstRefusedAt >= REFUSAL_WINDOW_MS && self && !marking) {
+              // Polling stops once the link is marked (replaceWorld stops this poller), not before: if the record's read or
+              // write fails, the next refused poll tries again, instead of a city frozen on old data that still says linked.
+              marking = true;
+              void markBroken(self)
+                .catch((err) => log.warn('marking the link broken failed', { who: who(sub), err: (err as Error).name }))
+                .finally(() => (marking = false));
             }
             // Nothing was read: no feed lessons and no finding changes from a poll that saw nothing.
             return;

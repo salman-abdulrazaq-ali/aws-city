@@ -320,9 +320,11 @@ When a change touches a decision, update its entry and run its Proof.
   `refusalsMarked`; our task credentials failing, ExpiredToken/InvalidClientTokenId, never mark a link broken, and
   'expired' never persists `brokenAt`) on `BROKEN_AFTER` (3) polls in a row, the first at least `REFUSAL_WINDOW_MS` (5 min)
   old, on a poll the breaker still takes for the player's own (polling goes on meanwhile, so each refused player stays in
-  the breaker while other players' cached credentials expire), stops polling and marks the record `brokenAt` (`broken: true`: "Was the stack deleted? Link again, or disconnect."), only when the record is still
+  the breaker while other players' cached credentials expire), marks the record `brokenAt` (`broken: true`: "Was the stack deleted? Link again, or disconnect."), only when the record is still
   the link that world was built from (`linkKey`, and the write is conditional; otherwise the world is rebuilt from the
-  record). The our-side wording test (`OUR_POLICY` in `server/src/aws.ts`: an AccessDenied naming an identity-based
+  record), and stops polling only once it's marked (the new world replaces the old; a failed read or write leaves polling
+  on, and the next refused poll tries again, never a city frozen on old data that still says linked). Proof:
+  `cd server && npx vitest run test/tenants.test.ts -t "broken"`. The our-side wording test (`OUR_POLICY` in `server/src/aws.ts`: an AccessDenied naming an identity-based
   policy, a service control policy, a permissions boundary or a session policy, all evaluated on our own role) has a
   breaker (`createRefusalBreaker`): the role
   refusing `REFUSAL_PLAYERS` (3) different players within `REFUSAL_WINDOW_MS` (5 min) on one server task, with no AssumeRole

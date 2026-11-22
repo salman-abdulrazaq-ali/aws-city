@@ -255,6 +255,30 @@ describe('the account lifecycle (v2.19)', () => {
     tenants.closeAll();
   });
 
+  it('a failed write while marking a link broken keeps polling, and the next refused poll marks it', async () => {
+    const later = fakeClock();
+    const { tenants, stores } = hub();
+    await stores.accounts.put('u1', linkedRecord);
+    const tenant = await tenants.acquire({ sub: 'u1' });
+    const tab: ServerEvent[] = [];
+    tenant.subscribe((e) => tab.push(e));
+    const poller = pollers[0]!;
+    // DynamoDB throttles the brokenAt write once (seen in review of #105: the city stayed linked on old data).
+    const update = vi.spyOn(stores.accounts, 'update').mockRejectedValueOnce(Object.assign(new Error('slow down'), { name: 'ProvisionedThroughputExceededException' }));
+    breakLink(poller, later, refused());
+    await vi.waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(running()).toBe(1);
+    expect(statuses(tab)).toEqual([]);
+    expect(await stores.accounts.get('u1')).not.toHaveProperty('brokenAt');
+    poller.poll(refused());
+    await vi.waitFor(() => expect(statuses(tab)).toHaveLength(1));
+    expect(running()).toBe(0);
+    expect(await stores.accounts.get('u1')).toMatchObject({ status: 'linked', brokenAt: expect.any(String) });
+    expect(statuses(tab)[0]).toMatchObject({ linked: false, broken: true, accountId: ACCOUNT });
+    tenants.closeAll();
+  });
+
   it('a link is marked broken only on a poll the breaker still takes for the player’s own refusal', async () => {
     const later = fakeClock();
     const { tenants, stores } = hub();
