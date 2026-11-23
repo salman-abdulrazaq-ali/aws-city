@@ -479,7 +479,8 @@ function handleFocus(f: PageFocus) {
 
 /**
  * Pages the Lookout may photograph on its own (auto-snap): AWS pages, never one that can show a secret (risk.ts
- * `SECRET_PAGES` on the real console: access keys, secret values, SecureStrings, KMS, CloudShell; and `isSensitivePage`'s
+ * `SECRET_PAGES` on the real console: access keys, secret values, SecureStrings, KMS, CloudShell, Lambda environment
+ * variables, RDS database pages, EC2's Windows password, Cognito app-client secrets; and `isSensitivePage`'s
  * paths: Cognito app clients, Identity Center credentials too). A photo isn't redacted, so those are snapped only on ask.
  */
 export const autoSnaps = (f: Pick<PageFocus, 'kind' | 'url'>) =>
