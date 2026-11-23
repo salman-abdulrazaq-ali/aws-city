@@ -256,6 +256,17 @@ const closePopups = async () => {
     await wait(200);
   }
 };
+// A card over everything (a citizen's question that Kai walked into, a finding) closed by its ✕, not Escape: Escape
+// also leaves Decorate. Seen in CI 23 Nov 2026: at 1–2 fps a walk from earlier reached a citizen's "?" while Decorate
+// was open, and its card took the category chip's click.
+const dismissCards = async (p = page) => {
+  for (let i = 0; i < 3 && (await p.locator('.finding-scrim').count()); i++) {
+    const close = p.locator('.finding-scrim button[aria-label="Close"]').first();
+    if (!(await close.count())) break;
+    await close.click().catch(() => {});
+    await wait(200);
+  }
+};
 const clickTab = async (label) => {
   await closePopups();
   await page.locator(`.tabs button[title="${label}"]`).click();
@@ -988,7 +999,9 @@ await panel.screenshot({ path: `${out}/12-lookout.png` });
       ...extra,
     ];
     for (const [cat, name, kind] of picks) {
+      await dismissCards(p);
       await p.locator('.bd-cats button', { hasText: cat }).click();
+      await dismissCards(p);
       await p.locator('.bd-item').filter({ has: p.locator('.bd-name', { hasText: new RegExp(`^${name}$`) }) }).click();
       const [spot] = await p.evaluate((k) => window.awsCity.build?.spots?.(k, 1) ?? [], kind);
       if (!spot) {
