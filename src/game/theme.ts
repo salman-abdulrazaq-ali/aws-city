@@ -27,8 +27,12 @@ export const CSS = {
   quoteInk: '#1f1608',
   gold: '#ffc233',
   goldHi: '#fff1b8',
+  paper: '#d9cfba',
   paperInk: '#1b1200',
   paperMeta: '#92400e',
+  /** The flashcard's small print on paper (10-flashcards.css overrides --paper-meta / --paper-hint): 6:1 on `paper`. */
+  cardMeta: '#7c2d12',
+  cardHint: '#4a4540',
   bubble: '#ffffff',
   bubbleInk: '#111111',
   roleOk: '#047857',
@@ -47,6 +51,48 @@ export const withAlpha = (c: ThemeColor, alpha: number) => `${CSS[c]}${Math.roun
 
 /** Text sizes on the canvas: small labels, body (bubbles), headings / rewards. */
 export const FONT_SIZE = { sm: '11px', md: '13px', lg: '16px' } as const;
+
+/** The smallest text the canvas draws, px (the UI's `--fs-xs`): nothing a player reads is smaller, at any text size. */
+export const MIN_TEXT_PX = 11;
+
+/** A canvas font size in px: `px` times the player's text size (⋯ → Text size: 1, 1.25 or 1.5), never under 11. */
+export const textPx = (px: number, scale = 1) => Math.max(MIN_TEXT_PX, Math.round(px * scale));
+
+/**
+ * The mini-games' chrome (MiniGame's `PAL`): the desk's graphite and amber, and the flashcards' paper for the end card,
+ * so a game reads as part of the desk beside the city. Numbers fill shapes, strings colour text.
+ */
+export const GAME_PAL = {
+  /** The stage and the title bar. */
+  bg: COLOR.bg,
+  /** The hint strip. */
+  panel: COLOR.panel,
+  /** Stat chips and the quiet button (← City). */
+  chip: COLOR.panelHi,
+  chipCss: CSS.panelHi,
+  line: COLOR.line,
+  /** Hard pixel borders and shadows. */
+  black: 0x000000,
+  /** The one amber primary. */
+  accent: COLOR.accent,
+  accentCss: CSS.accent,
+  accentInk: CSS.accentInk,
+  /** Expert: the city's pale gold, set apart from the amber primary. */
+  expert: COLOR.goldHi,
+  expertCss: CSS.goldHi,
+  paper: COLOR.paper,
+  paperInk: CSS.paperInk,
+  paperMeta: CSS.cardMeta,
+  paperHint: CSS.cardHint,
+  /** Text on the dark stage and the chips, each 4.5:1 or better there (the desk's red text is `bad-ink`: `bad` is 4:1 on a chip). */
+  ink: CSS.inkHi,
+  good: CSS.good,
+  bad: CSS.badInk,
+  muted: CSS.muted,
+} as const;
+
+/** The dark pill behind an answer's verdict (MiniGame.verdict): graphite, nearly opaque. */
+export const GAME_PILL = withAlpha('bg', 0.95);
 
 /**
  * The boot screen's loading tip: the panel's small text size (`--fs-sm`, 12 px) in ink-soft on a solid graphite chip,
