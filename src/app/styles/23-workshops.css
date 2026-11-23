@@ -120,6 +120,13 @@
 .terminal-line.ok {
   color: var(--good-ink);
 }
+/* A coaching line in the game's voice ("Practice terminal: …", a placeholder note): help, not a CLI error. */
+.terminal-line.help {
+  border-left: 2px solid var(--line);
+  padding-left: 6px;
+  color: var(--ink-soft);
+  font-family: var(--font-ui);
+}
 /* The input, its tools and the note: pinned to the dialog's bottom edge while the terminal is in view, so Hint, Fill
    and Tab never sit below the fold (sticky inside .terminal, the dialog being the scroller). */
 .terminal-dock {
@@ -304,6 +311,21 @@
   display: grid;
   gap: 8px;
 }
+/* A talk fits the side panel: its answers and sources are sentences, so they wrap (buttons don't by default). */
+.north-hall {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.north-hall .btn {
+  max-width: 100%;
+  white-space: normal;
+}
+.talk-check .btn {
+  text-align: left;
+}
+.talk-stage > * {
+  min-width: 0;
+}
 .talk-stage h4 {
   margin: 0;
 }
@@ -347,6 +369,9 @@
 .template-yaml {
   max-height: 260px;
   overflow: auto;
+  /* Its long lines scroll inside it: they never widen the card past the side panel (no min-content push upward). */
+  contain: inline-size;
+  max-width: 100%;
   margin: 6px 0;
   white-space: pre;
 }

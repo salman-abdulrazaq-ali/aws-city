@@ -7,7 +7,7 @@
       "aliases": [
         "AZ"
       ],
-      "short": "A separate location inside a Region, like us-east-2a. Each Region has at least three, so apps can survive one failing.",
+      "short": "A separate site in a Region, with its own power and network. A Region has at least three, so apps survive one failing.",
       "url": "https://docs.aws.amazon.com/global-infrastructure/latest/regions/aws-availability-zones.html"
     },
     {

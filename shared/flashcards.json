@@ -613,7 +613,7 @@
         "q": "What do S3 Lifecycle rules do?",
         "a": "They transition objects to cheaper classes or expire them after a set age. Rules can cover old noncurrent versions too, cutting cost without manual clean-up.",
         "simple": "Lifecycle rules tidy up for you: they move old files to cheaper shelves, or delete them after a while.",
-        "tier": 3,
+        "tier": 2,
         "source": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lifecycle-mgmt.html"
       },
       {
@@ -637,7 +637,7 @@
         "q": "What are Amazon S3 Tables?",
         "a": "S3 storage built for tabular data, like rows of sales or sensor readings. Tables live in a new bucket type, a table bucket, in the Apache Iceberg format, and you query them with SQL from engines like Amazon Athena.",
         "simple": "S3 Tables store data in rows and columns, like a giant spreadsheet you can ask questions about.",
-        "tier": 2,
+        "tier": 3,
         "source": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-tables.html"
       },
       {
@@ -653,7 +653,7 @@
         "q": "What is Amazon S3 Vectors for?",
         "a": "Storing vector embeddings (numbers that capture what text or images mean) in a vector bucket and finding the most similar ones. It suits RAG, semantic search and AI agents, with no servers to set up.",
         "simple": "S3 Vectors stores the meaning of words and pictures as numbers, so you can find the most similar ones.",
-        "tier": 2,
+        "tier": 3,
         "source": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-vectors.html"
       },
       {

@@ -117,13 +117,20 @@ export function consoleUrl(serviceId: string): string {
   return `https://console.aws.amazon.com/${base}/home${route ? `#${route}` : ''}`;
 }
 
-/** Keyword routing for free text (prompts, page titles). Returns best service id or undefined. */
+/**
+ * Keyword routing for free text (prompts, page titles). Returns best service id or undefined. A keyword counts only at
+ * the start of a word ("bucket" in "buckets"), so "ebs" never matches inside "website".
+ */
 export function matchText(text: string): string | undefined {
   const t = ` ${text.toLowerCase()} `;
+  const has = (k: string) => {
+    for (let i = t.indexOf(k); i >= 0; i = t.indexOf(k, i + 1)) if (!/^[a-z0-9]/.test(k) || !/[a-z0-9]/.test(t[i - 1])) return true;
+    return false;
+  };
   let winner: { id: string; score: number } | undefined;
   for (const s of SERVICES) {
     let score = 0;
-    for (const k of s.keywords) if (t.includes(k)) score += k.length;
+    for (const k of s.keywords) if (has(k)) score += k.length;
     if (score > 0 && (!winner || score > winner.score)) winner = { id: s.id, score };
   }
   return winner?.id;

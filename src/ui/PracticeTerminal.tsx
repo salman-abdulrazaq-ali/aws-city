@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { fillNames, hintWord, nextWord, placeholderNote, run, tabComplete, type TerminalStep } from '@/learning/terminal';
+import { fillNames, hintWord, isCoaching, nextWord, placeholderNote, run, tabComplete, type TerminalStep } from '@/learning/terminal';
+import { keysBelongToUi } from '@/game/keys';
 import { feel } from './feedback';
 
 interface Line {
-  kind: 'in' | 'out' | 'err' | 'ok';
+  /** `help`: a coaching line in the game's voice ("Practice terminal: …"), shown as help, never as a CLI error. */
+  kind: 'in' | 'out' | 'err' | 'ok' | 'help';
   text: string;
 }
 
@@ -35,6 +37,11 @@ export function PracticeTerminal(props: {
   const [passed, setPassed] = useState(false);
   const screen = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+  // A step that comes up after the last one passed takes the focus that one dropped as it unmounted: otherwise typing
+  // and ↑ went to the city, walked Kai onto a job's station and opened Jobs by themselves (Okafor's playtest).
+  useEffect(() => {
+    if (!keysBelongToUi(document.activeElement, undefined)) input.current?.focus();
+  }, []);
   useEffect(() => {
     const el = screen.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -67,12 +74,13 @@ export function PracticeTerminal(props: {
       onPass(r.values, hints);
     } else if (r.kind === 'error') {
       feel.bad();
-      setLines((l) => [...l, echo, { kind: 'err', text: r.output }, { kind: 'ok', text: `💡 ${r.error.explain} ${r.error.fix}` }]);
+      setLines((l) => [...l, echo, { kind: isCoaching(r.output) ? 'help' : 'err', text: r.output }, { kind: 'ok', text: `💡 ${r.error.explain} ${r.error.fix}` }]);
     } else {
-      // A placeholder typed as shown is a teaching note, not a mistake; anything else is a miss.
-      if (/^Swap `/.test(r.output)) feel.tap();
+      // A placeholder typed as shown or a coaching line is a teaching note, not a mistake; anything else is a miss.
+      const help = /^Swap `/.test(r.output) || isCoaching(r.output);
+      if (help) feel.tap();
       else feel.bad();
-      setLines((l) => [...l, echo, { kind: 'err', text: r.output }]);
+      setLines((l) => [...l, echo, { kind: help ? 'help' : 'err', text: r.output }]);
     }
   };
 
