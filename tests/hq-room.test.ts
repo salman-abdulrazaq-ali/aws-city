@@ -1,8 +1,8 @@
 // A district HQ seats what fits and stands the rest (src/game/hqRoom.ts): districts have 6 to 11 services and the room
 // has 6 desks, and a 7th service found used to throw before the camera was set (23 Nov 2026).
 import { describe, expect, it } from 'vitest';
-import { DOOR, piecesFor, ROOM_H, ROOM_W, SEATS, staffSpots, tilesOf } from '@/game/hqRoom';
-import type { Tile } from '@/world/layout';
+import { DOOR, ENTRY, keptClear, piecesFor, ROOM_H, ROOM_W, SEATS, staffPlaces, staffSpots, tilesOf } from '@/game/hqRoom';
+import type { Rect, Tile } from '@/world/layout';
 import { DISTRICTS, servicesIn, type DistrictId } from '@/world/taxonomy';
 
 const key = (t: Tile) => t.y * ROOM_W + t.x;
@@ -86,15 +86,101 @@ describe('an HQ room staffs a full district', () => {
     }
   });
 
-  it('the scene takes its spots from staffSpots, never indexes the desks by hand', async () => {
+  it('the scene takes its places from staffPlaces, never indexes the desks or spawns the staff by hand', async () => {
     const { readFileSync } = await import('node:fs');
     const src = readFileSync('src/game/scenes/InteriorScene.ts', 'utf8');
-    expect(src).toMatch(/staffSpots\(staff\.length\)/);
+    expect(src).toMatch(/staffPlaces\(this\.districtId, staff\.length\)/);
     expect(src).not.toMatch(/SEATS\[/);
+    // Each starts at its own place and idles on its own patch (they spawned on three tiles: `3 + (i % 3)`).
+    expect(src).toMatch(/const \{ start, area, spot \} = places\[i\];/);
+    expect(src).toMatch(/tile: start,\s*home: area,\s*workSpot: spot\?\.tile,/);
+    expect(src).not.toMatch(/i % 3/);
     // Room text follows ⋯ → Text size, as in the city, and the room's sign is pinned to the top of the view (it stood
     // above the back wall, off-screen at every zoom), with bubbles kept below it.
     expect(src).toMatch(/const text = \(useCity\.getState\(\)\.prefs\.textSize \?\? 100\) \/ 100;\s*const ui = text \/ cam\.zoom;/);
     expect(src).toMatch(/this\.title\.setScale\(ui\)\.setPosition\(cam\.midPoint\.x, cam\.midPoint\.y - cam\.height \/ 2 \/ cam\.zoom/);
     expect(src).toMatch(/setBubbleTopInset\(this, /);
+  });
+});
+
+/** Every tile of a patch. */
+const tilesIn = (r: Rect): Tile[] => Array.from({ length: r.w * r.h }, (_, i) => ({ x: r.x + (i % r.w), y: r.y + Math.floor(i / r.w) }));
+
+describe('the staff spread out: each starts at its own place and idles on its own patch (23 Nov 2026: one knot)', () => {
+  // The Spheres always has its three (concierge, builder, lookout); a district any number, up to past the spots.
+  const rooms: [string, number][] = [...DISTRICTS.flatMap((d) => Array.from({ length: 12 }, (_, i): [string, number] => [d.id, i + 1])), ['spheres', 3]];
+
+  it('for 6 to 12 staff, in every district, each start tile is distinct, walkable and reachable, never the door or Kai’s tile', () => {
+    for (const [d, n] of rooms.filter(([d, n]) => n >= 6 || d === 'spheres')) {
+      const places = staffPlaces(d, n);
+      expect(places, `${d} ${n}`).toHaveLength(n);
+      const blocked = blockedFor(d, n);
+      const open = reachable(blocked);
+      expect(new Set(places.map((p) => key(p.start))).size, `${d} ${n}: two staff on one tile`).toBe(n);
+      for (const p of places) {
+        const at = `${d} ${n} ${JSON.stringify(p.start)}`;
+        expect(inRoom(p.start), at).toBe(true);
+        expect(blocked.has(key(p.start)), `${at}: on furniture or a desk`).toBe(false);
+        expect(open.has(key(p.start)), `${at}: out of Kai’s reach`).toBe(true);
+        expect(key(p.start), at).not.toBe(key(DOOR));
+        expect(key(p.start), at).not.toBe(key(ENTRY));
+      }
+    }
+  });
+
+  it('each starts at its work spot (six at the desks, the rest at the racks) and idles on a patch round it that no one else’s touches', () => {
+    for (const [d, n] of rooms) {
+      const spots = staffSpots(n);
+      const owner = new Map<number, number>();
+      staffPlaces(d, n).forEach((p, i) => {
+        const at = `${d} ${n} #${i}`;
+        expect(p.spot, at).toEqual(spots[i]);
+        if (p.spot) expect(p.start, at).toEqual(p.spot.tile);
+        // Its start is on its patch, and the patch is inside the room.
+        expect(tilesIn(p.area).some((t) => key(t) === key(p.start)), at).toBe(true);
+        for (const t of tilesIn(p.area)) {
+          expect(inRoom(t), `${at} ${JSON.stringify(p.area)}`).toBe(true);
+          expect(owner.get(key(t)), `${at} shares ${JSON.stringify(t)} with #${owner.get(key(t))}`).toBeUndefined();
+          owner.set(key(t), i);
+        }
+      });
+    }
+  });
+
+  it('nobody in a real district stands head over head: any two starts are 32 px apart across the screen or 40 px down it', () => {
+    // On screen a tile is 32 × 16 (src/game/iso.ts): x − y steps 16 px across, x + y steps 8 px down.
+    for (const d of DISTRICTS.map((x) => x.id as DistrictId)) {
+      const places = staffPlaces(d, servicesIn(d).length);
+      for (let i = 0; i < places.length; i++)
+        for (let j = i + 1; j < places.length; j++) {
+          const [a, b] = [places[i].start, places[j].start];
+          const across = Math.abs(a.x - a.y - (b.x - b.y)) * 16;
+          const down = Math.abs(a.x + a.y - (b.x + b.y)) * 8;
+          expect(across >= 32 || down >= 40, `${d}: ${JSON.stringify(a)} and ${JSON.stringify(b)}`).toBe(true);
+        }
+    }
+  });
+
+  it('nobody idles in front of the door or on Kai’s first tile: a tap on the door reaches the door', () => {
+    // In front of the door on screen: its own column (x − y within a step) and up to two rows nearer the viewer.
+    const front = (t: Tile) => Math.abs(t.x - t.y - (DOOR.x - DOOR.y)) <= 1 && t.x + t.y - (DOOR.x + DOOR.y) >= 0 && t.x + t.y - (DOOR.x + DOOR.y) <= 2;
+    expect(keptClear(ENTRY.x, ENTRY.y)).toBe(true);
+    for (const [d, n] of rooms)
+      staffPlaces(d, n).forEach((p, i) => {
+        expect(keptClear(p.start.x, p.start.y), `${d} ${n} #${i} starts in Kai’s way`).toBe(false);
+        for (const t of tilesIn(p.area)) if (key(t) !== key(DOOR) && front(t)) expect(keptClear(t.x, t.y), `${d} ${n} #${i}: ${JSON.stringify(t)}`).toBe(true);
+      });
+  });
+
+  it('the scene lets its staff idle anywhere on their patch but the kept-clear tiles', async () => {
+    const { readFileSync } = await import('node:fs');
+    expect(readFileSync('src/game/scenes/InteriorScene.ts', 'utf8')).toMatch(/wanderable: \(x, y\) => !keptClear\(x, y\),/);
+  });
+
+  it('those at the racks stand on the grate, every other row, and the corner’s stays on its own tile', () => {
+    const racks = staffSpots(11).slice(SEATS.length);
+    for (const s of racks) expect(s!.tile.x, JSON.stringify(s)).toBeGreaterThanOrEqual(8);
+    const rows = racks.map((s) => s!.tile).filter((t) => t.x === 8).map((t) => t.y);
+    for (let i = 1; i < rows.length; i++) expect(rows[i] - rows[i - 1]).toBeGreaterThanOrEqual(2);
   });
 });
