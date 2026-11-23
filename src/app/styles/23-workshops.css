@@ -796,6 +796,6 @@
 /* For real: which account CloudShell must run in, and the console-account warning when the city can tell. */
 .workshop-account {
   display: grid;
-  gap: 4px;
-  margin: 4px 0 8px;
+  gap: var(--s-2);
+  margin: var(--s-2) 0 var(--s-4);
 }
