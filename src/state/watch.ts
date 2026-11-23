@@ -117,6 +117,15 @@ export function thinkingLine(agent: { state: string; service?: string; detail?: 
 }
 
 /** A failed task's reason, without the server's "Task failed: " lead. */
+/**
+ * The first sentence of the server's line about a change the player made in AWS themselves (server/src/contract/aws-feed.ts:
+ * "New in your account: bucket "photos-1"." or ""photos-1" (bucket) is gone from your account."), else undefined. Seen
+ * 23 Nov 2026: a bucket made in the console got Sally's line as a bubble over S3 Lake, off screen, so it was missed.
+ */
+export function accountNews(text: string): string | undefined {
+  return /^New in your account: [^"]*"[^"]*"\./.exec(text)?.[0] ?? /^"[^"]*" \([^)]*\) is gone from your account\./.exec(text)?.[0];
+}
+
 export const failedReason = (message: string) => message.replace(/^Task failed:\s*/, '').trim();
 
 /**

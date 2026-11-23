@@ -9,6 +9,21 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  # No AI tool is credited as an author or as having built this: a commit with a Co-Authored-By line naming Claude or
+  # anthropic.com, or a pull request description with "Generated with Claude Code", fails here. The description comes in
+  # through env, never into the script's text.
+  attribution:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false, fetch-depth: 0 }
+      - name: No AI credit in the commits or the description
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: bash scripts/no-ai-credit.sh "$BASE" "$HEAD"
   extension:
     runs-on: ubuntu-latest
     steps:

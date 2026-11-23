@@ -4,7 +4,7 @@ import type { Progress } from '@/backend/contract';
 import { redact } from '@/console/risk';
 import { explainError, type TerminalError } from '@/learning/terminal';
 import { stepReward, workshopStatus } from '@/learning/workshopRewards';
-import { accountLabel, regionName } from '@/state/account';
+import { accountLabel, accountTitle, regionName } from '@/state/account';
 import { bus } from '@/state/bus';
 import { growthLine, growthOf } from '@/state/growth';
 import { levelOf } from '@/state/mastery';
@@ -121,10 +121,14 @@ function AccountCheck() {
   return (
     <div className="workshop-account">
       <p className="muted small">
-        CloudShell must run in account <b>{accountLabel(account.accountId)}</b> (the one the city checks). To see which account a shell is in:
+        CloudShell must run in account <b>{accountTitle(account.accountId)}</b> (the one the city checks). To see which account a shell is in:
       </p>
       <CodeChip code="aws sts get-caller-identity --query Account --output text" />
       <ConsoleAccountWarning />
+      {/* Seen 23 Nov 2026: a new account's CloudShell said "account verification is in progress" (up to 2 days). */}
+      <p className="muted small workshop-no-cloudshell">
+        CloudShell says “account verification is in progress”? New AWS accounts wait up to 2 days for it. Run the same commands in your own terminal with the AWS CLI, signed in to that account.
+      </p>
     </div>
   );
 }
