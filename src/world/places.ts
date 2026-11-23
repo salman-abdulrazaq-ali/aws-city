@@ -54,6 +54,16 @@ export const PLACES: Place[] = world.services.map((s) => ({
 
 export const placeFor = (serviceId: string) => PLACES.find((p) => p.serviceId === serviceId);
 
+/**
+ * Where a task card says the agent is going: the AWS service and its agent ("Amazon S3 (Sally the Angler)"), not the
+ * landmark's city name. Seen 23 Nov 2026: "Heading to S3 Lake" read as some other service. Unknown ids stay as they are.
+ */
+export function cardPlace(serviceId: string): string {
+  const service = world.services.find((s) => s.id === serviceId);
+  if (!service) return serviceId;
+  return service.agentName ? `${service.name} (${service.agentName})` : service.name;
+}
+
 export interface SpecialAgent {
   id: string;
   name: string;

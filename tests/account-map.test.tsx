@@ -144,6 +144,8 @@ describe('the map on screen', () => {
     expect(screen.getByRole('img', { name: /Diagram of what the city built in US West \(Oregon\)/ })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^No building yet/ })).toBeNull();
     expect(screen.getByText(/No costs here: AWS bills each service for the whole account/)).toBeTruthy();
+    // Seen 23 Nov 2026: a console bucket wasn't here and read as missing.
+    expect(screen.getByText(/What you made yourself \(the console, CloudShell\) is under Everything/)).toBeTruthy();
     cleanup();
     useCity.setState({ inventory: { ...inventory, items: inventory.items.map((i) => ({ ...i, managedByGame: false })) } });
     render(<AccountMap />);

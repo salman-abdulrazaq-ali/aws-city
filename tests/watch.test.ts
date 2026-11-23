@@ -3,7 +3,8 @@
 import { describe, expect, it } from 'vitest';
 import { MockBackend } from '@/backend/MockBackend';
 import type { ServerEvent, TaskPlanEvent } from '@/backend/contract';
-import { agentOffer, liveStep, paidLine, taskPhase, taskStory } from '@/state/watch';
+import { accountNews, agentOffer, liveStep, paidLine, taskPhase, taskStory } from '@/state/watch';
+import { cardPlace } from '@/world/places';
 import type { TaskView } from '@/state/store';
 import templatesJson from '../shared/templates.json' with { type: 'json' };
 import { FEATURED_REQUESTS } from '@/world/taxonomy';
@@ -78,6 +79,8 @@ describe('the demo task mirrors the city', () => {
     await new Promise((r) => setTimeout(r, 700));
     const plan = events.find((e): e is TaskPlanEvent => e.type === 'task.plan')!;
     expect(plan.steps).toContain('Asking Ivy for help');
+    // The card names the AWS service and its agent, not the landmark (seen 23 Nov 2026: "S3 Lake" read as another service).
+    expect(plan.steps[0]).toBe('Heading to Amazon S3 (Sally the Angler)');
     const steps = events.filter((e) => e.type === 'task.step');
     const last = new Map<number, string>();
     for (const e of steps) if (e.type === 'task.step') last.set(e.index, e.status);
@@ -91,5 +94,24 @@ describe('the demo task mirrors the city', () => {
     expect(ivy).toBeGreaterThan(running);
     expect(events.some((e) => e.type === 'task.done' && e.ok)).toBe(true);
     mock.disconnect();
+  });
+});
+
+describe('where the card says the agent is going', () => {
+  it('names the AWS service and its agent, and leaves an unknown id as it is', () => {
+    expect(cardPlace('s3')).toBe('Amazon S3 (Sally the Angler)');
+    expect(cardPlace('nope')).toBe('nope');
+  });
+});
+
+// Seen 23 Nov 2026: a bucket made in the console got Sally's line only as a bubble over S3 Lake, off screen.
+describe('news of a change the player made in AWS', () => {
+  it('is the first sentence of the server’s line, the lesson after it left out', () => {
+    expect(accountNews('New in your account: bucket "test-demo-1.v2". Buckets hold objects (files) by key.')).toBe('New in your account: bucket "test-demo-1.v2".');
+    expect(accountNews('"test-demo-1" (bucket) is gone from your account.')).toBe('"test-demo-1" (bucket) is gone from your account.');
+  });
+  it('is nothing else an agent says', () => {
+    expect(accountNews('Sounds like a job for Sally!')).toBeUndefined();
+    expect(accountNews('"web-1" went running → stopped.')).toBeUndefined();
   });
 });

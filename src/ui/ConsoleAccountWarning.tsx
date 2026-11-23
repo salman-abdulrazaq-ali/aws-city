@@ -1,5 +1,5 @@
 import { openSwitchRole } from '@/app/runtime';
-import { accountLabel, regionName } from '@/state/account';
+import { accountLabel, accountTitle, regionName } from '@/state/account';
 import { useCity } from '@/state/store';
 
 /**
@@ -15,10 +15,10 @@ export function ConsoleAccountWarning() {
   return (
     <div className="field-error console-account" role="alert">
       ⚠️ Your AWS console is signed in to account <b>{accountLabel(consoleAccount)}</b>, but the city is linked to{' '}
-      <b>{accountLabel(account.accountId)}</b>
+      <b>{accountTitle(account.accountId)}</b>
       {account.region ? ` (${regionName(account.region)})` : ''}. What you make there (CloudShell too) won’t show in the city.{' '}
       <button type="button" className="btn tiny" onClick={() => openSwitchRole()}>
-        Switch role into {accountLabel(account.accountId)}
+        Switch role into {accountTitle(account.accountId)}
       </button>
     </div>
   );

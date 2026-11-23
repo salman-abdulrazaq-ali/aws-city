@@ -11,6 +11,7 @@ import type { ActionService, ApprovalRequest } from '../agents/service.js';
 import type { Approvals } from './approvals.js';
 import type { WorldSnapshot } from '../state/model.js';
 import {
+  cardPlace,
   type ChatAsk,
   type DistrictId,
   districtById,
@@ -36,10 +37,11 @@ const XP = { task: 15, perWrite: 5, attempted: 3, classify: 3 } as const;
 /**
  * What a chat answer may promise. Seen 22 Nov 2026: asked in chat to delete a server made in the console, Eddie said he
  * couldn't see it. Chat never changes AWS (a change is a request in the city's box, with the player's Approve), and the
- * city only changes what it built (the player role allows only its own tagged resources).
+ * city only changes what it built (the player role allows only its own tagged resources). Seen 23 Nov 2026: asked to check
+ * the objects in a console bucket, Sally said she couldn't because the city didn't build it; no bucket's objects are read.
  */
 export const CHAT_CAN_DO =
-  "This chat can't change AWS: to build, stop or remove something, the player types it in the city's request box and approves the card. The city only changes what it built; if asked to change something else you can see (notBuiltByTheCity, or a resource with builtByGame false), say you can see it and that the player changes it in the AWS console.";
+  "This chat can't change AWS: to build, stop or remove something, the player types it in the city's request box and approves the card. The city only changes what it built; if asked to change something else you can see (notBuiltByTheCity, or a resource with builtByGame false), say you can see it and that the player changes it in the AWS console. The city never sees inside a bucket (no objects or files, the city's or not): asked what's in one, say so and point to the bucket's Objects tab in the S3 console.";
 
 /**
  * The landmark agent's words to act on: the player's request (first, unchanged), then the concierge's plan as fenced data
@@ -223,12 +225,13 @@ export const createOrchestrator = (deps: {
     const summary = actions.describe(command.name, command.input);
     emit({ type: 'agent.message', from: 'concierge', to: 'user', text: `That's a job for ${spot?.agentName ?? agentId} at ${place}!` });
     emit({ type: 'agent.message', from: 'concierge', to: agentId, text: `New request: “${cmd.prompt.slice(0, 60)}”` });
-    const steps = [`Heading to ${place}`, summary];
+    const card = cardPlace(agentId);
+    const steps = [`Heading to ${card}`, summary];
     emit({ type: 'task.plan', taskId, agentId, targetServiceId: agentId, steps });
     emit({ type: 'task.step', taskId, index: 0, text: steps[0]!, status: 'running' });
     await sleep(walkMs);
     if (signal?.aborted) return;
-    emit({ type: 'task.step', taskId, index: 0, text: `Arrived at ${place}`, status: 'done' });
+    emit({ type: 'task.step', taskId, index: 0, text: `Arrived at ${card}`, status: 'done' });
     emit({ type: 'task.step', taskId, index: 1, text: summary, status: 'running' });
     const api = AWS_API[command.name];
     emit({ type: 'agent.state', agentId, state: 'working', service: api.split(':')[0], detail: `${api.split(':')[1] ?? api} — ${summary}` });
@@ -285,15 +288,15 @@ export const createOrchestrator = (deps: {
       const p = await working(emit, 'concierge', 'bedrock', 'InvokeModel — routing your request', () => plan(cmd));
       if (signal?.aborted) return;
       const agentId = serviceById(p.agentId) ? p.agentId : 'bedrock';
-      const place = placeFor(agentId)?.place ?? serviceById(agentId)?.name ?? agentId;
 
       emit({ type: 'agent.message', from: 'concierge', to: 'user', text: p.reply });
       emit({ type: 'agent.message', from: 'concierge', to: agentId, text: `New request: “${cmd.prompt.slice(0, 60)}”` });
-      const steps = [`Heading to ${place}`, ...p.steps];
+      const card = cardPlace(agentId);
+      const steps = [`Heading to ${card}`, ...p.steps];
       emit({ type: 'task.plan', taskId, agentId, targetServiceId: agentId, steps });
       emit({ type: 'task.step', taskId, index: 0, text: steps[0]!, status: 'running' });
       await sleep(walkMs);
-      emit({ type: 'task.step', taskId, index: 0, text: `Arrived at ${place}`, status: 'done' });
+      emit({ type: 'task.step', taskId, index: 0, text: `Arrived at ${card}`, status: 'done' });
 
       let index = 1;
       const last = steps.length - 1;

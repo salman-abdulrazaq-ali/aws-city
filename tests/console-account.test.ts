@@ -2,7 +2,7 @@
 // never showed in My AWS (which reads the linked account). The city reads which account a console page is in and warns.
 import { describe, expect, it } from 'vitest';
 import { consoleAccount } from '@/console/consoleAccount';
-import { switchRoleUrl } from '@/state/account';
+import { accountName, accountTitle, switchRoleUrl } from '@/state/account';
 
 const userInfo = (arn: string, times = 1) => {
   let v = JSON.stringify({ arn, alias: 'x', username: 'salman-admin', keybase: 'k', issuer: 'https://signin.aws.amazon.com/', signinType: 'PUBLIC' });
@@ -39,6 +39,12 @@ describe('Switch role into the linked account', () => {
       redirect_uri: 'https://us-west-2.console.aws.amazon.com/console/home?region=us-west-2',
     });
     expect(new URL(switchRoleUrl('047463438585', undefined, 'Admin')!).searchParams.get('roleName')).toBe('Admin');
+  });
+  // Asked on 23 Nov 2026: say the account's name, not just its number; the same name the console shows after Switch role.
+  it('names the linked account as the console does after Switch role, with its number', () => {
+    expect(accountName('047463438585')).toBe('AWSCity-8585');
+    expect(accountTitle('047463438585')).toBe('AWSCity-8585 (0474-6343-8585)');
+    expect(new URL(switchRoleUrl('047463438585', 'us-west-2')!).searchParams.get('displayName')).toBe(accountName('047463438585'));
   });
   it('never for anything but a 12-digit account and a valid role name', () => {
     expect(switchRoleUrl('4746', 'us-west-2')).toBeUndefined();

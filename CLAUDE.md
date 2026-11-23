@@ -590,7 +590,13 @@ When a change touches a decision, update its entry and run its Proof.
   `server/src/contract/aws-feed.ts`), then just the change. HQ chat on the CPU model names servers, buckets and tables the player made
   themselves (`notBuiltByTheCity` in `snapshotSummary`; seen 23 Nov 2026: Sally couldn't see a console bucket), and every chat answer knows it can't change AWS and that the city
   only changes what it built (`CHAT_CAN_DO`, `server/src/contract/orchestrator.ts`; seen 22 Nov 2026: asked to delete a
-  console-made server, Eddie said he couldn't see it). An audit line hashes a new bucket's real name (never the `<account>` placeholder), so it matches the gate's line. A plain request's
+  console-made server, Eddie said he couldn't see it). The city never sees inside a bucket (`RULES` has no object
+  read), and every agent (`RULES` in `server/src/agents/personas.ts`) and chat answer says so and points to the bucket's
+  Objects tab in the S3 console (seen 23 Nov 2026: Sally blamed "not built by the city"; proof `cd server && npx vitest
+  run test/bucket-objects.test.ts`). The feed's line about a change the player made (`accountNews`, `src/state/watch.ts`:
+  "New in your account: …", "… is gone from your account.") is also a toast from its agent, and every toast waits while
+  the page is hidden (`toastsHeld`; seen 23 Nov 2026: Sally's line about a console bucket was a bubble off screen; proof
+  `npx vitest run tests/account-news.test.ts`). An audit line hashes a new bucket's real name (never the `<account>` placeholder), so it matches the gate's line. A plain request's
   task ends at `task.done`: the agent's few words after it run on their own (`explainAfter`), so the task's slot (two a
   socket) is free at once (seen 22 Nov 2026: "Two tasks are already running" right after a card said done). They're
   skipped on the CPU model (`llm.small`: one call per player at a time, so they held the next chat answer 30–75 s; the
@@ -1002,7 +1008,9 @@ When a change touches a decision, update its entry and run its Proof.
   service + "CreateBucket — …", never its model calls). A request refused at once keeps the concierge's reason on screen
   ("X, you're up!" waits for the first step that runs), and the agent's last bubble says why (`bubbleText`, whole
   sentences that fit, asides dropped; `failedBubble`, `src/state/watch.ts`), never only "That didn't work…" (seen 22 Nov
-  2026: a refused m5.large read as nothing happening). Proof: `cd server && npx vitest run
+  2026: a refused m5.large read as nothing happening). The card's walk names the AWS service and its agent ("Heading to
+  Amazon S3 (Sally the Angler)", `cardPlace` in `src/world/places.ts`), not the landmark (seen 23 Nov 2026: "S3 Lake"
+  read as another service); the map keeps its landmark names. Proof: `cd server && npx vitest run
   test/contract.test.ts test/commands.test.ts test/service.test.ts test/approvals.test.ts test/care.test.ts`; `npx vitest
   run tests/approval-target.test.tsx tests/builds.test.ts tests/approve-flow.test.tsx tests/ui.test.tsx tests/progress-chat.test.tsx`,
   `npm run smoke` (`06b-task-refused`).
@@ -1039,7 +1047,8 @@ When a change touches a decision, update its entry and run its Proof.
   are real buttons. Sign out is in the ⋯ menu too (signed in and able to sign out), not only Deploy → Your data.
   The Diagram draws Everything or **Built by the city** (`accountDiagram(…, { builtOnly })`, asked for on 22 Nov 2026:
   your own project): only services with something the city built, counted by those, with the usual links between them,
-  and no cost lines (AWS bills a service for the whole account, not each thing the city built); a picked service counts
+  and no cost lines (AWS bills a service for the whole account, not each thing the city built), and a line saying what
+  the player made themselves is under Everything (seen 23 Nov 2026: a console bucket read as missing); a picked service counts
   what the city built, like its box; nothing built yet says so (`role="status"`). A picked box's details scroll into
   view (focus stays on the box). Regions read by name with the code beside them ("US West (Oregon) (us-west-2)",
   `regionName`, as Deploy shows them; seen 22 Nov 2026: Oregon vs us-west-2 confused). Proof:
@@ -1198,9 +1207,12 @@ When a change touches a decision, update its entry and run its Proof.
   prefix, else the `aws-userInfo` cookie's ARN; it stays on the computer, `console.account` taken only from a console page)
   and when it isn't the linked one the city says so where the player works (`ConsoleAccountWarning`: the prompt bar,
   Deploy, a workshop for real) with Switch role (`switchRoleUrl`, `src/state/account.ts`: the role name in
-  `prefs.consoleRole`, default OrganizationAccountAccessRole); seen 23 Nov 2026: a console bucket and a CloudShell one went
-  to the city's own account. A workshop for real says which account CloudShell must run in and where a failed check
-  looked. Proof: `npx vitest run tests/console-account.test.ts tests/deploy-account.test.tsx tests/workshop-ui.test.tsx`,
+  `prefs.consoleRole`, default OrganizationAccountAccessRole). The linked account is named as the console names it after
+  Switch role, then its number (`accountTitle`: "AWSCity-8585 (0474-6343-8585)", the link's `displayName` is
+  `accountName`; asked on 23 Nov 2026); seen 23 Nov 2026: a console bucket and a CloudShell one went
+  to the city's own account. A workshop for real says which account CloudShell must run in, where a failed check
+  looked, and what to do when a new account's CloudShell is still being verified (up to 2 days: the same commands in
+  your own terminal; seen 23 Nov 2026). Proof: `npx vitest run tests/console-account.test.ts tests/deploy-account.test.tsx tests/workshop-ui.test.tsx`,
   `npx vitest run tests/runtime-session.test.ts -t "console’s account"`.
   Proof: `npx vitest run tests/taxonomy.test.ts tests/deploy-account.test.tsx`, `npx vitest run tests/runtime-session.test.ts -t "Open the console"`.
 - **State vs moments.** Persistent state goes in the zustand store (`src/state/store.ts`); one-off

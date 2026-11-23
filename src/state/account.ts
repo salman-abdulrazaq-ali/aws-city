@@ -33,6 +33,14 @@ export interface LinkRegion {
 /** "0474-6343-8585": an account id as the console shows it. */
 export const accountLabel = (id: string) => id.replace(/^(\d{4})(\d{4})(\d{4})$/, '$1-$2-$3');
 
+/**
+ * The linked account's name in the city: the display name its Switch role link gives the console (AWSCity-8585), so the
+ * city and the console's top bar say the same thing. Asked on 23 Nov 2026: "say its name, not just an ID".
+ */
+export const accountName = (id: string) => `AWSCity-${id.slice(-4)}`;
+/** "AWSCity-8585 (0474-6343-8585)": the name, then the number to check it by. */
+export const accountTitle = (id: string) => `${accountName(id)} (${accountLabel(id)})`;
+
 /** The role an AWS Organization makes in each member account, which "Switch role" asks for unless the player changed it. */
 export const DEFAULT_CONSOLE_ROLE = 'OrganizationAccountAccessRole';
 
@@ -44,7 +52,7 @@ export const DEFAULT_CONSOLE_ROLE = 'OrganizationAccountAccessRole';
 export function switchRoleUrl(accountId: string, region: string | undefined, role = DEFAULT_CONSOLE_ROLE): string | undefined {
   if (!/^\d{12}$/.test(accountId) || !/^[\w+=,.@-]{1,64}$/.test(role)) return undefined;
   const back = region && /^[a-z]{2}(-[a-z]+)+-\d$/.test(region) ? `https://${region}.console.aws.amazon.com/console/home?region=${region}` : 'https://console.aws.amazon.com/console/home';
-  const q = new URLSearchParams({ account: accountId, roleName: role, displayName: `AWSCity-${accountId.slice(-4)}`, redirect_uri: back });
+  const q = new URLSearchParams({ account: accountId, roleName: role, displayName: accountName(accountId), redirect_uri: back });
   return `https://signin.aws.amazon.com/switchrole?${q.toString()}`;
 }
 

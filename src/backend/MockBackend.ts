@@ -7,7 +7,7 @@ import { DEMO, demoBill, demoFlow, demoExplain, demoFindings, demoHealth, demoIn
 import templatesJson from '../../shared/templates.json' with { type: 'json' };
 import { ConsoleMock } from './consoleMock';
 import { SERVICES, matchText, serviceById, servicesIn, type DistrictId } from '@/world/taxonomy';
-import { placeFor } from '@/world/places';
+import { cardPlace, placeFor } from '@/world/places';
 import { QUESTS } from '@/world/content';
 import { checkExplain, checkKeywords, EXPLAIN_MARK, explainFeedback, explainService } from '@/state/explain';
 import { ALL_TASKS } from '@/world/clients';
@@ -398,11 +398,11 @@ export class MockBackend implements AgentBackend {
         taskId,
         agentId: serviceId,
         targetServiceId: serviceId,
-        steps: [`Heading to ${place?.place ?? serviceId}`, ...planned],
+        steps: [`Heading to ${cardPlace(serviceId)}`, ...planned],
       });
-      this.emit({ type: 'task.step', taskId, index: 0, text: `Heading to ${place?.place ?? serviceId}`, status: 'running' });
+      this.emit({ type: 'task.step', taskId, index: 0, text: `Heading to ${cardPlace(serviceId)}`, status: 'running' });
       await this.sleep(4500); // give the agent time to walk over
-      this.emit({ type: 'task.step', taskId, index: 0, text: `Arrived at ${place?.place ?? serviceId}`, status: 'done' });
+      this.emit({ type: 'task.step', taskId, index: 0, text: `Arrived at ${cardPlace(serviceId)}`, status: 'done' });
 
       let index = 0;
       for (let i = 0; i < script.steps.length; i++) {

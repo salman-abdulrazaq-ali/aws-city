@@ -26,6 +26,7 @@ import {
 } from '@/app/runtime';
 import {
   accountLabel,
+  accountTitle,
   DEFAULT_CONSOLE_ROLE,
   connectsPlayer,
   defaultLinkRegion,
@@ -664,7 +665,7 @@ export function DeployPanel() {
         {account.linked ? (
           <>
             <p className="linked">
-              <span className="linked-badge">✓ Linked</span> <b>{account.accountId}</b>
+              <span className="linked-badge">✓ Linked</span> <b>{account.accountId ? accountTitle(account.accountId) : ''}</b>
               {account.region && (
                 <span>
                   · {regionName(account.region)} <span className="muted">({account.region})</span>
@@ -686,7 +687,7 @@ export function DeployPanel() {
               // Asked on 23 Nov 2026: "how do I get to my console?" The city opens it in the right Region, but the
               // sign-in is the player's own (it never holds console credentials, and the role trusts only the city).
               <p className="muted small">
-                Sign in as account {accountLabel(account.accountId)} with your own AWS sign-in: the city never signs you in. If that account is in an AWS
+                Sign in as account {accountTitle(account.accountId)} with your own AWS sign-in: the city never signs you in. If that account is in an AWS
                 Organization, switch role into it first.
               </p>
             )}

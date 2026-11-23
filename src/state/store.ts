@@ -18,7 +18,7 @@ import { REGIONS } from '@/world/culture';
 import { citizenById, PILLAR_LABEL } from '@/world/citizens';
 import { bus } from './bus';
 import { doneLine } from './builds';
-import { failedReason } from './watch';
+import { accountNews, failedReason } from './watch';
 import { growthLine, growthOf } from './growth';
 import { newsOpen } from './ladder';
 import { builtCities, carriedStars, landmarkOf, migrateCities, withLandmark } from './cities';
@@ -143,8 +143,10 @@ const listOf = (xs: string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(', ')}
  * toasts (badges, AWS status, a drill) wait in the queue and show one by one once it closes, so nothing lands on top
  * of the big moment or a game's timer. Errors still show at once.
  */
+/** The page is in the background (the city's tab behind the console): a toast now would time out unseen. */
+const pageHidden = () => globalThis.document?.visibilityState === 'hidden';
 export const toastsHeld = (s: { celebration?: string; workshopDone?: string; clientDone?: unknown; view: { name: string } }) =>
-  !!s.celebration || !!s.workshopDone || !!s.clientDone || s.view.name === 'game';
+  !!s.celebration || !!s.workshopDone || !!s.clientDone || s.view.name === 'game' || pageHidden();
 /** The next waiting toast, once nothing else shows and nothing holds the floor. */
 const nextToast = (get: () => CityState) => {
   const s = get();
@@ -1257,6 +1259,10 @@ export const useCity = create<CityState>()((set, get) => ({
       }
       case 'agent.message': {
         s.log({ kind: 'message', from: e.from, to: e.to, text: e.text, ambient: e.to !== 'user' && !taskRunning(s) });
+        // A change the player made in AWS themselves (a console bucket): its agent may be off screen, so a toast too,
+        // which waits while the page is hidden (toastsHeld).
+        const news = e.to === 'user' ? accountNews(e.text) : undefined;
+        if (news) s.toast('🔔', `${agentName(e.from)}: ${news}`, 'info', undefined, placeFor(e.from) ? { serviceId: e.from } : undefined);
         // A citizen answering an Explain: keep the answer on that finding's card.
         // A citizen answering a fix request without a preview (e.g. the server says they need teaching first) also ends it.
         const ex = e.to === 'user' ? Object.entries(s.careRequests).find(([id]) => s.findings[id]?.citizenId === e.from) : undefined;
@@ -1962,3 +1968,8 @@ function flushHeld() {
   heldFindings.clear();
   for (const f of all) useCity.getState().applyFinding(f);
 }
+
+// Toasts that came while the page was hidden show once the player is back (toastsHeld waits for it).
+globalThis.document?.addEventListener('visibilitychange', () => {
+  if (!pageHidden()) nextToast(useCity.getState);
+});
