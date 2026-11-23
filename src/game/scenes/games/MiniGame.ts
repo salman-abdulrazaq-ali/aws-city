@@ -468,8 +468,9 @@ export abstract class MiniGame extends Phaser.Scene {
     // Never cut at an edge: keep the whole floater inside the view.
     t.setX(Math.max(t.width / 2 + 6, Math.min(w - t.width / 2 - 6, x)));
     this.saidAt ??= { x: Math.round(t.x), y: Math.round(y) };
-    if (reducedMotion()) return void this.time.delayedCall(900, () => t.destroy());
-    this.tweens.add({ targets: t, y: y - 30, alpha: 0, duration: 900, ease: 'Stepped', easeParams: [6], onComplete: () => t.destroy() });
+    if (reducedMotion()) this.time.delayedCall(900, () => t.destroy());
+    else this.tweens.add({ targets: t, y: y - 30, alpha: 0, duration: 900, ease: 'Stepped', easeParams: [6], onComplete: () => t.destroy() });
+    return t;
   }
 
   /** The verdict on screen now (one at a time: a new one replaces it). */

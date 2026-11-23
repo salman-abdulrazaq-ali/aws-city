@@ -65,6 +65,15 @@ export function stackChips(
 }
 
 /**
+ * The bench's note: what reached Eddie while the note was up, counted, busy first and poison second, a line each (`×N`
+ * from the second). One note at a time, so a burst's arrivals 260 ms apart never pile up their floaters.
+ */
+export function benchNote(lost: number, poisoned: number) {
+  const times = (n: number) => (n > 1 ? ` ×${n}` : '');
+  return [lost && `worker busy: lost!${times(lost)}`, poisoned && `poison: fails forever${times(poisoned)}`].filter(Boolean).join('\n');
+}
+
+/**
  * A message on the belt or in the tray: its box with the label as a chip, one Container (dragged as one). `home` is the
  * chip's bottom over the box, from the Container's middle (placeChips may lift the chip clear of others).
  */
@@ -124,6 +133,9 @@ export class QueueGame extends MiniGame {
   private keeperCarries?: boolean;
   /** The strings lifted labels hang on to their boxes: under every parcel, so a string never crosses a label. */
   private strings?: Phaser.GameObjects.Graphics;
+  /** The bench's note while it's up (benchNote), and one floater line's height, px (a second line hangs under the first). */
+  private bench?: { t: Phaser.GameObjects.Text; lost: number; poisoned: number };
+  private noteLineH = 0;
 
   constructor() {
     super('game:queue', 'queue', 'sqs', '📬 Queue Juggler — click a message (or Space) to queue it; drag red poison to the DLQ (or D)');
@@ -136,6 +148,7 @@ export class QueueGame extends MiniGame {
     this.waves = 0;
     this.dlq = 0;
     this.workerFree = this.keeperCarries = undefined;
+    this.bench = undefined;
     this.strings = this.add.graphics().setDepth(19);
     this.onKeys((k) => {
       const f = this.front();
@@ -163,6 +176,10 @@ export class QueueGame extends MiniGame {
     const probe = label('worker · busy');
     const chipH = probe.height;
     probe.destroy();
+    // One line of a floater (MiniGame.floater's style), for the bench note's second line.
+    const noteProbe = this.add.text(0, 0, 'worker busy', { ...TXT(16), stroke: CSS.bg, strokeThickness: 4 });
+    this.noteLineH = noteProbe.height;
+    noteProbe.destroy();
     this.chipStep = chipH + 2;
     // The tray's heading wraps inside the tray's width at 1× (bigger text in the side panel), so it never reaches the chute.
     const heading = label('SQS queue: the worker pulls when free', CSS.ink)
@@ -461,11 +478,11 @@ export class QueueGame extends MiniGame {
     if (poison) {
       this.wrong();
       this.addScore(POINTS.queue.poisoned, 'soft');
-      this.floater(c.x - 60, fy, 'poison: fails forever', FEEDBACK.wrong);
+      this.noteAtBench('poisoned', c.x - 60, fy);
       this.speak(`Poison reached the worker and fails forever. Score ${this.score}.`);
     } else if (this.time.now < this.busyUntil) {
       this.addScore(POINTS.queue.lost, 'soft');
-      this.floater(c.x - 60, fy, 'worker busy: lost!', FEEDBACK.wrong);
+      this.noteAtBench('lost', c.x - 60, fy);
       this.speak(`Lost: the worker was busy and it wasn't queued. Score ${this.score}.`);
       if (!reducedMotion()) this.cameras.main.shake(90, 0.003);
     } else {
@@ -473,6 +490,23 @@ export class QueueGame extends MiniGame {
       this.addScore(POINTS.queue.direct, 'none');
     }
     c.destroy();
+  }
+
+  /**
+   * The bench's one note: an arrival while it's up counts into it and starts it again from the bench (its first line
+   * keeps its place), never a second floater on top of the first.
+   */
+  private noteAtBench(kind: 'lost' | 'poisoned', x: number, y: number) {
+    const up = this.bench?.t.active ? this.bench : undefined;
+    const n = { lost: up?.lost ?? 0, poisoned: up?.poisoned ?? 0 };
+    n[kind]++;
+    if (up) {
+      this.tweens.killTweensOf(up.t);
+      up.t.destroy();
+    }
+    const lines = (n.lost ? 1 : 0) + (n.poisoned ? 1 : 0);
+    const t = this.floater(x, y + ((lines - 1) * this.noteLineH) / 2, benchNote(n.lost, n.poisoned), FEEDBACK.wrong);
+    this.bench = { t, ...n };
   }
 
   /** Eddie hammers while he works and waits idle when free; his chip says which in words (never colour alone). */

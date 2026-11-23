@@ -15,7 +15,7 @@ vi.mock('@/game/SpeechBubble', () => ({ crisp: <T>(t: T) => t }));
 vi.mock('@/game/motion', () => ({ reducedMotion: () => false }));
 
 const { gateRows, liftReach, turnedBox, LIFT } = await import('@/game/scenes/games/IamGateGame');
-const { QueueGame, stackChips } = await import('@/game/scenes/games/QueueGame');
+const { QueueGame, benchNote, stackChips } = await import('@/game/scenes/games/QueueGame');
 
 const read = (f: string) => fs.readFileSync(path.join(process.cwd(), f), 'utf8');
 /** Code without its comments: comments may name old colours. */
@@ -358,5 +358,87 @@ describe('Queue Juggler: the belt’s label chips never pile up (batch B8)', () 
     // The belt's timing is the tween's own: placing labels never moves a parcel.
     expect(place).not.toMatch(/\bc\.set(X|Y|Position)\(|\.c\.x =|\.c\.y =/);
     expect(method(c, '  private spawn(poison: boolean) {')).toMatch(/x: this\.beltEnd - c\.width \/ 2,\s*duration: pace\(4200 - Math\.min\(1500, this\.waves \* 60\)\)/);
+  });
+});
+
+describe('Queue Juggler: the bench’s floaters never pile up (batch F)', () => {
+  it('one note counts what reached the worker while it was up: busy first, poison second, ×N from the second', () => {
+    expect(benchNote(1, 0)).toBe('worker busy: lost!');
+    expect(benchNote(3, 0)).toBe('worker busy: lost! ×3');
+    expect(benchNote(0, 1)).toBe('poison: fails forever');
+    expect(benchNote(0, 2)).toBe('poison: fails forever ×2');
+    expect(benchNote(2, 1)).toBe('worker busy: lost! ×2\npoison: fails forever');
+    expect(benchNote(1, 4)).toBe('worker busy: lost!\npoison: fails forever ×4');
+  });
+
+  type Note = { active: boolean; text: string; y: number; born: number; destroy(): void };
+  /** The scene's `this` for noteAtBench: MiniGame.floater stood in by notes that live 900 ms, as its tween or timer does. */
+  const bench = () => {
+    let now = 0;
+    const notes: Note[] = [];
+    const killed: Note[] = [];
+    const self = {
+      bench: undefined as { t: Note; lost: number; poisoned: number } | undefined,
+      noteLineH: 22,
+      tweens: { killTweensOf: (t: Note) => killed.push(t) },
+      floater(_x: number, y: number, text: string) {
+        const t: Note = { active: true, text, y, born: now, destroy: () => void (t.active = false) };
+        notes.push(t);
+        return t;
+      },
+    };
+    const note = (QueueGame.prototype as unknown as { noteAtBench: (this: typeof self, kind: 'lost' | 'poisoned', x: number, y: number) => void }).noteAtBench;
+    const at = (t: number) => {
+      now = t;
+      for (const n of notes) if (n.active && now - n.born >= 900) n.active = false;
+    };
+    return { self, notes, killed, at, arrive: (kind: 'lost' | 'poisoned', fy = 100) => note.call(self, kind, 200, fy), up: () => notes.filter((n) => n.active) };
+  };
+
+  it('a burst’s arrivals 260 ms apart show one note at a time, counting up, its first line where a single note stands', () => {
+    const b = bench();
+    const kinds = ['lost', 'lost', 'poisoned', 'lost', 'lost', 'poisoned', 'lost', 'lost', 'lost', 'lost'] as const;
+    let lost = 0;
+    let poisoned = 0;
+    kinds.forEach((kind, i) => {
+      b.at(i * 260);
+      if (kind === 'lost') lost++;
+      else poisoned++;
+      b.arrive(kind);
+      expect(b.up(), `arrival ${i}`).toHaveLength(1);
+      const [n] = b.up();
+      expect(n.text).toBe(benchNote(lost, poisoned));
+      const lines = n.text.split('\n').length;
+      // Centred on y, so the first line's middle stays at the bench's 100 whether the note has one line or two.
+      expect(n.y - ((lines - 1) * 22) / 2).toBe(100);
+      // The note it replaced stops rising and goes (its tween killed first, so it can't finish on a destroyed text).
+      if (i > 0) expect(b.killed.at(-1)).toBe(b.notes.at(-2));
+    });
+    expect(b.notes.filter((n) => n.active)).toHaveLength(1);
+  });
+
+  it('once the note has gone (900 ms after the last arrival), the next one starts a fresh count', () => {
+    const b = bench();
+    b.at(0);
+    b.arrive('lost');
+    b.at(260);
+    b.arrive('lost');
+    expect(b.up()[0].text).toBe('worker busy: lost! ×2');
+    b.at(260 + 900);
+    expect(b.up()).toHaveLength(0);
+    b.arrive('poisoned');
+    expect(b.up().map((n) => n.text)).toEqual(['poison: fails forever']);
+    expect(b.killed).toHaveLength(1);
+  });
+
+  it('the scene sends both bench floaters through the note, with the spoken lines as before; floater hands its text back', () => {
+    const c = code(queue);
+    const arrive = method(c, '  private arrive(');
+    expect(arrive).not.toMatch(/this\.floater\(/);
+    expect(arrive).toMatch(/this\.noteAtBench\('poisoned', c\.x - 60, fy\);/);
+    expect(arrive).toMatch(/this\.noteAtBench\('lost', c\.x - 60, fy\);/);
+    expect(method(c, '  protected setup() {')).toMatch(/this\.bench = undefined;/);
+    const floater = method(code(read('src/game/scenes/games/MiniGame.ts')), '  protected floater(');
+    expect(floater).toMatch(/return t;\s*\}\s*$/);
   });
 });

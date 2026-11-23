@@ -542,7 +542,8 @@ When a change touches a decision, update its entry and run its Proof.
   the counter are 9-slices, drawn off WebGL too); tiled and 9-slice pieces are opaque edge to edge so the atlas never
   trims them. Nothing covers what a player reads to decide: the Permission Gate's notice board hangs above the boom's
   whole lift (`gateRows`, `liftReach`), and Queue Juggler's belt labels lift clear of each other and of Eddie's chip on
-  strings to their boxes (`stackChips`), inside the stage, the parcels keeping their timing. Proof: `npx vitest run tests/art.test.ts tests/stage-shield-redteam.test.ts tests/stage-queue-iamgate.test.ts tests/stage-edge.test.ts`.
+  strings to their boxes (`stackChips`), inside the stage, the parcels keeping their timing; what reaches Eddie while
+  his bench note is up counts into that one note ("worker busy: lost! ×3", `benchNote`), never a second floater. Proof: `npx vitest run tests/art.test.ts tests/stage-shield-redteam.test.ts tests/stage-queue-iamgate.test.ts tests/stage-edge.test.ts`.
 - **Text is crisp in a pixelArt world:** use `crisp()` from `src/game/SpeechBubble.ts` (LINEAR filter
   plus DPR resolution) and counter-scale by `1/zoom`. Camera zoom stays on integers, and sprites on whole-number scales:
   a mini-game's play group is 1× in the side panel and 2× in the tab (`playScale`, `src/game/scenes/games/stageFx.ts`;
