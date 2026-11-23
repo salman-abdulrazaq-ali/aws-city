@@ -76,7 +76,10 @@ const EXPECTED = {
   // services. Terrain, road graphs, camera and waterways are untouched (their hashes are the originals).
   core: '46c7d874',
   decor: '5d34b73d',
-  camera: 'c385e605',
+  // Re-taken 23 Nov 2026 on purpose (the adapt batch): the starting zoom follows the map's size (`viewZoom`), so the
+  // 1920×1080 and 4K frames now start closer in on the Town Square instead of the whole core at zoom 1; the 400×700
+  // and 1280×800 frames are unchanged (tests/camera.test.ts pins each frame).
+  camera: 'c3766f9a',
   water: 'c7f81679',
 };
 
