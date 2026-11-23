@@ -73,9 +73,11 @@ Neither one deletes what the game built in your AWS account: take those down fir
   anything that looks like an access key, secret key, session token or email address.
 - **A safety check on changes (only if this service has it turned on):** before you're asked to approve a change an
   agent wants to make in your AWS account, your own words for that task (at most 500 characters, with AWS account ids
-  and ARNs removed), the kind of change and its one-line summary are sent to TypeSafe's Jev service, which says how
-  risky the change looks. Nothing read from your AWS account is sent, and the check can only make the city stricter
-  (you still approve every change).
+  and ARNs removed) and a one-line summary of the change are sent to TypeSafe's Jev service, which answers whether the
+  change is what you asked for and, for something being removed, whether you asked to remove it and named it. The only
+  thing read from your AWS account that's sent is the name (its Name tag) of a server the change would remove. A
+  change with no words of yours behind it, such as Take it down in My builds, sends nothing. The check can only make
+  the city stricter (you still approve every change).
 - **AWS documentation search:** to ground an answer in AWS's own documentation, the server sends a short search
   (the service's name and your question, with keys and emails taken out) to AWS's public Knowledge MCP service
   (`knowledge-mcp.global.api.aws`), which is run by AWS outside the host's account. It doesn't include your

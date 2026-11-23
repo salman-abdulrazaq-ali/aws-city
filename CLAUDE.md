@@ -218,7 +218,8 @@ When a change touches a decision, update its entry and run its Proof.
   into the game's agents (they get only allow-listed read-only docs tools). Proof: `cd server && npx vitest run test/knowledge.test.ts`.
 - **Every AWS write needs the player's approval** (contract v2 `deploy.preview` → `deploy.approve`).
   With no approval channel, writes are refused (only reads run). v2.19 `resource.remove` (no model) goes the same way:
-  `ActionService.submit` with the socket's approvals, so policy, Jev, the preview, MFA on approve and the gate all apply.
+  `ActionService.submit` with the socket's approvals, so policy, the preview, MFA on approve and the gate all apply (Jev
+  needs the player's own words, so a take-down isn't sent; its preview asks for the typed name anyway).
   A destructive write (terminate, delete, a take-down) always carries `confirmText`, the resource's name or id, whether
   or not Jev asks (`server/src/contract/approvals.ts`); the demo's take-downs too. A new preview focuses its card's title
   (`.stack-title`), never Approve, so a stray Enter or Space approves nothing.
@@ -250,15 +251,24 @@ When a change touches a decision, update its entry and run its Proof.
   imports nothing, so `server/src/config.ts` stays light enough for the extension's tests to import). Off unless `TYPESAFE_API_KEY` is
   set (local or hosted). ActionService asks TypeSafe's Jev about a write after policy passes and before the player is asked
   (the `judge` dependency, in `write()`, so an agent's write and a plain request's direct one alike); never about a read,
-  a denied write or one with no approval channel. The state is only the player's own words (`TurnHooks.intent` =
-  task.submit's prompt, ≤ 500 chars, on both paths in `server/src/contract/orchestrator.ts`), the action type, `describeAction` and
-  `destructive`, with 12-digit ids and ARNs redacted; nothing from AWS. Questions: `intent` (`noul`, only with the player's
-  words) and `risk` (`score`, 3 levels, lowest first); the thresholds are code (`verdictFor`: block < 0.2 intent; ask < 0.6
-  or risk ≥ 1.2; `AWS_CITY_JEV_*`). Block refuses with a plain sentence; ask adds a "Safety check" detail line and the
+  a denied write or one with no approval channel, and never without the player's own words (`TurnHooks.intent` =
+  task.submit's prompt, on both paths in `server/src/contract/orchestrator.ts`): without them it's allow at once and
+  nothing is sent (a take-down, city care; a destructive write carries `confirmText` anyway). The state is only
+  `{request, change}`: those words (≤ 500 chars) and `describeAction`, with 12-digit ids and ARNs redacted; never the
+  action type, `destructive` or anything else from AWS: a terminate's `change` names the server by its Name tag, or says it has
+  none (`serverName`/`changeFor`), and an unnamed server counts as not named unless the player's words hold its id
+  (`unnamedTarget`: an exact lookup, so code). Judgments from Jev, decisions in code: the questions are Nouls, worded
+  with their criteria and the thresholds in `jev-config.ts` (`JEV_QUESTIONS`): `asked_for` (every write), and for a
+  destructive one `asks_to_remove` and `names_target`. A Noul ≤ `AWS_CITY_JEV_NO` (0.3) is no, ≥ `AWS_CITY_JEV_YES` (0.7)
+  yes, between unsettled; `decide` is the table, first row wins (blocks first): `asked_for` no → block; destructive and
+  `asks_to_remove` no → block; `asked_for` unsettled → ask; `asks_to_remove` unsettled → ask; `names_target` not yes →
+  ask; else allow. The old `AWS_CITY_JEV_BLOCK_BELOW`/`_ASK_BELOW`/`_ASK_RISK` are refused at startup. Block refuses with a plain sentence; ask adds a "Safety check" detail line and the
   preview's v2.3 `confirmText` (the resource's name; `approvals.answer` refuses a mismatch; a destructive write has one anyway); it never skips or answers
-  the approval. A timeout (3 s), non-2xx, a reply over 32 KB, a redirect or a reply off the documented shape is ask. The
-  model is pinned (`AWS_CITY_JEV_MODEL`, default `jev-1.13.0`); each decision is logged (id, model, scores, verdict, ms,
-  tokens), never the state or the key. Injected text can sway Jev, so it can never loosen anything.
+  the approval. A timeout (3 s), non-2xx, a reply over 32 KB, a redirect, a reply off the documented shape or a question
+  not answered as a Noul is ask, never read as an answer. The model is pinned (`AWS_CITY_JEV_MODEL`, default
+  `jev-1.14.0`); each decision is logged (id, model, each Noul, verdict, row, ms, tokens), never the state or the key.
+  Injected text can sway Jev, so it can never loosen anything. `server/test/live/jev.live.test.ts` (skipped without
+  `TYPESAFE_API_KEY`) sends 29 made-up cases one at a time (27/29 as expected on 23 Nov 2026, both misses an ask on the safe side), capped at 2M input tokens, and writes `.omc/jev-probe.json`.
   Proof: `cd server && npx vitest run test/jev.test.ts test/service.test.ts test/guard.test.ts`.
 - **Linking an AWS account, approving a write, applying a fix and taking something down need MFA (step-up).** Hosted players must have TOTP
   on for `account.link`/`account.verify`, `deploy.approve`, `finding.fix` and `resource.remove` (Google sign-ins are exempt); prod Cognito runs Plus with threat protection.

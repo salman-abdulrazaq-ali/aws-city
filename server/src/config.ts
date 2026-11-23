@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { DEFAULT_JEV_MODEL, DEFAULT_JEV_THRESHOLDS, type JevConfig, RISK_LEVELS } from './agents/jev-config.js';
+import { DEFAULT_JEV_MODEL, DEFAULT_JEV_THRESHOLDS, type JevConfig } from './agents/jev-config.js';
 
 /**
  * Two ways to run:
@@ -153,16 +153,23 @@ const numberIn = (name: string, value: string | undefined, fallback: number, min
   return n;
 };
 
+/** The old risk-score thresholds: refused, so nobody runs with a setting that's silently ignored. */
+const RETIRED_JEV_ENV = ['AWS_CITY_JEV_BLOCK_BELOW', 'AWS_CITY_JEV_ASK_BELOW', 'AWS_CITY_JEV_ASK_RISK'] as const;
+
 /** Jev is on only with a key. The key is never logged or put in an error message. */
 const jevConfig = (env: NodeJS.ProcessEnv): JevConfig | undefined => {
+  for (const name of RETIRED_JEV_ENV)
+    if (env[name] !== undefined && env[name] !== '')
+      throw new ConfigError(
+        `${name} is no longer read: Jev's thresholds are now AWS_CITY_JEV_NO (default ${DEFAULT_JEV_THRESHOLDS.no}) and AWS_CITY_JEV_YES (default ${DEFAULT_JEV_THRESHOLDS.yes}). Remove it (docs/jev.md).`,
+      );
   if (env.TYPESAFE_API_KEY === undefined || env.TYPESAFE_API_KEY === '') return undefined;
   return {
     apiKey: env.TYPESAFE_API_KEY,
     model: env.AWS_CITY_JEV_MODEL || DEFAULT_JEV_MODEL,
     thresholds: {
-      blockBelow: numberIn('AWS_CITY_JEV_BLOCK_BELOW', env.AWS_CITY_JEV_BLOCK_BELOW, DEFAULT_JEV_THRESHOLDS.blockBelow, 0, 1),
-      askBelow: numberIn('AWS_CITY_JEV_ASK_BELOW', env.AWS_CITY_JEV_ASK_BELOW, DEFAULT_JEV_THRESHOLDS.askBelow, 0, 1),
-      askRiskAtLeast: numberIn('AWS_CITY_JEV_ASK_RISK', env.AWS_CITY_JEV_ASK_RISK, DEFAULT_JEV_THRESHOLDS.askRiskAtLeast, 0, RISK_LEVELS.length - 1),
+      no: numberIn('AWS_CITY_JEV_NO', env.AWS_CITY_JEV_NO, DEFAULT_JEV_THRESHOLDS.no, 0, 1),
+      yes: numberIn('AWS_CITY_JEV_YES', env.AWS_CITY_JEV_YES, DEFAULT_JEV_THRESHOLDS.yes, 0, 1),
     },
   };
 };
@@ -267,6 +274,6 @@ export const validate = (c: Config) => {
   if (c.jev) {
     need(/^[\x21-\x7e]+$/.test(c.jev.apiKey), 'TYPESAFE_API_KEY must be one printable token (no spaces or line breaks)');
     need(/^[\w.-]{1,64}$/.test(c.jev.model), `AWS_CITY_JEV_MODEL=${c.jev.model} must be a model name like ${DEFAULT_JEV_MODEL}`);
-    need(c.jev.thresholds.blockBelow <= c.jev.thresholds.askBelow, 'AWS_CITY_JEV_BLOCK_BELOW must not be above AWS_CITY_JEV_ASK_BELOW');
+    need(c.jev.thresholds.no < c.jev.thresholds.yes, 'AWS_CITY_JEV_NO must be below AWS_CITY_JEV_YES (a Noul at or below NO is a no, at or above YES a yes)');
   }
 };
