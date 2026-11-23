@@ -211,6 +211,25 @@ describe('the account lifecycle (v2.19)', () => {
     tenants.closeAll();
   });
 
+  // His Disconnect promise: "AWS City no longer reads or changes your AWS account". A poll already in flight when the
+  // player disconnects must not still tell the tabs about that account (a feed line, a finding, the map).
+  it('a poll that lands after account.unlink says nothing about the old account', async () => {
+    const { tenants, stores } = hub();
+    await stores.accounts.put('u1', linkedRecord);
+    const tenant = await tenants.acquire({ sub: 'u1' });
+    const poller = pollers[0]!;
+    poller.poll({ ...emptyWorld('us-west-2'), accountId: ACCOUNT });
+    const tab: ServerEvent[] = [];
+    tenant.subscribe((e) => tab.push(e));
+    await tenant.unlink('r-unlink', () => {});
+    expect(statuses(tab)).toHaveLength(1);
+    const after = tab.length;
+    poller.poll({ ...emptyWorld('us-west-2'), accountId: ACCOUNT, resources: [table('city-new')] });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(tab.slice(after)).toEqual([]);
+    tenants.closeAll();
+  });
+
   it(`${BROKEN_AFTER} refused AssumeRoles in a row, the first a breaker window old, break the link: polling stops, the record says so, every tab hears it`, async () => {
     const later = fakeClock();
     const { tenants, stores } = hub();

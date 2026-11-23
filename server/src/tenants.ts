@@ -302,16 +302,17 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         const bill = createBill({ sub, store: deps.stores.bills, broadcast });
         const flow = createFlow({ sub, region, initialOn: flowOn, broadcast, active });
         const broken = record?.brokenAt && record.status === 'linked' ? { broken: true, accountId: record.accountId, ...(record.roleVersion !== undefined ? { roleVersion: record.roleVersion } : {}) } : {};
+        const unlinkedRetired = new AbortController();
         return {
           // actions: a plain request ("Create a bucket called x") still gets an honest answer: link your account first.
-          orchestrator: createOrchestrator({ llm, runner, snapshot, uploads: deps.uploads, owner: sub, walkMs: deps.walkMs, knowledge: deps.knowledge, actions: runnerDeps.actions }),
+          orchestrator: createOrchestrator({ llm, runner, snapshot, uploads: deps.uploads, owner: sub, walkMs: deps.walkMs, knowledge: deps.knowledge, actions: runnerDeps.actions, retired: unlinkedRetired.signal }),
           snapshot,
           linked: false,
           region,
           bill,
           flow,
           link: linkKey(record),
-          retired: new AbortController(),
+          retired: unlinkedRetired,
           ...broken,
         };
       }
@@ -343,6 +344,8 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         region: aws.region,
         intervalMs: deps.config.pollIntervalMs,
         onSnapshot(prev, next) {
+          // A poll in flight when the world was replaced (Disconnect, a new link): nothing more about that account.
+          if (retired.signal.aborted) return;
           if (next.roleRefused) {
             // Refusals the breaker took for our side (many players at once: aws.ts) never count against this link, and
             // never mark it: only a poll the breaker still takes for the player's own does, a breaker window after the first.
@@ -365,7 +368,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
           broadcast(care.update(next));
           // A server appeared, went or changed state (an agent's write re-polls at once and after 4 s): the map follows
           // within a poll, from the last listing and this snapshot, with no AWS call.
-          if (!retired.signal.aborted && events.some(movesInventory)) {
+          if (events.some(movesInventory)) {
             const inventory = care.reconcile(next);
             if (inventory) broadcast([inventory]);
           }
@@ -400,7 +403,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
       const readInventory = () =>
         void care!
           .refreshInventory()
-          .then((e) => e && broadcast([e]))
+          .then((e) => e && !retired.signal.aborted && broadcast([e]))
           .catch((err) => log.warn('inventory failed', { who: who(sub), err: (err as Error).name }));
       readInventory();
       // v2.5: the bill (only while the player has it on; Cost Explorer is read at most once a day).
@@ -421,7 +424,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         bill,
         flow,
         inventoryTimer,
-        orchestrator: createOrchestrator({ llm, runner, snapshot, uploads: deps.uploads, owner: sub, walkMs: deps.walkMs, knowledge: deps.knowledge, actions }),
+        orchestrator: createOrchestrator({ llm, runner, snapshot, uploads: deps.uploads, owner: sub, walkMs: deps.walkMs, knowledge: deps.knowledge, actions, retired: retired.signal }),
         snapshot,
         linked: true,
         region: aws.region,

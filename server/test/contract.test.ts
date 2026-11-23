@@ -193,7 +193,7 @@ describe('server speaks the frontend contract', () => {
 
 describe('a plain request goes straight to its agent’s action: the card in seconds, no model call before it', () => {
   /** The real approvals and an ActionService that asks before every write, like service.ts. */
-  const withApprovals = (responses: Parameters<typeof fakeLlm>[0] = [], answer: boolean | 'never' = true) => {
+  const withApprovals = (responses: Parameters<typeof fakeLlm>[0] = [], answer: boolean | 'never' = true, opts: { retired?: AbortSignal } = {}) => {
     const { llm } = fakeLlm(responses, 'A bucket keeps files. Try uploading one.');
     const actions = {
       describe: vi.fn((name: unknown, input: unknown) => `Create S3 bucket with suffix "${(input as { suffix?: string }).suffix}" (${String(name)})`),
@@ -206,7 +206,7 @@ describe('a plain request goes straight to its agent’s action: the card in sec
       }),
     };
     const runner = createAgentRunner({ llm, actions: actions as unknown as ActionService, snapshot: emptySnapshot });
-    const orchestrator = createOrchestrator({ llm, runner, snapshot: emptySnapshot, uploads: createUploadStore('http://127.0.0.1:8787'), walkMs: 0, paceMs: 0, actions: actions as unknown as ActionService });
+    const orchestrator = createOrchestrator({ llm, runner, snapshot: emptySnapshot, uploads: createUploadStore('http://127.0.0.1:8787'), walkMs: 0, paceMs: 0, actions: actions as unknown as ActionService, ...(opts.retired ? { retired: opts.retired } : {}) });
     const approvals = createApprovals({ region: 'us-west-2', accountId: () => '047463438585' });
     const events: ServerEvent[] = [];
     const emit = (e: ServerEvent) => {
@@ -244,6 +244,43 @@ describe('a plain request goes straight to its agent’s action: the card in sec
     (llm.stream as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise(() => {})); // a model that never answers
     await orchestrator.submitTask({ taskId: 'd9', prompt: 'Create a bucket called holiday-123', context: {} }, emit, approvals);
     expect(events.find((e) => e.type === 'task.done')).toMatchObject({ taskId: 'd9', ok: true });
+  });
+
+  // Chosen 23 Nov 2026 for the workshop: on the CPU model (one call per player at a time) the explanation held the next
+  // chat answer 30–75 s, and the card's result line already says what changed.
+  it('on the small CPU model there is no explanation after the change (the next chat answer waits for nothing)', async () => {
+    const { orchestrator, events, emit, approvals, llm } = withApprovals();
+    (llm as { small?: boolean }).small = true;
+    await orchestrator.submitTask({ taskId: 'd10', prompt: 'Create a bucket called holiday-123', context: {} }, emit, approvals);
+    expect(events.find((e) => e.type === 'task.done')).toMatchObject({ taskId: 'd10', ok: true });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(llm.stream).not.toHaveBeenCalled();
+    expect(events.filter((e) => e.type === 'agent.message' && e.from === 's3').map((e) => (e as { text: string }).text)).toEqual([expect.stringContaining('Your approval card is waiting')]);
+  });
+
+  it('after a Disconnect (the world retired) the explanation of a change to that account is never said', async () => {
+    const retired = new AbortController();
+    const { orchestrator, events, emit, approvals, llm } = withApprovals([], true, { retired: retired.signal });
+    const stream = llm.stream as ReturnType<typeof vi.fn>;
+    const answer = stream.getMockImplementation() as (...args: unknown[]) => unknown;
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    stream.mockImplementation(async (...args: unknown[]) => {
+      await held;
+      return answer(...args);
+    });
+    await orchestrator.submitTask({ taskId: 'd11', prompt: 'Create a bucket called holiday-123', context: {} }, emit, approvals);
+    await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(1));
+    retired.abort('Disconnected.');
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'agent.message', from: 's3', text: 'A bucket keeps files. Try uploading one.' }));
+    // Retired before the change finished: no model call at all.
+    const { orchestrator: o2, events: e2, emit: emit2, approvals: a2, llm: llm2 } = withApprovals([], true, { retired: retired.signal });
+    await o2.submitTask({ taskId: 'd12', prompt: 'Create a bucket called holiday-123', context: {} }, emit2, a2);
+    expect(e2.find((e) => e.type === 'task.done')).toMatchObject({ taskId: 'd12' });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(llm2.stream).not.toHaveBeenCalled();
   });
 
   it('the player says no: nothing changes, the step says why, the task is not ok, no explanation', async () => {
