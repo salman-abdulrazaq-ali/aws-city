@@ -584,6 +584,23 @@ describe('runtime sessions', () => {
     expect(fake.sent.at(-1)).toMatchObject({ action: 'task.submit', prompt: 'Create a bucket called photos-1' });
   });
 
+  it('Open the console goes to the linked account’s Region; a global service keeps its own console', async () => {
+    const { rt, useCity } = await boot();
+    const opened = vi.spyOn(fakeBrowser.tabs, 'create').mockResolvedValue({} as never);
+    useCity.setState({ account: { linked: true, accountId: '047463438585', region: 'us-west-2' } });
+    rt.openConsole('s3');
+    rt.openConsole();
+    rt.openConsole('iam');
+    useCity.setState({ account: { linked: false } });
+    rt.openConsole('s3');
+    expect(opened.mock.calls.map(([o]) => (o as { url: string }).url)).toEqual([
+      'https://us-west-2.console.aws.amazon.com/s3/home?region=us-west-2',
+      'https://us-west-2.console.aws.amazon.com/console/home?region=us-west-2',
+      expect.stringMatching(/^https:\/\/console\.aws\.amazon\.com\/iam/),
+      'https://console.aws.amazon.com/s3/home',
+    ]);
+  });
+
   it('a screenshot is forgotten when the page changes and when the session ends', async () => {
     const { rt } = await boot();
     fake.status('connected');

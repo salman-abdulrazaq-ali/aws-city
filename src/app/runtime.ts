@@ -17,6 +17,7 @@ import { smallTalkTo } from '@/state/smallTalk';
 import { ladder, questsDone } from '@/state/ladder';
 import { shows } from '@/state/simple';
 import { consoleUrl, DEFAULT_CONSOLE_SERVICE, matchText, matchUrl } from '@/world/taxonomy';
+import { isGlobalService } from '@/world/regions';
 import { isPracticeService, isPracticeUrl, PRACTICE_PATH, practiceRoute, practiceUrl } from '@/console/practice';
 import type { CopilotMessage } from '@/console/agent';
 import { isSecretPage, redact, redactConsoleUrl } from '@/console/risk';
@@ -1133,8 +1134,14 @@ export function openFullCity() {
   void browser.tabs.create({ url: browser.runtime.getURL('/city.html') });
 }
 
-export function openConsole(serviceId: string) {
-  void browser.tabs.create({ url: consoleUrl(serviceId) });
+/**
+ * Opens a service's console page, or the console's home (no service), in the linked account's Region: the city builds
+ * and checks there. A global service (IAM, Route 53…) keeps its own console. Signing in is the player's own: the city
+ * never holds console credentials.
+ */
+export function openConsole(serviceId = '') {
+  const { linked, region } = store().account;
+  void browser.tabs.create({ url: consoleUrl(serviceId, linked && !isGlobalService(serviceId) ? region : undefined) });
 }
 
 /** Dev helper: pretend the user opened `url` (used by tests and the DevTools console via window.awsCity). */
