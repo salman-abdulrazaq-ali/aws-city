@@ -228,8 +228,10 @@ export function placeSuggestions(p: Progress, region: string): PlaceSuggestion[]
 }
 
 /**
- * What a screen reader hears on arriving in a city: the Region, how many buildings stand there, open issues, AWS status
- * and live traffic, in one sentence. The canvas has no text of its own, so this is the city's summary.
+ * What a screen reader hears on arriving in a city: the Region, how many of the AWS services the player has put up there,
+ * open issues, AWS status and live traffic, in one sentence. The canvas has no text of its own, so this is the city's
+ * summary. It names what it counts ("AWS services put up"), and `]`'s line names its own ("Place 1 of 10 on the map",
+ * src/state/announce.ts stepLine): "0 of 58 buildings" beside "1 of 10" read as one count that disagreed (Lena, 22 Nov 2026).
  */
 export function citySummary(s: {
   cityRegion: string;
@@ -241,12 +243,12 @@ export function citySummary(s: {
 }): string {
   const built = SERVICES.filter((x) => isDiscovered(s.progress, x.id, s.cityRegion)).length;
   const parts = [
-    `${s.regionName ?? s.cityRegion}: ${built} of ${SERVICES.length} buildings`,
+    `${s.regionName ?? s.cityRegion}: you’ve put up ${built} of the ${SERVICES.length} AWS services here`,
     s.openIssues ? `${s.openIssues} ${s.openIssues === 1 ? 'issue' : 'issues'} to fix` : 'no issues',
   ];
   if (s.outage) parts.push('AWS reports a problem in this Region');
   if (s.flowOn) parts.push('live traffic on');
-  return `${parts.join(', ')}. Press ] for the next building.`;
+  return `${parts.join(', ')}. Press ] and [ to step through the places on the map.`;
 }
 
 /**

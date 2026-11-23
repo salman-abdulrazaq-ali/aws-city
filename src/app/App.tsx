@@ -42,6 +42,8 @@ import { FindingCard } from '@/ui/FindingCard';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { SoundCaptions } from '@/ui/SoundCaptions';
 import { BuildDrawer } from '@/ui/BuildDrawer';
+import { useKeepFocus } from '@/ui/useDialog';
+import { cardWaitsForKai } from '@/state/walk';
 import { citySummary, isTourDone, newlyUnlocked, nextTabIndex, readPref, readSet, TAB_KEY, UNLOCK_TOASTS_KEY, unlockText, writePref, writeSet } from '@/ui/logic';
 import { GameCanvas } from './GameCanvas';
 import type { Layout } from './runtime';
@@ -148,8 +150,12 @@ export function App({ layout }: { layout: Layout }) {
     body.current?.scrollTo({ top: 0 });
   };
 
-  // A building tapped (in the city or a list): its card opens in the City tab, in place of the shift.
-  useEffect(() => bus.on('select', () => setTab('info')), []);
+  // A building tapped (in the city or a list): its card opens in the City tab, in place of the shift. A "Walk to" opens
+  // it when Kai gets there (src/state/walk.ts), not at the press.
+  useEffect(() => bus.on('select', ({ id }) => !cardWaitsForKai(id) && setTab('info')), []);
+  // A button that went away with its row, tab or card leaves focus on the new panel's heading, never on <body>.
+  const side = useRef<HTMLElement>(null);
+  useKeepFocus(side, () => body.current);
   // Home's big button (src/state/next.ts nextAction) runs through here, so it can open the tab its label names.
   const setTabNow = useRef(setTab);
   setTabNow.current = setTab;
@@ -285,7 +291,7 @@ export function App({ layout }: { layout: Layout }) {
           </button>
         )}
       </div>
-      <aside className="side">
+      <aside className="side" ref={side}>
         <SyncNote />
         {view.name === 'interior' && view.districtId !== 'spheres' ? (
           <ChatPanel districtId={view.districtId} />

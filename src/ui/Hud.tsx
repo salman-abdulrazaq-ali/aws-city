@@ -240,6 +240,9 @@ function AccountItems({ run, askDelete }: { run: (fn: () => void) => () => void;
   );
 }
 
+/** ⋯ in the demo (Dana, 22 Nov 2026: the demo said nothing about data): what it keeps, and that it sends nothing. */
+export const DEMO_PRIVACY_LINE = 'Demo: your progress stays on this device; nothing is sent anywhere.';
+
 /** The ⋯ menu's items in order (checkbox items too), for its arrow keys. */
 const menuItems = (menu: HTMLElement | null) => [...(menu?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? [])];
 
@@ -265,7 +268,8 @@ function MoreMenu({ layout }: { layout: Layout }) {
   const builder = useCity((s) => !!s.prefs.builder);
   const setPref = useCity((s) => s.setPref);
   const setTourOpen = useCity((s) => s.setTourOpen);
-  const inDemo = useCity((s) => s.backendKind) === 'mock' && isDemo();
+  const backendKind = useCity((s) => s.backendKind);
+  const inDemo = backendKind === 'mock' && isDemo();
   const signedIn = useCity((s) => s.backendKind !== 'mock' && s.backendStatus !== 'signed-out');
   const locked = useLocked();
   const simple = useCity((s) => isSimple(s.prefs));
@@ -330,10 +334,14 @@ function MoreMenu({ layout }: { layout: Layout }) {
       document.removeEventListener('keydown', esc);
     };
   }, [open]);
+  // An item closes the menu and focus goes back to ⋯ first, so a dialog it opens (My City, the tour) gives focus back
+  // to ⋯ when it closes, never to <body> (the item is gone by then).
   const run = (fn: () => void) => () => {
+    trigger.current?.focus();
     fn();
     setOpen(false);
   };
+  const accountItems = hosted || (signedIn && canSignIn());
   return (
     <>
       <div className="more" ref={box}>
@@ -352,7 +360,7 @@ function MoreMenu({ layout }: { layout: Layout }) {
         {open && (
           <div className="menu" role="menu" aria-label="More" ref={list} tabIndex={-1} onKeyDown={onMenuKey}>
             {/* Where players look for Sign out first (seen 22 Nov 2026): any build that can sign in, once signed in. */}
-            {(hosted || (signedIn && canSignIn())) && <AccountItems run={run} askDelete={() => setConfirmDelete(true)} />}
+            {accountItems && <AccountItems run={run} askDelete={() => setConfirmDelete(true)} />}
             <button
               role="menuitemcheckbox"
               aria-checked={!muted}
@@ -409,10 +417,14 @@ function MoreMenu({ layout }: { layout: Layout }) {
               <button
                 role="menuitemcheckbox"
                 aria-checked={builder}
-                title="Every area open, and the deeper “For AWS learners” text shown first"
+                title="Everything on (not Simple): every area open, and the deeper “For AWS learners” text shown first"
                 onClick={() => {
+                  // On, it does what the world intro's “I already build on AWS” does (src/ui/WorldIntro.tsx): Everything on
+                  // and every area open. Off, only the deeper text goes; Simple stays as the player set it.
                   setPref('builder', builder ? undefined : true);
-                  if (!builder) openEverything();
+                  if (builder) return;
+                  setPref('simple', false);
+                  openEverything();
                 }}
               >
                 <span>I already build on AWS</span>
@@ -472,6 +484,20 @@ function MoreMenu({ layout }: { layout: Layout }) {
               <button role="menuitem" onClick={() => switchDemo(false)}>
                 Sign in to save your city
               </button>
+            )}
+            {/* The demo says where its data goes (nowhere), as a muted item a screen reader reaches with the arrows, and
+                links the privacy policy when the build has one (Account has it otherwise). */}
+            {backendKind === 'mock' && (
+              <div role="group" aria-label="Privacy">
+                <button role="menuitem" aria-disabled="true" className="menu-note">
+                  <small>{DEMO_PRIVACY_LINE}</small>
+                </button>
+                {!accountItems && privacyPolicyUrl() && (
+                  <button role="menuitem" title="Opens in a new tab" onClick={run(openPrivacyPolicy)}>
+                    Privacy policy ↗
+                  </button>
+                )}
+              </div>
             )}
             <hr />
             {/* The street maps' credit is an item too (a menu holds only items): it opens the OpenStreetMap copyright page. */}

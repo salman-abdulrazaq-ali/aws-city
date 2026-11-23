@@ -392,7 +392,9 @@ describe('citySummary', () => {
     const { citySummary } = await import('@/ui/logic');
     const { emptyProgress } = await import('@/state/store');
     const line = citySummary({ cityRegion: 'us-west-2', regionName: 'US West (Oregon)', progress: emptyProgress(), openIssues: 2, outage: true, flowOn: true });
-    expect(line).toMatch(/^US West \(Oregon\): 0 of \d+ buildings, 2 issues to fix, AWS reports a problem in this Region, live traffic on\. Press \]/);
+    expect(line).toMatch(/^US West \(Oregon\): you’ve put up 0 of the \d+ AWS services here, 2 issues to fix, AWS reports a problem in this Region, live traffic on\. Press \] and \[ to step through the places on the map\.$/);
+    // It counts AWS services, and says so; `]` counts the places on the map, and says so (stepLine): never two bare "of N".
+    expect(line).not.toMatch(/\d+ of \d+ buildings/);
     expect(citySummary({ cityRegion: 'eu-west-1', progress: emptyProgress(), openIssues: 1 })).toContain('1 issue to fix');
     expect(citySummary({ cityRegion: 'eu-west-1', progress: emptyProgress(), openIssues: 0 })).toContain('no issues');
   });

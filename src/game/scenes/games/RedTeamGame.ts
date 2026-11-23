@@ -98,6 +98,8 @@ export class RedTeamGame extends MiniGame {
       this.tweens.add({ targets: t, alpha: 1, duration: 200 });
     }
     this.live.push(t);
+    // Each request is said as it comes in (the lanes are only drawn): Space flags the one nearest your app.
+    this.speak(`Request: ${r.line}`, true);
     t.once('destroy', () => {
       this.live = this.live.filter((x) => x !== t);
       this.busy[lane] = false;

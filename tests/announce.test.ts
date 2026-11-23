@@ -58,14 +58,14 @@ describe('announce', () => {
 describe('] and [ name the building', () => {
   it('a service by its place and its plain line', () => {
     const s3 = placeFor('s3')!;
-    expect(stepLine('s3', s3.place, 1, 10)).toBe(`${s3.place}. ${s3.simple} 1 of 10.`);
+    expect(stepLine('s3', s3.place, 1, 10)).toBe(`${s3.place}. ${s3.simple} Place 1 of 10 on the map.`);
   });
 
   it('a culture or campus site by its sign, even with no label passed (never "day1office", "coe" or "fulfilment")', () => {
-    expect(stepLine('day1office', 'Day 1 Office', 3, 10)).toBe('Day 1 Office. 3 of 10.');
-    expect(stepLine('coe', undefined, 6, 10)).toBe('Correction of Error board. 6 of 10.');
-    expect(stepLine('fulfilment', undefined, 1, 10)).toBe('Amazon.com Fulfilment Centre. 1 of 10.');
-    expect(stepLine('hq:storage', undefined, 2, 10)).toBe(`${districtById('storage')!.hq}. 2 of 10.`);
-    expect(stepLine('nowhere-1', '  ', 4, 10)).toBe('A building. 4 of 10.');
+    expect(stepLine('day1office', 'Day 1 Office', 3, 10)).toBe('Day 1 Office. Place 3 of 10 on the map.');
+    expect(stepLine('coe', undefined, 6, 10)).toBe('Correction of Error board. Place 6 of 10 on the map.');
+    expect(stepLine('fulfilment', undefined, 1, 10)).toBe('Amazon.com Fulfilment Centre. Place 1 of 10 on the map.');
+    expect(stepLine('hq:storage', undefined, 2, 10)).toBe(`${districtById('storage')!.hq}. Place 2 of 10 on the map.`);
+    expect(stepLine('nowhere-1', '  ', 4, 10)).toBe('A building. Place 4 of 10 on the map.');
   });
 });
