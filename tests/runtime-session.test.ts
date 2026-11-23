@@ -571,6 +571,19 @@ describe('runtime sessions', () => {
     expect(rt.isSensitivePage('https://us-west-2.console.aws.amazon.com/s3/home')).toBe(false);
   });
 
+  // Seen live, 23 Nov 2026: "Eddie, how are you?" in the request box was planned as "launch a t4g.nano called Eddie".
+  it('small talk in the request box asks that agent in their HQ chat; a request is still a task', async () => {
+    const { rt, useCity } = await boot();
+    fake.status('connected');
+    useCity.setState({ view: { name: 'city' } });
+    rt.submitPrompt('Eddie, how are you?');
+    expect(fake.sent.at(-1)).toMatchObject({ action: 'chat.ask', districtId: 'compute', question: 'Eddie, how are you?' });
+    expect(fake.sent.some((c) => c.action === 'task.submit')).toBe(false);
+    expect(useCity.getState().view).toEqual({ name: 'interior', districtId: 'compute' });
+    rt.submitPrompt('Create a bucket called photos-1');
+    expect(fake.sent.at(-1)).toMatchObject({ action: 'task.submit', prompt: 'Create a bucket called photos-1' });
+  });
+
   it('a screenshot is forgotten when the page changes and when the session ends', async () => {
     const { rt } = await boot();
     fake.status('connected');

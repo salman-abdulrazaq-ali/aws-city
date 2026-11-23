@@ -13,6 +13,7 @@ import { bus } from '@/state/bus';
 import { mergeProgress, sameProgress } from '@/state/progress';
 import { CITIZEN_XP, fixGate } from '@/state/citizens';
 import { forgetGotIt, knownAgents, useCity, type CityState } from '@/state/store';
+import { smallTalkTo } from '@/state/smallTalk';
 import { ladder, questsDone } from '@/state/ladder';
 import { shows } from '@/state/simple';
 import { consoleUrl, DEFAULT_CONSOLE_SERVICE, matchText, matchUrl } from '@/world/taxonomy';
@@ -516,6 +517,13 @@ export const isSensitivePage = (url: string | undefined) => !!url && SENSITIVE_P
 export function submitPrompt(prompt: string) {
   const text = prompt.trim();
   if (!text || !backend) return;
+  // Small talk ("Eddie, how are you?") is a chat with that agent in their HQ, not a request (src/state/smallTalk.ts).
+  const talk = smallTalkTo(text, store().selected);
+  if (talk) {
+    store().setView({ name: 'interior', districtId: talk.districtId });
+    askDistrict(talk.districtId, text);
+    return;
+  }
   const taskId = uid();
   store().addTask(taskId, text);
   backend.send({ action: 'task.submit', taskId, prompt: text, context: { ...pageContext(), screenshotKey: lastScreenshotKey } });
