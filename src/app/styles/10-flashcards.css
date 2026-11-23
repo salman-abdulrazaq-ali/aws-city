@@ -94,8 +94,17 @@
   border: 1px solid rgba(0, 0, 0, 0.18);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-pixel), inset 0 -4px 0 rgba(0, 0, 0, 0.06);
+  -webkit-backface-visibility: hidden;
   backface-visibility: hidden;
   line-height: 1.45;
+  /* Safari draws a face's own-layer children (the text above, z-index 1) whatever its backface says, so the front
+     showed mirrored over the answer (seen 23 Nov 2026). The face not showing is hidden outright, half-way through
+     the flip, when it's edge-on. */
+  transition: visibility 0s linear calc(var(--dur-3) / 2);
+}
+.flash:not(.back) .flash-face.back-face,
+.flash.back .flash-face:not(.back-face) {
+  visibility: hidden;
 }
 .flash-face.back-face {
   background: var(--paper-back);

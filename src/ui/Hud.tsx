@@ -211,7 +211,7 @@ export function SyncNote() {
 }
 
 /**
- * ⋯ → Account, on the hosted server: the player's own AWS account (its card in Deploy), sign in or out, download their
+ * ⋯ → Account, on the hosted server or for a signed-in player whose build can sign in: the player's own AWS account (its card in Deploy), sign in or out, download their
  * data, delete their account (asked first, in a dialog: DeleteAccountDialog) and the privacy policy (when the build has
  * its address, WXT_PRIVACY_URL).
  */

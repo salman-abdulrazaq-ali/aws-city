@@ -18,6 +18,7 @@ const rt = vi.hoisted(() => ({
   openUrl: vi.fn(),
   deleteAccount: vi.fn(async () => {}),
   openPrivacyPolicy: vi.fn(),
+  openConsole: vi.fn(),
 }));
 const privacy = vi.hoisted(() => ({ url: undefined as string | undefined }));
 vi.mock('@/app/runtime', async (importOriginal) => ({
@@ -46,6 +47,19 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('the Deploy tab’s account cards', () => {
+  // Asked on 23 Nov 2026: "how do I get to my console?" It opens in the linked Region; the sign-in is the player's.
+  it('a linked account offers Open the AWS console, and says whose sign-in to use (never in the demo)', () => {
+    useCity.setState({ account: { linked: true, accountId: '047463438585', region: 'us-west-2' } });
+    const { unmount } = render(<DeployPanel />);
+    fireEvent.click(screen.getByRole('button', { name: /Open the AWS console/ }));
+    expect(rt.openConsole).toHaveBeenCalledOnce();
+    expect(screen.getByText(/Sign in as account 0474-6343-8585 with your own AWS sign-in/)).toBeTruthy();
+    unmount();
+    useCity.setState({ backendKind: 'mock' });
+    render(<DeployPanel />);
+    expect(screen.queryByRole('button', { name: /Open the AWS console/ })).toBeNull();
+  });
+
   it('the sign-in card links the privacy policy when the build has its address (WXT_PRIVACY_URL)', () => {
     useCity.setState({ backendStatus: 'signed-out' });
     const { unmount } = render(<DeployPanel />);

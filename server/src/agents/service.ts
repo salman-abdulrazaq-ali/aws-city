@@ -75,7 +75,8 @@ export const createActionService = (deps: {
    * approval given before a re-link, a disconnect or the city stopping never writes to the old account.
    */
   live?: (write: boolean) => Promise<boolean>;
-  /** Aborted when this world is retired: pending previews are cancelled (the signal's reason says why). */
+  /** Aborted when this world is retired: pending previews are cancelled (the signal's reason says why), and the look
+   *  again after a write is skipped. */
   retired?: AbortSignal;
   /** Called once per write asked for, whatever happened (an audit line); never for reads or input that didn't parse. */
   audit?: Audit;
@@ -123,8 +124,9 @@ export const createActionService = (deps: {
       if (result.ok && !READ_ONLY.has(action.type)) {
         const refresh = () => void deps.poller.refresh().catch((err) => log.warn('refresh after write failed', { err: (err as Error).name })); // the next scheduled poll retries
         refresh();
-        // State transitions (pending → running, CREATING → ACTIVE) take a few seconds; look again soon.
-        setTimeout(refresh, 4_000).unref();
+        // State transitions (pending → running, CREATING → ACTIVE) take a few seconds; look again soon. Not once the
+        // world is retired: after Disconnect the city no longer reads that account.
+        setTimeout(() => !deps.retired?.aborted && refresh(), 4_000).unref();
       }
       return { status: result.ok ? 'done' : 'failed', result };
     });

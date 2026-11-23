@@ -998,6 +998,7 @@ describe('screenshots are scoped to their owner', () => {
 describe('hosted server: Cognito players and tenants', () => {
   let port: number;
   let close: () => void;
+  let stores: ReturnType<typeof localStores>;
   let mfaReady: ReturnType<typeof vi.fn<(p: Principal) => Promise<StepUp>>>;
   const verifier: JwtVerifier = {
     async verify(token) {
@@ -1013,6 +1014,8 @@ describe('hosted server: Cognito players and tenants', () => {
       if (token === 'jwt-gus') return { sub: 'gus', auth_time };
       // POST /me/mfa's per-player limit: only its own test calls it as this player.
       if (token === 'jwt-hana') return { sub: 'hana', auth_time };
+      // GET /me/export's failed-then-retried download: only its own test exports as this player.
+      if (token === 'jwt-ivy') return { sub: 'ivy', auth_time };
       // …and its 409/503 test: one fresh player per case, so no burst is shared with another test.
       if (token.startsWith('jwt-mfa-')) return { sub: token.slice('jwt-'.length), auth_time };
       // A token that expires the moment the socket opens.
@@ -1025,7 +1028,7 @@ describe('hosted server: Cognito players and tenants', () => {
     const base = loadConfig({});
     const config = { ...base, authMode: 'cognito' as const, extensionOrigins: [EXT], port: 0 };
     // Its own directory each run: progress files sit beside it, and one run's players must not meet the next run's.
-    const stores = localStores(`${process.env.TEMP ?? '/tmp'}/aws-city-hosted-${Date.now()}/progress.json`);
+    stores = localStores(`${process.env.TEMP ?? '/tmp'}/aws-city-hosted-${Date.now()}/progress.json`);
     const { llm } = fakeLlm([]);
     const uploads = createUploadStore('http://127.0.0.1:1');
     const tenants = createTenants({ config, stores, uploads, llm, enabled: async () => true, awsFor: () => undefined, walkMs: 0 });
@@ -1139,6 +1142,18 @@ describe('hosted server: Cognito players and tenants', () => {
     const again = await fetch(`http://127.0.0.1:${port}/me/export`, { headers: auth('jwt-bob') });
     expect(again.status).toBe(429);
     expect(await again.json()).toEqual({ error: 'You downloaded your data a moment ago. Try again in a minute.' });
+  });
+
+  it('GET /me/export: a download that failed can be tried again at once (only a finished one counts toward the minute)', async () => {
+    const auth = { authorization: 'Bearer jwt-ivy', origin: EXT };
+    const bills = vi.spyOn(stores.bills, 'get').mockRejectedValueOnce(Object.assign(new Error('slow down'), { name: 'ProvisionedThroughputExceededException' }));
+    try {
+      expect((await fetch(`http://127.0.0.1:${port}/me/export`, { headers: auth })).status).toBe(500);
+      expect((await fetch(`http://127.0.0.1:${port}/me/export`, { headers: auth })).status).toBe(200);
+      expect((await fetch(`http://127.0.0.1:${port}/me/export`, { headers: auth })).status).toBe(429);
+    } finally {
+      bills.mockRestore();
+    }
   });
 
   it('v2.19 version handshake: a newer extension is refused (409, naming the server’s version) on the upgrade and on progress', async () => {

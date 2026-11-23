@@ -27,11 +27,13 @@ export function WorldIntro({ docked = false }: { docked?: boolean }) {
   const card = useRef<HTMLDivElement>(null);
   if (!onWorld || picked || !CITY_REGION) return null;
   // The intro (and the button pressed) goes with the world map: focus moves to the city's panel, never <body>. After
-  // the frame in which the city scene may take the keys (createGame's focusSoon), so the panel keeps it, unless the
-  // player has already moved on.
+  // the frame in which the city scene may take the keys (createGame's focusSoon): a canvas that took them keeps them,
+  // so the arrow keys walk Kai as the tour says ("Keys go to the canvas when … the city starts"; seen in review 23 Nov
+  // 2026: moving focus off the canvas left the arrows scrolling the panel after the tour). Focus left on the intro
+  // (hidden once the dive starts) goes to the panel too. Unless the player moved on.
   const toPanel = () => {
     const a = document.activeElement;
-    if (!a || a === document.body || a.tagName === 'CANVAS' || card.current?.contains(a)) document.getElementById(CITY_PANEL_ID)?.focus({ preventScroll: true });
+    if (!a || a === document.body || card.current?.contains(a)) document.getElementById(CITY_PANEL_ID)?.focus({ preventScroll: true });
   };
   const start = () => {
     if (!requestDive(REGIONS.cityRegion)) {

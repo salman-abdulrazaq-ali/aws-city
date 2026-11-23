@@ -334,9 +334,11 @@ When a change touches a decision, update its entry and run its Proof.
   `refusalsMarked`; our task credentials failing, ExpiredToken/InvalidClientTokenId, never mark a link broken, and
   'expired' never persists `brokenAt`) on `BROKEN_AFTER` (3) polls in a row, the first at least `REFUSAL_WINDOW_MS` (5 min)
   old, on a poll the breaker still takes for the player's own (polling goes on meanwhile, so each refused player stays in
-  the breaker while other players' cached credentials expire), stops polling and marks the record `brokenAt` (`broken: true`: "Was the stack deleted? Link again, or disconnect."), only when the record is still
+  the breaker while other players' cached credentials expire), marks the record `brokenAt` (`broken: true`: "Was the stack deleted? Link again, or disconnect."), only when the record is still
   the link that world was built from (`linkKey`, and the write is conditional; otherwise the world is rebuilt from the
-  record). The our-side wording test (`OUR_POLICY` in `server/src/aws.ts`: an AccessDenied naming an identity-based
+  record), and stops polling only once it's marked (the new world replaces the old; a failed read or write leaves polling
+  on, and the next refused poll tries again, never a city frozen on old data that still says linked). Proof:
+  `cd server && npx vitest run test/tenants.test.ts -t "broken"`. The our-side wording test (`OUR_POLICY` in `server/src/aws.ts`: an AccessDenied naming an identity-based
   policy, a service control policy, a permissions boundary or a session policy, all evaluated on our own role) has a
   breaker (`createRefusalBreaker`): the role
   refusing `REFUSAL_PLAYERS` (3) different players within `REFUSAL_WINDOW_MS` (5 min) on one server task, with no AssumeRole
@@ -359,7 +361,8 @@ When a change touches a decision, update its entry and run its Proof.
   a masked email, else "Player " + 8 characters of the sub: `connectsPlayerLabel`), and verify is refused 24 h after the link.
   A refused link or verify (the 24 h one included) is `error {requestId}`, never an `account.status`: a status with a requestId always means success. `resource.remove` takes down one game-owned thing with no model (approved
   like any write). `GET /me/export` (once a minute per player on each server task, an in-memory map in `server/src/http.ts`,
-  so with N tasks up to N a minute; 429 otherwise) downloads everything the privacy policy lists:
+  so with N tasks up to N a minute; 429 otherwise; a failed download doesn't count, so a retry works at once)
+  downloads everything the privacy policy lists:
   progress, link metadata (never the ExternalId or role ARN), social rows, the bill, AI counts, the first AI day and the
   MFA time (`firstDay`/`mfa.get` are plain reads).
   Serverless quest templates (`hello-api`, `queue-worker`) are practice builds on the server (`ServerBackend.planPractice`),
@@ -597,16 +600,24 @@ When a change touches a decision, update its entry and run its Proof.
   `MAX_PER_SERVICE`). A table listed and then not found mid-poll is skipped, not a failed DynamoDB read. A poll that
   creates, removes or changes a server, table or bucket (`movesInventory`, `server/src/state/diff.ts`) re-sends the
   mirror from the last listing (`care.reconcile`, no AWS call), and the mirror's "changed?" signature includes the items,
-  so a terminate plus a launch with the same counts is still sent. An agent's write re-polls at once and after 4 s, so the
-  map follows it within seconds. The feed says each kind's and state's lesson once per session (`feedEvents(e, said)`,
+  so a terminate plus a launch with the same counts is still sent. A listing builds from the newest snapshot once its
+  `readGeo` is done, never the one from before it (seen 22 Nov 2026: a terminated server came back until the next
+  listing). An agent's write re-polls at once and after 4 s (not once its world is retired), so the map follows it
+  within seconds. The feed says each kind's and state's lesson once per session (`feedEvents(e, said)`,
   `server/src/contract/aws-feed.ts`), then just the change. HQ chat on the CPU model names servers the player made
   themselves (`otherServers` in `snapshotSummary`), and every chat answer knows it can't change AWS and that the city
   only changes what it built (`CHAT_CAN_DO`, `server/src/contract/orchestrator.ts`; seen 22 Nov 2026: asked to delete a
   console-made server, Eddie said he couldn't see it). An audit line hashes a new bucket's real name (never the `<account>` placeholder), so it matches the gate's line. A plain request's
   task ends at `task.done`: the agent's few words after it run on their own (`explainAfter`), so the task's slot (two a
-  socket) is free at once (seen 22 Nov 2026: "Two tasks are already running" right after a card said done).
-  Proof: `cd server && npx vitest run test/bill.test.ts test/care.test.ts test/player-role.test.ts`, `cd server && npx vitest
-  run test/care.test.ts -t "DescribeInstances|bucket or table" test/diff.test.ts test/poller.test.ts test/contract.test.ts -t "lesson|chat answers" test/runner.test.ts`, `npx vitest run tests/contract.test.ts`.
+  socket) is free at once (seen 22 Nov 2026: "Two tasks are already running" right after a card said done). They're
+  skipped on the CPU model (`llm.small`: one call per player at a time, so they held the next chat answer 30–75 s; the
+  card's result line says what changed; chosen 23 Nov 2026) and never said once the world is retired (Disconnect, a new
+  link: the orchestrator's `retired`). A retired world says nothing more either: `onSnapshot` returns first thing, and
+  a listing that lands after it isn't broadcast.
+  Proof: `cd server && npx vitest run test/bill.test.ts test/care.test.ts test/player-role.test.ts test/diff.test.ts
+  test/poller.test.ts test/runner.test.ts`, `cd server && npx vitest run test/care.test.ts test/contract.test.ts -t
+  "DescribeInstances|bucket or table|newer snapshot|lesson|chat answers|explanation|retired"`, `cd server && npx vitest run
+  test/tenants.test.ts test/service.test.ts -t "after account.unlink|retired"`, `npx vitest run tests/contract.test.ts`.
 - **Street plans come from OpenStreetMap, baked.** A Region with `shared/city-maps/<region>.json` (v1, ODbL, © OpenStreetMap
   contributors) gets a 64×64 core of its real downtown's streets: `src/world/citymap.ts` decodes and validates it,
   `src/world/zoning.ts` zones it (superblocks keep today's insides, blocks → water/park/building, 3×3 lots fronting a
@@ -726,7 +737,7 @@ When a change touches a decision, update its entry and run its Proof.
   folded under More to do. Quest steps'
   buttons say what they do (`stepButton`: "Walk there", "Open cards (Learn)", "Solve it (Learn)", "Approve it in Deploy"),
   never a bare "Go"; each step done toasts a ✓ and bumps its building (`questStep` on the bus). The first screen says
-  what AWS is in one line (`WorldIntro`); its "I already build on AWS" turns Everything on (Simple off) and opens every area, and after either button focus moves to the City tab's panel; First Brick needs a building put up somewhere (`anyBuilt` in
+  what AWS is in one line (`WorldIntro`); its "I already build on AWS" turns Everything on (Simple off) and opens every area, and after either button focus moves to the City tab's panel unless the city's canvas took the keys (then the arrows walk Kai); First Brick needs a building put up somewhere (`anyBuilt` in
   `src/state/badges.ts`); the news ticker doesn't rotate on its own under reduced motion (its button still steps). Proof:
   `npx vitest run tests/next.test.ts tests/ui.test.tsx tests/onboarding-fixes.test.tsx tests/world-intro.test.tsx`, `npm run smoke` (one primary button on the shift).
 - **Learning has a daily rhythm and a goal.** The shift shows Today (a few cards, a puzzle, a fix: only areas that are open;
@@ -872,7 +883,7 @@ When a change touches a decision, update its entry and run its Proof.
   (`art/tiles/legend_art.py`; the Legend's beam is night-lights only) and the sign stands above them; the building card
   lists the next crown's steps. Proof: `npx vitest run tests/mastery.test.ts tests/learning.test.ts tests/art.test.ts`.
 - **Walking counts.** A quest's visit step counts when Kai *arrives* (`store.arrive`, from `goTo`'s callback or stepping
-  on the work spot), not on a tap; "Walk there", "Walk to <place>" and the tour walk him there (`src/state/walk.ts` `walkTo`; the building's card opens as the visit counts, never at the press: `cardWaitsForKai`), and a city that
+  on the work spot), not on a tap; "Walk there", "Walk to <place>" and the tour walk him there (`src/state/walk.ts` `walkTo`; the building's card opens as the visit counts, never at the press: `cardWaitsForKai`; a walk that arrives at once, Kai already on the spot, opens it too), and a city that
   can't (asleep behind a game or HQ) counts it at once, so a quest never sticks. Now and then one existing citizen has a
   question (`src/state/requests.ts`, `src/game/Requests.ts`: a gold "?", at most 5 a day, no new walkers): reaching them
   opens `RequestCard`, an ordinary flashcard review plus a 2⭐ thank-you (never over Decorate: the citizen waits while it's open, and a card already up is held until the drawer closes); the "?" stays until it's answered, and only
@@ -912,11 +923,16 @@ When a change touches a decision, update its entry and run its Proof.
   coaching line ("Practice terminal: this step also sets …"), never a made-up CLI error; a step's `outputs` pick the answer by a flag's value (create-bucket's `"/<bucket>"` in us-east-1, the bucket address elsewhere), shorthand keys in any order and the JSON form count as the step's (`sameShape`), `itemKey` takes any well-formed DynamoDB item with the key; a command word one typo off gets the CLI parser's "Found invalid choice … Maybe you meant" and an `aws s3` path without `s3://` "Error: Invalid argument type" (`parserRefusal`, from aws-cli v2's argparser.py and customizations/s3); coaching lines ("Practice terminal: …", `isCoaching`) show as help, not errors; a step that comes up after a pass takes the terminal's focus, so typing never reaches the city; nothing touches AWS) or AWS CloudShell, where `workshop.verify` checks it with a
   read-only look at the poller's snapshot (`server/src/workshops/checks.ts`: a fixed registry, no SDK calls of its own, no
   new IAM). For real, each name a command needs is typed once in a box that fills both the command and the check;
-  `<region>` is the linked account's Region, and optional parts are kept once filled (`commandFor`,
+  `<region>` is the linked account's Region (until the account says it, the Region gets a box too, so Copy never waits
+  for a gap with nowhere to type it), and optional parts are kept once filled (`commandFor`,
   `src/world/workshops.ts`), so S3 keeps `LocationConstraint` outside us-east-1 and Copy waits until nothing is left as
-  `<x>` (seen 22 Nov 2026: Oregon got `--bucket <bucket>` with no constraint, and CloudShell refused it). Pasted errors
+  `<x>` (seen 22 Nov 2026: Oregon got `--bucket <bucket>` with no constraint, and CloudShell refused it). A step's `setup`
+  (a file CloudShell doesn't have: `echo … > sample.txt`) runs first in the same line for real only (seen 23 Nov 2026:
+  "Upload a file" failed in CloudShell). The bucket box has 🎲 Suggest a free name (`freeBucketName`: bucket names are
+  global, "testdemo" was taken) and says what S3 would refuse before Copy (`bucketNameProblem`). Pasted errors
   match the step's known ones first, then go to the building's agent as quoted, redacted data, and its answer shows under
-  the step, not only in the HQ chat.
+  the step, not only in the HQ chat, with the agent's portrait while it reads and each command in it (between backticks)
+  on its own line with a Copy button (`AnswerWithCode`).
   Steps pay stars once per mode, ever (`src/learning/workshopRewards.ts`, real > practice; no daily ledger, so a
   workshop done in one sitting pays in full). The terminal helps like a shell: Tab finishes a word, ↑ recalls lines,
   💡 Hint types the next word for −1⭐ on that step (a paying step still pays one), and Fill my names swaps `<table>` for
@@ -1003,8 +1019,8 @@ When a change touches a decision, update its entry and run its Proof.
   `TaskView.paid`/`capped`; a practice deploy pays what it reports, once per template), the next step
   (`nextAction`) and, in the demo when a task matches a practice template, 🏗️ See it in Deploy (`planDeploy`, link first
   if needed; Home passes `openTab` so it opens Deploy). Home's agent offer is the same `AgentOffer`, and each featured
-  request's words route to the agent offering it (`FEATURED_REQUESTS`, `matchText`: a keyword counts only at a word's start, "ebs" never inside "website"). A building card separates 💬 Ask a question (the HQ chat) from 🛠️ Watch it done (an agent task, whose TaskCard then shows on that same card, scrolled into view). Its sign's marks are said in words there (`signLegend`: ×N resources, ! N things to check). Proof:
-  `npx vitest run tests/watch.test.ts tests/watch-ui.test.tsx tests/taxonomy.test.ts tests/daily-pay.test.ts tests/cards-order.test.tsx`; `npm run smoke` (`03`–`06-task-*.png`).
+  request's words route to the agent offering it (`FEATURED_REQUESTS`, `matchText`: a keyword counts only at a word's start, "ebs" never inside "website"). A building card separates 💬 Ask a question (the HQ chat) from 🛠️ Watch it done (an agent task, whose TaskCard then shows on that same card, scrolled into view). Its sign's marks are said in words there (`signLegend`: ×N resources, ! N things to check). Small talk typed in the request box ("Eddie, how are you?", "Thanks Sally": a greeting or social question, at most 8 words, no word that asks for a change) is a chat, not a task: it opens that agent's HQ and asks there (`smallTalkTo`, `src/state/smallTalk.ts`, from `submitPrompt`; seen 23 Nov 2026: sent as a task, the CPU concierge planned "launch a t4g.nano called Eddie"); every request, question about the account and featured request stays a task. Proof:
+  `npx vitest run tests/watch.test.ts tests/watch-ui.test.tsx tests/taxonomy.test.ts tests/daily-pay.test.ts tests/cards-order.test.tsx tests/small-talk.test.ts`, `npx vitest run tests/runtime-session.test.ts -t "small talk"`; `npm run smoke` (`03`–`06-task-*.png`).
   The agent is told the concierge's plan after the player's words, fenced as `<concierge_plan>` data it acts on only as
   far as the player asked; a step that destroys something reaches it only when the player's own words ask for one (`withPlan`,
   `planForAgent`, `server/src/contract/orchestrator.ts`: the concierge reads page context, which anyone can word), and
@@ -1021,7 +1037,7 @@ When a change touches a decision, update its entry and run its Proof.
   `server/src/tenants.ts`: the player as `who(sub)`, the Region, the action and its outcome, the target as the gate's
   `targetHash`; never a resource name or the account id). The card can't be missed: a task card with one waiting says "⏳ Waiting for your Approve" with
   Approve in Deploy → (`openDeployAt`, leaving an HQ first), elsewhere a toast opens it, and Deploy brings the card up with
-  focus on Approve (`deployFocus`). "My builds" is one card per resource for the agents' changes (`arrangeBuilds`,
+  focus on its title (`deployFocus`, `.stack-title`), never Approve, so no approval happens by accident (#105). "My builds" is one card per resource for the agents' changes (`arrangeBuilds`,
   `src/state/builds.ts`: a launch joins its server's later cards by `deploy.status.outputs.ResourceId`; status words fit
   the action; Tear down only while it exists, sent as a plain request, and not when My builds' inventory list already
   offers Take it down for the same resource: one removal button each). The card says where the task is: "Watch Sally
@@ -1068,8 +1084,10 @@ When a change touches a decision, update its entry and run its Proof.
   are real buttons. Sign out is in the ⋯ menu too (signed in and able to sign out), not only Deploy → Your data.
   The Diagram draws Everything or **Built by the city** (`accountDiagram(…, { builtOnly })`, asked for on 22 Nov 2026:
   your own project): only services with something the city built, counted by those, with the usual links between them,
-  and no cost lines (AWS bills a service for the whole account, not each thing the city built); nothing built yet says
-  so. Proof:
+  and no cost lines (AWS bills a service for the whole account, not each thing the city built); a picked service counts
+  what the city built, like its box; nothing built yet says so (`role="status"`). A picked box's details scroll into
+  view (focus stays on the box). Regions read by name with the code beside them ("US West (Oregon) (us-west-2)",
+  `regionName`, as Deploy shows them; seen 22 Nov 2026: Oregon vs us-west-2 confused). Proof:
   `npx vitest run tests/account-map.test.tsx tests/account-diagram.test.ts tests/menu-signout.test.tsx`, `npm run smoke` (`18b-my-aws-map`,
   `18c-my-aws-diagram`, `18c2-built-by-the-city`, `18e-my-aws-diagram-panel`, axe, still dots under reduced motion). A third view, **How AWS City
   runs** (`shared/city-architecture.json`, `src/world/cityArchitecture.ts`), draws the city's own hosted parts the same
@@ -1199,7 +1217,7 @@ When a change touches a decision, update its entry and run its Proof.
   mini-game (`TXT`). Games without a clock (`prefs.relaxed`, `src/game/pace.ts`) end rounds on Done and stretch
   reaction windows and spawns (Rush Hour's day, which is the game, runs at half speed instead); Sound captions
   (`prefs.captions`) show a word pill for each meaningful sound (`CAPTIONS` in `src/game/audio.ts`, not steps or blips).
-  Every mini-game plays from the keyboard (`onKeys`, or in Fishing and Edge Cache the maps in `src/game/scenes/games/gameKeys.ts`: Space casts and hooks, 1–3 pick a bucket; 1–4 pick a cache slot, I invalidates, C caches; `tests/game-keyboard.test.ts`), its end card too (`endCardKey`: Enter plays again, X the Expert round when open, Escape back to the city, after 800 ms; fishing: Space/Enter, X, Escape). A key press shows where it went: its button sinks (`pressLook`), the answer's target is framed (`answerPop`, `src/game/scenes/games/stageFx.ts`: green with sparks, red, or amber for a plain action; still under reduced motion), and a right answer's sparks burst where the pointer pressed or, after a key, where the answer went (`sparkSpot`: `answerPop`'s spot or `MiniGame.answerAt`, else the press's first verdict or floater, else the view's centre); Rush Hour's buttons name their keys (`RUSH_BUTTONS`). Mini-games speak through App's one polite live region (`announce`, `src/state/announce.ts`: one update per line, ≥ 150 ms apart, `replace` keeps the newest): the goal and keys first (`startLine`, a game's `keysHelp` when its title doesn't name them), each prompt (fishing's fish and buckets, the sorting office's parcel, the Dance Hall's question, the gate's request, the food stall's orders, the shield wall's arrivals, the queue's messages, Edge Cache's misses and changes, the Red Team Range's requests), every verdict and the player's own score changes in one line a frame (`MiniGame.speak`), and the end card in words (`endLine`, `src/game/scenes/games/say.ts`); the canvas is named for the game while it runs. Sound captions stay `aria-hidden` (the live region already says it). Keyboard: arrows walk, E talks, `]` / `[` step through buildings (announced by their sign's name, never an id, as "Place N of M on the map": `stepLine`), `+` / `−` zoom. ⋯ is a menu: opening it focuses its first item, arrows/Home/End move (never reaching the game), Escape returns to ⋯; its sections are labelled groups (Sound & view, Accessibility, How you play, Your city; Account first when hosted) and the street-maps credit is an item; Decorate is a plain item that returns focus to ⋯. A glossary definition opens in the top layer (popover API, `popPlace` keeps it in view); a flashcard's hidden face is `inert` and `aria-hidden`, and its small print is ≥ 4.5:1 on both papers (7:1 high contrast). Keys go
+  Every mini-game plays from the keyboard (`onKeys`, or in Fishing and Edge Cache the maps in `src/game/scenes/games/gameKeys.ts`: Space casts and hooks, 1–3 pick a bucket; 1–4 pick a cache slot, I invalidates, C caches; `tests/game-keyboard.test.ts`), its end card too (`endCardKey`: Enter plays again, X the Expert round when open, Escape back to the city, after 800 ms; fishing: Space/Enter, X, Escape). A key press shows where it went: its button sinks (`pressLook`), the answer's target is framed (`answerPop`, `src/game/scenes/games/stageFx.ts`: green with sparks, red, or amber for a plain action; still under reduced motion), and a right answer's sparks burst where the pointer pressed or, after a key, where the answer went (`sparkSpot`: `answerPop`'s spot or `MiniGame.answerAt`, else the press's first verdict or floater, else the view's centre); Rush Hour's buttons name their keys (`RUSH_BUTTONS`). Mini-games speak through App's one polite live region (`announce`, `src/state/announce.ts`: one update per line, ≥ 150 ms apart, `replace` keeps the newest): the goal and keys first (`startLine`, a game's `keysHelp` when its title doesn't name them), each prompt (fishing's fish and buckets, the sorting office's parcel, the Dance Hall's question, the gate's request, the food stall's orders, the shield wall's arrivals, the queue's messages, Edge Cache's misses and changes, the Red Team Range's requests), every verdict and the player's own score changes in one line a frame (`MiniGame.speak`), and the end card in words (`endLine`, `src/game/scenes/games/say.ts`); the canvas is named for the game while it runs. Sound captions stay `aria-hidden` (the live region already says it). Keyboard: arrows walk, E talks, `]` / `[` step through buildings (announced by their sign's name, never an id, as "Place N of M on the map": `stepLine`), `+` / `−` zoom. ⋯ is a menu: opening it focuses its first item, arrows/Home/End move (never reaching the game), Escape returns to ⋯; its sections are labelled groups (Sound & view, Accessibility, How you play, Your city; Account first when hosted) and the street-maps credit is an item; Decorate is a plain item that returns focus to ⋯. A glossary definition opens in the top layer (popover API, `popPlace` keeps it in view); a flashcard's hidden face is `inert` and `aria-hidden`, and `visibility: hidden` half-way through the flip (Safari drew its z-index text mirrored over the answer whatever `backface-visibility` said; seen 23 Nov 2026), and its small print is ≥ 4.5:1 on both papers (7:1 high contrast). Keys go
   to the canvas when a game or the city starts, unless the player is in the UI (`keysBelongToUi`, `mayFocusGame`; a workshop's next step takes the focus the passed one dropped,
   `src/game/keys.ts`).
   Arriving in a city announces its summary (`citySummary`: the AWS services put up here of all of them, issues, AWS status, live traffic). Focus never falls to `<body>`: a side-panel control that goes away leaves it on the new panel's heading (`useKeepFocus`, `src/ui/useDialog.ts`), and a ⋯ item gives focus to ⋯ before it opens a dialog, so closing My City or the tour returns there. The smoke runs
@@ -1221,7 +1239,11 @@ When a change touches a decision, update its entry and run its Proof.
   mini-games, each built for one landmark: `s3` fishing, `lambda` food stall, `route53` dance, `shield` wall, `ec2` rush hour, `dynamodb` sorting office, `securityagent` red team range, `sqs` queue juggler, `iam` permission gate, `cloudfront` edge cache). Proof: `npx vitest run tests/taxonomy.test.ts` checks every service has a
   place, a landmark and a valid work spot. A service's first `consolePaths` entry is what "Open the console" opens
   (`consoleUrl`): `vpcconsole#TransitGateways:` is a hash route, `lightsail.aws.amazon.com/ls/webapp` a console on its own
-  host; `matchUrl` reads both back (same test).
+  host; `matchUrl` reads both back (same test). With a linked account it opens in that account's Region
+  (`<region>.console.aws.amazon.com/…?region=`, a Region code only; `openConsole` in `src/app/runtime.ts`, global services
+  keep their own console; seen 23 Nov 2026: the console opened in London while the city builds in Oregon), and Deploy's
+  linked card has 🖥️ Open the AWS console (not in the demo) with whose sign-in to use: the city never signs the player in.
+  Proof: `npx vitest run tests/taxonomy.test.ts tests/deploy-account.test.tsx`, `npx vitest run tests/runtime-session.test.ts -t "Open the console"`.
 - **State vs moments.** Persistent state goes in the zustand store (`src/state/store.ts`); one-off
   animations and camera moves go on the bus (`src/state/bus.ts`). Scenes subscribe to both and must
   unsubscribe on both SHUTDOWN and DESTROY, because React StrictMode destroys the first game.

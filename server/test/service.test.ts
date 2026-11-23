@@ -58,6 +58,28 @@ describe('action service', () => {
     expect(executeAction).not.toHaveBeenCalled();
   });
 
+  // After Disconnect "AWS City no longer reads or changes your AWS account": the look again 4 s after a write is skipped.
+  it('the look again after a write is skipped once the world is retired', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      for (const disconnect of [false, true]) {
+        const retired = new AbortController();
+        const poller = pollerFor();
+        const refresh = vi.spyOn(poller, 'refresh');
+        const service = createActionService({ clients: {} as AwsClients, poller, region: 'us-west-2', retired: retired.signal });
+        const done = service.submit('create_table', { name: 'city-quest' }, { approve: async () => true });
+        await vi.advanceTimersByTimeAsync(10);
+        expect(await done).toMatchObject({ status: 'done' });
+        expect(refresh).toHaveBeenCalledTimes(1);
+        if (disconnect) retired.abort('Disconnected.');
+        await vi.advanceTimersByTimeAsync(4_000);
+        expect(refresh).toHaveBeenCalledTimes(disconnect ? 1 : 2);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('rejects invalid input before policy or AWS', async () => {
     const service = createActionService({ clients: {} as AwsClients, poller: pollerFor(), region: 'us-west-2' });
     expect(await service.submit('launch_instance', { name: 'x', instanceType: 'm5.large' })).toMatchObject({ status: 'invalid' });

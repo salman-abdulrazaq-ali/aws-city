@@ -4,6 +4,7 @@ import type { Progress } from '@/backend/contract';
 import { redact } from '@/console/risk';
 import { explainError, type TerminalError } from '@/learning/terminal';
 import { stepReward, workshopStatus } from '@/learning/workshopRewards';
+import { regionName } from '@/state/account';
 import { bus } from '@/state/bus';
 import { growthLine, growthOf } from '@/state/growth';
 import { levelOf } from '@/state/mastery';
@@ -11,11 +12,12 @@ import { useCity } from '@/state/store';
 import { questById } from '@/world/content';
 import { placeFor } from '@/world/places';
 import { serviceById } from '@/world/taxonomy';
-import { commandFor, isChecked, placeholdersIn, terminalStep, workshopById, WORKSHOPS, type Workshop as WorkshopDef, type WorkshopStep } from '@/world/workshops';
+import { bucketNameProblem, commandFor, freeBucketName, isChecked, placeholdersIn, terminalStep, workshopById, WORKSHOPS, type Workshop as WorkshopDef, type WorkshopStep } from '@/world/workshops';
 import { AiNote } from './AiNote';
 import { AwsIcon } from './AwsIcon';
 import { feel, useCopy } from './feedback';
 import { GrowLine } from './Flashcards';
+import { Portrait } from './Portrait';
 import { PracticeTerminal } from './PracticeTerminal';
 import { Plain } from './Term';
 import { useDialog } from './useDialog';
@@ -93,7 +95,15 @@ function ModeIntro({ mode, demo, names }: { mode: Mode; demo: boolean; names: Re
     );
   return (
     <p className="muted small workshop-intro" role="note">
-      ☁️ Run each command in AWS CloudShell, then let the city check your account (read-only).{same} Region: {account.region ?? 'the one your console shows'}.
+      ☁️ Run each command in AWS CloudShell, then let the city check your account (read-only).{same} Region:{' '}
+      {account.region ? (
+        <>
+          {regionName(account.region)} <span className="muted">({account.region})</span>
+        </>
+      ) : (
+        'the one your console shows'
+      )}
+      .
       {!account.linked && ' Link your account in the Deploy tab first, so the city can look.'}
     </p>
   );
@@ -227,8 +237,10 @@ function StepView(props: {
   // The check reads only the name it looks for (the table, the bucket): the form asks for that one, filled in already.
   const asks = isChecked(step) ? [step.verify.value] : [];
   // For real, the Region is the linked account's (the city checks that Region); every other name is typed once, below.
+  // Before the account says its Region (not linked yet, or its status still on the way), the Region gets a box too:
+  // otherwise Copy waited for a <region> there was nowhere to type.
   const linkedRegion = useCity((s) => s.account.region);
-  const typed = placeholdersIn(step.cli).filter((n) => n !== 'region');
+  const typed = placeholdersIn(step.cli).filter((n) => n !== 'region' || !linkedRegion);
   const [form, setForm] = useState<Record<string, string>>(() => Object.fromEntries([...new Set([...typed, ...asks])].map((n) => [n, names[n] ?? ''])));
   const [copied, copyText] = useCopy();
   const remember = (patch: { names?: Record<string, string>; line?: string }) => useCity.getState().rememberWorkshop(w.id, patch);
@@ -249,6 +261,10 @@ function StepView(props: {
     () => commandFor(step.cli ?? '', realHere ? { ...names, ...form, ...(linkedRegion ? { region: linkedRegion } : {}) } : names, realHere),
     [step.cli, names, form, realHere, linkedRegion],
   );
+  // For real, the step's setup (a file CloudShell doesn't have) runs first, in the same line, so one Copy does both.
+  const shown = realHere && step.setup && filled ? `${step.setup} && ${filled}` : filled;
+  // A bucket name S3 would refuse is said before it's copied, not after CloudShell says InvalidBucketName.
+  const badBucket = realHere && typed.includes('bucket') ? bucketNameProblem(form.bucket ?? '') : undefined;
   const g = growthOf(progress, w.serviceId, region);
   return (
     <section className="workshop-step" aria-label={step.title}>
@@ -278,10 +294,23 @@ function StepView(props: {
         <div className="workshop-names">
           {typed.map((n) => (
             <label key={n}>
-              <span className="label">{n === 'bucket' || n === 'table' || n === 'function' ? `Your ${n} name` : `Your ${n}`}</span>
-              <input value={form[n] ?? ''} onChange={(e) => setForm((v) => ({ ...v, [n]: e.target.value }))} spellCheck={false} autoCapitalize="off" placeholder={n} />
+              <span className="label">{n === 'bucket' || n === 'table' || n === 'function' ? `Your ${n} name` : n === 'region' ? 'Your Region code' : `Your ${n}`}</span>
+              <input value={form[n] ?? ''} onChange={(e) => setForm((v) => ({ ...v, [n]: e.target.value }))} spellCheck={false} autoCapitalize="off" placeholder={n === 'region' ? 'us-west-2' : n} />
+              {n === 'bucket' && (
+                <span className="workshop-name-help">
+                  <span className="muted small">Bucket names are shared by every AWS account in the world: pick one nobody has.</span>
+                  <button type="button" className="btn tiny" onClick={() => setForm((v) => ({ ...v, bucket: freeBucketName(randomHex) }))}>
+                    🎲 Suggest a free name
+                  </button>
+                </span>
+              )}
             </label>
           ))}
+          {badBucket && (
+            <p className="field-error small" role="alert">
+              {badBucket}
+            </p>
+          )}
         </div>
       )}
       {step.cli && (
@@ -289,18 +318,19 @@ function StepView(props: {
           {/* A long command wraps and scrolls in its box; the keyboard can reach it to scroll (axe scrollable-region-focusable). */}
           {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
           <code className="workshop-cmd" tabIndex={0}>
-            {filled}
+            {shown}
           </code>
           <button
             className="btn tiny"
-            disabled={realHere && unfilled.length > 0}
-            title={realHere && unfilled.length > 0 ? 'Type the names above first' : undefined}
-            onClick={() => (realHere && remember({ names: form }), copyText(filled))}
+            disabled={realHere && (unfilled.length > 0 || !!badBucket)}
+            title={realHere && unfilled.length > 0 ? 'Type the names above first' : badBucket ? 'Fix the bucket name above first' : undefined}
+            onClick={() => (realHere && remember({ names: form }), copyText(shown))}
           >
             {copied ? 'Copied' : 'Copy'}
           </button>
         </div>
       )}
+      {step.cli && realHere && step.setup && <p className="muted small">It makes the small file first (CloudShell starts with none), then runs the step.</p>}
       {step.cli && unfilled.length > 0 && (
         <p className="muted small">
           {realHere ? 'Type' : 'Replace'}{' '}
@@ -411,6 +441,57 @@ function StepView(props: {
 }
 
 /** "I got an error": a known one is explained at once (rules first); anything else goes to the building's agent. */
+/** Random hex for a free bucket name (crypto, so two players never get the same one by chance). */
+const randomHex = () => Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, '0')).join('');
+
+/** One command from an answer, with its own Copy. */
+function CodeChip({ code }: { code: string }) {
+  const [copied, copyText] = useCopy();
+  return (
+    <span className="code-row">
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+      <code className="workshop-cmd" tabIndex={0}>
+        {code}
+      </code>
+      <button type="button" className="btn tiny" onClick={() => copyText(code)}>
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+    </span>
+  );
+}
+
+/**
+ * The agent's answer under the step. A command in it (between backticks, or a ``` block) is shown as one with its own
+ * Copy button, so it's clear what to paste into CloudShell (seen 23 Nov 2026: the fix was buried in the sentence).
+ */
+export function AnswerWithCode({ who, text }: { who: string; text: string }) {
+  const parts = text.split(/```(?:[a-z]+\n)?([\s\S]*?)```|`([^`\n]+)`/g);
+  // split() with two groups: [text, fenced, inline, text, fenced, inline, …]
+  const pieces: { code?: string; text?: string }[] = [];
+  for (let i = 0; i < parts.length; i += 3) {
+    if (parts[i]) pieces.push({ text: parts[i] });
+    const code = (parts[i + 1] ?? parts[i + 2])?.trim();
+    if (code) pieces.push({ code });
+  }
+  const codes = pieces.filter((p) => p.code && /^(aws|echo|cat|ls|cd)\b/.test(p.code));
+  return (
+    <div>
+      <p>
+        <b>{who}:</b>{' '}
+        {pieces.map((p, i) => (p.code ? <code key={i}>{p.code}</code> : <Plain key={i} text={p.text!} />))}
+      </p>
+      {codes.length > 0 && (
+        <>
+          <p className="muted small">Copy a command below, then run it in CloudShell:</p>
+          {codes.map((p, i) => (
+            <CodeChip key={i} code={p.code!} />
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
 function ErrorHelp({ w, errors }: { w: WorkshopDef; errors?: TerminalError[] }) {
   const [text, setText] = useState('');
   const noteId = useId();
@@ -450,11 +531,17 @@ function ErrorHelp({ w, errors }: { w: WorkshopDef; errors?: TerminalError[] }) 
       {known === null && asked && (
         <div className="workshop-answer" aria-live="polite">
           {!answer || (answer.pending && !answer.text) ? (
-            <p className="muted">💭 {agent} is looking at it… this can take up to a minute.</p>
-          ) : (
-            <p>
-              <b>{agent}:</b> <Plain text={answer.text} />
+            <p className="muted workshop-thinking">
+              <Portrait id={w.serviceId} size={20} /> {agent} is reading your error
+              <span className="thinking-dots" aria-hidden="true">
+                <span>.</span>
+                <span>.</span>
+                <span>.</span>
+              </span>{' '}
+              (up to a minute)
             </p>
+          ) : (
+            <AnswerWithCode who={agent} text={answer.text} />
           )}
         </div>
       )}

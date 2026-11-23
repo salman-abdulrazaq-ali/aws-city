@@ -211,6 +211,25 @@ describe('the account lifecycle (v2.19)', () => {
     tenants.closeAll();
   });
 
+  // His Disconnect promise: "AWS City no longer reads or changes your AWS account". A poll already in flight when the
+  // player disconnects must not still tell the tabs about that account (a feed line, a finding, the map).
+  it('a poll that lands after account.unlink says nothing about the old account', async () => {
+    const { tenants, stores } = hub();
+    await stores.accounts.put('u1', linkedRecord);
+    const tenant = await tenants.acquire({ sub: 'u1' });
+    const poller = pollers[0]!;
+    poller.poll({ ...emptyWorld('us-west-2'), accountId: ACCOUNT });
+    const tab: ServerEvent[] = [];
+    tenant.subscribe((e) => tab.push(e));
+    await tenant.unlink('r-unlink', () => {});
+    expect(statuses(tab)).toHaveLength(1);
+    const after = tab.length;
+    poller.poll({ ...emptyWorld('us-west-2'), accountId: ACCOUNT, resources: [table('city-new')] });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(tab.slice(after)).toEqual([]);
+    tenants.closeAll();
+  });
+
   it(`${BROKEN_AFTER} refused AssumeRoles in a row, the first a breaker window old, break the link: polling stops, the record says so, every tab hears it`, async () => {
     const later = fakeClock();
     const { tenants, stores } = hub();
@@ -252,6 +271,30 @@ describe('the account lifecycle (v2.19)', () => {
     });
     // A refused poll says nothing else to the player (no "IAM locked" lesson per service, no findings resolved).
     expect(tab.filter((e) => e.type !== 'account.status')).toEqual([]);
+    tenants.closeAll();
+  });
+
+  it('a failed write while marking a link broken keeps polling, and the next refused poll marks it', async () => {
+    const later = fakeClock();
+    const { tenants, stores } = hub();
+    await stores.accounts.put('u1', linkedRecord);
+    const tenant = await tenants.acquire({ sub: 'u1' });
+    const tab: ServerEvent[] = [];
+    tenant.subscribe((e) => tab.push(e));
+    const poller = pollers[0]!;
+    // DynamoDB throttles the brokenAt write once (seen in review of #105: the city stayed linked on old data).
+    const update = vi.spyOn(stores.accounts, 'update').mockRejectedValueOnce(Object.assign(new Error('slow down'), { name: 'ProvisionedThroughputExceededException' }));
+    breakLink(poller, later, refused());
+    await vi.waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(running()).toBe(1);
+    expect(statuses(tab)).toEqual([]);
+    expect(await stores.accounts.get('u1')).not.toHaveProperty('brokenAt');
+    poller.poll(refused());
+    await vi.waitFor(() => expect(statuses(tab)).toHaveLength(1));
+    expect(running()).toBe(0);
+    expect(await stores.accounts.get('u1')).toMatchObject({ status: 'linked', brokenAt: expect.any(String) });
+    expect(statuses(tab)[0]).toMatchObject({ linked: false, broken: true, accountId: ACCOUNT });
     tenants.closeAll();
   });
 

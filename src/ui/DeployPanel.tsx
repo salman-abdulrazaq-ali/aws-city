@@ -9,6 +9,7 @@ import {
   isSafeAwsUrl,
   linkAccount,
   mfaStatus,
+  openConsole,
   openPrivacyPolicy,
   openUrl,
   planDeploy,
@@ -43,7 +44,7 @@ import { GUARDED_BLUEPRINTS, isPracticeDeploy } from '@/backend/ServerBackend';
 import { TEMPLATES } from '@/world/content';
 import { serviceById } from '@/world/taxonomy';
 import { TemplateView } from './TemplateView';
-import { offered, perUnit, pricesFor, regionInfo } from '@/world/regions';
+import { offered, perUnit, pricesFor } from '@/world/regions';
 import { DeleteConfirm, FixesOn, RoleUpdate, StackLink } from './Account';
 import { useCopy } from './feedback';
 import { costLine, offlineReason } from './logic';
@@ -175,7 +176,7 @@ function PendingButton({ pending, busyLabel, children, className = 'btn', disabl
 export const linkRegion = (url?: string): { code: string; name: string } | undefined => {
   try {
     const code = url ? new URL(url).searchParams.get('region') : null;
-    return code ? { code, name: regionInfo(code)?.name ?? code } : undefined;
+    return code ? { code, name: regionName(code) } : undefined;
   } catch {
     return undefined;
   }
@@ -792,9 +793,24 @@ export function DeployPanel() {
               )}
             </p>
             {account.message && <p className="muted">{account.message}</p>}
-            <button className="btn tiny" onClick={() => useCity.getState().openAccountMap(true)} title="Your account as one map: what runs where, data that moves, live traffic and this month's cost">
-              🗺️ My AWS, live
-            </button>
+            <div className="row account-actions">
+              <button className="btn tiny" onClick={() => useCity.getState().openAccountMap(true)} title="Your account as one map: what runs where, data that moves, live traffic and this month's cost">
+                🗺️ My AWS, live
+              </button>
+              {kind !== 'mock' && (
+                <button className="btn tiny" onClick={() => openConsole()} title={`The AWS console in ${account.region ? regionName(account.region) : 'your Region'}, where the city builds`}>
+                  🖥️ Open the AWS console
+                </button>
+              )}
+            </div>
+            {kind !== 'mock' && account.accountId && (
+              // Asked on 23 Nov 2026: "how do I get to my console?" The city opens it in the right Region, but the
+              // sign-in is the player's own (it never holds console credentials, and the role trusts only the city).
+              <p className="muted small">
+                Sign in as account {accountLabel(account.accountId)} with your own AWS sign-in: the city never signs you in. If that account is in an AWS
+                Organization, switch role into it first.
+              </p>
+            )}
             {account.fixes !== undefined && (
               <p className="muted">
                 Small fixes: <b>{account.fixes ? 'on' : 'off'}</b>

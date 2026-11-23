@@ -96,7 +96,7 @@
           "output": "{\n    \"Location\": \"http://{{bucket}}.s3.amazonaws.com/\"\n}",
           "outputs": [{ "when": { "flag": "--region", "value": "^us-east-1$" }, "output": "{\n    \"Location\": \"/{{bucket}}\"\n}" }],
           "errors": [
-            { "code": "BucketAlreadyExists", "message": "An error occurred (BucketAlreadyExists) when calling the CreateBucket operation: The requested bucket name is not available. The bucket namespace is shared by all users of the system. Please select a different name and try again.", "when": { "flag": "--bucket", "value": "^(test|my-bucket)$" }, "explain": "Bucket names are shared by every AWS account in the world, and someone already has this one.", "fix": "Add something random to the name, like city-photos-4f9c2a." },
+            { "code": "BucketAlreadyExists", "message": "An error occurred (BucketAlreadyExists) when calling the CreateBucket operation: The requested bucket name is not available. The bucket namespace is shared by all users of the system. Please select a different name and try again.", "when": { "flag": "--bucket", "value": "^(test|my-bucket)$" }, "explain": "Bucket names are shared by every AWS account in the world, and someone already has this one.", "fix": "Pick a name nobody has: press 🎲 Suggest a free name, or add something random, like city-photos-4f9c2a." },
             { "code": "InvalidBucketName", "message": "An error occurred (InvalidBucketName) when calling the CreateBucket operation: The specified bucket is not valid.", "when": { "flag": "--bucket", "value": "^(?=[A-Za-z0-9._-]{1,255}$)(?:(?![a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$)|.*\\.\\.|xn--|sthree-|amzn-s3-demo-|.*(?:-s3alias|--ol-s3|\\.mrap|--x-s3|--table-s3)$|\\d+\\.\\d+\\.\\d+\\.\\d+$)" }, "explain": "A bucket name is 3 to 63 lowercase letters, numbers, dots and hyphens, starting and ending with a letter or number. No capitals or underscores, and the prefixes amzn-s3-demo-, xn-- and sthree- are reserved.", "fix": "Pick a name like city-photos-4f9c2a." },
             { "code": "You must specify a region", "message": "Practice terminal: which Region? This terminal has no default Region (CloudShell uses your console's), so name it with --region.", "when": { "missing": "--region" }, "explain": "S3 makes the bucket in the Region the request goes to. Outside us-east-1 it also wants that Region in the location constraint, or it refuses.", "fix": "Add --region us-east-1, or your own Region (like eu-west-1) plus --create-bucket-configuration LocationConstraint= and the same Region." },
             { "code": "The unspecified location constraint", "message": "An error occurred (IllegalLocationConstraintException) when calling the CreateBucket operation: The unspecified location constraint is incompatible for the region specific endpoint this request was sent to.", "when": { "missing": "--create-bucket-configuration", "flag": "--region", "value": "^(?!us-east-1$)" }, "explain": "Outside us-east-1, S3 needs to be told the bucket's Region.", "fix": "Add --create-bucket-configuration LocationConstraint= followed by the same Region as --region, for example eu-west-1." },
@@ -117,7 +117,7 @@
           "id": "upload",
           "title": "Upload a file",
           "body": "Make a small file first (echo \"Hello, S3\" > sample.txt). S3 is a flat object store: a key with slashes only looks like a folder. Note the VersionId in the answer.",
-          "cli": "aws s3api put-object --bucket <bucket> --key sample.txt --body sample.txt",
+          "cli": "aws s3api put-object --bucket <bucket> --key sample.txt --body sample.txt", "setup": "echo \"Hello from AWS City\" > sample.txt",
           "output": "{\n    \"ETag\": \"\\\"34604da2079f37530dc71b117b9cd58b\\\"\",\n    \"ChecksumCRC64NVME\": \"vL37ViPe6JI=\",\n    \"ChecksumType\": \"FULL_OBJECT\",\n    \"ServerSideEncryption\": \"AES256\",\n    \"VersionId\": \"3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY\"\n}",
           "errors": [
             { "code": "d41d8cd98f00b204e9800998ecf8427e", "message": "Practice terminal: stopped. Without --body the real CLI still answers, but it stores an empty object: sample.txt with nothing in it (its ETag, d41d8cd98f00b204e9800998ecf8427e, is the MD5 of no data).", "when": { "missing": "--body" }, "explain": "--body is optional: it names the local file whose contents go up. Leave it out and S3 stores the key with 0 bytes.", "fix": "Add --body sample.txt." },
@@ -646,7 +646,7 @@
           "id": "upload",
           "title": "Upload a page",
           "body": "Make a one-line index.html first (echo \"<h1>Hello</h1>\" > index.html), then copy it into the bucket.",
-          "cli": "aws s3 cp index.html s3://<bucket>/index.html",
+          "cli": "aws s3 cp index.html s3://<bucket>/index.html", "setup": "echo \"<h1>Hello from AWS City</h1>\" > index.html",
           "output": "upload: ./index.html to s3://{{bucket}}/index.html",
           "verify": { "manual": true }
         },
@@ -989,7 +989,7 @@
           "id": "encrypt",
           "title": "Encrypt a small secret",
           "body": "fileb:// sends the file as raw bytes. The answer is base64 text: in a real shell, pipe it through base64 --decode into secret.enc to keep the ciphertext.",
-          "cli": "aws kms encrypt --key-id alias/<alias> --plaintext fileb://secret.txt --output text --query CiphertextBlob",
+          "cli": "aws kms encrypt --key-id alias/<alias> --plaintext fileb://secret.txt --output text --query CiphertextBlob", "setup": "echo \"my secret\" > secret.txt",
           "output": "AQICAHhJ3pS1EXAMPLEyQb0jvF0w8Zr...EXAMPLE==",
           "verify": { "manual": true }
         },

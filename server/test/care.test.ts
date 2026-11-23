@@ -304,6 +304,41 @@ describe('the mirror follows DescribeInstances, not the lagging listing (22 Nov 
     expect(care.reconcile(current)).toBeUndefined();
     expect(care.welcome()[0]).toMatchObject({ type: 'city.inventory', items: [{ name: 'demo' }] });
   });
+
+  // Seen 22 Nov 2026: a terminated server came back on My AWS for minutes. The listing's snapshot was taken before
+  // readGeo; a poll that reconciled meanwhile was then overwritten by that older state.
+  it('a listing finishing after a poll reconciled keeps the newer snapshot (a terminated server stays gone)', async () => {
+    const send = vi.fn(async (cmd: unknown) => {
+      if (cmd instanceof ListIndexesCommand) return { Indexes: [{ Region: 'us-west-2', Type: 'LOCAL' }] };
+      if (cmd instanceof SearchCommand) return { Resources: [{ Arn: ARN('i-old'), Region: 'us-west-2' }] };
+      return { AvailabilityZones: [], Regions: [] };
+    });
+    const clients = { ec2: { send }, ec2For: () => ({ send }), explorer: { send } } as unknown as AwsClients;
+    let current = snapshot([instance('i-old', 'running', true, 'web')]);
+    const care = createCityCare({ clients, region: 'us-west-2', accountId: ACCOUNT, runner: { turn: vi.fn(), reset: () => undefined } as unknown as AgentRunner, withLock: (fn) => fn(), refresh: async () => undefined, progress: async () => null, snapshot: () => current, fixesEnabled: false });
+    const first = (await care.refreshInventory())!;
+    expect(first.items.map((i) => i.name)).toEqual(['web']);
+
+    // The next listing starts while the server runs, and its readGeo is slow (a new Region, say).
+    let releaseSecond!: () => void;
+    const secondHeld = new Promise<void>((r) => (releaseSecond = r));
+    send.mockClear();
+    send.mockImplementation(async (cmd: unknown) => {
+      if (cmd instanceof ListIndexesCommand) return { Indexes: [{ Region: 'us-west-2', Type: 'LOCAL' }] };
+      if (cmd instanceof SearchCommand) return { Resources: [{ Arn: ARN('i-old'), Region: 'us-west-2' }, { Arn: `arn:aws:dynamodb:eu-west-1:${ACCOUNT}:table/t`, Region: 'eu-west-1' }] };
+      if (cmd instanceof DescribeAvailabilityZonesCommand) await secondHeld;
+      return { AvailabilityZones: [], Regions: [] };
+    });
+    const listing = care.refreshInventory();
+    await vi.waitFor(() => expect(send.mock.calls.some(([c]) => c instanceof DescribeAvailabilityZonesCommand)).toBe(true));
+    // Meanwhile the player terminates it and a poll reconciles: gone from the map.
+    current = snapshot([instance('i-old', 'terminated', true, 'web')]);
+    expect(care.reconcile(current)!.items).toEqual([]);
+    releaseSecond();
+    await listing;
+    expect(care.welcome()[0]).toMatchObject({ type: 'city.inventory' });
+    expect((care.welcome()[0] as { items: { name: string }[] }).items.map((i) => i.name)).not.toContain('web');
+  });
 });
 
 describe('city care: fixes with the player in charge', () => {

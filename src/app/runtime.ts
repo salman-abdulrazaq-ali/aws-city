@@ -13,9 +13,11 @@ import { bus } from '@/state/bus';
 import { mergeProgress, sameProgress } from '@/state/progress';
 import { CITIZEN_XP, fixGate } from '@/state/citizens';
 import { forgetGotIt, knownAgents, useCity, type CityState } from '@/state/store';
+import { smallTalkTo } from '@/state/smallTalk';
 import { ladder, questsDone } from '@/state/ladder';
 import { shows } from '@/state/simple';
 import { consoleUrl, DEFAULT_CONSOLE_SERVICE, matchText, matchUrl } from '@/world/taxonomy';
+import { isGlobalService } from '@/world/regions';
 import { isPracticeService, isPracticeUrl, PRACTICE_PATH, practiceRoute, practiceUrl } from '@/console/practice';
 import type { CopilotMessage } from '@/console/agent';
 import { isSecretPage, redact, redactConsoleUrl } from '@/console/risk';
@@ -516,6 +518,13 @@ export const isSensitivePage = (url: string | undefined) => !!url && SENSITIVE_P
 export function submitPrompt(prompt: string) {
   const text = prompt.trim();
   if (!text || !backend) return;
+  // Small talk ("Eddie, how are you?") is a chat with that agent in their HQ, not a request (src/state/smallTalk.ts).
+  const talk = smallTalkTo(text, store().selected);
+  if (talk) {
+    store().setView({ name: 'interior', districtId: talk.districtId });
+    askDistrict(talk.districtId, text);
+    return;
+  }
   const taskId = uid();
   store().addTask(taskId, text);
   backend.send({ action: 'task.submit', taskId, prompt: text, context: { ...pageContext(), screenshotKey: lastScreenshotKey } });
@@ -671,8 +680,10 @@ export function signIn(opts?: { fresh?: boolean }) {
     .catch((e: unknown) => {
       const msg = e instanceof Error ? e.message : String(e);
       if (/cancel|closed|did not approve/i.test(msg)) return store().log({ kind: 'system', text: 'Sign-in cancelled.' });
-      store().log({ kind: 'system', text: `⚠️ Sign-in failed: ${msg}` });
-      store().toast('⚠️', `Sign-in didn’t finish: ${msg}. If it keeps happening, this build’s sign-in redirect may not be registered with the server.`, 'error');
+      // Players get a sentence, never the raw browser or token error (#105's plain errors); the console keeps the detail.
+      console.warn('sign-in failed', e);
+      store().log({ kind: 'system', text: '⚠️ Sign-in didn’t finish.' });
+      store().toast('⚠️', 'Sign-in didn’t finish. Check your connection and try again. If it keeps happening, this browser’s sign-in address may not be set up on the city’s server yet.', 'error');
     })
     .finally(() => store().setSigningIn(false));
 }
@@ -1123,8 +1134,14 @@ export function openFullCity() {
   void browser.tabs.create({ url: browser.runtime.getURL('/city.html') });
 }
 
-export function openConsole(serviceId: string) {
-  void browser.tabs.create({ url: consoleUrl(serviceId) });
+/**
+ * Opens a service's console page, or the console's home (no service), in the linked account's Region: the city builds
+ * and checks there. A global service (IAM, Route 53…) keeps its own console. Signing in is the player's own: the city
+ * never holds console credentials.
+ */
+export function openConsole(serviceId = '') {
+  const { linked, region } = store().account;
+  void browser.tabs.create({ url: consoleUrl(serviceId, linked && !isGlobalService(serviceId) ? region : undefined) });
 }
 
 /** Dev helper: pretend the user opened `url` (used by tests and the DevTools console via window.awsCity). */
