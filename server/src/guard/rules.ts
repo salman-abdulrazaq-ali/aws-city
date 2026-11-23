@@ -23,7 +23,16 @@ export interface WireContext {
   region: string;
   /** Undefined until known: bucket writes and fixes that name the owner are refused until then. */
   accountId?: string;
+  /**
+   * The grant was minted for something the player made, with "Let the city change things you made" on (player role v6
+   * AllowCleanup): DeleteBucket may name any bucket of the account, not only aws-city-<account>-… (still exactly the
+   * approved one, with ExpectedBucketOwner = the account). Only ActionService sets it, after policy and the approval.
+   */
+  cleanup?: boolean;
 }
+
+/** The IAM actions the role's aws-city-cleanup policy grants (AllowCleanup=true only): the same writes, on what the player made. */
+export const CLEANUP_IAM = ['ec2:StartInstances', 'ec2:StopInstances', 'ec2:TerminateInstances', 's3:DeleteBucket'] as const;
 
 /** `region` for the few account-wide reads that may go to any Region. */
 export const ANY_REGION = 'any';
@@ -73,8 +82,9 @@ const oneInstance = z.object({ InstanceIds: z.tuple([instanceId]) }).strict();
 /** Stop, start or terminate: exactly one instance, named by its own id (the grant's target). */
 const oneInstanceWrite = (iam: string) =>
   write({ iam: [iam], wire: () => oneInstance, refusal: 'houses are changed one at a time, by their own id.', target: (i) => i.InstanceIds[0] });
-/** A bucket of this account's: aws-city-<account>-… (none until the account is known). */
-const gameBucket = (ctx: WireContext) => (ctx.accountId ? z.string().startsWith(bucketPrefix(ctx.accountId)) : z.never());
+/** A bucket of this account's: aws-city-<account>-… (none until the account is known); any valid name under a cleanup grant. */
+const gameBucket = (ctx: WireContext) =>
+  !ctx.accountId ? z.never() : ctx.cleanup ? z.string().regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/) : z.string().startsWith(bucketPrefix(ctx.accountId));
 /** S3's ExpectedBucketOwner, which must be the account the credentials act in (bucket names are global). */
 const bucketOwner = (ctx: WireContext) => (ctx.accountId ? z.literal(ctx.accountId) : z.never());
 

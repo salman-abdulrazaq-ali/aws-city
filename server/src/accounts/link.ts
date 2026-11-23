@@ -106,6 +106,7 @@ export const createAccountLinker = (deps: {
       // Visible on the quick-create page: who this link connects (a stranger's link names a stranger).
       param_ConnectsPlayer: opts.label,
       ...(opts.allowFixes ? { param_AllowFixes: 'true' } : {}),
+      ...(opts.allowCleanup ? { param_AllowCleanup: 'true' } : {}),
       // No trust parameters: the published template has our account fixed in it.
     };
     // %20 for spaces (not form-encoding's +), so the console reads the label as written.
@@ -124,7 +125,11 @@ export const createAccountLinker = (deps: {
       if (await deps.deleted?.(sub)) throw new LinkError(DELETED_MESSAGE);
       const existing = await deps.accounts.get(sub);
       // Every link starts a fresh day to verify in, and names the template version it points at.
-      const issued = { linkIssuedAt: new Date(now()).toISOString(), ...(latestRoleVersion !== undefined ? { linkRoleVersion: latestRoleVersion } : {}) };
+      const issued = {
+        linkIssuedAt: new Date(now()).toISOString(),
+        ...(latestRoleVersion !== undefined ? { linkRoleVersion: latestRoleVersion } : {}),
+        linkCleanup: opts.allowCleanup === true,
+      };
       // Re-linking keeps the same ExternalId, so a stack the player already installed keeps working. A linked account
       // stays linked (and usable) until verify succeeds for the new Region. A broken link goes back to pending.
       let record: AccountRecord;
@@ -149,7 +154,7 @@ export const createAccountLinker = (deps: {
       if (!(now() - issuedAt <= LINK_TTL_MS))
         throw new LinkError('Your setup link is more than a day old, so I won’t use it. Press “Get my setup link” again (a stack you already made from it keeps working), then check again.');
       // The Region asked for last (a linked player's new Region, else the record's own). What verify learns is fresh.
-      const { pendingRegion, brokenAt: _b, fixes: _f, roleVersion: _r, ...rest } = stored;
+      const { pendingRegion, brokenAt: _b, fixes: _f, roleVersion: _r, cleanup: _c, ...rest } = stored;
       const record = { ...rest, region: pendingRegion ?? stored.region };
       const trimmed = input.trim();
       const prefix = deps.playerRolePrefix ?? 'AWSCityPlayerRole';
@@ -171,6 +176,8 @@ export const createAccountLinker = (deps: {
       // Installed from this link: a first verify (pending), a new Region or account, or the player updated the stack.
       const installed = stored.status !== 'linked' || pendingRegion !== undefined || stored.accountId !== m[1] || opts.updated === true;
       const roleVersion = installed ? record.linkRoleVersion : stored.roleVersion;
+      // The same rule for AllowCleanup: what the link the stack came from asked for.
+      const cleanup = installed ? record.linkCleanup === true : stored.cleanup === true;
       const linked = {
         ...record,
         status: 'linked' as const,
@@ -179,6 +186,7 @@ export const createAccountLinker = (deps: {
         linkedAt: new Date(now()).toISOString(),
         ...(roleVersion !== undefined ? { roleVersion } : {}),
         ...(fixes !== undefined ? { fixes } : {}),
+        ...(cleanup ? { cleanup } : {}),
       };
       // Onto the record it started from: a DELETE /me or Disconnect on another task meanwhile is never written back.
       if (!(await deps.accounts.put(sub, linked, stored))) throw new LinkError(LINK_CHANGED_MESSAGE);
@@ -224,6 +232,8 @@ export interface LinkOptions {
   label: string;
   /** v2.17: AllowFixes=true on the quick-create page (the player ticked "Allow small fixes"). */
   allowFixes?: boolean;
+  /** AllowCleanup=true on the quick-create page (the player turned on "Let the city change things you made"). */
+  allowCleanup?: boolean;
 }
 
 export type AccountLinker = ReturnType<typeof createAccountLinker>;

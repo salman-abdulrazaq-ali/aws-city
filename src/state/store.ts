@@ -208,6 +208,8 @@ export interface AccountState {
   // v2.19 (account.status): a link whose role stopped working, whether fixes are allowed, the role's version.
   broken?: boolean;
   fixes?: boolean;
+  /** "Let the city change things you made" is on (the stack's AllowCleanup, player role v6). Hosted only. */
+  cleanup?: boolean;
   roleVersion?: number;
   latestRoleVersion?: number;
   templateUrl?: string;
@@ -215,6 +217,8 @@ export interface AccountState {
   wantsLink?: boolean;
   linkRegion?: string;
   allowFixes?: boolean;
+  /** The last setup link asked for AllowCleanup=true (turning the switch on or off is a fresh link plus a stack update). */
+  allowCleanup?: boolean;
   /** The requestId of the account.unlink sent (its account.status answer says "Disconnected"). */
   unlinking?: string;
   /** After a Disconnect: the Region whose AWSCity stack is still in the account until the player deletes it. */
@@ -1367,6 +1371,7 @@ export const useCity = create<CityState>()((set, get) => ({
             error: undefined,
             broken: e.broken,
             fixes: e.fixes,
+            cleanup: e.cleanup,
             roleVersion: e.roleVersion,
             latestRoleVersion: e.latestRoleVersion,
             templateUrl: e.templateUrl,

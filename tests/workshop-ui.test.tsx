@@ -147,6 +147,8 @@ describe('for real', () => {
     expect(screen.getByText(/CloudShell must run in account/).textContent).toMatch(/AWSCity-8585 \(0474-6343-8585\)/);
     // Seen 23 Nov 2026: a new account's CloudShell waits for verification; the terminal is the way round it.
     expect(screen.getByText(/account verification is in progress/).textContent).toMatch(/your own terminal/);
+    expect(screen.getByRole('button', { name: 'Ask AWS Support ↗' })).toBeTruthy();
+    expect(screen.getByText(/--output text drops the JSON/)).toBeTruthy();
     expect([...document.querySelectorAll('.workshop-account .workshop-cmd')].map((c) => c.textContent)).toEqual(['aws sts get-caller-identity --query Account --output text']);
     expect(screen.getByRole('alert').textContent).toMatch(/signed in to account 4229-2981-4205/);
   });

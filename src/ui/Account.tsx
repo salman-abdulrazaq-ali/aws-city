@@ -2,9 +2,24 @@
 // Deploy's "Your data" and ⋯ share one "Delete my account" confirm; the linked card and City care share the step lists
 // (update the role, turn fixes on) and "Check again". The rules are pure in src/state/account.ts.
 
-import { useEffect, useRef, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { confirmRoleUpdate, deleteAccount, linkAccount, openUrl, recheckAccount } from '@/app/runtime';
-import { connectOffer, connectsPlayer, FIXES_ON_STEPS, LOCAL_FIXES_COMMAND, roleUpdateSteps, stacksUrl, stepsText, stillBuilt } from '@/state/account';
+import {
+  CLEANUP_OFF,
+  CLEANUP_ROLE_VERSION,
+  CLEANUP_SWITCH,
+  cleanupOn,
+  cleanupSteps,
+  connectOffer,
+  connectsPlayer,
+  FIXES_ON_STEPS,
+  LOCAL_FIXES_COMMAND,
+  regionName,
+  roleUpdateSteps,
+  stacksUrl,
+  stepsText,
+  stillBuilt,
+} from '@/state/account';
 import { connectTask } from '@/state/simple';
 import { bus } from '@/state/bus';
 import { useCity } from '@/state/store';
@@ -149,11 +164,81 @@ export function FixesOn({ region }: { region: string }) {
 }
 
 /**
+ * "Let the city change things you made" (asked for on 23 Nov 2026), in the linked account's card: Off by default, which
+ * is today's rule (only what the city built). The switch lives in the player's own AWS account (the AWSCity stack's
+ * AllowCleanup, player role v6), so the city can't turn it on by itself: Turn on/off shows the stack update and "I've
+ * updated the stack" (whose fresh link and verify record it). The demo's practice account plays it with a new link.
+ */
+export function CleanupSwitch({ region }: { region: string }) {
+  const account = useCity((s) => s.account);
+  const hosted = useCity((s) => s.hosted);
+  const demo = useCity((s) => s.backendKind === 'mock');
+  const [open, setOpen] = useState(false);
+  const [copied, copy] = useCopy();
+  if (!hosted && !demo) return null;
+  const on = account.cleanup === true;
+  const want = !on;
+  // A role older than v6 has no AllowCleanup: the same update brings the newer template.
+  const older = account.roleVersion !== undefined && account.roleVersion < CLEANUP_ROLE_VERSION;
+  const newTemplate = older ? account.templateUrl : undefined;
+  const label = connectsPlayer(account.linkUrl);
+  return (
+    <section className="account-howto cleanup-switch" aria-labelledby="cleanup-switch-title">
+      <p className="row">
+        <b id="cleanup-switch-title">{CLEANUP_SWITCH}:</b>{' '}
+        <span className={`switch-state ${on ? 'on' : 'off'}`}>{on ? 'On' : 'Off'}</span>
+        <button
+          className="btn tiny"
+          aria-expanded={open}
+          onClick={() => {
+            setOpen(!open);
+            // What the next "I've updated the stack" records (confirmRoleUpdate's link carries it).
+            if (!open) useCity.getState().patchAccount({ allowCleanup: want });
+          }}
+        >
+          {on ? 'Turn off' : 'Turn on'}
+        </button>
+      </p>
+      <p className="muted small">
+        <Plain text={on ? cleanupOn(regionName(region)) : CLEANUP_OFF} />
+      </p>
+      {open &&
+        (demo ? (
+          <p className="muted">
+            Practice account: press Use another Region or account, {want ? 'tick' : 'untick'} “{CLEANUP_SWITCH}”, then Verify again.
+          </p>
+        ) : (
+          <>
+            <StepList steps={cleanupSteps(want, newTemplate)} label={want ? `Turn on “${CLEANUP_SWITCH}”` : `Turn off “${CLEANUP_SWITCH}”`} />
+            {newTemplate && (
+              <div className="template-url">
+                <code>{newTemplate}</code>
+                <button className="btn tiny" onClick={() => copy(newTemplate)}>
+                  {copied ? 'Copied ✓' : 'Copy the template address'}
+                </button>
+                {label && (
+                  <span>
+                    ConnectsPlayer: <code>{label}</code>
+                  </span>
+                )}
+              </div>
+            )}
+            <div className="row">
+              <StackLink region={region} />
+              <UpdatedStack allowCleanup={want} />
+            </div>
+          </>
+        ))}
+    </section>
+  );
+}
+
+/**
  * "I've updated the stack": the city can't read the stack's version, so the player says the update is done (a fresh
  * setup link, then a verify marked `updated`: src/app/runtime.ts confirmRoleUpdate). It waits for the account's answer,
  * an error, or 15 s.
  */
-function UpdatedStack() {
+function UpdatedStack({ allowCleanup }: { allowCleanup?: boolean } = {}) {
   const seq = useCity((s) => s.account.seq);
   const offline = useCity((s) => !isOnline(s.backendKind, s.backendStatus));
   const pending = usePending();
@@ -166,7 +251,7 @@ function UpdatedStack() {
       disabled={busy || offline}
       aria-busy={busy}
       onClick={() => {
-        const requestId = confirmRoleUpdate();
+        const requestId = confirmRoleUpdate(allowCleanup !== undefined ? { allowCleanup } : {});
         if (requestId) pending.start('updated', requestId);
       }}
     >

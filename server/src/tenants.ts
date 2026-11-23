@@ -65,7 +65,7 @@ export interface Tenant {
   progress: { get(): Promise<Progress | null>; put(input: unknown): Promise<PutResult> };
   uploads: { create(contentType: ImageType): Promise<UploadTarget> };
   /** v2.19 `allowFixes`: the setup link asks for AllowFixes=true. */
-  link(requestId: string, region: string, emit: Emit, allowFixes?: boolean): Promise<void>;
+  link(requestId: string, region: string, emit: Emit, allowFixes?: boolean, allowCleanup?: boolean): Promise<void>;
   /** `updated`: v2.19 "I've updated the stack" (the role version becomes the link's; accounts/link.ts). */
   verify(requestId: string, roleArn: string, emit: Emit, updated?: boolean): Promise<void>;
   /** v2.19 account.recheck ("Check again"): asks the linked role again whether fixes are allowed; read-only, no MFA. */
@@ -219,6 +219,8 @@ interface World {
   fixes?: boolean;
   /** v2.19: the player-role template version the player installed from the city's link (hosted). */
   roleVersion?: number;
+  /** Hosted: "Let the city change things you made" (the record's `cleanup`, from the link's AllowCleanup). Local: undefined. */
+  cleanup?: boolean;
   /** v2.19: the record this world was built from (linkKey): another key in the store means the world is stale. */
   link: string;
   /**
@@ -378,7 +380,19 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
       // Every AWS change asked for, done or refused: who (hashed), the Region, the action and its outcome. Like the gate's
       // lines, the target is a hash and the account id is never written (resource names carry it). Kept 30 days.
       const audit: Audit = (e) => log.info('aws change', { who: who(sub), region: aws.region, ...e });
-      const actions = createActionService({ clients: aws.clients, poller, region: aws.region, locks, accountKey: () => aws.accountId, judge, live, retired: retired.signal, audit });
+      const actions = createActionService({
+        clients: aws.clients,
+        poller,
+        region: aws.region,
+        locks,
+        accountKey: () => aws.accountId,
+        judge,
+        live,
+        retired: retired.signal,
+        audit,
+        // Read at each write, so turning it on or off (verify, the minute's re-read) takes effect at once. Local: no switch.
+        cleanup: () => (deps.linker ? self?.cleanup === true : undefined),
+      });
       const runnerDeps = { llm, actions, snapshot, knowledge: deps.knowledge };
       const strands = createStrandsRunner(runnerDeps);
       const runner = routedRunner(createAgentRunner(runnerDeps), strands, deps.config.agentEngine === 'strands');
@@ -431,6 +445,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         accountId: aws.accountId,
         ...(fixes !== undefined ? { fixes } : {}),
         ...(record?.roleVersion !== undefined ? { roleVersion: record.roleVersion } : {}),
+        ...(record?.cleanup ? { cleanup: true } : {}),
         link: linkKey(record),
         retired,
       };
@@ -481,6 +496,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
             region: world.region,
             message: deps.config.awsMode === 'profile' ? 'Workshop AWS account (local server). Every change needs your approval.' : 'Your AWS account is connected. Every change needs your approval.',
             ...(world.fixes !== undefined ? { fixes: world.fixes } : {}),
+            ...(deps.linker ? { cleanup: world.cleanup === true } : {}),
             ...roleOf(world),
           }
         : world.broken
@@ -511,9 +527,10 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
           return broadcast([accountStatus()]);
         }
         if (!world.linked || !deps.linker || !record) return;
-        if (record.fixes === world.fixes && record.roleVersion === world.roleVersion) return;
+        if (record.fixes === world.fixes && record.roleVersion === world.roleVersion && (record.cleanup === true) === (world.cleanup === true)) return;
         world.fixes = record.fixes;
         world.roleVersion = record.roleVersion;
+        world.cleanup = record.cleanup === true;
         broadcast([accountStatus()]);
       });
     const resyncSoon = () => void resync().catch((err) => log.warn('account re-read failed', { who: who(sub), err: (err as Error).name }));
@@ -574,12 +591,12 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
       },
       social: socialFor({ store: deps.stores.social, sub, profile: async () => (await deps.stores.progress.get(sub))?.profile }),
       uploads: { create: (contentType) => deps.uploads.create(contentType, sub) },
-      link: (requestId, region, emit, allowFixes) => serial(async () => {
+      link: (requestId, region, emit, allowFixes, allowCleanup) => serial(async () => {
         if (!deps.linker) return emit(accountStatus(requestId));
         try {
           // The stack names who it connects (ConnectsPlayer): the public Mayor name, else a masked id (accounts/link.ts).
           const label = connectsPlayerLabel(p, (await deps.stores.progress.get(sub))?.profile);
-          const { url, externalId } = await deps.linker.link(sub, region, { label, ...(allowFixes ? { allowFixes } : {}) });
+          const { url, externalId } = await deps.linker.link(sub, region, { label, ...(allowFixes ? { allowFixes } : {}), ...(allowCleanup ? { allowCleanup } : {}) });
           emit({ type: 'account.linkUrl', requestId, url, externalId });
           // A broken link went back to pending: the city waits for the new stack now, so it isn't "broken" any more.
           if (world.broken) {

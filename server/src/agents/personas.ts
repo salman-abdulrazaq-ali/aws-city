@@ -8,7 +8,9 @@ IAM Gatehouse), grouped in districts (Storage Shores, Compute Quarter, Database 
 
 const RULES = `How you act:
 - You change the real AWS account only through your tools. The game enforces guardrails: only resources the game built can be
-  changed, there are small count limits, and every change (especially demolishing) waits for the player's Approve.
+  changed (unless the player turned on "Let the city change things you made" in Deploy, Your AWS account: then servers and
+  empty buckets they made too), there are small count limits, and every change (especially demolishing) waits for the
+  player's Approve; a removal also needs them to type its name or id.
 - When a tool call is denied, explain the reason simply. It's a chance to teach something about AWS (for example, IAM or ownership).
 - If you have no tool for what the player asked, say so and explain how they would do it in the AWS Console.
 - You never see inside a bucket: no tool lists or reads the objects (files) in any bucket, built by the city or not.

@@ -54,7 +54,7 @@ the v2.19 commands; step-up is enforced by the server whatever the client knows.
 | `deploy.approve` / `deploy.reject` | `deployId, confirm?` | The player's answer to a `deploy.preview`. Nothing changes in AWS without `deploy.approve`. |
 | `deploy.plan` | `requestId, templateId` | On `aws`, `ServerBackend` sends it to the matching agent as a prompt (`GUARDED_BLUEPRINTS`). v2.19: a template with no guarded build (`hello-api`, `queue-worker`: serverless) is a practice build made by `ServerBackend` itself, like the demo's (a `deploy.preview` whose `deployId` starts `practice-`, then `deploy.status complete` under its own `templateId`, so a quest's deploy step counts). Nothing is sent and nothing is created; it never becomes an EC2 house. |
 | `deploy.teardown` | `deployId` | On `aws`, it asks the agent to demolish what was built (that also needs approval). |
-| `account.link` | `requestId, region, allowFixes?` | Hosted: returns `account.linkUrl` (CloudFormation quick-create for `infra/player-role/player-role.yaml`, with the player's ExternalId and `ConnectsPlayer`). v2.19 `allowFixes`: the link sets `AllowFixes=true`. |
+| `account.link` | `requestId, region, allowFixes?, allowCleanup?` | Hosted: returns `account.linkUrl` (CloudFormation quick-create for `infra/player-role/player-role.yaml`, with the player's ExternalId and `ConnectsPlayer`). v2.19 `allowFixes`: the link sets `AllowFixes=true`. `allowCleanup`: the link sets `AllowCleanup=true` ("Let the city change things you made", role v6; an older server ignores it). |
 | `account.verify` | `requestId, roleArn, updated?` | `roleArn` may be just the 12-digit account id. The server assumes the role and checks the caller identity before linking. v2.19: refused a day after the link was made; learns whether fixes are allowed (a DryRun) and records the template version when the player installed or (`updated`) updated the stack from the link. Success is `account.status {requestId, linked: true}`; any refusal is `error {requestId, message}` and never an `account.status`. |
 | `account.recheck` | `requestId` | v2.19 "Check again": the same fixes DryRun for the linked role, read-only (no MFA, no new link window, the role version stays). Answered with `account.status {requestId, …, fixes}` on every tab, or `error {requestId}`. |
 | `account.unlink` | `requestId` | v2.19: disconnect the account (no MFA). Answered with `account.status {linked: false}` on every tab. |
@@ -411,7 +411,8 @@ minutes of that socket's own successful `account.link` (link, then verify as soo
   Otter") while their profile is public, else their email masked ("a***@e***.com") when the sign-in carries one, else
   "Player " and the first 8 characters of their sign-in id (`connectsPlayerLabel`, `server/src/accounts/link.ts`). It is
   `param_ConnectsPlayer` in the link's URL (percent-encoded), so the client can show the same words. Never a secret,
-  never the raw email. `allowFixes: true` adds `param_AllowFixes=true`. A link is good for a day: `account.verify` more
+  never the raw email. `allowFixes: true` adds `param_AllowFixes=true`; `allowCleanup: true` adds `param_AllowCleanup=true`,
+  and the account's `cleanup` is what the link the stack was installed or updated from asked for (recorded at verify). A link is good for a day: `account.verify` more
   than 24 hours after the last `account.link` is refused with a sentence asking for a new link (the ExternalId stays the
   same, so a stack made from the old link keeps working).
 - `account.verify {requestId, roleArn, updated?}`: on success the server also asks, without changing anything, whether
@@ -440,7 +441,8 @@ minutes of that socket's own successful `account.link` (link, then verify as soo
   `account.link` (back to pending) or a successful `account.verify` clears it. `fixes`: whether the role allows fixes
   (absent = unknown; the local server sends its own setting). Hosted only: `roleVersion` (the template version the
   player installed from the city's link; absent if linked before v2.19), `latestRoleVersion` and `templateUrl` (the
-  newest template, for "Update your AWS City role").
+  newest template, for "Update your AWS City role"), and `cleanup` ("Let the city change things you made" is on: servers
+  and empty buckets the player made may be changed, each removal with its typed name, MFA and Approve).
 - `resource.remove {requestId, kind, id}`: `kind` is `instance`, `table` or `bucket`; `id` the instance id, table name or
   bucket name (the last part of the inventory item's ARN). It must be `managedByGame` in the server's latest read of the
   account. Answered with `deploy.preview {requestId, deployId, templateId: terminate_instance|delete_table|delete_bucket,

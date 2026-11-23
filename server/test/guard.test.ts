@@ -204,6 +204,29 @@ describe('the gate between the server and AWS', () => {
     expect(sent.at(-1)).toMatchObject({ op: 'DELETE aws-city-123456789012-photos/', owner: ACCOUNT });
   });
 
+  // Asked for on 23 Nov 2026: "Let the city change things you made" (player role v6 AllowCleanup).
+  it('a bucket the player made goes out only under a cleanup grant, by its exact name, owned by this account', async () => {
+    const { clients, sent } = recording();
+    const MINE = 'test-demo-7k2';
+    // A plain grant for it (the switch off): the gate still knows only aws-city-<account>-… buckets.
+    await granted(actionGrant({ type: 'delete_bucket', name: MINE }, ACCOUNT), async () => {
+      await refused(clients.s3.send(new DeleteBucketCommand({ Bucket: MINE, ExpectedBucketOwner: ACCOUNT })));
+    });
+    // A grant made after policy let it through with the switch on: that bucket, this account, once.
+    await granted(actionGrant({ type: 'delete_bucket', name: MINE }, ACCOUNT, { cleanup: true }), async () => {
+      await refused(clients.s3.send(new DeleteBucketCommand({ Bucket: 'someone-elses', ExpectedBucketOwner: ACCOUNT })));
+      await refused(clients.s3.send(new DeleteBucketCommand({ Bucket: MINE })));
+      await refused(clients.s3.send(new DeleteBucketCommand({ Bucket: MINE, ExpectedBucketOwner: '999999999999' })));
+      await clients.s3.send(new DeleteBucketCommand({ Bucket: MINE, ExpectedBucketOwner: ACCOUNT }));
+      await refused(clients.s3.send(new DeleteBucketCommand({ Bucket: MINE, ExpectedBucketOwner: ACCOUNT })));
+    });
+    expect(sent.map((x) => x.op)).toEqual([`DELETE ${MINE}/`]);
+    // No grant at all: nothing.
+    await refused(clients.s3.send(new DeleteBucketCommand({ Bucket: MINE, ExpectedBucketOwner: ACCOUNT })));
+    // A cleanup grant only widens a bucket delete, never what another write may name.
+    expect(actionGrant({ type: 'create_bucket', suffix: 'photos' }, ACCOUNT, { cleanup: true })?.cleanup).toBeUndefined();
+  });
+
   it("RunInstances keeps the role's shape even with a grant", async () => {
     const { clients, sent } = recording();
     const launch = (input: RunInstancesCommandInput) =>

@@ -69,7 +69,7 @@ const reasonFor = (name: ActionName, input: Record<string, unknown>): string => 
     case 'create_bucket':
       return 'AWS City names buckets aws-city-<account>-<name>. The name part is 3-40 lowercase letters, digits or hyphens, starting and ending with a letter or digit.';
     case 'delete_bucket':
-      return 'The city only deletes buckets it built: their names start with aws-city-<account>-.';
+      return 'That isn’t an S3 bucket name: 3-63 lowercase letters, digits, dots or hyphens.';
     case 'create_table':
     case 'delete_table':
       return `Table names here start with ${TABLE_PREFIX} and then use 1-40 lowercase letters, digits or hyphens.`;

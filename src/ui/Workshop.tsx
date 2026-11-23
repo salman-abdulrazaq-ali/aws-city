@@ -115,6 +115,9 @@ function ModeIntro({ mode, demo, names }: { mode: Mode; demo: boolean; names: Re
  * check said "not found"). One command says which account a shell is in, and the console's own account, when the city
  * can tell, is checked too (ConsoleAccountWarning).
  */
+/** AWS Support's "Account and billing" case, which is free on every plan: where a new account's verification is asked about. */
+const AWS_SUPPORT_CASE = 'https://support.console.aws.amazon.com/support/home#/case/create?issueType=customer-service';
+
 function AccountCheck() {
   const account = useCity((s) => s.account);
   if (!account.linked || !account.accountId) return null;
@@ -124,10 +127,15 @@ function AccountCheck() {
         CloudShell must run in account <b>{accountTitle(account.accountId)}</b> (the one the city checks). To see which account a shell is in:
       </p>
       <CodeChip code="aws sts get-caller-identity --query Account --output text" />
+      {/* Asked on 23 Nov 2026: "what is --output text?" */}
+      <p className="muted small">It prints just the 12-digit account number (--output text drops the JSON around it).</p>
       <ConsoleAccountWarning />
       {/* Seen 23 Nov 2026: a new account's CloudShell said "account verification is in progress" (up to 2 days). */}
       <p className="muted small workshop-no-cloudshell">
-        CloudShell says “account verification is in progress”? New AWS accounts wait up to 2 days for it. Run the same commands in your own terminal with the AWS CLI, signed in to that account.
+        CloudShell says “account verification is in progress”? New AWS accounts wait up to 2 days for it. Run the same commands in your own terminal with the AWS CLI, signed in to that account. Waiting longer?{' '}
+        <button type="button" className="btn tiny" onClick={() => openUrl(AWS_SUPPORT_CASE)}>
+          Ask AWS Support ↗
+        </button>
       </p>
     </div>
   );

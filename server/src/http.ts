@@ -210,7 +210,7 @@ const Command = z.discriminatedUnion('action', [
   z.object({ action: z.literal('console.observe'), taskId: Id, index: z.number().int().min(0).max(100), ok: z.boolean(), note: z.string().max(200).optional(), snapshot: Snapshot }),
   z.object({ action: z.literal('console.stop'), taskId: Id }),
   // Connecting the player's own AWS account (hosted); v2.19: allowFixes, and disconnecting it
-  z.object({ action: z.literal('account.link'), requestId: Id, region: z.string().min(1).max(32), allowFixes: z.boolean().optional() }),
+  z.object({ action: z.literal('account.link'), requestId: Id, region: z.string().min(1).max(32), allowFixes: z.boolean().optional(), allowCleanup: z.boolean().optional() }),
   z.object({ action: z.literal('account.verify'), requestId: Id, roleArn: z.string().min(1).max(200), updated: z.boolean().optional() }),
   z.object({ action: z.literal('account.unlink'), requestId: Id }).strict(),
   // contract v2.19 "Check again": the linked role's fixes answer, read again (read-only, no MFA)
@@ -752,7 +752,7 @@ export const createHttpServer = (deps: Deps) => {
           if (why !== 'ok') return refuse(why, cmd.requestId);
           if (cmd.action === 'account.link') {
             const requestId = cmd.requestId;
-            return tenant.link(requestId, cmd.region, (e) => (e.type === 'account.linkUrl' && e.requestId === requestId && (linkedAt = Date.now()), emit(e)), cmd.allowFixes);
+            return tenant.link(requestId, cmd.region, (e) => (e.type === 'account.linkUrl' && e.requestId === requestId && (linkedAt = Date.now()), emit(e)), cmd.allowFixes, cmd.allowCleanup);
           }
           return tenant.verify(cmd.requestId, cmd.roleArn, emit, cmd.updated);
         })().catch(failed);
