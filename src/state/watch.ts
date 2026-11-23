@@ -160,9 +160,9 @@ export function liveStep(task: Pick<TaskView, 'steps'>) {
   return at >= 0 ? { index: at, text: task.steps[at].text, of: task.steps.length } : undefined;
 }
 
-/** "+15 ⭐ S3 Lake, +5 ⭐ IAM Gatehouse", or the friendly daily-cap line when the building's paid tasks are used up today. */
+/** "+3 ⭐ S3 Lake, +1 ⭐ IAM Gatehouse", or the friendly daily-cap line when today's paid tasks (here or in all) are used up. */
 export function paidLine(task: Pick<TaskView, 'paid' | 'capped'>): string | undefined {
-  if (task.capped) return 'Today’s task stars here are used up: full stars again tomorrow.';
+  if (task.capped) return 'Today’s task stars are used up: full stars again tomorrow.';
   if (!task.paid?.length) return undefined;
   return task.paid.map((x) => `+${x.stars} ⭐ ${placeFor(x.serviceId)?.place ?? x.serviceId}`).join(', ');
 }

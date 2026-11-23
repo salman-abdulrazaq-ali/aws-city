@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { SocialRow } from './world.js';
 
 /**
  * Live city and leaderboards (contract v2.11). A player is never stored here by their id: rows carry a salted hash of
@@ -24,6 +25,8 @@ export interface SocialStore {
   top(board: string, week: string, sub: string, limit: number): Promise<BoardEntry[]>;
   /** Removes the player's presence and every leaderboard row (a profile turned private, or DELETE /me). */
   forget(sub: string): Promise<void>;
+  /** v2.17 GET /me/export: every presence and leaderboard row filed under this player (no one else's). */
+  mine(sub: string): Promise<SocialRow[]>;
 }
 
 export const PRESENCE_MS = 90_000;
@@ -86,6 +89,22 @@ export function memorySocial(now: () => number = Date.now): SocialStore {
       const who = whoOf(sub);
       for (const m of presence.values()) m.delete(who);
       for (const b of boards.values()) b.delete(who);
+    },
+    async mine(sub) {
+      const who = whoOf(sub);
+      const rows: SocialRow[] = [];
+      for (const [region, m] of presence) {
+        const p = m.get(who);
+        if (p && p.until > now()) rows.push({ kind: 'presence', region, until: new Date(p.until).toISOString(), ...(p.mayor ?? {}) });
+      }
+      for (const [key, b] of boards) {
+        const e = b.get(who);
+        if (!e) continue;
+        // The key is `${board}#${week}` (submit).
+        const cut = key.lastIndexOf('#');
+        rows.push({ kind: 'leaderboard', board: key.slice(0, cut), week: key.slice(cut + 1), name: e.name, score: e.score });
+      }
+      return rows;
     },
   };
 }

@@ -1,9 +1,12 @@
 // Stars a mini-game round pays its building: full for the first few rounds of a game each day and for any new best,
-// half after that, so the city grows from learning across the board (cards, drawings, games), not one game on repeat.
+// half for the next HALF_ROUNDS_A_DAY, then none (as its City Coins stop, src/state/wallet.ts roundCoins), so the city
+// grows from learning across the board (cards, drawings, games), not one game on repeat.
 import { countDaily, deviceLedger, type LedgerStore } from './dailyLedger';
 import { dayKey } from '@/state/progress';
 
 export const FULL_ROUNDS_A_DAY = 3;
+/** Rounds of a game a day at half pay (stars and coins) after the full ones; past them only a new best pays. */
+export const HALF_ROUNDS_A_DAY = 10;
 
 /**
  * Games without a clock (prefs.relaxed) end on Done, so in a game that counts right and wrong calls a round needs at
@@ -13,7 +16,12 @@ export const RELAXED_MIN_CALLS = 6;
 /** True when a relaxed (untimed) round of a game with an accuracy floor ended before RELAXED_MIN_CALLS calls. */
 export const tooFewCalls = (untimed: boolean, hasFloor: boolean, calls: number) => untimed && hasFloor && calls < RELAXED_MIN_CALLS;
 
-export const roundStars = (base: number, roundsToday: number, newBest: boolean) => (newBest || roundsToday < FULL_ROUNDS_A_DAY ? base : Math.ceil(base / 2));
+/** `roundsToday`: rounds of this game played before this one today (countRound). */
+export function roundStars(base: number, roundsToday: number, newBest: boolean): number {
+  if (newBest || roundsToday < FULL_ROUNDS_A_DAY) return base;
+  if (roundsToday < FULL_ROUNDS_A_DAY + HALF_ROUNDS_A_DAY) return Math.ceil(base / 2);
+  return 0;
+}
 
 /** S3 fishing: 3 stars a right bucket and 5 for a perfect round, paid once at the end under the same daily rule. */
 export const fishingStars = (correct: number, perfect: boolean, roundsToday: number, newBest: boolean) =>

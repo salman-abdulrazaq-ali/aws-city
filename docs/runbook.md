@@ -41,7 +41,9 @@ Amazon Nova or Claude, and a new account's Bedrock hold). This section is the op
    permissions boundary:
    `npx cdk bootstrap aws://<acct>/<region> --cloudformation-execution-policies arn:aws:iam::<acct>:policy/AWSCityCdkExecution --custom-permissions-boundary AWSCityBoundary`
    The deploy role only assumes the default-qualifier roles (`cdk-hnb659fds-*`, `infra/lib/ci-stack.ts`).
-4. GitHub → Settings → Environments: create `staging` and `prod` (prod: required reviewers). Set variables
+4. The wizard's GitHub question is pre-filled from this clone's `origin` and asks you to confirm the repo: only that
+   repo's `staging` and `prod` environments can assume the deploy role. GitHub → Settings → Environments: create
+   `staging` and `prod` (prod: required reviewers). Set variables
    `AWS_DEPLOY_ROLE_ARN` (the `AWSCityGitHubDeploy` role from the CI stack) and `AWS_REGION`, and on `prod`
    also `WXT_AWS_WS_URL`, `WXT_AWS_API_URL`, `WXT_COGNITO_DOMAIN`, `WXT_COGNITO_CLIENT_ID` (stack outputs).
    From then on: merge to `main` → CI → staging deploys the exact commit CI tested; the staging run's summary
@@ -57,8 +59,14 @@ Amazon Nova or Claude, and a new account's Bedrock hold). This section is the op
      to it (and a tag ruleset limiting who may push `v*`) before the first release.
 5. One-time account settings CDK doesn't manage:
    - **Amazon Inspector** ECR scanning for the CDK assets repository: `aws inspector2 enable --resource-types ECR`.
-   - **Cost allocation tags**: activate `env` and `app` in Billing → Cost allocation tags (lets you split
-     staging and prod spend; the budgets currently count the whole account).
+   - **Cost allocation tags**: activate `app` and `env` in Billing → Cost allocation tags (from the management
+     account in an AWS Organization). **The budget filter only works once they are active:** each environment's budget
+     counts its own resources (`app=aws-city` and `env=<env>`) plus all spend with no `app` tag, and until activation no
+     cost carries the tags, so both budgets count the whole account. Tags take up to 24 hours to appear and another 24
+     to apply, and aren't retroactive. Claude on Bedrock always counts in both budgets of a shared account: the server
+     calls system geo inference profiles, which can't be tagged, and the cut-off is there for that spend
+     (`infra/lib/budget-stack.ts`). If you also activate them as **IAM principal** tags (they appear after the task
+     role's first Bedrock call), Cost Explorer can split Bedrock spend by environment too.
    - **The account's security baseline.** `<r>` is your deploy Region; run the Regional ones there and in `us-east-1`
      (CloudFront's firewall). Each "Check:" reads it back.
      - **GuardDuty** (threat detection; a 30-day free trial, then a few dollars a month for a small account):
@@ -112,14 +120,17 @@ Amazon Nova or Claude, and a new account's Bedrock hold). This section is the op
      switches the registry to enhanced scanning (OS and npm packages, rescanned as new CVEs appear).
      Check: `aws securityhub get-enabled-standards`, `aws configservice describe-configuration-recorder-status`,
      `aws ecr get-registry-scanning-configuration` (ENHANCED).
-6. Release the extension: tag `v1.2.3` → the `release` workflow attaches the zip → upload it in the Chrome
-   Web Store dashboard with `docs/store-listing.md` and `docs/privacy-policy.md`.
+6. Release the extension: bump `version` in `package.json`, tag `v<that version>` → the `release` workflow attaches the
+   zips → upload them in the Chrome Web Store dashboard (the same zip goes to Edge Add-ons) with
+   `docs/store-listing.md` and `docs/privacy-policy.md`. The workflow stops if the tag isn't `v` + the package version,
+   if a `WXT_*` variable is missing (a store build never falls back to the demo: `wxt.config.ts`), or if a built
+   manifest has another version or a `key` (`scripts/release-check.mjs`).
 
 ## Kill switch / budget
 
 - **Manual, instant (~30 s):** `aws ssm put-parameter --name /cloud-city/<env>/ai-enabled --value false --overwrite`
   (players see "the city's AI is resting"; everything else works). Turn back on with `--value true`.
-- **Automatic:** at 100% of the monthly budget, AWS Budgets attaches `AWSCityDenyBedrock-<env>` to
+- **Automatic:** at 100% of the monthly budget (what it counts: *Cost allocation tags* above), AWS Budgets attaches `AWSCityDenyBedrock-<env>` to
   `AWSCityTaskRole-<env>`. This exists even without an alarm email (Budgets notifies an SNS topic). You're
   warned earlier at 50%, 80% and when the month is *forecast* to overrun. Re-enable after review:
   `aws iam detach-role-policy --role-name AWSCityTaskRole-<env> --policy-arn arn:aws:iam::<acct>:policy/AWSCityDenyBedrock-<env>`
@@ -137,13 +148,16 @@ Amazon Nova or Claude, and a new account's Bedrock hold). This section is the op
 |---|---|
 | Http5xx | ECS service events, the server log group (JSON lines; `level=error`, each with a `ref` players can quote). A deploy that trips it is **rolled back automatically**. |
 | Unhealthy / TasksBelowMinimum | ECS service events (crash loop? capacity?), `UnhandledRejections` metric |
+| LoggedErrors | 20+ `level=error` log lines in 5 minutes, three times running (a metric filter on the server log group; WebSocket failures too, which Http5xx never sees). Search the log group for `{ $.level = "error" }`; each line's `ref` is what players quote |
+| UnhandledRejections | Any promise nobody handled (the server logs it and keeps serving): a bug. The log line `unhandled rejection` names the error |
 | ModelThrottled | Bedrock 429s after retries: raise the Bedrock quota (Service Quotas) or lower `globalDailyModelCalls` |
 | TableThrottled | DynamoDB throttling on the player table (on-demand: usually a hot key or a burst) |
 | GlobalCap / ModelCallSpike | Dashboard `aws-city-<env>`; consider the kill switch |
 | QuotaRejections | Normal at scale; raise `dailyModelCalls` if players are unhappy |
 
 Metrics in the `AWSCity` namespace also include `InputTokens`, `OutputTokens`, `CacheReadTokens` and
-`Refusals` (what the Bedrock bill is made of, and whether prompt caching works).
+`Refusals` (what the Bedrock bill is made of, and whether prompt caching works). The dashboard `aws-city-<env>` graphs
+them with errors (`LoggedErrors`, `UnhandledRejections`) and model throttles.
 
 ## Security events
 
@@ -153,7 +167,9 @@ Metrics in the `AWSCity` namespace also include `InputTokens`, `OutputTokens`, `
   for MFA on medium risk. Cognito console → User pool → Threat protection shows the events.
 - **A player says someone used their account:** disable the user (`aws cognito-idp admin-disable-user`), then
   `admin-user-global-sign-out`. Their sockets close within the token's lifetime (≤ 1 hour, sooner when idle).
-  They should also delete the `AWSCity` stack in their own AWS account, which removes our access.
+  They should also **Disconnect** in the game (⋯ → Account → Your AWS account: it forgets the link record at once) and delete
+  the `AWSCity` stack in their own AWS account, which removes our access. Only the player can remove that role: the
+  stack lives in their account.
 
 ## Security Hub (AWS Foundational Security Best Practices, eu-west-2)
 
@@ -181,7 +197,8 @@ deferred. Check what's still open:
     the load balancer, the server or CloudFront.
   - ELB.1, ELB.18, ELB.21, ELB.22: the load balancer is internal. It's reached only through CloudFront's VPC origin
     inside the VPC; viewers get HTTPS from CloudFront.
-  - Cognito.5: MFA is optional to play, and required (step-up) to link an account, approve a change or apply a fix.
+  - Cognito.5: MFA is optional to play, and required (step-up) to link an account, approve a change, apply a fix or
+    take something down.
   - SecretsManager.1: the Google OAuth client secret can't rotate automatically (Google issues it).
   - ECR.2: image tags are content hashes, so a tag never points at different code.
 - **Deferred (after the workshop):**
@@ -195,7 +212,9 @@ deferred. Check what's still open:
 
 ## Deploys and restarts
 
-Rolling deploys are safe: a stopping task fails `/health`, tells players "the city is updating", waits up
+`/health` answers `{ "status": "ok", "version": "<server package.json version>", "contract": "<CONTRACT_VERSION>" }` (the
+startup log line carries both too), so `curl https://<api>/health` tells which build is live. Rolling deploys are safe: a
+stopping task fails `/health` (503, `"status": "draining"`), tells players "the city is updating", waits up
 to 100 s for running agent turns, then closes sockets with 1012; the extension reconnects with jitter to a
 healthy task. The circuit breaker and the 5xx deployment alarm roll back a bad image automatically.
 
@@ -229,19 +248,94 @@ Screenshots in S3 expire after a day and aren't backed up; that's by design.
 
 ## Player support
 
-- **"It says turn on an authenticator first":** linking an AWS account needs TOTP MFA (agents can change that
-  account). Deploy tab → *Set up an authenticator*. Players who signed up before this need to sign out and in
-  once. Google sign-ins are exempt (MFA is at Google). There is no switch to turn this off in hosted mode.
-- **"Sign in again to confirm this":** linking, approving a change and applying a fix need a sign-in from the last
-  30 minutes (`STEP_UP_MAX_AGE_MS`, `server/src/accounts/mfa.ts`), so a stolen refresh token can't act on a
-  player's AWS account. The *Sign in again* button asks for the password and authenticator code again.
+- **Step-up, in one place:** linking an AWS account (and *Verify*), approving a change, applying a fix and taking
+  something down (*Take it down*) each pass every check, in this order: the player wasn't deleted on another task (else
+  the socket closes), TOTP MFA is on (`mfa_required`), this session signed in after the server first saw it on (code
+  `auth`), and it signed in within the last 30 minutes (`reauth_required`). One check never replaces another. Hosted,
+  there's no switch to turn any of it off (the old `REQUIRE_MFA_FOR_LINK` is gone); the local server has no sign-in, so
+  no step-up.
+- **"It says turn on an authenticator first":** step-up needs TOTP MFA (agents can change that account). Deploy tab →
+  *Set up an authenticator*; after enrolling the extension ends every session and the player signs in again with the
+  code. Google sign-ins are exempt (MFA is at Google).
+- **"Sign out, then sign in again with your app's code":** the player has TOTP on, but this session started before the
+  server first saw it on (`server/src/accounts/mfa.ts` keeps that time and accepts only an access token whose `auth_time`
+  is at or after it). Signing out and in fixes it. Nothing to do on the server.
+- **"Sign in again to confirm this":** step-up needs a sign-in from the last 30 minutes (`STEP_UP_MAX_AGE_MS`,
+  `server/src/accounts/mfa.ts`), so a stolen refresh token can't act on a player's AWS account. The *Sign in again*
+  button asks for the password and authenticator code again, and the fresh token goes over the open socket
+  (`auth.renew`), so a change waiting for approval survives.
 - **Lost authenticator:** `aws cognito-idp admin-set-user-mfa-preference --user-pool-id <pool> --username <user> --software-token-mfa-settings Enabled=false`
   after verifying who they are by email.
 - **"Can't link my account":** they must create the stack from the link in the *same* region, then paste the
   12-digit account id. The role is `AWSCityPlayerRole-<region>`
-  (`AWSCityPlayerRole-staging-<region>` on staging); its trust is fixed to our account.
-- **Delete a player:** they can do it themselves (Deploy → Delete my account = `DELETE /me`): every table item,
-  their screenshots and their Cognito user are removed, and their open tabs are disconnected.
+  (`AWSCityPlayerRole-staging-<region>` on staging); its trust is fixed to our account. A setup link is good for 24 hours
+  for *Verify* ("Your setup link is more than a day old": they press *Get a new setup link*; the stack they already made
+  keeps working, since the ExternalId doesn't change). A stack that fails with `iam:CreateRole` or CloudFormation denied
+  is an account (workshop accounts, some Organizations) that can't create roles: nothing we can change. The player's
+  steps and these messages are in `docs/connect-aws-account.md`.
+- **"Was the stack deleted? Link again, or disconnect.":** STS refused the player's role on three polls in a row, the first
+  at least 5 minutes before, while their city was open (`BROKEN_AFTER` in `server/src/tenants.ts`), so the server stopped reading their account and marked
+  the link record broken (`brokenAt`). It is not a revocation of anything and there's nothing to repair on our side: the
+  record stays until the player links again (a new setup link, same ExternalId, then *Verify*), disconnects, or deletes
+  their account. A restart doesn't retry a broken link.
+- **A player wants to disconnect:** ⋯ → Account → Your AWS account → *Disconnect* (no MFA; the link record, with its
+  ExternalId, is deleted and polling stops). It leaves the `AWSCity` stack and anything the city built in their account:
+  the game tells them to take builds down first (Deploy → My builds) and then delete the stack in CloudFormation.
+- **"Download my data":** ⋯ → Account → *Download my data* is `GET /me/export` (JSON: progress, the account link as
+  metadata without the ExternalId or role ARN, their presence and leaderboard rows, the bill switch and cached bill, today's
+  and yesterday's AI counts, the first AI day and the MFA "on since" time); once a minute per player (`429`), `410` for a
+  deleted player.
+- **Delete a player:** they can do it themselves (⋯ → Account → Delete my account…, or Deploy → Your data; it is
+  `DELETE /me`): every table item (the account link record included), their screenshots and their Cognito user are
+  removed, and their open tabs are disconnected. It doesn't touch their own AWS account: the `AWSCity` stack and anything
+  the city built there are theirs to remove (the confirmation warns them).
+
+## Destroy and redeploy
+
+`npm run setup -- --destroy --env <env>` (`cdk destroy --all -c env=<env> --force`) removes the stacks but, by design,
+**keeps what holds player data or identity** (`RemovalPolicy.RETAIN`, checked in the synthesized prod templates):
+
+| Kept | Where |
+|---|---|
+| The player table `aws-city-<env>` (deletion protection on) and its KMS key | `infra/lib/data-stack.ts` |
+| The AWS Backup vault `AWSCity<env>DataTableBackupVault<hash>` and its recovery points | `infra/lib/data-stack.ts` |
+| The Cognito user pool `aws-city-<env>` (**prod only**, with deletion protection; staging's pool is destroyed) | `infra/lib/auth-stack.ts` |
+| The task role `AWSCityTaskRole-<env>` | `infra/lib/service-stack.ts` |
+| The screenshot, template and log buckets (generated names) | `data-stack.ts`, `service-stack.ts` |
+
+The KMS **alias** (`alias/aws-city-<env>-table`) is *not* kept: it has no retain policy, so the key survives without its
+alias (the table still works) and a redeploy makes a new key with that alias.
+
+What this means:
+
+- **A redeploy with the same names fails:** the stacks try to create a table named `aws-city-<env>`, a role named
+  `AWSCityTaskRole-<env>` and a backup vault with the same generated name, and they already exist.
+- **Never "fix" that by letting a new user pool be created.** A new pool issues new user ids (`sub`), and every player's
+  progress is stored under `USER#<sub>`, so all of it would be orphaned and every player would start from nothing. Their
+  account link, ExternalId and MFA state sit under the same `sub`.
+- So **destroying prod is effectively permanent** unless the kept resources are adopted back into the new stacks
+  (`cdk import`, or CloudFormation resource import). Not verified here: whether each of these resource types can be
+  imported (the table is an `AWS::DynamoDB::GlobalTable`). Check CloudFormation's import support and rehearse on staging
+  first. The alternative is to delete the retained table and pool on purpose and accept that every player's data is gone
+  (then say so on your privacy page).
+- Staging is easier: its pool is destroyed, so only the table, role and vault block a redeploy, and its players start
+  again anyway (new `sub`s) unless you adopt the old table.
+- The retained task role keeps its permissions, including assuming players' `AWSCityPlayerRole-<region>`. With no tasks
+  running nobody can use it, but if you are decommissioning rather than redeploying, delete it yourself.
+
+To see what was kept:
+
+```
+aws dynamodb describe-table --table-name aws-city-<env> --query "Table.[TableStatus,DeletionProtectionEnabled,ItemCount]"
+aws cognito-idp list-user-pools --max-results 60 --query "UserPools[?Name=='aws-city-<env>'].[Id,Name]"
+aws kms list-keys     # then: aws kms describe-key --key-id <id> --query KeyMetadata.Description
+aws iam get-role --role-name AWSCityTaskRole-<env> --query Role.Arn
+aws backup list-backup-vaults --query "BackupVaultList[?contains(BackupVaultName,'<env>')].BackupVaultName"
+aws s3 ls
+```
+
+A destroy doesn't touch players' own AWS accounts: their `AWSCityPlayerRole` keeps trusting our account until they delete
+their `AWSCity` stack.
 
 ## Local development (unchanged)
 

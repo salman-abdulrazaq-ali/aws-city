@@ -1,4 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
+import { RateLimitError } from '@anthropic-ai/sdk';
 import { describe, expect, it, vi } from 'vitest';
 import { createStrandsRunner, TOOL_BUDGET_MESSAGE } from '../src/citizens/engine.js';
 import { CITIZENS } from '../src/citizens/roles.js';
@@ -109,6 +110,27 @@ describe('Strands runner (citizens and landmark agents)', () => {
     expect(gate).toHaveBeenCalledTimes(2);
   });
 
+  it('a model call Bedrock refused before answering is given back to the quota', async () => {
+    const throttled = new RateLimitError(429, { message: 'slow down' }, 'slow down', new Headers());
+    const client = {
+      messages: {
+        stream() {
+          return (async function* () {
+            yield* [];
+            throw throttled;
+          })();
+        },
+      },
+    } as unknown as Anthropic;
+    const { llm } = fakeLlm([]);
+    const gate = vi.fn(async () => undefined);
+    const refund = vi.fn(async () => undefined);
+    const runner = createStrandsRunner({ llm: { ...llm, gate, refund }, actions: fakeActions(), snapshot: emptySnapshot, client });
+    await expect(runner.turn('ec2', 'hello')).rejects.toThrow();
+    expect(gate).toHaveBeenCalledTimes(1);
+    expect(refund).toHaveBeenCalledTimes(1);
+  });
+
   it('stops after the tool budget and tells the model why', async () => {
     const calls = Array.from({ length: 8 }, (_, i) => ({ blocks: [{ tool: 'describe_resource', id: `t${i}`, input: { id: `i-${i}` } }], stop: 'tool_use' as const }));
     const { runner, actions, requests } = setup([...calls, { blocks: [{ text: 'summary' }], stop: 'end_turn' }]);
@@ -171,6 +193,16 @@ describe('Strands runner (citizens and landmark agents)', () => {
     await runner.turn('s3', 'make a bucket', { approve } as never);
     // The approval itself happens inside the ActionService (deploy.preview → deploy.approve), never in Strands.
     expect(actions.submit).toHaveBeenCalledWith('create_bucket', { suffix: 'abc' }, { approve });
+  });
+
+  it("passes the player's own words with a write, for its second opinion (Jev)", async () => {
+    const { runner, actions } = setup([
+      { blocks: [{ tool: 'create_bucket', id: 't1', input: { suffix: 'abc' } }], stop: 'tool_use' },
+      { blocks: [{ text: 'done' }], stop: 'end_turn' },
+    ]);
+    const approve = vi.fn(async () => true);
+    await runner.turn('s3', 'make a bucket', { approve, intent: 'make a bucket for my photos' });
+    expect(actions.submit).toHaveBeenCalledWith('create_bucket', { suffix: 'abc' }, { approve, intent: 'make a bucket for my photos' });
   });
 
   it('a refusal becomes a short apology', async () => {

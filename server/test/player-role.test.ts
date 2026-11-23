@@ -1,14 +1,105 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { parseDocument } from 'yaml';
+import { connectsPlayerLabel } from '../src/accounts/link.js';
+import { FIXES } from '../src/agents/fixes.js';
+import { RULES } from '../src/guard/rules.js';
 
 /**
  * The player role (infra/player-role/player-role.yaml) must allow every AWS call the server makes for a
  * player, and nothing broad. Adding an SDK command without its IAM action fails here, not in production.
+ * The template is parsed (YAML, CloudFormation's short tags as plain values), so a comment never counts as a grant.
  */
 const template = readFileSync(new URL('../../infra/player-role/player-role.yaml', import.meta.url), 'utf8');
 const source = ['../src/state/poller.ts', '../src/state/inventory.ts', '../src/state/bill.ts', '../src/state/flow.ts', '../src/agents/executor.ts', '../src/agents/fixes.ts'].map((f) => readFileSync(new URL(f, import.meta.url), 'utf8')).join('\n');
-/** The opt-in aws-city-fix policy (only created when AllowFixes=true). */
-const fixPolicy = template.slice(template.indexOf('- FixesOn'), template.indexOf('- !Ref AWS::NoValue'));
+/** Every SDK command the server's player-facing code constructs. */
+const used = [...new Set([...source.matchAll(/new ([A-Z][A-Za-z0-9]+Command)\(/g)].map((m) => m[1]!))];
+
+/** CloudFormation's short-form intrinsics (!Sub, !Ref, !If…), read as the plain scalar, list or map they hold. */
+const INTRINSICS = ['Ref', 'Sub', 'GetAtt', 'If', 'Equals', 'Not', 'And', 'Or', 'Condition', 'Join', 'Select', 'Split', 'FindInMap', 'ImportValue', 'Base64', 'Cidr', 'GetAZs'];
+const customTags = INTRINSICS.flatMap((name) => [
+  { tag: `!${name}`, resolve: (value: string) => value },
+  { tag: `!${name}`, collection: 'seq' as const, resolve: <T>(node: T) => node },
+  { tag: `!${name}`, collection: 'map' as const, resolve: <T>(node: T) => node },
+]);
+
+interface Statement {
+  Sid?: string;
+  Effect?: string;
+  Action?: string | string[];
+  NotAction?: unknown;
+  Condition?: Record<string, Record<string, unknown>>;
+}
+interface Policy {
+  PolicyName: string;
+  PolicyDocument: { Statement: Statement[] };
+}
+/** The one statement granting `action` in `policy` (undefined if none or several). */
+const statementFor = (policy: Statement[], action: string) => {
+  const hits = policy.filter((s) => [s.Action ?? []].flat().includes(action));
+  return hits.length === 1 ? hits[0] : undefined;
+};
+
+/** What the template grants, read from its parsed policies: each policy's statements and IAM actions. */
+const parseRole = (text: string) => {
+  const doc = parseDocument(text, { customTags, uniqueKeys: true });
+  const problems = [...doc.errors, ...doc.warnings].map((e) => `yaml: ${e.message.split('\n')[0]}`);
+  const t = (doc.toJS() ?? {}) as { Resources?: Record<string, { Type?: string; Properties?: Record<string, unknown> }> };
+  const role = t.Resources?.PlayerRole?.Properties ?? {};
+  const statements: Record<string, Statement[]> = {};
+  const conditions: Record<string, unknown> = {};
+  for (const item of (role.Policies ?? []) as (Policy | [string, Policy, unknown])[]) {
+    // An optional policy is `!If [Condition, policy, !Ref AWS::NoValue]`.
+    const [condition, policy, otherwise] = Array.isArray(item) ? item : [undefined, item, 'AWS::NoValue'];
+    if (otherwise !== 'AWS::NoValue') problems.push(`${policy.PolicyName}: its !If must otherwise be AWS::NoValue`);
+    if (statements[policy.PolicyName]) problems.push(`${policy.PolicyName}: defined twice`);
+    statements[policy.PolicyName] = policy.PolicyDocument.Statement;
+    conditions[policy.PolicyName] = condition;
+  }
+  const actionsOf = (name: string) => [...new Set((statements[name] ?? []).flatMap((s) => [s.Action ?? []].flat()))].sort();
+  return { t, role, problems, statements, conditions, actionsOf };
+};
+
+/** The gate's IAM actions of one kind (server/src/guard/rules.ts). */
+const gateIam = (kind: 'read' | 'write' | 'fix') =>
+  [...new Set(Object.values(RULES).flatMap((commands) => Object.values(commands).flatMap((rule) => (rule.kind === kind ? [...rule.iam] : []))))].sort();
+/** Which gate kind each of the role's policies must match exactly. */
+const POLICIES = { 'aws-city-read': 'read', 'aws-city-build': 'write', 'aws-city-fix': 'fix' } as const;
+
+/**
+ * Everything wrong with a template, as the role's own words: empty means it grants exactly the gate's read, write and
+ * fix actions, each in its own policy, fixes only behind AllowFixes, and nothing else anywhere.
+ */
+const roleProblems = (text: string): string[] => {
+  const { t, role, problems, statements, conditions, actionsOf } = parseRole(text);
+  if (Object.keys(t.Resources ?? {}).join() !== 'PlayerRole') problems.push(`resources: ${Object.keys(t.Resources ?? {}).join(', ')} (only PlayerRole)`);
+  for (const key of ['ManagedPolicyArns', 'PermissionsBoundary']) if (key in role) problems.push(`PlayerRole has ${key}`);
+  if (Object.keys(statements).sort().join() !== Object.keys(POLICIES).sort().join()) problems.push(`policies: ${Object.keys(statements).join(', ')}`);
+  for (const [name, kind] of Object.entries(POLICIES)) {
+    const got = actionsOf(name);
+    const want = gateIam(kind);
+    if (got.join() !== want.join()) problems.push(`${name} grants [${got.join(', ')}], the gate's ${kind} actions are [${want.join(', ')}]`);
+    if (conditions[name] !== (kind === 'fix' ? 'FixesOn' : undefined)) problems.push(`${name}: condition ${String(conditions[name])}`);
+  }
+  // No wildcard action and no NotAction anywhere in the template (any resource, any policy, the trust policy too).
+  const walk = (node: unknown, path: string) => {
+    if (Array.isArray(node)) node.forEach((n, i) => walk(n, `${path}[${i}]`));
+    else if (node && typeof node === 'object') {
+      for (const [key, value] of Object.entries(node)) {
+        if (key === 'NotAction') problems.push(`${path}.NotAction`);
+        if (key === 'Action') for (const a of [value].flat()) if (typeof a !== 'string' || a.includes('*')) problems.push(`${path}.Action: ${String(a)}`);
+        walk(value, `${path}.${key}`);
+      }
+    }
+  };
+  walk(t, 'template');
+  return problems;
+};
+
+const role = parseRole(template);
+/** Every IAM action the role grants anywhere, by policy. */
+const granted = Object.keys(POLICIES).flatMap((name) => role.actionsOf(name));
+const fixStatements = role.statements['aws-city-fix'] ?? [];
 
 const IAM_FOR: Record<string, string> = {
   DescribeInstancesCommand: 'ec2:DescribeInstances',
@@ -57,13 +148,17 @@ const IAM_FOR: Record<string, string> = {
 };
 
 describe('player role template', () => {
+  it('parses cleanly, every short tag read as a plain value', () => {
+    expect(role.problems).toEqual([]);
+    expect(Object.keys(role.statements)).toEqual(['aws-city-read', 'aws-city-build', 'aws-city-fix']);
+  });
+
   it('allows every AWS call the server makes for a player', () => {
-    const used = [...new Set([...source.matchAll(/new ([A-Z][A-Za-z0-9]+Command)\(/g)].map((m) => m[1]!))];
     expect(used.length).toBeGreaterThan(10);
     for (const cmd of used) {
       const action = IAM_FOR[cmd];
       expect(action, `${cmd} has no IAM mapping — add it here and to player-role.yaml`).toBeDefined();
-      expect(template, `${action} missing from player-role.yaml`).toContain(action!);
+      expect(granted, `${action} missing from player-role.yaml's policies`).toContain(action!);
     }
   });
 
@@ -86,20 +181,54 @@ describe('player role template', () => {
     expect(source).toMatch(/Ebs: \{ Encrypted: true \}/);
   });
 
-  it('fixes are opt-in, match fixes.ts exactly, and can only tighten things', async () => {
-    const { FIXES } = await import('../src/agents/fixes.js');
+  it('fixes are opt-in, match fixes.ts exactly, and can only tighten things', () => {
     expect(template).toMatch(/AllowFixes:\s*\n\s*Type: String\s*\n\s*Default: 'false'/);
     expect(template).toContain("FixesOn: !Equals [!Ref AllowFixes, 'true']");
-    expect(fixPolicy).toContain('PolicyName: aws-city-fix');
+    expect(role.conditions['aws-city-fix']).toBe('FixesOn');
     for (const def of Object.values(FIXES)) {
-      expect(fixPolicy, `${def.iamAction} belongs in aws-city-fix`).toContain(def.iamAction);
+      expect(role.actionsOf('aws-city-fix'), `${def.iamAction} belongs in aws-city-fix`).toContain(def.iamAction);
       // ...and only there: no fix action is granted unconditionally.
-      expect(template.replace(fixPolicy, ''), `${def.iamAction} outside aws-city-fix`).not.toContain(def.iamAction);
+      expect([...role.actionsOf('aws-city-read'), ...role.actionsOf('aws-city-build')], `${def.iamAction} outside aws-city-fix`).not.toContain(def.iamAction);
     }
     // IMDS changes are held to HttpTokens=required by IAM itself.
-    expect(fixPolicy).toMatch(/ModifyInstanceMetadataOptions[\s\S]*?'ec2:Attribute\/HttpTokens': required/);
+    expect(statementFor(fixStatements, 'ec2:ModifyInstanceMetadataOptions')?.Condition?.StringEquals?.['ec2:Attribute/HttpTokens']).toBe('required');
     // Nothing that could undo a fix by loosening a setting, anywhere in the role.
     for (const loosen of ['AuthorizeSecurityGroupIngress', 'DisableEbsEncryptionByDefault', 'DeleteBucketPublicAccessBlock', 'DeletePublicAccessBlock']) expect(template).not.toContain(loosen);
+  });
+
+  it('v2.17: the DryRun probe (fixesAllowed at verify) needs its fix action, which only aws-city-fix grants: "allowed" means AllowFixes=true', () => {
+    // IAM checks a DryRun against the change's own action, so the probe (a read for the gate: no grant) maps to the fix
+    // policy, not aws-city-read. That's the point: DryRunOperation comes back exactly when fixes are on.
+    const probes = Object.values(RULES).flatMap((commands) => Object.values(commands).flatMap((rule) => ('probe' in rule && rule.probe ? [rule] : [])));
+    expect(probes).toHaveLength(1);
+    for (const rule of probes) {
+      expect(rule.kind).toBe('fix');
+      for (const action of rule.iam) {
+        expect(role.actionsOf('aws-city-fix')).toContain(action);
+        expect([...role.actionsOf('aws-city-read'), ...role.actionsOf('aws-city-build')]).not.toContain(action);
+      }
+    }
+  });
+
+  it('v5: names the player it serves (ConnectsPlayer: visible, required, used), and every label the server writes fits it', () => {
+    const t = role.t as { Description?: string; Parameters?: Record<string, Record<string, unknown>> };
+    expect(t.Description).toMatch(/\bv5$/);
+    const p = t.Parameters?.ConnectsPlayer;
+    expect(p).toMatchObject({ Type: 'String', Description: "The AWS City player this role will serve. Don't create the stack if this isn't you." });
+    expect(p).not.toHaveProperty('NoEcho');
+    expect(p).not.toHaveProperty('Default');
+    // Used (in the role's description), so cfn-lint has no unused parameter to warn about.
+    expect(String(role.role.Description)).toContain('${ConnectsPlayer}');
+    const pattern = new RegExp(`^(?:${String(p!.AllowedPattern)})$`);
+    for (const label of [
+      connectsPlayerLabel({ sub: 'abc' }, { public: true, name: 'Kind Otter' }),
+      connectsPlayerLabel({ sub: 'u', email: 'first.last@example.org' }),
+      connectsPlayerLabel({ sub: '1a2b3c4d-0000-0000-0000-000000000000' }),
+      connectsPlayerLabel({ sub: '!!' }, { public: true, name: '<script>' }),
+    ]) {
+      expect(label).toMatch(pattern);
+      expect(label.length).toBeLessThanOrEqual(Number(p!.MaxLength));
+    }
   });
 
   it('CloudWatch: GetMetricData only, in its own Region, and only the fixed queries flow.ts sends', async () => {
@@ -110,9 +239,55 @@ describe('player role template', () => {
     for (const q of FLOW_QUERIES) expect(q.expression, q.id).toMatch(/^SELECT SUM\(/);
   });
 
+  it("grants exactly the gate's command table (server/src/guard/rules.ts), policy by policy, and no wildcard anywhere", () => {
+    expect(roleProblems(template)).toEqual([]);
+    // Every guarded command names its IAM actions (GetCallerIdentity needs none).
+    for (const [client, commands] of Object.entries(RULES)) {
+      for (const [command, rule] of Object.entries(commands)) if (command !== 'GetCallerIdentityCommand') expect(rule.iam.length, `${client}.${command} names no IAM action`).toBeGreaterThan(0);
+    }
+    expect(Object.values(FIXES).map((d) => d.iamAction).sort()).toEqual(gateIam('fix'));
+    // Every command the server sends is in the table, under the IAM action IAM_FOR names, and the table holds nothing IAM_FOR doesn't.
+    const rules = Object.entries(RULES).flatMap(([client, commands]) => Object.entries(commands).map(([command, rule]) => ({ name: `${client}.${command}`, command, iam: [...rule.iam] })));
+    const ALIASES: Record<string, string> = { GetAccountPublicAccessBlockCommand: 'GetPublicAccessBlockCommand' };
+    for (const cmd of used) {
+      const hits = rules.filter((r) => r.command === (ALIASES[cmd] ?? cmd) && r.iam.includes(IAM_FOR[cmd]!));
+      expect(hits, `${cmd} isn't in the gate's table (server/src/guard/rules.ts)`).toHaveLength(1);
+    }
+    for (const r of rules) if (r.iam.length) expect(Object.values(IAM_FOR), `${r.name} isn't in IAM_FOR`).toContain(r.iam[0]);
+  });
+
+  it("the check isn't fooled: comments, quotes, wildcards, NotAction, a write in the read policy or an extra policy all fail it", () => {
+    const stmt = (lines: string) => `              - Sid: X\n                Effect: Allow\n${lines}                Resource: '*'\n`;
+    const before = (anchor: string, insert: string) => {
+      expect(template, anchor).toContain(anchor);
+      return template.replace(anchor, insert + anchor);
+    };
+    const GAME_BUCKETS = '              - Sid: GameBuckets';
+    const mutations: Record<string, string> = {
+      'single wildcard': before(GAME_BUCKETS, stmt('                Action: ec2:*\n')),
+      'list wildcard': before(GAME_BUCKETS, stmt('                Action:\n                  - iam:*\n')),
+      'quoted action': before(GAME_BUCKETS, stmt("                Action: 'iam:PassRole'\n")),
+      'quoted list item': before(GAME_BUCKETS, stmt('                Action:\n                  - "s3:PutBucketPolicy"\n')),
+      NotAction: before(GAME_BUCKETS, stmt('                NotAction: s3:GetObject\n')),
+      'flow-list wildcard': before(GAME_BUCKETS, stmt('                Action: [ec2:*]\n')),
+      'a write in the read policy': template.replace('                  - tag:GetResources\n', '                  - tag:GetResources\n                  - ec2:AuthorizeSecurityGroupIngress\n'),
+      // An action that's only in a comment is no grant: dropping the real line must fail.
+      'ce:GetCostAndUsage only in a comment': template.replace('                Action: ce:GetCostAndUsage\n', '                Action: cloudwatch:GetMetricData\n'),
+      'a fix granted unconditionally': before(GAME_BUCKETS, stmt('                Action: ec2:EnableEbsEncryptionByDefault\n')),
+      'a managed policy': template.replace('      MaxSessionDuration: 3600\n', '      MaxSessionDuration: 3600\n      ManagedPolicyArns: [arn:aws:iam::aws:policy/ReadOnlyAccess]\n'),
+      'another resource': template.replace('\nOutputs:', "\n  Extra:\n    Type: AWS::IAM::Policy\n    Properties: { PolicyName: x, Roles: [!Ref PlayerRole], PolicyDocument: { Statement: [{ Effect: Allow, Action: 's3:GetObject', Resource: '*' }] } }\n\nOutputs:"),
+      'an unknown tag': template.replace("FixesOn: !Equals [!Ref AllowFixes, 'true']", "FixesOn: !Bogus [!Ref AllowFixes, 'true']"),
+    };
+    for (const [name, text] of Object.entries(mutations)) {
+      expect(text, `${name}: the mutation didn't apply`).not.toBe(template);
+      expect(roleProblems(text), name).not.toEqual([]);
+    }
+  });
+
   it('role name matches what account linking expects', async () => {
     const { playerRoleName } = await import('../src/accounts/link.js');
     expect(template).toContain('RoleName: !Sub __AWS_CITY_PLAYER_ROLE__-${AWS::Region}');
+    expect(role.role.RoleName).toBe('__AWS_CITY_PLAYER_ROLE__-${AWS::Region}');
     expect(playerRoleName('eu-west-1')).toBe('AWSCityPlayerRole-eu-west-1');
     expect(playerRoleName('eu-west-1', 'AWSCityPlayerRole-staging')).toBe('AWSCityPlayerRole-staging-eu-west-1');
   });

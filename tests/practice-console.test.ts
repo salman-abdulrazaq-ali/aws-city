@@ -8,7 +8,7 @@ import { mayAct, mayChoose } from '@/console/safety';
 import { takeSnapshot } from '@/console/snapshot';
 import { isPracticeUrl, practiceRoute, practiceServiceOf, practiceUrl, PRACTICE_SERVICES } from '@/console/practice';
 import { mountPractice, PRACTICE_NOTE } from '@/console/practicePage';
-import { ConsoleMock, flowFor, isFlow } from '@/backend/consoleMock';
+import { ConsoleMock, flowFor, isFlow, isRemovalGoal, NO_DELETING } from '@/backend/consoleMock';
 import type { ConsoleStepEvent, ServerEvent } from '@/backend/contract';
 import { matchText, serviceById } from '@/world/taxonomy';
 
@@ -108,9 +108,11 @@ async function play(service: (typeof PRACTICE_SERVICES)[number], goal: string) {
       const el = findExact(document, step.target!);
       const item = snap().items.find((i) => i.id === step.target?.id);
       const verdict = mayAct(item, step.action, el, step.value);
-      // The agent only ever acts itself on a safe control; anything else is handed to the player (who presses it
-      // here): a commit (create, save, launch…) or a step the model marked for the player's OK. Never a risky one.
-      if (!verdict.ok) expect(verdict, `${service}: ${step.say}`).toMatchObject({ reason: 'commit' });
+      // The agent only ever acts itself on a safe control; anything else is handed to the player (who presses it here):
+      // a commit (create, save, launch…: the rule holds on the practice console too), a risky control the flow already
+      // hands back (risk 'confirm'), or a step the model marked for the player's OK.
+      if (!verdict.ok)
+        expect(verdict.reason === 'commit' || (verdict.reason === 'risky' && step.risk === 'confirm'), `${service}: ${step.say} (${verdict.reason})`).toBe(true);
       if (!verdict.ok || step.risk === 'confirm') handedBack.push(step.target!.name);
       if (step.action === 'click') press(el!);
       else if (step.action === 'type') typeInto(el!, step.value ?? '');
@@ -133,10 +135,23 @@ async function play(service: (typeof PRACTICE_SERVICES)[number], goal: string) {
   return { done, said, handedBack, created: document.body.dataset.created, risky: document.body.dataset.risky };
 }
 
+describe('the practice console is never a player-only page', () => {
+  it('the IAM wizard’s controls are the agent’s at the practice URL, and the player’s on the real IAM console', () => {
+    window.history.replaceState(null, '', '#/iam/create');
+    mountPractice(document, { delay: 0, selectDelay: 0 });
+    const s = snap();
+    const next = s.items.find((i) => i.name === 'Next')!;
+    const el = findExact(document, next)!;
+    expect(mayAct(next, 'click', el, undefined, `${BASE}#/iam/create`)).toEqual({ ok: true });
+    expect(mayAct(next, 'click', el, undefined, 'https://us-east-1.console.aws.amazon.com/iam/home#/roles/create')).toMatchObject({ ok: false, reason: 'player-only' });
+  });
+});
+
 describe('every scripted Copilot flow completes on the practice console', () => {
   const CASES: { service: (typeof PRACTICE_SERVICES)[number]; goal: string; created: RegExp; confirm: string[] }[] = [
     { service: 's3', goal: 'Create an S3 bucket', created: /^city-demo-\w+ \(SSE-S3 · Block all public access on\)$/, confirm: ['Create bucket', 'Create bucket'] },
-    { service: 'ec2', goal: 'Launch an EC2 instance', created: /^city-web-\w+ \(t3\.micro\)$/, confirm: ['Launch instances', 'Launch instance'] },
+    // SSH from anywhere is handed back with a warning, never kept as safe (Marcus).
+    { service: 'ec2', goal: 'Launch an EC2 instance', created: /^city-web-\w+ \(t3\.micro\)$/, confirm: ['Launch instances', 'Allow SSH traffic from Anywhere (0.0.0.0/0) Helps you connect to your instance', 'Launch instance'] },
     { service: 'dynamodb', goal: 'Create a DynamoDB table', created: /^city-demo-\w+ \(pk id\)$/, confirm: ['Create table', 'Create table'] },
     { service: 'lambda', goal: 'Create a Lambda function', created: /^city-hello \(Node\.js 24\.x, from scratch\)$/, confirm: ['Create function', 'Create function'] },
     { service: 'rds', goal: 'Create an RDS database', created: /^city-db-\w+ \(PostgreSQL, Free tier\)$/, confirm: ['Create database', 'Create database'] },
@@ -159,4 +174,39 @@ describe('every scripted Copilot flow completes on the practice console', () => 
       expect(r.said.length).toBeGreaterThanOrEqual(5);
     });
   }
+});
+
+describe('the practice Copilot never deletes, and never keeps SSH open as safe (Marcus)', () => {
+  it('asked to delete a bucket, it creates nothing and says the delete is the player’s', async () => {
+    for (const goal of ['Delete my S3 bucket', 'remove the bucket', 'Terminate my EC2 instance']) {
+      const service = goal.includes('EC2') ? 'ec2' : 's3';
+      const r = await play(service, goal);
+      expect(r.created, `${goal}: ${r.said.join(' → ')}`).toBeUndefined();
+      expect(r.said, goal).toEqual(['done']);
+      expect(r.done, goal).toMatchObject({ type: 'task.done', ok: false, result: NO_DELETING, xp: [] });
+      document.body.innerHTML = '';
+      vi.useRealTimers();
+    }
+    expect(isRemovalGoal('Create an empty bucket')).toBe(false);
+  });
+
+  it('hands the SSH-from-anywhere box back with a warning', async () => {
+    vi.useFakeTimers();
+    window.history.replaceState(null, '', '#/ec2');
+    mountPractice(document, { delay: 0, selectDelay: 0 });
+    press([...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Launch instances')!);
+    await vi.advanceTimersByTimeAsync(50);
+    const events: ServerEvent[] = [];
+    const m = new ConsoleMock((e) => events.push(e));
+    m.start('t', 'Launch an EC2 instance', snap(), 'ec2');
+    for (let n = 0; n < 12 && !events.some((e) => e.type === 'console.step' && /SSH/.test(e.target?.name ?? '')); n++) {
+      m.observe('t', true, undefined, snap());
+      await vi.advanceTimersByTimeAsync(400);
+    }
+    const ssh = events.find((e): e is ConsoleStepEvent => e.type === 'console.step' && /SSH/.test(e.target?.name ?? ''));
+    expect(ssh).toMatchObject({ action: 'click', risk: 'confirm' });
+    expect(ssh?.say).toMatch(/0\.0\.0\.0\/0/);
+    // and nothing else in the flow calls it safe any more
+    expect(events.filter((e): e is ConsoleStepEvent => e.type === 'console.step' && e.risk === 'safe').map((e) => e.why).join(' ')).not.toMatch(/SSH from anywhere/i);
+  });
 });

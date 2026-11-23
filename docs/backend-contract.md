@@ -1,4 +1,4 @@
-# Backend contract v2.18
+# Backend contract v2.19
 
 **Source of truth:** `src/backend/contract.ts`. If this doc and that file disagree, the file wins,
 so fix this doc. Both backends import or mirror that file:
@@ -12,10 +12,37 @@ so fix this doc. Both backends import or mirror that file:
 | `WXT_BACKEND` | Backend | Transport | Deploys |
 |---|---|---|---|
 | `mock` (default) | `src/backend/MockBackend.ts`, runs in the browser | none | Simulated curated templates |
-| `aws` | **`server/`**, the team's local Node server with a real account and Claude on Bedrock | WebSocket `/ws` + REST `/progress`, `/screenshots`; the Origin allowlist is `EXTENSION_ORIGIN` | **Guarded actions** (EC2 t4g, DynamoDB, S3); every write needs the player's approval |
+| `aws` | **`server/`**, the team's local Node server with a real account and Claude on Bedrock | WebSocket `/ws` + REST `/progress`, `/screenshots`; every request needs the bearer token, and `EXTENSION_ORIGIN` is the browser (Origin) check | **Guarded actions** (EC2 t4g, DynamoDB, S3); every write needs the player's approval |
 | `hosted` | **`server/`** deployed by `infra/` (ECS Fargate): players sign in with Cognito (JWT in `Sec-WebSocket-Protocol`, `Authorization: Bearer` on REST) and link their own AWS account | Same as `aws`; `GET /` (no sign-in) says what the server is, for anyone opening its address in a browser | Guarded actions in the **player's own account** through `AWSCityPlayerRole-<region>` (ExternalId), each needing approval |
 
 The workshop account denies CloudFormation and `iam:CreateRole`, so `aws` is the backend in use.
+
+## Version handshake (v2.19)
+
+`CONTRACT_VERSION` is a `major.minor` string, and versions compare as numbers (`compareContract`: 2.10 is newer than 2.9).
+A client needs a server of its version or newer, so deploy the server first; the handshake catches a release out of order.
+`MIN_CLIENT_CONTRACT` stays `2.0`, so every older extension is still served: one from before the handshake sends no
+`contract` and is let in, and one that sends `2.17` or `2.18` is older than `2.19` and served. Such a client never sends
+the v2.19 commands; step-up is enforced by the server whatever the client knows.
+- The client names its version as `?contract=<version>` on `/ws` and on every REST call (`CONTRACT_PARAM`). It's a query
+  parameter, not a header, because a new request header would fail the CORS preflight of a server from before the
+  handshake. The bearer token stays in `Sec-WebSocket-Protocol` / `Authorization`, never in the URL.
+- Every REST answer after the Host and Origin checks carries `x-aws-city-contract: <server version>` (`CONTRACT_HEADER`,
+  listed in `Access-Control-Expose-Headers`). `GET /health` has it in its body (`contract`).
+- The server refuses a client it can't serve with `409 {error}`. That's a client newer than the server (its strict schemas
+  would refuse the newer fields) or older than `MIN_CLIENT_CONTRACT` (`server/src/http.ts`, `2.0` today). It applies to the
+  WebSocket upgrade (before any sign-in; a browser sees only `1006`), `GET /progress` and `PUT /progress`. `DELETE /me`,
+  `GET /me/export` and `POST /me/mfa` always answer. A client with no `contract`, or one that isn't `major.minor`, predates
+  the handshake and is let in.
+- `ServerBackend` asks `GET /progress` why after two refused upgrades, as it does for 401/403/410. A `409` whose header
+  names an older server gives the status `updating`: saves wait on the device, and it asks again every 60–90 s. A newer
+  server gives `outdated`: the extension needs its update, so it doesn't retry. Either way the player reads one calm line,
+  never the server's words.
+- A frame the server can't parse (an unknown action, a wrong shape) is answered `error {message: 'Bad command: this server
+  didn’t understand that request.'}`, and the socket stays open.
+- `PUT /progress` refused with any other 4xx (400: the strict schema refused the copy; 413: too big) isn't re-sent on the
+  next open. The client says "Not saved to your account — kept on this device" until a later save goes through. 5xx,
+  network errors, 401 and 409 keep the copy for the next open.
 
 ## Client → server
 
@@ -25,17 +52,20 @@ The workshop account denies CloudFormation and `iam:CreateRole`, so `aws` is the
 | `chat.ask` | `requestId, districtId, question, context` | |
 | `page.classify` | `requestId, context` (with `screenshotKey` or url/title) | |
 | `deploy.approve` / `deploy.reject` | `deployId, confirm?` | The player's answer to a `deploy.preview`. Nothing changes in AWS without `deploy.approve`. |
-| `deploy.plan` | `requestId, templateId` | On `aws`, `ServerBackend` sends it to the matching agent as a prompt (`GUARDED_BLUEPRINTS`). |
+| `deploy.plan` | `requestId, templateId` | On `aws`, `ServerBackend` sends it to the matching agent as a prompt (`GUARDED_BLUEPRINTS`). v2.19: a template with no guarded build (`hello-api`, `queue-worker`: serverless) is a practice build made by `ServerBackend` itself, like the demo's (a `deploy.preview` whose `deployId` starts `practice-`, then `deploy.status complete` under its own `templateId`, so a quest's deploy step counts). Nothing is sent and nothing is created; it never becomes an EC2 house. |
 | `deploy.teardown` | `deployId` | On `aws`, it asks the agent to demolish what was built (that also needs approval). |
-| `account.link` | `requestId, region` | Hosted: returns `account.linkUrl` (CloudFormation quick-create for `infra/player-role/player-role.yaml`, with the player's ExternalId). |
-| `account.verify` | `requestId, roleArn` | `roleArn` may be just the 12-digit account id. The server assumes the role and checks the caller identity before linking. |
+| `account.link` | `requestId, region, allowFixes?` | Hosted: returns `account.linkUrl` (CloudFormation quick-create for `infra/player-role/player-role.yaml`, with the player's ExternalId and `ConnectsPlayer`). v2.19 `allowFixes`: the link sets `AllowFixes=true`. |
+| `account.verify` | `requestId, roleArn, updated?` | `roleArn` may be just the 12-digit account id. The server assumes the role and checks the caller identity before linking. v2.19: refused a day after the link was made; learns whether fixes are allowed (a DryRun) and records the template version when the player installed or (`updated`) updated the stack from the link. Success is `account.status {requestId, linked: true}`; any refusal is `error {requestId, message}` and never an `account.status`. |
+| `account.recheck` | `requestId` | v2.19 "Check again": the same fixes DryRun for the linked role, read-only (no MFA, no new link window, the role version stays). Answered with `account.status {requestId, …, fixes}` on every tab, or `error {requestId}`. |
+| `account.unlink` | `requestId` | v2.19: disconnect the account (no MFA). Answered with `account.status {linked: false}` on every tab. |
+| `resource.remove` | `requestId, kind: instance\|table\|bucket, id` | v2.19: take down one thing the city built, with no model; approved like any write (see below). |
 | `bill.enable` | `on` | v2.5: the month-to-date bill on or off (off by default; each Cost Explorer read costs $0.01, so at most one a day). |
 | `flow.enable` | `on` | v2.8: live traffic on or off (off by default; CloudWatch reads at most every 5 minutes while the city is open). |
 | `workshop.verify` | `workshopId, stepId, values?` | v2.10: check a workshop step in the account, read-only (see below). |
 | `presence.beat` | `region, rank?` | v2.11: the player is in this city now (on connect, on arriving, every 30 s while a tab is visible). |
 | `score.submit` | `board, score` | v2.11: a best for a weekly leaderboard (a game id or `mayors:<region>`). |
 | `leaderboard.get` | `board` | v2.11: this week's top of a board. |
-| `progress.get/put`, `screenshot.presign`, `quest.start` | | On `aws`/`hosted`, handled over REST (`/progress`, `/screenshots`) or locally by `ServerBackend`. `DELETE /me` removes everything stored for the player. |
+| `progress.get/put`, `screenshot.presign`, `quest.start` | | On `aws`/`hosted`, handled over REST (`/progress`, `/screenshots`) or locally by `ServerBackend`. `DELETE /me` removes everything stored for the player. Hosted: `POST /me/mfa` right after the player turns TOTP on records when MFA started, so the step-up accepts the next sign-in: 204 once it's recorded; 409 when Cognito doesn't show the authenticator yet, throttles the look or no longer has the player (never a 5xx: anyone can send it); 503 only when the failure is the server's own; 429 past 3 in a row, then one every 5 s per player. The client tries again on any refusal. |
 
 Client-internal, not on the wire: `storage.local` keeps `progress.parked` (a signed-out player's unsynced progress, tagged with the player's id, their Cognito `sub`, and only ever restored to that same player), and the optional `AgentBackend.playerId()` (hosted only; absent on local/mock) exists just to tag it. It is not a security check: the server authorizes every request by the JWT.
 
@@ -51,14 +81,14 @@ Client-internal, not on the wire: `storage.local` keeps `progress.parked` (a sig
 | `deploy.preview {deployId, taskId?, templateId, stackName, region, accountId?, changes[], costNote?}` | The Deploy tab shows the change list with **Approve / Reject**, and the account and Region it changes (v2.18). |
 | `deploy.status {deployId, status, message?, outputs?}` | `status` is one of `creating`, `complete`, `failed`, `rejected`, `deleting` or `deleted`. |
 | `agent.level {agentId, level, skill?}` | The agent gets faster and announces its new skill. |
-| `account.status`, `account.linkUrl` | These drive the Deploy tab's account section. |
+| `account.status {requestId?, linked, accountId?, region?, message?, broken?, fixes?, roleVersion?, latestRoleVersion?, templateUrl?}`, `account.linkUrl {requestId, url, externalId}` | These drive the Deploy tab's account section. `requestId` is set only on a successful answer to that request (the welcome and state changes carry none; a refused link or verify is `error {requestId}`). v2.19 fields below. |
 | `presence.state {region, online, mayors[{name, rank}], practice?}` | v2.11: the HUD's 👥 count; public mayors walk the streets as visitors. |
 | `leaderboard.state {board, week, entries[{name, score, you?}], practice?}` | v2.11: the leaderboard card. |
 | `workshop.verified {workshopId, stepId, ok, detail}` | v2.10: the step is ticked as done for real (and pays its building), or the sentence says what to try. |
 | `page.classified`, `chat.answer` (streamed), `screenshot.url`, `progress.state`, `error` | The same as in v1. |
 
 **v2.2 additions (all optional):**
-- `error.code`: `quota` (the player's daily AI calls are used up), `paused` (the city's AI is switched off), `auth` (sign in again), `unlinked` (connect an AWS account first) `mfa_required` (hosted: `account.link`/`account.verify`, `deploy.approve` and `finding.fix` need an authenticator app on first; the Deploy tab enrols one) or `reauth_required` (hosted: those same actions also need a sign-in from the last 30 minutes, the access token's `auth_time`; the client signs in again with `prompt=login` and sends the new token on the open socket with `auth.renew`, v2.17). The UI shows friendly text for each.
+- `error.code`: `quota` (the player's daily AI calls are used up), `paused` (the city's AI is switched off), `auth` (sign in again; hosted, also when this session signed in before the authenticator was first seen: sign out, then in again with the code), `unlinked` (connect an AWS account first), `mfa_required` (hosted: `account.link`/`account.verify`, `deploy.approve`, `finding.fix` and `resource.remove` need an authenticator app on first; the Deploy tab enrols one) or `reauth_required` (hosted: those same actions also need a sign-in from the last 30 minutes, the access token's `auth_time`; the client signs in again with `prompt=login` and sends the new token on the open socket with `auth.renew`, v2.17). All of these apply together. The UI shows friendly text for each.
 - `sources: [{title, url}]` on `task.done` and on the final `chat.answer`: the AWS documentation pages (docs.aws.amazon.com / aws.amazon.com only) the answer was grounded in, from the AWS Knowledge MCP server.
 - WebSocket close codes (`CLOSE_CODES` in `contract.ts`): `4401` = reconnect with a fresh token, `4403` = the account was deleted
   (`DELETE /me`, from this tab or another): sign out and don't reconnect, `1012` = server restarting (reconnect with jitter),
@@ -91,7 +121,7 @@ Client-internal, not on the wire: `storage.local` keeps `progress.parked` (a sig
 - `finding.undo {requestId, findingId}`: answered with how to undo the fix in the AWS console (fixes only tighten things).
 - `finding.fix {requestId, findingId}`: nothing changes yet. The server
   re-reads the resource, then sends a `deploy.preview` with `findingId`, `rollback`, `costNote?` and, for a resource the
-  city didn't build or an account-wide setting, `confirmText` (the resource id or ARN, which is unique). Approve with `deploy.approve {deployId, confirm}`; the
+  city didn't build, an account-wide setting or any destructive write (terminate, delete, a take-down; Jev's "ask" adds it to others), `confirmText` (the resource id or ARN, which is unique). Approve with `deploy.approve {deployId, confirm}`; the
   server compares `confirm` to `confirmText`. Fixes are a fixed allowlist of reversible changes (`server/src/agents/fixes.ts`).
 - `Progress.citizens` (`{id: {xp}}`) and `Progress.fixes` (`{findingId: iso}`).
 - v2.4: `Progress.streak` (`{days, last: 'YYYY-MM-DD' local date, best}`), merged by the later `last` with `best` = max.
@@ -152,13 +182,14 @@ Both backends follow it. The server never sends it for background polling.
 2. `approvals.request` sends a `deploy.preview` (`server/src/contract/approvals.ts`).
 3. The player sends `deploy.approve`. The server sends `deploy.status creating`, re-checks policy inside the write lock, executes, then sends `deploy.status complete` or `failed`.
 4. Requests with no answer expire after 5 minutes, and closing the socket rejects all pending requests. With no approval channel, every write is refused and only reads run (`server/src/agents/service.ts`; proof: `server/test/service.test.ts`).
+5. v2.19 `resource.remove` takes the same path with no model in it: the server maps it to `terminate_instance`, `delete_table` or `delete_bucket` and calls `ActionService.submit` with the socket's approvals, so policy (game-owned only), the gate, the preview (carrying the command's `requestId`) and step-up on `deploy.approve` (MFA and a recent sign-in) all apply (proof: `server/test/tenants.test.ts`).
 
 ## Console Copilot (v2.1)
 
 Agents act in the player's live, logged-in AWS console, one visible step at a time, and teach the *why* for each step.
 
 **Flow:**
-1. **The content script** (`src/entrypoints/console.content.ts`) sends a snapshot of the page's interactive elements. It includes id, role, accessible name, section and state. It sends labels only; it never reads secret fields.
+1. **The content script** (`src/entrypoints/console.content.ts`) sends a snapshot of the page's interactive elements. It includes id, role, accessible name, section and state, and (v2.19) the page's language as `lang` (its `<html lang>`, `''` when it has none). It sends labels only; it never reads secret fields. A button in a table's column header (a sort control) is sent with role `columnheader`.
 2. The runtime sends `console.start {taskId, goal, context, snapshot}`.
 3. The backend answers with `console.step {taskId, index, agentId, action, target{id,name}, value?, say, why, risk}`. The `action` is one of `click`, `type`, `select`, `point` or `done`.
 4. The page shows the step: an orange highlight plus the agent's bubble with what and why. It then performs the step and replies with `console.observe {taskId, index, ok, note?, snapshot}`.
@@ -168,6 +199,7 @@ Agents act in the player's live, logged-in AWS console, one visible step at a ti
 **Safety** (`src/console/safety.ts`, which runs in the page no matter what the backend says):
 - Risky controls are never clicked by the agent. The page turns them into a green "your turn" highlight that waits for the player's click. The server also sets `risk:'confirm'` on them.
   - Risky means: delete, terminate, remove, empty, public access, IAM admin or access keys, billing, account settings, sign-out.
+- On the real console, the button that commits a form is the player's to press (`isCommit` in `src/console/risk.ts`): one named create, launch, start, save, apply, … or the page's primary or submit button. The words are English, so when the snapshot's `lang` isn't `en*` (or is `''`), every button or menu item press is the player's. The agent fills the form and points at it. The server sets `risk:'confirm'` on those steps by name and `lang` (a snapshot without `lang`, from an older client, goes by the words alone). The practice console stays automatic.
 - Nothing is typed into secret fields.
 - It runs only on `https://*.console.aws.amazon.com`, never on sign-in pages, and only during a Copilot task the player started.
 - There's a limit of 25 steps, and it stops after 3 failures.
@@ -242,7 +274,8 @@ refuses a save that carries `remembered`, `scored`, `bestTimed` or `bestWeek`. D
 - `Progress.games[id].bestTimed?` / `bestWeek?` (`YYYY-Www`, the ISO week of the UTC date, the same week the boards use): the best round played against the
   clock that week (relaxed rounds never count). The client sends only this week's `bestTimed` to `score.submit`. On merge
   the later week wins; the same week, the higher score.
-- `presence.beat`'s `rank` may be `Global City`, the sixth rank (above Megacity).
+- `presence.beat`'s `rank` may be `Global City`, the sixth rank (above Megacity). The client's crown ranks above it
+  (Crown City, Cloud Capital, Legendary City: `src/state/rank.ts`) are sent as `Global City`, so the six names stand.
 
 
 **v2.13 additions, City Clients and build mode (optional):**
@@ -310,29 +343,6 @@ Everything here is earned and cosmetic: no coins or stars inside, nothing bought
   local date first found (at most 200). Service cards and sets are read from the rest of Progress. On merge: the union,
   the earlier date per combo.
 
-**v2.18 additions, every approval says where it writes:**
-
-- `deploy.preview.accountId?`: the 12-digit AWS account the change goes to (absent before one is linked). The card
-  reads "Changes AWS account 0474-6343-8585 · us-west-2". The server reads the account and Region when each card is
-  made, so a re-link on an open socket never shows the old ones. An older client ignores the field.
-- Server only, no wire change: a plain request in the player's own words ("Create a bucket called holiday-123", "Stop
-  i-0123…", `server/src/agents/commands.ts`) goes straight to its own agent: `task.plan` with two steps, then the
-  server submits it through the same ActionService and `deploy.preview` (no model call before the card), then an
-  `agent.message` explaining it after `task.done`. A request understood but not allowed gets `task.done {ok: false, xp: []}`
-  at once with the reason. Only `task.submit`'s `prompt` is read, never page context or a plan. Every write asked for,
-  done or refused, is logged as `aws change`.
-- `deploy.status.outputs.ResourceId` (when the change made or touched a resource: a launch's `i-…` id): the client folds
-  a server's launch, stop and terminate into one "My builds" card. A bucket's `deploy.preview` `logicalId` is its full
-  name (`aws-city-<account>-<name>`) once the account is known.
-
-**v2.17 additions, step-up on an open socket:**
-
-- `auth.renew {token}` (client → server): after `reauth_required`, the client signs in again (`prompt=login`) and
-  sends the fresh access token on the socket it already has. The server verifies it exactly like a new connection's
-  token and, only when it belongs to the same player, takes its newer sign-in time. Pending approvals and running tasks
-  stay (closing the socket would cancel them). Another player's token, or a bad one, changes nothing; at most one
-  renewal per socket every 5 s. A v2.16 server answers it with "Bad command".
-
 **v2.16 additions, merges that never lose a freeze, a refund or a removal (optional):**
 
 A v2.16 client needs a v2.16 server: the server's Progress schema is strict (unknown fields fail), so an older server
@@ -360,3 +370,91 @@ v2.15 copy merges with a v2.16 one as described.
   what it removed, so then the later copy wins whole, as before. Undo is prop by prop too: a prop brought back after
   removal gets a new id.
 
+**v2.17 additions, step-up on an open socket:**
+
+- `auth.renew {token}` (client → server): after `reauth_required`, the client signs in again (`prompt=login`) and
+  sends the fresh access token on the socket it already has. The server verifies it exactly like a new connection's
+  token and, only when it belongs to the same player, takes its newer sign-in time. Pending approvals and running tasks
+  stay (closing the socket would cancel them). Another player's token, or a bad one, changes nothing; at most one
+  renewal per socket every 5 s. A v2.16 server answers it with "Bad command".
+
+**v2.18 additions, every approval says where it writes:**
+
+- `deploy.preview.accountId?`: the 12-digit AWS account the change goes to (absent before one is linked). The card
+  reads "Changes AWS account 0474-6343-8585 · us-west-2". The server reads the account and Region when each card is
+  made, so a re-link on an open socket never shows the old ones. An older client ignores the field.
+- Server only, no wire change: a plain request in the player's own words ("Create a bucket called holiday-123", "Stop
+  i-0123…", `server/src/agents/commands.ts`) goes straight to its own agent: `task.plan` with two steps, then the
+  server submits it through the same ActionService and `deploy.preview` (no model call before the card), then an
+  `agent.message` explaining it after `task.done`. A request understood but not allowed gets `task.done {ok: false, xp: []}`
+  at once with the reason. Only `task.submit`'s `prompt` is read, never page context or a plan. Every write asked for,
+  done or refused, is logged as `aws change` (the target as a hash, never a name or the account id).
+- `deploy.status.outputs.ResourceId` (when the change made or touched a resource: a launch's `i-…` id): the client folds
+  a server's launch, stop and terminate into one "My builds" card. A bucket's `deploy.preview` `logicalId` is its full
+  name (`aws-city-<account>-<name>`) once the account is known.
+
+**v2.19 additions, the account lifecycle and the version handshake (all optional):**
+
+First drafted as v2.17, these are v2.19 (`CONTRACT_VERSION` `'2.19'`): v2.17 and v2.18 are the changes above. The
+version handshake and the console snapshot's `lang` are v2.19 too. A v2.19 client needs a v2.19 server: an older server refuses the actions it doesn't know (`account.unlink`,
+`account.recheck`, `resource.remove`) as a bad command, and its `account.link` and `account.verify` schemas aren't strict, so
+it drops `allowFixes` (the link comes without AllowFixes) and `updated` (the role version isn't moved) without a word.
+Deploy the server first, then the client.
+
+The account commands (`account.link`, `account.verify`, `account.recheck`, `account.unlink`) share a 5 s cooldown per
+socket ("Give it a few seconds before trying that again.", `error {requestId}`), except one `account.verify` within 2
+minutes of that socket's own successful `account.link` (link, then verify as soon as `account.linkUrl` is in). A
+`resource.remove` waiting for its approval counts with the socket's tasks (two at once), never with its request slots.
+
+- `account.link {requestId, region, allowFixes?}`: the quick-create link names who it connects, as the stack's visible
+  `ConnectsPlayer` parameter (`infra/player-role/player-role.yaml` v5): the player's public Mayor name ("Mayor Kind
+  Otter") while their profile is public, else their email masked ("a***@e***.com") when the sign-in carries one, else
+  "Player " and the first 8 characters of their sign-in id (`connectsPlayerLabel`, `server/src/accounts/link.ts`). It is
+  `param_ConnectsPlayer` in the link's URL (percent-encoded), so the client can show the same words. Never a secret,
+  never the raw email. `allowFixes: true` adds `param_AllowFixes=true`. A link is good for a day: `account.verify` more
+  than 24 hours after the last `account.link` is refused with a sentence asking for a new link (the ExternalId stays the
+  same, so a stack made from the old link keeps working).
+- `account.verify {requestId, roleArn, updated?}`: on success the server also asks, without changing anything, whether
+  the role allows fixes (EC2 `EnableEbsEncryptionByDefault` with `DryRun: true`: `DryRunOperation` = yes,
+  `UnauthorizedOperation` = no, anything else = unknown). The role version is the template version the link points at
+  (`v<N>` of the template URL), recorded only when the player installed or updated the stack from that link: a pending
+  record's first verify, another Region or account, or `updated: true` (the player pressed "I've updated the stack").
+  Any other verify keeps the version it had: the account can't be read for it, so it's the one installed from the
+  city's link (a template version that changes what the role allows must add a probe like fixes). Every refusal of
+  `account.link` or `account.verify` (the role can't be used, the link is more than a day old, not the AWSCity role, our
+  own account…) is `error {requestId, message}` and never an `account.status`, so an `account.status` carrying a
+  `requestId` always means the request worked. Nothing changes on a refusal: an account already linked stays linked.
+- `account.recheck {requestId}` ("Check again", after turning AllowFixes on): the server asks the linked role again,
+  without changing anything, whether it allows fixes (the same DryRun) and answers `account.status {requestId, …,
+  fixes}` on every tab. Read-only: no new setup link or link window, no MFA step-up, the role version stays, and pending
+  previews stand. Nothing linked, a broken link or a role that can't be used is `error {requestId, message}`.
+- `account.unlink {requestId}`: the server forgets the link (role ARN, account id, ExternalId), stops reading the account
+  and answers every tab of the player with `account.status {linked: false}` (the asking tab's carries the `requestId`).
+  No MFA step-up: taking access away is always allowed. The AWSCity stack stays until the player deletes it. The local
+  server has nothing to disconnect and says so (`linked: true`). Every pending preview for the old account (an agent's
+  write, a fix, a removal) ends with `deploy.status rejected` "That account was disconnected, so nothing changed.", and
+  a write already approved is refused inside the account lock; another server task notices within about a minute (it
+  re-reads the link once a minute while a tab is open, and before every write).
+- `account.status` v2.19 fields: `broken: true` (with `linked: false`, `accountId`, `region`): STS refused the player
+  role on 3 polls in a row, the first at least 5 minutes before (the stack was deleted or changed), so the server stopped reading the account; a new
+  `account.link` (back to pending) or a successful `account.verify` clears it. `fixes`: whether the role allows fixes
+  (absent = unknown; the local server sends its own setting). Hosted only: `roleVersion` (the template version the
+  player installed from the city's link; absent if linked before v2.19), `latestRoleVersion` and `templateUrl` (the
+  newest template, for "Update your AWS City role").
+- `resource.remove {requestId, kind, id}`: `kind` is `instance`, `table` or `bucket`; `id` the instance id, table name or
+  bucket name (the last part of the inventory item's ARN). It must be `managedByGame` in the server's latest read of the
+  account. Answered with `deploy.preview {requestId, deployId, templateId: terminate_instance|delete_table|delete_bucket,
+  changes: [{action: 'Remove'}]}` and, after `deploy.approve`, `deploy.status complete|failed` on that `deployId`
+  (`rejected` after `deploy.reject`). Refused before any preview (no linked account, no such resource, not the city's):
+  `error {requestId, message}` (`code: 'unlinked'` without an account). Hosted, it starts only after step-up (MFA on,
+  a session signed in after it, and a recent sign-in), like `finding.fix`.
+- `GET /me/export` (REST, authenticated like `/progress`; `410` for a deleted player): a JSON download
+  (`Content-Disposition: attachment`) of `PlayerDataExport {exportedAt, contract, progress, account?, social[], bill?,
+  aiCalls?, firstSeenDay?, mfaOnSince?}`: the player's progress; their account link as metadata only, `{status, region,
+  pendingRegion?, accountId?, linkedAt?, linkIssuedAt?, roleVersion?, linkRoleVersion?, fixes?, broken?, brokenAt?}`
+  (never the ExternalId or the role ARN); their live-city and leaderboard rows (`SocialRow`: `{kind: 'presence', region,
+  until, name?, rank?}` or `{kind: 'leaderboard', board, week, name, score}`); the bill switch and cached bill
+  (`{on, readAt?, bill?}`); today's and yesterday's AI request counts (`[{day, calls}]`); the day of the first AI request;
+  and when the server first saw an authenticator on (ISO). Each read is a plain read (it saves nothing). Nobody else's
+  rows. Once a minute per player (`429` "You downloaded your data a moment ago. Try again in a minute."). The demo's
+  `exportMe()` gives this device's progress with `practice: true`.

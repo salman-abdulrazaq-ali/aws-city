@@ -5,7 +5,7 @@ import { REGIONS } from '@/world/culture';
 import { bus } from '@/state/bus';
 import { openFindings, useCity } from '@/state/store';
 import { ChatPanel } from '@/ui/ChatPanel';
-import { Hud } from '@/ui/Hud';
+import { Hud, SyncNote } from '@/ui/Hud';
 import { Workshop } from '@/ui/Workshop';
 import { Collection } from '@/ui/Collection';
 import { AccountMap } from '@/ui/AccountMap';
@@ -29,6 +29,7 @@ import { Flashcards } from '@/ui/Flashcards';
 import { badgeCount } from '@/state/srs';
 import { activeSteps, type Tab } from '@/state/ladder';
 import { isSimple, shows } from '@/state/simple';
+import { linking } from '@/state/account';
 import { setNextRunner } from '@/state/next';
 import { runPlan, type OpenTab as GoTo } from '@/ui/QuestLog';
 import { Home, taskMovedOn } from '@/ui/Home';
@@ -41,6 +42,8 @@ import { FindingCard } from '@/ui/FindingCard';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { SoundCaptions } from '@/ui/SoundCaptions';
 import { BuildDrawer } from '@/ui/BuildDrawer';
+import { useKeepFocus } from '@/ui/useDialog';
+import { cardWaitsForKai } from '@/state/walk';
 import { citySummary, isTourDone, newlyUnlocked, nextTabIndex, readPref, readSet, TAB_KEY, UNLOCK_TOASTS_KEY, unlockText, writePref, writeSet } from '@/ui/logic';
 import { GameCanvas } from './GameCanvas';
 import type { Layout } from './runtime';
@@ -112,8 +115,11 @@ export function App({ layout }: { layout: Layout }) {
   const steps = useCity((s) => activeSteps(s.progress).map((x) => x.kind).join());
   const linked = useCity((s) => s.account.linked);
   const deployWaiting = useCity((s) => Object.values(s.deploys).some((d) => d.status === 'preview' && !d.findingId));
+  // A real account being linked keeps Deploy (its steps) in sight, in Simple too (src/state/account.ts), and so does a
+  // hosted player with no account linked yet (Deploy is where it connects).
+  const linkingNow = useCity((s) => linking(s.account));
   const canConnect = useCanConnect();
-  const simpleCtx = { steps: steps.split(','), linked, deployWaiting, canConnect };
+  const simpleCtx = { steps: steps.split(','), linked, deployWaiting, linking: linkingNow, canConnect };
   const deployShown = shows('deployTab', prefs, simpleCtx);
   /** The tabs this player has earned and this mode shows (a new one gets the unlock toast). */
   const earned = useMemo(() => new Set([...l.tabs].filter((t) => t !== 'deploy' || deployShown)), [l.tabs, deployShown]);
@@ -144,12 +150,18 @@ export function App({ layout }: { layout: Layout }) {
     body.current?.scrollTo({ top: 0 });
   };
 
-  // A building tapped (in the city or a list): its card opens in the City tab, in place of the shift.
-  useEffect(() => bus.on('select', () => setTab('info')), []);
+  // A building tapped (in the city or a list): its card opens in the City tab, in place of the shift. A "Walk to" opens
+  // it when Kai gets there (src/state/walk.ts), not at the press.
+  useEffect(() => bus.on('select', ({ id }) => !cardWaitsForKai(id) && setTab('info')), []);
+  // A button that went away with its row, tab or card leaves focus on the new panel's heading, never on <body>.
+  const side = useRef<HTMLElement>(null);
+  useKeepFocus(side, () => body.current);
   // Home's big button (src/state/next.ts nextAction) runs through here, so it can open the tab its label names.
   const setTabNow = useRef(setTab);
   setTabNow.current = setTab;
   useEffect(() => setNextRunner((plan) => (taskMovedOn(), runPlan(plan, (t) => setTabNow.current(t)))), []);
+  // ⋯ → Account (outside the tabs) shows a tab the way a button that names it does.
+  useEffect(() => bus.on('showTab', ({ tab }) => setTabNow.current(tab)), []);
   // City Clients (a business tapped in the city, a job closed, "All businesses"): the Jobs tab shows it.
   const clientsOpen = useCity((s) => s.clientsOpen);
   useEffect(() => {
@@ -279,7 +291,8 @@ export function App({ layout }: { layout: Layout }) {
           </button>
         )}
       </div>
-      <aside className="side">
+      <aside className="side" ref={side}>
+        <SyncNote />
         {view.name === 'interior' && view.districtId !== 'spheres' ? (
           <ChatPanel districtId={view.districtId} />
         ) : (

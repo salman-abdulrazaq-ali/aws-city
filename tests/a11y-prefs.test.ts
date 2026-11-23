@@ -99,3 +99,28 @@ describe('expert rounds', () => {
     expect(expert()).toBe(false); // leaving the game ends it
   });
 });
+
+describe('the flashcard’s small print', () => {
+  it('reads at 4.5:1 or better on both paper colours, and at 7:1 with high contrast', () => {
+    const css = (f: string) => fs.readFileSync(path.resolve(__dirname, '../src/app/styles', f), 'utf8');
+    const token = (src: string, name: string) => new RegExp(`${name}: *(#[0-9a-f]{6})`, 'i').exec(src)?.[1];
+    const lum = (hex: string) => {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const contrast = (a: string, b: string) => {
+      const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    const base = css('00-base.css');
+    // The front face's text is checked against the back face's colour too: both faces share one grid cell (axe).
+    const papers = [token(base, '--paper')!, token(base, '--paper-back')!];
+    const face = /\.flash-face \{([^}]*)\}/.exec(css('10-flashcards.css'))![1];
+    const high = /:root\[data-contrast='high'\] \.flash-face \{([^}]*)\}/.exec(css('22-access.css'))![1];
+    for (const name of ['--paper-meta', '--paper-hint'])
+      for (const paper of papers) {
+        expect(contrast(token(face, name)!, paper), `${name} on ${paper}`).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(token(high, name)!, paper), `${name} (high contrast) on ${paper}`).toBeGreaterThanOrEqual(7);
+      }
+  });
+});

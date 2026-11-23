@@ -82,6 +82,11 @@ describe('infrastructure guarantees', () => {
     t.auth.hasResourceProperties('AWS::Cognito::UserPoolClient', { AllowedOAuthScopes: Match.arrayWith(['aws.cognito.signin.user.admin']) });
   });
 
+  it('sign-out can revoke refresh tokens, and a new email takes effect only once it is verified', () => {
+    t.auth.hasResourceProperties('AWS::Cognito::UserPoolClient', { EnableTokenRevocation: true });
+    t.auth.hasResourceProperties('AWS::Cognito::UserPool', { UserAttributeUpdateSettings: { AttributesRequireVerificationBeforeUpdate: ['email'] } });
+  });
+
   it('the player table uses our rotated KMS key, and the task role can use it', () => {
     t.data.hasResourceProperties('AWS::KMS::Key', { EnableKeyRotation: true });
     t.data.hasResourceProperties('AWS::DynamoDB::GlobalTable', { SSESpecification: Match.objectLike({ SSEEnabled: true, SSEType: 'KMS' }) });
@@ -110,8 +115,13 @@ describe('infrastructure guarantees', () => {
     t.data.hasResourceProperties('AWS::Backup::BackupSelection', { BackupSelection: Match.objectLike({ Resources: Match.anyValue() }) });
   });
 
-  it('alarms cover throttling and missing tasks, and a bad deploy rolls back on the 5xx alarm', () => {
-    for (const metric of ['ModelThrottled', 'RunningTaskCount']) t.svc.hasResourceProperties('AWS::CloudWatch::Alarm', { MetricName: metric });
+  it('alarms cover throttling, missing tasks, logged errors and unhandled rejections, and a bad deploy rolls back on the 5xx alarm', () => {
+    for (const metric of ['ModelThrottled', 'RunningTaskCount', 'LoggedErrors', 'UnhandledRejections', 'RoleRefusalBreaker']) t.svc.hasResourceProperties('AWS::CloudWatch::Alarm', { MetricName: metric });
+    // server/src/log.ts writes {"level":"error",…} lines; the filter turns them into AWSCity/LoggedErrors.
+    t.svc.hasResourceProperties('AWS::Logs::MetricFilter', {
+      FilterPattern: '{ $.level = "error" }',
+      MetricTransformations: [Match.objectLike({ MetricNamespace: 'AWSCity', MetricName: 'LoggedErrors', MetricValue: '1' })],
+    });
     t.svc.hasResourceProperties('AWS::ECS::Service', { DeploymentConfiguration: Match.objectLike({ Alarms: Match.objectLike({ Enable: true, Rollback: true }) }) });
     // One-minute periods: ECS watches a finished deploy for as long as this alarm's settings say (3 × 5 min kept every
     // deploy open ~16 minutes after the new servers were live). 5 a minute is the old 20 in 5 minutes.
@@ -162,6 +172,19 @@ describe('infrastructure guarantees', () => {
     t.budget.hasResourceProperties('AWS::Budgets::BudgetsAction', { ActionType: 'APPLY_IAM_POLICY', ApprovalModel: 'AUTOMATIC', ActionThreshold: { Type: 'PERCENTAGE', Value: 100 } });
     t.budget.hasResourceProperties('AWS::Budgets::Budget', {
       NotificationsWithSubscribers: Match.arrayWith([Match.objectLike({ Notification: Match.objectLike({ NotificationType: 'FORECASTED' }) })]),
+    });
+  });
+
+  it("each budget counts its environment's tagged resources and untagged spend (Claude on Bedrock), not the other environment's", () => {
+    t.budget.hasResourceProperties('AWS::Budgets::Budget', {
+      Budget: Match.objectLike({
+        FilterExpression: {
+          Or: [
+            { And: [{ Tags: { Key: 'app', Values: ['aws-city'], MatchOptions: ['EQUALS'] } }, { Tags: { Key: 'env', Values: [env.name], MatchOptions: ['EQUALS'] } }] },
+            { Tags: { Key: 'app', MatchOptions: ['ABSENT'] } },
+          ],
+        },
+      }),
     });
   });
 
@@ -463,10 +486,28 @@ describe('cdk-nag AwsSolutions (acknowledgements sit on the constructs they are 
     ['prod, CloudFront + internal ALB', { name: 'prod' as const, domainName: '', hostedZoneId: '', zoneName: '' }],
     ['staging, custom domain + public ALB (eu-west-1)', { region: 'eu-west-1' }],
     ['prod, custom domain + public ALB', { name: 'prod' as const }],
+    ['prod with Jev on', { name: 'prod' as const, jev: { secretName: 'aws-city/jev' } }],
     ['staging on Amazon Nova, CloudFront (eu-west-2)', { region: 'eu-west-2', domainName: '', hostedZoneId: '', zoneName: '', modelChoice: 'nova' as const, models: modelsForChoice('eu-west-2', 'nova') }],
     ['prod with the AI on Fargate (Spot), CloudFront (eu-west-2)', { name: 'prod' as const, region: 'eu-west-2', domainName: '', hostedZoneId: '', zoneName: '', aiCpu: { spot: true } }],
   ])('%s synthesises clean', (_name, over) => {
     expect(nagSynth(over)).not.toThrow();
+  });
+
+  it('Jev: off by default; when configured, its key reaches the task only as a Secrets Manager secret', () => {
+    const off = JSON.stringify(build().svc.findResources('AWS::ECS::TaskDefinition'));
+    expect(off).not.toContain('TYPESAFE_API_KEY');
+    const on = build({ jev: { secretName: 'aws-city/jev', model: 'jev-1.13.0' } }).svc;
+    on.hasResourceProperties('AWS::ECS::TaskDefinition', {
+      ContainerDefinitions: Match.arrayWith([
+        Match.objectLike({
+          Secrets: [Match.objectLike({ Name: 'TYPESAFE_API_KEY', ValueFrom: Match.anyValue() })],
+          Environment: Match.arrayWith([{ Name: 'AWS_CITY_JEV_MODEL', Value: 'jev-1.13.0' }]),
+        }),
+      ]),
+    });
+    // Never as a plain environment variable.
+    const env = JSON.stringify(on.findResources('AWS::ECS::TaskDefinition')).match(/"Environment":\[[^\]]*\]/g)?.join('') ?? '';
+    expect(env).not.toContain('TYPESAFE_API_KEY');
   });
 
   it('a new bucket without access logs is still flagged', () => {

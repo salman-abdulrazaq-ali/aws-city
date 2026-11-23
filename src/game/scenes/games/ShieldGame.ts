@@ -83,6 +83,7 @@ export class ShieldGame extends MiniGame {
     if (wave > this.wave) {
       this.wave = wave;
       this.floater(this.scale.width / 2, this.road.y0 - 30, `Wave ${wave + 1}: they're getting faster`, '#fde047');
+      this.speak(`Wave ${wave + 1}: they're getting faster.`);
     }
     this.time.delayedCall(pace(Math.max(500, 900 - this.wave * 200)), () => {
       if (this.over) return;
@@ -109,6 +110,7 @@ export class ShieldGame extends MiniGame {
     this.wrong();
     this.addScore(SWING.blank);
     this.floater(this.road.x + 110, (this.road.y0 + this.road.y1) / 2, `nothing to stop ${SWING.blank}`, FEEDBACK.wrong);
+    this.speak('Nothing on the road to stop.');
   }
 
   private spawn() {
@@ -125,6 +127,8 @@ export class ShieldGame extends MiniGame {
     const t = crisp(this.add.text(w + 10, y, label, { ...TXT(16, color), backgroundColor: '#0f172ae6', padding: { x: 5, y: 2 } })).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
     this.onRoad.push(t);
     t.once('destroy', () => (this.onRoad = this.onRoad.filter((x) => x !== t)));
+    // Each arrival is said as it comes on the road (the road is only drawn): the player reads it and decides.
+    this.speak(`On the road: ${label}.`, true);
     const quicken = 1 - Math.min(0.35, this.wave * 0.15);
     const speed = (kind === 'flood' ? 5200 : 6500 + Math.random() * 1500) * quicken;
     const tw = this.tweens.add({
@@ -148,6 +152,7 @@ export class ShieldGame extends MiniGame {
           this.wrong();
           this.addScore(POINTS.shield.breach, 'soft');
           this.floater(cx + 110, y, 'breach!', FEEDBACK.wrong);
+          this.speak(`Breach! ${label} got in. Score ${this.score}.`);
           if (!reducedMotion()) this.cameras.main.shake(120, 0.004);
         }
         t.destroy();
@@ -161,15 +166,18 @@ export class ShieldGame extends MiniGame {
         this.addScore(POINTS.shield.block);
         this.stopped[attack.rule] = (this.stopped[attack.rule] ?? 0) + 1;
         this.floater(t.x, y, `${SHIELD.rules[attack.rule].name} ✓`, '#fde047');
+        this.speak(`Stopped by ${SHIELD.rules[attack.rule].name}.`);
       } else if (kind === 'good') {
         this.wrong();
         this.addScore(POINTS.shield.blockedUser);
         this.floater(t.x, y, 'blocked a real user!', FEEDBACK.wrong);
+        this.speak(`Blocked a real user: ${label}.`);
       } else {
         // A flood is Shield's: clicking it wastes the defender's time (the lesson is "let Shield absorb it").
         this.wrong();
         this.addScore(POINTS.shield.flood);
         this.floater(t.x, y, 'Shield had this one: let floods through', FEEDBACK.note);
+        this.speak('Shield had this one: let floods through.');
       }
       t.destroy();
     });

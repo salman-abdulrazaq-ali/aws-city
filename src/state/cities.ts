@@ -2,10 +2,29 @@
 // from scratch. Global services (IAM, Route 53, CloudFront: `isGlobalService`, shared/region-facts.json `global`)
 // stand in every city at once, so they live in `Progress.landmarks`; a Region's own landmarks live in
 // `Progress.cities[region].landmarks` (contract v2.7). What a player *knows* (cards, quests, puzzles, citizens) is theirs
-// everywhere. Pure, so the store, the scene and tests agree.
+// everywhere, and a building put up in a new city starts from it (`carriedStars`). Pure, so the store, the scene and
+// tests agree.
 
 import type { LandmarkProgress, Progress } from '@/backend/contract';
+import { xpFor } from '@/learning/srs';
+import { cardsFor } from '@/world/content';
+import { TIER_XP } from '@/world/places';
 import { isGlobalService } from '@/world/regions';
+import { isKnown } from './srs';
+
+/** What a building can start a new city with: just under Expert (the rest is learned there, crowns included). */
+export const CARRY_MAX = TIER_XP[3] - 1;
+
+/**
+ * Stars a building starts with when it's first put up in a city: the new-card stars (xpFor a new card) for each of its
+ * cards the player knows already, at most CARRY_MAX. Read from the cards alone, so every surface works out the same
+ * number; it's the landmark's starting xp (store.discover), and copies merge by the higher xp, so it's paid once per
+ * city however many surfaces put the building up.
+ */
+export function carriedStars(p: Progress, serviceId: string): number {
+  const known = cardsFor(serviceId).filter((c) => isKnown(p.cards?.[c.id])).length;
+  return Math.min(CARRY_MAX, known * xpFor(undefined, 'good'));
+}
 
 const better = (x: LandmarkProgress | undefined, y: LandmarkProgress | undefined): LandmarkProgress | undefined =>
   !x ? y : !y ? x : { discovered: x.discovered || y.discovered, xp: Math.max(x.xp, y.xp) };

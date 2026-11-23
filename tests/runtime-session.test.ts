@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
-import type { ConnectionStatus } from '@/backend/AgentBackend';
+import type { ConnectionStatus, SaveState } from '@/backend/AgentBackend';
 import type { ClientCommand, Progress, ServerEvent } from '@/backend/contract';
 import { landmarkOf } from '@/state/cities';
 
@@ -10,6 +10,14 @@ class FakeBackend {
   readonly deployMode = 'guarded' as const;
   private statuses = new Set<(s: ConnectionStatus) => void>();
   private events = new Set<(e: ServerEvent) => void>();
+  private saves = new Set<(s: SaveState) => void>();
+  onSave(cb: (s: SaveState) => void) {
+    this.saves.add(cb);
+    return () => void this.saves.delete(cb);
+  }
+  save(s: SaveState) {
+    for (const cb of this.saves) cb(s);
+  }
   sent: ClientCommand[] = [];
   puts: Progress[] = [];
   remote: Progress | null | Error = null;
@@ -96,6 +104,21 @@ describe('runtime sessions', () => {
     await settle();
     expect(fake.puts.length).toBeGreaterThan(0);
     expect(['lambda', 's3'].every((id) => landmarkOf(fake.puts[0]!, id))).toBe(true);
+  });
+
+  it('a refused save shows "Not saved" until a save goes through; the next player never inherits it', async () => {
+    const { useCity } = await boot();
+    fake.status('connected');
+    await settle();
+    expect(useCity.getState().saveRefused).toBe(false);
+    fake.save('refused');
+    expect(useCity.getState().saveRefused).toBe(true);
+    fake.save('saved');
+    expect(useCity.getState().saveRefused).toBe(false);
+    fake.save('refused');
+    fake.status('signed-out');
+    await settle();
+    expect(useCity.getState().saveRefused).toBe(false);
   });
 
   it('a session that died parks this device’s progress for the same player only', async () => {
@@ -245,6 +268,9 @@ describe('runtime sessions', () => {
     expect(rt.afterMfa({ action: 'account.verify', roleArn: vf }).resend).toEqual({ action: 'account.verify', roleArn: vf });
     expect(rt.afterMfa({ action: 'deploy.approve' })).toEqual({ message: expect.stringMatching(/Approve again/) });
     expect(rt.afterMfa({ action: 'finding.fix' })).toEqual({ message: expect.stringMatching(/Fix again/) });
+    // resource.remove needs MFA too: the hint says to press Take it down again (signed in or signed out).
+    expect(rt.afterMfa({ action: 'resource.remove' })).toEqual({ message: expect.stringMatching(/Take it down again/) });
+    expect(rt.afterMfa({ action: 'resource.remove' }, true).message).toMatch(/then press Take it down again/);
     expect(rt.afterMfa(undefined).resend).toBeUndefined();
     const sent = new Map([['r1', { action: 'account.link', region: 'eu-west-1' } as const]]);
     expect(rt.refusedBy({ requestId: 'r1' }, sent)).toEqual({ action: 'account.link', region: 'eu-west-1' });
@@ -273,6 +299,236 @@ describe('runtime sessions', () => {
     await rt.confirmMfaSetup('123456');
     expect(fake.sent).toEqual([]);
     expect(useCity.getState().account.mfaRequired).toBe(false);
+  });
+
+  it('turning the authenticator on signs the hosted player out: they are told to sign in again, and nothing is resent', async () => {
+    const { rt, useCity } = await boot();
+    fake.status('connected');
+    await settle();
+    // The hosted backend ends every session once TOTP is on (src/backend/auth.ts confirmTotp).
+    Object.assign(fake, { confirmTotp: async () => fake.status('signed-out') });
+    const fire = (e: ServerEvent) => (fake as unknown as { events: Set<(e: ServerEvent) => void> }).events.forEach((cb) => cb(e));
+    const requestId = rt.linkAccount('eu-west-1')!;
+    fire({ type: 'error', requestId, code: 'mfa_required', message: 'MFA first' });
+    fake.sent = [];
+    useCity.getState().clearToasts(); // the refusal's error toast would hold the next one in the queue
+    expect(await rt.confirmMfaSetup('123456')).toBe(true);
+    expect(fake.sent).toEqual([]);
+    expect(useCity.getState().toasts.map((t) => t.text)).toContainEqual(expect.stringMatching(/sign in again with your app’s code, then press Get my setup link again/));
+    expect(rt.afterMfa({ action: 'deploy.approve' }, true).message).toMatch(/ask for the change again/);
+    expect(rt.afterMfa({ action: 'deploy.approve' }, true).message).not.toMatch(/once more/);
+  });
+
+  it('if the server never heard the authenticator went on, the player is told they may have to sign in twice', async () => {
+    const { rt, useCity } = await boot();
+    fake.status('connected');
+    await settle();
+    Object.assign(fake, { confirmTotp: async () => (fake.status('signed-out'), { signInTwice: true }) });
+    useCity.getState().clearToasts();
+    expect(await rt.confirmMfaSetup('123456')).toBe(true);
+    expect(useCity.getState().toasts.map((t) => t.text)).toContainEqual(expect.stringMatching(/sign in again with your app’s code\..*may ask you to sign in once more/));
+  });
+
+  it('"Your data" (sign out, delete my account) is for signed-in players only, never the local server', async () => {
+    const { rt } = await boot();
+    Object.assign(fake, { deleteAccount: async () => {} });
+    expect(rt.canDeleteAccount()).toBe(false); // the local server: no accounts, its sign-out does nothing
+    Object.assign(fake, { hosted: true });
+    expect(rt.canDeleteAccount()).toBe(true);
+  });
+
+  it('v2.19: a link is made for the Region the player picked (AllowFixes when ticked), and a refused one is resent with both', async () => {
+    const { rt, useCity } = await boot();
+    Object.assign(fake, { confirmTotp: async () => {} });
+    fake.status('connected');
+    await settle();
+    const fire = (e: ServerEvent) => (fake as unknown as { events: Set<(e: ServerEvent) => void> }).events.forEach((cb) => cb(e));
+    const requestId = rt.linkAccount('ap-southeast-2', { allowFixes: true })!;
+    expect(fake.sent.at(-1)).toEqual({ action: 'account.link', requestId, region: 'ap-southeast-2', allowFixes: true });
+    // Nothing is assumed before the link arrives (a refused request leaves step 2 as it was).
+    expect(useCity.getState().account.allowFixes).toBeUndefined();
+    fire({ type: 'error', requestId, code: 'mfa_required', message: 'MFA first' });
+    fake.sent = [];
+    await rt.confirmMfaSetup('123456');
+    const resent = fake.sent[0] as Extract<ClientCommand, { action: 'account.link' }>;
+    expect(fake.sent).toEqual([{ action: 'account.link', requestId: expect.any(String), region: 'ap-southeast-2', allowFixes: true }]);
+    fire({ type: 'account.linkUrl', requestId: resent.requestId, url: 'https://ap-southeast-2.console.aws.amazon.com/x', externalId: 'e' });
+    expect(useCity.getState().account).toMatchObject({ linkRegion: 'ap-southeast-2', allowFixes: true, linkUrl: 'https://ap-southeast-2.console.aws.amazon.com/x' });
+    // Unticked: no allowFixes field at all, and step 2's box clears with the new link.
+    const plain = rt.linkAccount('eu-west-1')!;
+    expect(fake.sent.at(-1)).toEqual({ action: 'account.link', requestId: plain, region: 'eu-west-1' });
+    fire({ type: 'account.linkUrl', requestId: plain, url: 'https://eu-west-1.console.aws.amazon.com/x', externalId: 'e' });
+    expect(useCity.getState().account).toMatchObject({ linkRegion: 'eu-west-1', allowFixes: false });
+  });
+
+  it('v2.19: Disconnect sends account.unlink, and Take it down sends resource.remove (the server asks for approval)', async () => {
+    const { rt, useCity } = await boot();
+    fake.status('connected');
+    await settle();
+    const requestId = rt.unlinkAccount()!;
+    expect(fake.sent.at(-1)).toEqual({ action: 'account.unlink', requestId });
+    expect(useCity.getState().account.unlinking).toBe(requestId);
+    const remove = rt.removeResource('table', 'city-orders')!;
+    expect(fake.sent.at(-1)).toEqual({ action: 'resource.remove', requestId: remove, kind: 'table', id: 'city-orders' });
+  });
+
+  it('v2.19: Check again is one read-only account.recheck (no setup link, no verify); its answer and its refusal are this tab’s own', async () => {
+    const { rt, useCity } = await boot();
+    fake.status('connected');
+    await settle();
+    const fire = (e: ServerEvent) => (fake as unknown as { events: Set<(e: ServerEvent) => void> }).events.forEach((cb) => cb(e));
+    expect(rt.recheckAccount()).toBeUndefined(); // nothing linked yet
+    fire({ type: 'account.status', linked: true, accountId: '111122223333', region: 'eu-west-1', fixes: false });
+    fake.sent = [];
+    const requestId = rt.recheckAccount()!;
+    expect(fake.sent).toEqual([{ action: 'account.recheck', requestId }]);
+    fire({ type: 'account.status', requestId, linked: true, accountId: '111122223333', region: 'eu-west-1', fixes: true });
+    expect(useCity.getState().account).toMatchObject({ linked: true, fixes: true });
+    expect(fake.sent).toHaveLength(1);
+    const refused = rt.recheckAccount()!;
+    fire({ type: 'error', requestId: refused, message: 'Give it a few seconds before trying that again.' });
+    expect(useCity.getState().account.error).toMatch(/few seconds/);
+  });
+
+  it('v2.19: “I’ve updated the stack” asks for a fresh setup link in the linked Region, then verifies it as updated, once', async () => {
+    const { rt, useCity } = await boot();
+    fake.status('connected');
+    await settle();
+    const fire = (e: ServerEvent) => (fake as unknown as { events: Set<(e: ServerEvent) => void> }).events.forEach((cb) => cb(e));
+    expect(rt.confirmRoleUpdate()).toBeUndefined(); // nothing linked yet
+    fire({ type: 'account.status', linked: true, accountId: '111122223333', region: 'eu-west-1' });
+    fake.sent = [];
+    const requestId = rt.confirmRoleUpdate()!;
+    expect(fake.sent).toEqual([{ action: 'account.link', requestId, region: 'eu-west-1' }]);
+    fire({ type: 'account.linkUrl', requestId, url: 'https://eu-west-1.console.aws.amazon.com/x', externalId: 'e' });
+    expect(fake.sent.at(-1)).toEqual({ action: 'account.verify', requestId: expect.any(String), roleArn: '111122223333', updated: true });
+    // Once only: the same link again sends nothing more; a refused link verifies nothing.
+    fire({ type: 'account.linkUrl', requestId, url: 'https://eu-west-1.console.aws.amazon.com/x', externalId: 'e' });
+    expect(fake.sent.filter((c) => c.action === 'account.verify')).toHaveLength(1);
+    const refused = rt.confirmRoleUpdate()!;
+    fire({ type: 'error', requestId: refused, message: 'Too many requests.' });
+    fire({ type: 'account.linkUrl', requestId: refused, url: 'https://eu-west-1.console.aws.amazon.com/x', externalId: 'e' });
+    expect(fake.sent.filter((c) => c.action === 'account.verify')).toHaveLength(1);
+    expect(useCity.getState().account.linked).toBe(true);
+  });
+
+  it('v2.19: a removal refused for MFA is known by its requestId, so turning the authenticator on says to press Take it down again', async () => {
+    const { rt, useCity } = await boot();
+    Object.assign(fake, { confirmTotp: async () => {} });
+    fake.status('connected');
+    await settle();
+    const fire = (e: ServerEvent) => (fake as unknown as { events: Set<(e: ServerEvent) => void> }).events.forEach((cb) => cb(e));
+    const requestId = rt.removeResource('table', 'city-orders')!;
+    fire({ type: 'error', requestId, code: 'mfa_required', message: 'MFA first' });
+    useCity.getState().clearToasts();
+    fake.sent = [];
+    await rt.confirmMfaSetup('123456');
+    expect(fake.sent).toEqual([]); // a removal is pressed again, never resent
+    expect(useCity.getState().toasts.map((t) => t.text)).toContainEqual(expect.stringMatching(/Take it down again/));
+  });
+
+  it('v2.19: an account reply is this tab’s own only if it asked; a refusal is said in the card', async () => {
+    const { rt, useCity } = await boot();
+    fake.status('connected');
+    await settle();
+    const fire = (e: ServerEvent) => (fake as unknown as { events: Set<(e: ServerEvent) => void> }).events.forEach((cb) => cb(e));
+    useCity.getState().clearToasts();
+    // Another tab of the same player verified: the broadcast reaches this tab too, quietly.
+    fire({ type: 'account.status', requestId: 'someone-else', linked: true, accountId: '111122223333', region: 'eu-west-1' });
+    expect(useCity.getState().account).toMatchObject({ linked: true, accountId: '111122223333' });
+    expect(useCity.getState().toasts).toEqual([]);
+    // This tab's own verify that failed: an error with its requestId, kept in the card (and toasted, like any error).
+    const asked = rt.verifyAccount('444455556666')!;
+    fire({ type: 'error', requestId: asked, message: 'Your setup link is more than a day old, so I won’t use it.' });
+    expect(useCity.getState().account.error).toMatch(/more than a day old/);
+    // The next try clears it, and its success is this tab's own (one toast).
+    useCity.getState().clearToasts();
+    const again = rt.verifyAccount('444455556666')!;
+    expect(useCity.getState().account.error).toBeUndefined();
+    fire({ type: 'account.status', requestId: again, linked: true, accountId: '444455556666', region: 'eu-west-1' });
+    expect(useCity.getState().toasts.map((t) => t.text)).toEqual([expect.stringMatching(/444455556666 is linked/)]);
+    // An authenticator refusal has its own card, not this line.
+    const link = rt.linkAccount('eu-west-1')!;
+    fire({ type: 'error', requestId: link, code: 'mfa_required', message: 'MFA first' });
+    expect(useCity.getState().account.error).toBeUndefined();
+  });
+
+  it('the store learns at startup whether the backend is the hosted server', async () => {
+    Object.assign(fake, { hosted: true });
+    const { useCity } = await boot();
+    fake.status('connected');
+    expect(useCity.getState().hosted).toBe(true);
+  });
+
+  it('Download my data saves what the server keeps as a JSON file on this device (hosted players only)', async () => {
+    const { rt, useCity } = await boot();
+    Object.assign(fake, { exportMe: async () => ({ progress: { version: 1 }, account: null }) });
+    expect(rt.canDownloadData()).toBe(false);
+    Object.assign(fake, { hosted: true });
+    expect(rt.canDownloadData()).toBe(true);
+    const a = { href: '', download: '', click: vi.fn() };
+    vi.stubGlobal('document', { createElement: () => a });
+    try {
+      await rt.downloadMyData();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(a.click).toHaveBeenCalledOnce();
+    expect(a.download).toMatch(/^aws-city-my-data-\d{4}-\d{2}-\d{2}\.json$/);
+    expect(a.href).toMatch(/^blob:/);
+    expect(useCity.getState().toasts.at(-1)?.text).toMatch(/saved as aws-city-my-data/);
+  });
+
+  it('a failed download says a plain sentence, with no request error in it', async () => {
+    const { rt, useCity } = await boot();
+    Object.assign(fake, { hosted: true, exportMe: async () => Promise.reject(new Error('GET /me/export → 500')) });
+    await rt.downloadMyData();
+    const text = useCity.getState().toasts.at(-1)?.text ?? '';
+    expect(text).toMatch(/Couldn’t download your data/);
+    expect(text).not.toMatch(/500|GET/);
+    // Once a minute per player (v2.19): a second download straight away says so, not "check your connection".
+    useCity.getState().clearToasts();
+    Object.assign(fake, { exportMe: async () => Promise.reject(Object.assign(new Error('GET /me/export → 429'), { tooSoon: true })) });
+    await rt.downloadMyData();
+    expect(useCity.getState().toasts.at(-1)?.text).toBe('You downloaded your data a moment ago. Try again in a minute.');
+  });
+
+  it('a failed sign-out or account deletion logs a plain sentence, with the detail only in the console', async () => {
+    const { rt, useCity } = await boot();
+    Object.assign(fake, { hosted: true, deleteAccount: async () => Promise.reject(new Error('DELETE /me → 500')) });
+    await rt.deleteAccount();
+    const text = useCity.getState().feed.at(-1)?.text ?? '';
+    expect(text).toMatch(/Couldn’t delete your account/);
+    expect(text).not.toMatch(/500|DELETE/);
+  });
+
+  describe('"Got it" answers on the device', () => {
+    const KEY = 'awscity.findingsGotIt';
+    beforeEach(() => {
+      const mem = new Map<string, string>([[KEY, '["f1"]']]);
+      vi.stubGlobal('localStorage', { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v), removeItem: (k: string) => void mem.delete(k) });
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    it('an explicit sign-out clears them', async () => {
+      fake.player = 'player-a';
+      const { rt } = await boot();
+      fake.status('connected');
+      await settle();
+      rt.signOut();
+      await settle();
+      expect(localStorage.getItem(KEY)).toBeNull();
+    });
+
+    it('an involuntary end (expired token) keeps them', async () => {
+      fake.player = 'player-a';
+      await boot();
+      fake.status('connected');
+      await settle();
+      fake.status('signed-out');
+      await settle();
+      expect(localStorage.getItem(KEY)).toBe('["f1"]');
+    });
   });
 
   it('auto-snap fires on AWS pages only, and a snap of another site sends no URL or title', async () => {

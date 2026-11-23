@@ -28,6 +28,7 @@ import { glowingNow, ReturnNote, SupplyDrop } from './Loops';
 import { withCoins } from './icons';
 import { doneLine, isSimple, type TodoTask } from '@/state/simple';
 import { ANY_GAME, playAt, runTodo, useCare, useTodayGoals, useTodo } from './today';
+import { ConnectLine, useConnectOffer } from './Account';
 import { EventBanner } from './EventBanner';
 import { ConnectCard } from './ConnectCard';
 
@@ -45,6 +46,7 @@ export function Home({ openTab, places }: { openTab: OpenTab; places?: ReactNode
   const simple = useCity((s) => isSimple(s.prefs));
   // On a first run's world map the only thing to do is pick a Region (WorldIntro): the shift waits until the city opens.
   const choosing = useCity((s) => s.view.name === 'world' && !s.prefs.region);
+  const offer = useConnectOffer();
   const more = useRef<HTMLDetailsElement>(null);
   const careFold = useRef<HTMLDetailsElement>(null);
   /** Today's "Fix something" opens City care (inside More to do) and brings it into view. */
@@ -67,9 +69,11 @@ export function Home({ openTab, places }: { openTab: OpenTab; places?: ReactNode
   return (
     <div className="home">
       <EventBanner />
-      <ConnectCard openTab={openTab} />
+      {/* One way in to linking at a time: the shift's ConnectLine when it offers one, else this card. */}
+      {!offer && <ConnectCard openTab={openTab} />}
       <Shift openTab={openTab} care={care} openCare={openCare} />
       <RunningTask />
+      <CertGoal />
       <details ref={more} className="more-fold">
         <summary className="label">More to do</summary>
         <MoreToDo openTab={openTab} care={care} careFold={careFold} openCare={openCare} />
@@ -88,7 +92,21 @@ export function Home({ openTab, places }: { openTab: OpenTab; places?: ReactNode
 
 /** Where a task's button goes when it's another tab (its label says what happens; this says where). */
 const TASK_WHERE: Partial<Record<TodayGoal['id'], string>> = { cards: 'Learn', puzzles: 'Learn', designs: 'Learn', jobs: 'Jobs' };
-const taskWhere = (t: TodoTask) => (t.run.kind === 'plan' ? whereOf(t.run.plan) : TASK_WHERE[t.run.goal]);
+function taskWhere(t: TodoTask): string | undefined {
+  switch (t.run.kind) {
+    case 'plan':
+      return whereOf(t.run.plan);
+    case 'goal':
+      return TASK_WHERE[t.run.goal];
+    case 'connect':
+      return 'Deploy';
+    default: {
+      // A new TodoRun kind fails to compile here until it says where its button goes.
+      const _never: never = t.run;
+      return _never;
+    }
+  }
+}
 
 /**
  * The City tab in Simple mode: what the player asked an agent (while it works), one plain To-do list (a box, one line
@@ -133,8 +151,9 @@ function SimpleHome({ openTab, care, places }: { openTab: OpenTab; care: boolean
     <div className="home simple">
       {/* AWS City Live: re:Invent, a Summit, the player's Meetup (one line; nothing when nothing is near). */}
       <EventBanner />
-      {/* A hosted player who hasn't linked an AWS account: the way in to Deploy's linking steps. */}
-      <ConnectCard openTab={openTab} />
+      {/* A hosted player who hasn't linked an AWS account: the way in to Deploy's linking steps, unless the list shows
+          its own "Connect your AWS account" row (one offer at a time). */}
+      {!rows.some((t) => t.run.kind === 'connect') && <ConnectCard openTab={openTab} />}
       {/* What the player asked from the prompt bar: its card while it works, over the list. */}
       {taskUp && working && <TaskCard key={latest!.taskId} task={latest!} openTab={openTab} quiet />}
       <section className="todo" aria-labelledby="todo-title">
@@ -205,7 +224,7 @@ function SimpleHome({ openTab, care, places }: { openTab: OpenTab; care: boolean
 function TodoRow({ t, primary, onRun }: { t: TodoTask; primary: boolean; onRun: (t: TodoTask) => void }) {
   const where = taskWhere(t);
   return (
-    <li className={`todo-row ${t.done ? 'done' : ''}`}>
+    <li className={`todo-row ${t.done ? 'done' : ''} ${t.counts || t.holds ? 'counts' : ''}`}>
       <span className={`todo-check ${t.done ? 'on' : ''}`} aria-hidden="true">
         {t.done ? '✓' : ''}
       </span>
@@ -295,6 +314,7 @@ function Shift({ openTab, care, openCare }: { openTab: OpenTab; care: boolean; o
       {taskUp && <TaskCard key={latest!.taskId} task={latest!} openTab={openTab} />}
       {(!taskUp || latest!.status === 'failed') && <NextButton action={action} calm={summary.done} />}
       {ladder.clients && <OrderBoard max={3} skip={action.kind === 'job' ? action.taskId : undefined} />}
+      <ConnectLine openTab={openTab} />
       {ready.length > 0 && (
         <section className="ready" aria-label="Ready to upgrade">
           <h4 className="label">Ready to upgrade</h4>
@@ -449,17 +469,48 @@ function RunningTask() {
 
 // ── More to do ─────────────────────────────────────────────────────────────────
 
+/**
+ * The certification the player chose in Golden Jacket Hall, as a bar: how many of its areas are ready, and what each
+ * missing one still needs. On the shift (Everything), not folded away; Simple hides it with the other extras.
+ */
+export function CertGoal() {
+  const progress = useCity((s) => s.progress);
+  const certGoal = useCity((s) => s.prefs.certGoal);
+  const cert = CERTS.certifications.find((c) => c.id === certGoal);
+  if (!cert) return null;
+  const steps = certProgress(progress, cert);
+  const ready = steps.filter((x) => x.done).length;
+  const name = cert.name.replace(/^AWS Certified /, '');
+  const label = `${name}: ${ready} of ${steps.length} areas ready`;
+  return (
+    <section className="today-goal-cert" aria-label="Your certification goal">
+      <p>
+        🎯 <b>{label}</b>
+        {ready === steps.length && ' · trophy lit! 🏆'}
+      </p>
+      <div className="workshop-progress" role="progressbar" aria-valuemin={0} aria-valuemax={steps.length} aria-valuenow={ready} aria-valuetext={label} aria-label={`${name} progress`}>
+        <i style={{ width: `${(ready / Math.max(1, steps.length)) * 100}%` }} />
+      </div>
+      {ready < steps.length && (
+        <p className="muted small">
+          {steps
+            .filter((x) => !x.done)
+            .map((x) => `${districtById(x.districtId)?.name}: ${TIER_NAMES[x.tier]} → ${TIER_NAMES[x.need]}`)
+            .join(' · ')}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function MoreToDo({ openTab, care, careFold, openCare }: { openTab: OpenTab; care: boolean; careFold: RefObject<HTMLDetailsElement | null>; openCare: () => void }) {
   const asked = useCity((s) => s.taskOrder.length > 0);
   const latest = useLatestTask();
   const progress = useCity((s) => s.progress);
   const region = useCity((s) => s.cityRegion);
-  const certGoal = useCity((s) => s.prefs.certGoal);
   const r = REQUESTS[0];
   const weekly = weeklyChallenge();
   const weeklyPlace = placeFor(weekly.serviceId);
-  const cert = CERTS.certifications.find((c) => c.id === certGoal);
-  const steps = cert ? certProgress(progress, cert) : [];
   const done = QUESTS.filter((q) => progress.quests?.[q.id]?.status === 'done').length;
   const today = useTodayGoals(care);
   const bonus = today.goals.filter((g) => g.bonus);
@@ -474,14 +525,6 @@ function MoreToDo({ openTab, care, careFold, openCare }: { openTab: OpenTab; car
         </button>
       )}
       <LaunchCard />
-      {cert && (
-        <p className="today-goal-cert">
-          🎯 <b>{cert.name.replace(/^AWS Certified /, '')}</b>:{' '}
-          {steps.every((x) => x.done)
-            ? 'trophy lit! 🏆'
-            : steps.map((x) => `${districtById(x.districtId)?.name} ${x.done ? '✅' : `${TIER_NAMES[x.tier]} → ${TIER_NAMES[x.need]}`}`).join(' · ')}
-        </p>
-      )}
       {care && <CityHealth />}
       {care && (
         <details ref={careFold} className="care-fold">

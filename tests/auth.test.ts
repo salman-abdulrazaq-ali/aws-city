@@ -38,7 +38,11 @@ describe('CognitoAuth', () => {
     await auth.signOut();
     await fakeBrowser.storage.local.set({ 'auth.refresh': 'attacker' });
     expect(await auth.token()).toBeUndefined();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Signing out revoked this device's real token (the vault's) at Cognito; the planted one was never sent anywhere.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]![0])).toBe(`${DOMAIN}/oauth2/revoke`);
+    expect(String((fetchMock.mock.calls[1]![1] as RequestInit).body)).toBe('token=r2&client_id=c');
+    expect(fetchMock.mock.calls.some(([, init]) => String((init as RequestInit | undefined)?.body ?? '').includes('attacker'))).toBe(false);
     expect((await fakeBrowser.storage.local.get('auth.refresh'))['auth.refresh']).toBeUndefined();
   });
 
@@ -75,9 +79,96 @@ describe('CognitoAuth', () => {
 
     fetchMock.mockResolvedValueOnce(json(200, { Status: 'SUCCESS' }));
     fetchMock.mockResolvedValueOnce(json(200, {}));
+    fetchMock.mockResolvedValueOnce(json(200, {}));
     await auth.confirmTotp(' 123456 ');
     expect(JSON.parse((fetchMock.mock.calls[2]![1] as RequestInit).body as string)).toMatchObject({ UserCode: '123456' });
     expect(JSON.parse((fetchMock.mock.calls[3]![1] as RequestInit).body as string)).toMatchObject({ SoftwareTokenMfaSettings: { Enabled: true, PreferredMfa: true } });
+  });
+
+  it('turning the authenticator on tells the server, ends every session, and forgets this device’s tokens', async () => {
+    const auth = new CognitoAuth({ domain: DOMAIN, clientId: 'c' });
+    await fakeBrowser.storage.session.set({ 'auth.tokens': { accessToken: 'a1', expiresAt: Date.now() + 3_600_000 } });
+    const order: string[] = [];
+    fetchMock.mockImplementation(async (_url: unknown, init: RequestInit) => {
+      order.push(String((init.headers as Record<string, string>)['x-amz-target'] ?? 'other').replace('AWSCognitoIdentityProviderService.', ''));
+      return order.at(-1) === 'VerifySoftwareToken' ? json(200, { Status: 'SUCCESS' }) : json(200, {});
+    });
+    const beforeSignOut = vi.fn(async () => void order.push('server looks'));
+    expect(await auth.confirmTotp('123456', beforeSignOut)).toEqual({ noted: true });
+    expect(order).toEqual(['VerifySoftwareToken', 'SetUserMFAPreference', 'server looks', 'GlobalSignOut']);
+    expect(JSON.parse((fetchMock.mock.calls[2]![1] as RequestInit).body as string)).toEqual({ AccessToken: 'a1' });
+    expect((await fakeBrowser.storage.local.get('auth.refresh'))['auth.refresh']).toBeUndefined();
+    expect((await fakeBrowser.storage.session.get('auth.tokens'))['auth.tokens']).toBeUndefined();
+  });
+
+  it('telling the server (POST /me/mfa) is tried again before every session ends; if it never lands, that is reported', async () => {
+    const auth = new CognitoAuth({ domain: DOMAIN, clientId: 'c' });
+    const signedIn = () => fakeBrowser.storage.session.set({ 'auth.tokens': { accessToken: 'a1', expiresAt: Date.now() + 3_600_000 } });
+    const order: string[] = [];
+    fetchMock.mockImplementation(async (_url: unknown, init: RequestInit) => {
+      order.push(String((init.headers as Record<string, string>)['x-amz-target'] ?? 'other').replace('AWSCognitoIdentityProviderService.', ''));
+      return order.at(-1) === 'VerifySoftwareToken' ? json(200, { Status: 'SUCCESS' }) : json(200, {});
+    });
+    // A blip, then it lands: the sign-in after this one is enough.
+    await signedIn();
+    let fails = 1;
+    const flaky = vi.fn(async () => {
+      order.push('server looks');
+      if (fails-- > 0) throw new Error('POST /me/mfa 503');
+    });
+    expect(await auth.confirmTotp('123456', flaky)).toEqual({ noted: true });
+    expect(order).toEqual(['VerifySoftwareToken', 'SetUserMFAPreference', 'server looks', 'server looks', 'GlobalSignOut']);
+    // It never lands: three tries, then every session still ends, and the player is told (noted: false).
+    await signedIn();
+    order.length = 0;
+    const down = vi.fn(async () => {
+      order.push('server looks');
+      throw new Error('POST /me/mfa 500');
+    });
+    expect(await auth.confirmTotp('123456', down)).toEqual({ noted: false });
+    expect(order).toEqual(['VerifySoftwareToken', 'SetUserMFAPreference', 'server looks', 'server looks', 'server looks', 'GlobalSignOut']);
+    expect((await fakeBrowser.storage.session.get('auth.tokens'))['auth.tokens']).toBeUndefined();
+  });
+
+  it('if every session can’t be ended, this device’s refresh token is still revoked', async () => {
+    const auth = new CognitoAuth({ domain: DOMAIN, clientId: 'c' });
+    await fakeBrowser.storage.session.set({ 'auth.tokens': { accessToken: 'a1', expiresAt: Date.now() + 3_600_000 } });
+    fetchMock.mockResolvedValueOnce(json(200, { Status: 'SUCCESS' })).mockResolvedValueOnce(json(200, {})).mockRejectedValueOnce(new TypeError('Failed to fetch')).mockResolvedValueOnce(new Response(null, { status: 200 }));
+    await auth.confirmTotp('123456');
+    expect(String(fetchMock.mock.calls[3]![0])).toBe(`${DOMAIN}/oauth2/revoke`);
+    expect((await fakeBrowser.storage.local.get('auth.refresh'))['auth.refresh']).toBeUndefined();
+  });
+
+  it('signing out revokes the refresh token at Cognito, then forgets the tokens, even offline', async () => {
+    const auth = new CognitoAuth({ domain: DOMAIN, clientId: 'c' });
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 200 }));
+    await auth.signOut();
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe(`${DOMAIN}/oauth2/revoke`);
+    expect(String((init as RequestInit).body)).toBe('token=r1&client_id=c');
+    expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal); // bounded: never hangs a sign-out
+    expect((await fakeBrowser.storage.local.get('auth.refresh'))['auth.refresh']).toBeUndefined();
+
+    await fakeBrowser.storage.local.set({ 'auth.refresh': 'r2' });
+    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    await auth.signOut();
+    expect((await fakeBrowser.storage.local.get('auth.refresh'))['auth.refresh']).toBeUndefined();
+    // Nothing to revoke: no call at all.
+    fetchMock.mockClear();
+    await auth.signOut();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('reads whether the authenticator is on (Google players keep their own second step)', async () => {
+    const auth = new CognitoAuth({ domain: DOMAIN, clientId: 'c' });
+    await fakeBrowser.storage.session.set({ 'auth.tokens': { accessToken: 'a1', expiresAt: Date.now() + 3_600_000 } });
+    fetchMock.mockResolvedValueOnce(json(200, { UserMFASettingList: ['SOFTWARE_TOKEN_MFA'], UserAttributes: [{ Name: 'email' }] }));
+    expect(await auth.mfaStatus()).toBe('on');
+    fetchMock.mockResolvedValueOnce(json(200, { UserAttributes: [{ Name: 'email' }] }));
+    expect(await auth.mfaStatus()).toBe('off');
+    fetchMock.mockResolvedValueOnce(json(200, { UserAttributes: [{ Name: 'identities' }] }));
+    expect(await auth.mfaStatus()).toBe('external');
+    expect((fetchMock.mock.calls[0]![1] as RequestInit).headers).toMatchObject({ 'x-amz-target': 'AWSCognitoIdentityProviderService.GetUser' });
   });
 
   it('tokens from before the authenticator scope get a clear next step', async () => {

@@ -1,5 +1,23 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { connectionLabel, DEMO_KEY, placeSuggestions, isAccountIdOrRoleArn, isDemo, setDemo, isOnline, newlyUnlocked, nextTabIndex, offlineReason, shuffle, signLegend, unlockText } from '@/ui/logic';
+import {
+  connectionLabel,
+  DEMO_KEY,
+  NOT_SAVED_LINE,
+  placeSuggestions,
+  isAccountIdOrRoleArn,
+  isDemo,
+  setDemo,
+  isOnline,
+  newlyUnlocked,
+  nextTabIndex,
+  offlineReason,
+  SERVER_UPDATING_LINE,
+  shuffle,
+  signLegend,
+  syncLine,
+  unlockText,
+  UPDATE_EXTENSION_LINE,
+} from '@/ui/logic';
 import type { Progress } from '@/backend/contract';
 import { badgeCount, dueDeck, NEW_CARDS_PER_DAY, newCardsLeft } from '@/state/srs';
 import { CARDS, QUESTS, type QuestStep } from '@/world/content';
@@ -28,6 +46,8 @@ describe('connection pill', () => {
     expect(connectionLabel('server', 'disconnected')).toBe('Offline');
     expect(connectionLabel('server', 'error')).toBe('Offline');
     expect(connectionLabel('server', 'signed-out')).toBe('Signed out');
+    expect(connectionLabel('server', 'updating')).toBe('Server updating');
+    expect(connectionLabel('server', 'outdated')).toBe('Update needed');
   });
   it('blocks actions only when a real backend is not connected', () => {
     expect(isOnline('mock', 'disconnected')).toBe(true);
@@ -36,13 +56,32 @@ describe('connection pill', () => {
     expect(offlineReason('server', 'connected')).toBeUndefined();
     expect(offlineReason('server', 'signed-out')).toMatch(/sign in/i);
     expect(offlineReason('server', 'disconnected')).toMatch(/not connected/i);
+    // Short: the full calm line is already above the tabs.
+    expect(offlineReason('server', 'updating')).toMatch(/server to finish updating/);
+    expect(offlineReason('server', 'outdated')).toBe('Update the extension first');
+  });
+
+  it('one calm line about saving: the version handshake first, then a refused save; never on the demo', () => {
+    expect(SERVER_UPDATING_LINE).toBe('The city’s server is being updated — your progress is kept on this device');
+    expect(UPDATE_EXTENSION_LINE).toBe('A newer AWS City is ready — update the extension');
+    expect(NOT_SAVED_LINE).toBe('Not saved to your account — kept on this device');
+    expect(syncLine('server', 'updating', true)).toBe(SERVER_UPDATING_LINE);
+    expect(syncLine('server', 'outdated', false)).toBe(UPDATE_EXTENSION_LINE);
+    expect(syncLine('server', 'connected', true)).toBe(NOT_SAVED_LINE);
+    expect(syncLine('server', 'disconnected', true)).toBe(NOT_SAVED_LINE);
+    expect(syncLine('server', 'connected', false)).toBeUndefined();
+    expect(syncLine('server', 'signed-out', true)).toBeUndefined();
+    expect(syncLine('mock', 'updating', true)).toBeUndefined();
   });
 });
 
 describe('error codes → friendly text', () => {
   it('maps known codes and falls back to the message', () => {
     expect(errorText({ message: 'x', code: 'quota' } as { message: string })).toBe('You’ve used today’s AI helpers — back tomorrow!');
-    expect(errorText({ message: 'x', code: 'auth' } as { message: string })).toBe('Please sign in again');
+    expect(errorText({ message: '', code: 'auth' } as { message: string })).toBe('Please sign in again');
+    // A session from before the authenticator keeps the server's sentence (it says what to do), never the generic line.
+    const preMfa = 'Your authenticator app is on, but this sign-in started before it was. Sign out, then sign in again with your app’s code.';
+    expect(errorText({ message: preMfa, code: 'auth' } as { message: string })).toBe(preMfa);
     expect(errorText({ message: 'x', code: 'unlinked' } as { message: string })).toBe('Connect your AWS account in the Deploy tab');
     expect(errorText({ message: 'raw', code: 'nope' } as { message: string })).toBe('raw');
     expect(errorText({ message: 'raw' })).toBe('raw');
@@ -259,6 +298,56 @@ describe("Today's goals on Home", () => {
     const empty = settleToday(undefined, day, []);
     expect(settleToday(empty, day, ['cards']).ids).toEqual(['cards']);
   });
+
+  it('a fix or a workshop step that can’t be done now is a bonus chip, so it never holds "Done for today" shut', async () => {
+    const { settleToday, todayDone, todayGoals } = await import('@/state/progress');
+    const day = '2026-10-12';
+    // City care is open but no finding's fix can be offered yet; every workshop step has paid already.
+    const stuck = { learn: true, puzzles: true, care: true, careNow: false, labs: true, labsNow: false };
+    const first = todayGoals(undefined, day, stuck);
+    expect(first.map((g) => [g.id, !!g.bonus])).toEqual([['cards', false], ['puzzles', false], ['labs', true], ['fixes', true]]);
+    const set = settleToday(undefined, day, first.flatMap((g) => (g.bonus ? [] : [g.id])));
+    expect(set.ids).toEqual(['cards', 'puzzles']);
+    // Cards and a puzzle done: the day is done, whatever City care and the workshops hold.
+    const log = { day, cards: 5, puzzles: 1, fixes: 0, labs: 0 };
+    expect(todayDone(todayGoals(log, day, stuck, set.ids))).toEqual({ done: 2, of: 2 });
+    // Doable: they're day goals (and a jobs top-up isn't needed to reach the shift's minimum).
+    const doable = todayGoals(undefined, day, { ...stuck, careNow: true, labsNow: true });
+    expect(doable.map((g) => [g.id, !!g.bonus])).toEqual([['cards', false], ['puzzles', false], ['labs', false], ['fixes', false]]);
+    // A day set while a fix was possible: once that finding is gone, the goal drops out of the finish line ("2/2",
+    // not a "2/3" that can never finish); a fix already done today stays one of the day's goals.
+    const morning = settleToday(undefined, day, todayGoals(undefined, day, { ...stuck, careNow: true }).flatMap((g) => (g.bonus ? [] : [g.id])));
+    expect(morning.ids).toEqual(['cards', 'puzzles', 'fixes']);
+    expect(todayDone(todayGoals(log, day, stuck, morning.ids))).toEqual({ done: 2, of: 2 });
+    expect(todayDone(todayGoals({ ...log, fixes: 1 }, day, stuck, morning.ids))).toEqual({ done: 3, of: 3 });
+    // A goal that can't be done doesn't take a slot from a job on a short shift.
+    const short = todayGoals(undefined, day, { learn: true, puzzles: false, care: true, careNow: false, jobs: 3 });
+    expect(short.filter((g) => !g.bonus).map((g) => [g.id, g.goal])).toEqual([['cards', 5], ['jobs', 2]]);
+  });
+
+  it('what "can be done now" means: an open finding whose fix gate passes, a workshop step that would still pay', async () => {
+    const { fixableNow, LEVEL_XP } = await import('@/state/citizens');
+    const { stepsLeftToPay } = await import('@/learning/workshopRewards');
+    const { demoFindings } = await import('@/backend/mockAccount');
+    const { WORKSHOPS } = await import('@/world/workshops');
+    const withFix = demoFindings().find((f) => f.fix && f.fix.scope === 'game')!;
+    const noFix = demoFindings().find((f) => !f.fix)!;
+    const p: Progress = { version: 2, landmarks: {}, updatedAt: '' };
+    // A citizen who hasn't learned enough can't offer the fix yet; a finding with no automatic fix never can.
+    expect(fixableNow(p, [withFix, noFix])).toBe(false);
+    const taught: Progress = { ...p, citizens: { [withFix.citizenId]: { xp: LEVEL_XP.at(-1)! } } };
+    expect(fixableNow(taught, [withFix])).toBe(true);
+    expect(fixableNow(taught, [{ ...withFix, status: 'resolved' }])).toBe(false);
+    expect(fixableNow(taught, [noFix])).toBe(false);
+    // Workshops: every step done in practice still pays for real, never again in practice.
+    const w = WORKSHOPS[0];
+    const practised = { [w.id]: { steps: Object.fromEntries(w.steps.map((st) => [st.id, 'practice' as const])) } };
+    expect(stepsLeftToPay(undefined, 'practice')).toBe(true);
+    expect(stepsLeftToPay(practised, 'practice', [w])).toBe(false);
+    expect(stepsLeftToPay(practised, 'real', [w])).toBe(true);
+    const real = { [w.id]: { steps: Object.fromEntries(w.steps.map((st) => [st.id, 'real' as const])) } };
+    expect(stepsLeftToPay(real, 'real', [w])).toBe(false);
+  });
 });
 
 describe('the Learn tab counts cards learned, not cards seen', () => {
@@ -303,7 +392,9 @@ describe('citySummary', () => {
     const { citySummary } = await import('@/ui/logic');
     const { emptyProgress } = await import('@/state/store');
     const line = citySummary({ cityRegion: 'us-west-2', regionName: 'US West (Oregon)', progress: emptyProgress(), openIssues: 2, outage: true, flowOn: true });
-    expect(line).toMatch(/^US West \(Oregon\): 0 of \d+ buildings, 2 issues to fix, AWS reports a problem in this Region, live traffic on\. Press \]/);
+    expect(line).toMatch(/^US West \(Oregon\): you’ve put up 0 of the \d+ AWS services here, 2 issues to fix, AWS reports a problem in this Region, live traffic on\. Press \] and \[ to step through the places on the map\.$/);
+    // It counts AWS services, and says so; `]` counts the places on the map, and says so (stepLine): never two bare "of N".
+    expect(line).not.toMatch(/\d+ of \d+ buildings/);
     expect(citySummary({ cityRegion: 'eu-west-1', progress: emptyProgress(), openIssues: 1 })).toContain('1 issue to fix');
     expect(citySummary({ cityRegion: 'eu-west-1', progress: emptyProgress(), openIssues: 0 })).toContain('no issues');
   });

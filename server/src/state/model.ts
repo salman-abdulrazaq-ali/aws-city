@@ -42,6 +42,10 @@ export interface WorldSnapshot {
   services: Record<Service, ServiceStatus>;
   resources: Resource[];
   account?: AccountSettings;
+  /** v2.17: STS refused the player role on this poll (RoleRefusedError), so nothing could be read; resources are the last seen. */
+  roleRefused?: true;
+  /** v2.17: those refusals looked like our side (aws.ts's breaker: many players at once), so they don't count toward BROKEN_AFTER. */
+  refusedOurSide?: true;
 }
 
 export type AwsEvent =

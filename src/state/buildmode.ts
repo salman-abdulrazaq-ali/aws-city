@@ -160,7 +160,7 @@ export function lockedBecause(p: Progress, region: string, it: BuildItem): strin
   if (u.rank) {
     const need = RANKS.findIndex((r) => r.id === u.rank);
     const have = RANKS.indexOf(cityRank(p, region).rank);
-    if (have < need) return `Grow this city to ${RANKS[need].icon} ${RANKS[need].name}`;
+    if (have < need) return `Grow this city to ${RANKS[need].icon} ${RANKS[need].title}`;
   }
   return undefined;
 }

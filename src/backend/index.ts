@@ -10,6 +10,8 @@ import { isDemo } from '@/ui/logic';
  *   WXT_BACKEND=hosted     the hosted server (infra/) — WXT_AWS_WS_URL + WXT_AWS_API_URL + Cognito sign-in
  *   anything else          the in-browser mock
  * A hosted build plays the mock too while the player has chosen "Play the demo" (the `awscity.demo` pref).
+ * A hosted build missing a setting falls back to the mock here only in developers' builds: a store build
+ * (WXT_STORE_BUILD=true) refuses to build without them (wxt.config.ts, scripts/release-check.mjs).
  */
 export function createBackend(mock: MockOptions = {}): AgentBackend {
   const env = import.meta.env;

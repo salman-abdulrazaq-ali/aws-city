@@ -37,16 +37,31 @@ const FIX_RESOURCE_TYPE: Record<string, string> = {
   dynamodb: 'AWS::DynamoDB::Table',
 };
 
+/** The resource's own name or id as the action gives it (a new bucket: only its suffix so far), if it gives one. */
+const ownName = (a: ApprovalRequest['action']): string | undefined => {
+  if ('name' in a) return String(a.name);
+  if ('instanceId' in a) return String(a.instanceId);
+  if ('suffix' in a) return String(a.suffix);
+  return undefined;
+};
+
 /**
  * What a change touches, as the card's resource name: a bucket's full name once the account is known (so Tear down can
  * name it), else its suffix after "aws-city-…-".
  */
 const labelOf = (a: ApprovalRequest['action'], accountId?: string): string =>
-  'name' in a ? String(a.name) : 'instanceId' in a ? String(a.instanceId) : 'suffix' in a ? `aws-city-${accountId ?? '…'}-${String(a.suffix)}` : a.type;
+  'suffix' in a ? `aws-city-${accountId ?? '…'}-${String(a.suffix)}` : (ownName(a) ?? a.type);
+
+/** What the player types before a destructive write or one a second look flagged: the resource's own name or id (never empty, never "…"). */
+const typedName = (a: ApprovalRequest['action']): string => ownName(a)?.trim() || a.type;
+
+/** What a preview cancelled because its account went away says (the world's retire reason, when it gives one). */
+export const DISCONNECTED_MESSAGE = 'That account was disconnected, so nothing changed.';
 
 /**
  * Per-socket player approvals (contract v2): a guarded write becomes deploy.preview; the player answers
- * with deploy.approve / deploy.reject. Unanswered requests expire; closing the socket rejects them all.
+ * with deploy.approve / deploy.reject. Unanswered requests expire; closing the socket rejects them all, and so does
+ * the request's `signal` (its account's world was retired: disconnected or changed), with the signal's reason.
  */
 export const createApprovals = (opts: { region: string | (() => string); accountId?: () => string | undefined; timeoutMs?: number }) => {
   /** v2.18: exactly where the change goes, read as each card is made. */
@@ -54,7 +69,7 @@ export const createApprovals = (opts: { region: string | (() => string); account
     const accountId = opts.accountId?.();
     return { region: typeof opts.region === 'function' ? opts.region() : opts.region, ...(accountId ? { accountId } : {}) };
   };
-  const pending = new Map<string, { resolve: (ok: boolean) => void; emit: Emit; timer: NodeJS.Timeout; confirmText?: string }>();
+  const pending = new Map<string, { resolve: (ok: boolean) => void; emit: Emit; timer: NodeJS.Timeout; confirmText?: string; unwatch?: () => void }>();
   const awaitingResult = new Map<string, string>(); // taskId → deployId of the approved call in flight
 
   const settle = (deployId: string, ok: boolean, reason?: string) => {
@@ -62,13 +77,26 @@ export const createApprovals = (opts: { region: string | (() => string); account
     if (!p) return false;
     pending.delete(deployId);
     clearTimeout(p.timer);
+    p.unwatch?.();
     if (!ok) p.emit({ type: 'deploy.status', deployId, status: 'rejected', message: reason ?? 'Nothing was changed.' });
     p.resolve(ok);
     return true;
   };
+  /** A retired world cancels its pending previews: at once if it already was, else when it is. */
+  const watch = (deployId: string, signal?: AbortSignal) => {
+    if (!signal) return undefined;
+    const cancel = () => settle(deployId, false, typeof signal.reason === 'string' ? signal.reason : DISCONNECTED_MESSAGE);
+    if (signal.aborted) {
+      queueMicrotask(cancel);
+      return undefined;
+    }
+    signal.addEventListener('abort', cancel, { once: true });
+    return () => signal.removeEventListener('abort', cancel);
+  };
 
   return {
-    request(taskId: string, req: ApprovalRequest, emit: Emit): Promise<boolean> {
+    /** `requestId`: a direct command's (v2.19 resource.remove), put on the preview so the client can match it. */
+    request(taskId: string, req: ApprovalRequest, emit: Emit, requestId?: string): Promise<boolean> {
       const deployId = `a-${randomUUID().slice(0, 8)}`;
       const t = req.action.type;
       const change: DeployChange = {
@@ -76,18 +104,34 @@ export const createApprovals = (opts: { region: string | (() => string); account
         logicalId: labelOf(req.action, opts.accountId?.()),
         resourceType: RESOURCE_TYPE[t],
       };
-      emit({ type: 'deploy.preview', deployId, taskId, templateId: t, stackName: req.summary, ...where(), changes: [change], costNote: COST[t] });
+      // The player types the name (v2.3 confirmText) before a destructive write (terminate, delete, a take-down), so one
+      // stray Enter or Space can never approve it; and when a second look (Jev) asked for care, with why on a 'detail' line.
+      const confirmText = req.check || req.destructive ? typedName(req.action) : undefined;
+      const why: DeployChange[] = req.check ? [{ action: 'Modify', logicalId: `Safety check: ${req.check.reason}`, resourceType: 'detail' }] : [];
+      emit({
+        type: 'deploy.preview',
+        ...(requestId ? { requestId } : {}),
+        deployId,
+        taskId,
+        templateId: t,
+        stackName: req.summary,
+        ...where(),
+        changes: [change, ...why],
+        costNote: COST[t],
+        ...(confirmText ? { confirmText } : {}),
+      });
       return new Promise<boolean>((resolve) => {
         const timer = setTimeout(() => settle(deployId, false, 'No answer within 5 minutes, so nothing was changed.'), opts.timeoutMs ?? 300_000);
         timer.unref?.();
-        pending.set(deployId, { resolve: (ok) => (ok && awaitingResult.set(taskId, deployId), resolve(ok)), emit, timer });
+        pending.set(deployId, { resolve: (ok) => (ok && awaitingResult.set(taskId, deployId), resolve(ok)), emit, timer, confirmText });
+        pending.get(deployId)!.unwatch = watch(deployId, req.signal);
       });
     },
     /**
      * A citizen's fix (contract v2.3): the preview carries the finding, its rollback text and, for a resource the city
      * didn't build or an account-wide setting, the text the player must type. Resolves true only on approve + match.
      */
-    requestFix(requestId: string, f: CityFinding & { fix: NonNullable<CityFinding['fix']> }, emit: Emit, confirmText?: string, detail: string[] = []) {
+    requestFix(requestId: string, f: CityFinding & { fix: NonNullable<CityFinding['fix']> }, emit: Emit, confirmText?: string, detail: string[] = [], signal?: AbortSignal) {
       const deployId = `f-${randomUUID().slice(0, 8)}`;
       emit({
         type: 'deploy.preview',
@@ -110,24 +154,26 @@ export const createApprovals = (opts: { region: string | (() => string); account
         const timer = setTimeout(() => settle(deployId, false, 'No answer within 5 minutes, so nothing was changed.'), opts.timeoutMs ?? 300_000);
         timer.unref?.();
         pending.set(deployId, { resolve, emit, timer, confirmText });
+        pending.get(deployId)!.unwatch = watch(deployId, signal);
       });
       return { deployId, approved };
     },
-    /** From the client: returns false if the id is unknown/expired. `confirm` must match a fix's confirmText. */
+    /** From the client: returns false if the id is unknown/expired. `confirm` must match the preview's confirmText (a fix, a destructive write, or a write the second look flagged). */
     answer(deployId: string, ok: boolean, confirm?: string): boolean {
       const p = pending.get(deployId);
       if (p && ok && p.confirmText && confirm?.trim() !== p.confirmText) return settle(deployId, false, 'The name you typed didn’t match, so nothing was changed.');
       if (p && ok) p.emit({ type: 'deploy.status', deployId, status: 'creating' });
       return settle(deployId, ok);
     },
-    /** After the approved tool call ran: report the real outcome on the same deployId. */
-    reportResult(taskId: string, call: ToolCallReport, emit: Emit) {
+    /** After the approved tool call ran: report the real outcome on the same deployId. False if nothing was approved for it. */
+    reportResult(taskId: string, call: ToolCallReport, emit: Emit): boolean {
       const deployId = awaitingResult.get(taskId);
-      if (!deployId) return;
+      if (!deployId) return false;
       awaitingResult.delete(taskId);
       const ok = call.outcome === 'done';
       // ResourceId: what a launch made (its i-… id), so the card joins the later stop/terminate cards of the same server.
       emit({ type: 'deploy.status', deployId, status: ok ? 'complete' : 'failed', message: call.message, outputs: ok ? { Result: call.message, ...(call.resourceId ? { ResourceId: call.resourceId } : {}) } : undefined });
+      return true;
     },
     cancelAll() {
       for (const id of [...pending.keys()]) settle(id, false, 'Connection closed, so nothing was changed.');

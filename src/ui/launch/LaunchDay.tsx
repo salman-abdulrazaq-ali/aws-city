@@ -2,7 +2,7 @@ import { Coin } from '../icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { openDocs } from '@/app/runtime';
 import { reducedMotion } from '@/game/motion';
-import { countRound, FULL_ROUNDS_A_DAY, roundStars } from '@/learning/gameStars';
+import { countRound, FULL_ROUNDS_A_DAY, HALF_ROUNDS_A_DAY, roundStars } from '@/learning/gameStars';
 import { ADVICE, cheapest, costOf, DAYS, PARTS, servicesOf, simulate, SLOTS, TICKS, type PartId, type Result, type SlotId, type Stack } from '@/learning/launch';
 import { practitioners } from '@/world/airport';
 import { isDiscovered } from '@/state/selectors';
@@ -95,8 +95,9 @@ function LaunchBody() {
     const services = servicesOf(stack);
     const roundsBefore = countRound('launch');
     const stars = roundStars(GRADE_STARS[result.grade], roundsBefore, result.score > best);
-    const each = Math.max(1, Math.round(stars / Math.max(1, services.length)) + 1);
-    for (const id of services) s.addXp(id, each);
+    // Past the day's half-pay launches only a new best pays (src/learning/gameStars.ts roundStars).
+    const each = stars > 0 ? Math.max(1, Math.round(stars / Math.max(1, services.length)) + 1) : 0;
+    if (each) for (const id of services) s.addXp(id, each);
     // A day that scored pays City Coins too (store.recordGame, contract v2.14).
     const coins = s.recordGame('launch', result.score);
     s.noteLearning('games');
@@ -224,7 +225,12 @@ function Debrief({ result, paid, stack }: { result: Result; paid?: { each: numbe
       <p className="launch-grade">
         <span className={`grade grade-${result.grade}`}>{result.grade}</span> {result.availability}% of requests served · score {result.score}
       </p>
-      {paid !== undefined && (
+      {paid !== undefined && paid.each === 0 && (
+        <p className="muted small">
+          No stars or coins from Launch Day after {FULL_ROUNDS_A_DAY + HALF_ROUNDS_A_DAY} launches a day: full pay again tomorrow, or beat your best!
+        </p>
+      )}
+      {paid !== undefined && paid.each > 0 && (
         <p className="muted small">
           {servicesOf(stack)
             .map((id) => placeFor(id)?.place ?? id)

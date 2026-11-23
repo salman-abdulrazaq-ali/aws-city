@@ -32,8 +32,9 @@ describe('mini-game combo', async () => {
 });
 
 describe('mini-game stars', async () => {
-  const { countRound, roundStars, FULL_ROUNDS_A_DAY } = await import('@/learning/gameStars');
+  const { countRound, roundStars, FULL_ROUNDS_A_DAY, HALF_ROUNDS_A_DAY } = await import('@/learning/gameStars');
   const { memoryLedger } = await import('@/learning/dailyLedger');
+  const { roundCoins } = await import('@/state/wallet');
   it('full stars for the first rounds of the day and any new best, half after that', () => {
     const seen = memoryLedger();
     const rounds = Array.from({ length: 5 }, () => countRound('shield', '2026-10-13', seen));
@@ -41,6 +42,17 @@ describe('mini-game stars', async () => {
     expect(rounds.map((n) => roundStars(20, n, false))).toEqual([20, 20, 20, 10, 10]);
     expect(roundStars(20, FULL_ROUNDS_A_DAY + 5, true)).toBe(20);
     expect(countRound('shield', '2026-10-14', seen)).toBe(0);
+  });
+
+  it('stars stop where the coins stop (after the full and half rounds); a new best still pays in full', () => {
+    const before = Array.from({ length: 20 }, (_, n) => n); // rounds played before this one today
+    const stars = before.map((n) => roundStars(20, n, false));
+    expect(stars.slice(0, FULL_ROUNDS_A_DAY).every((x) => x === 20)).toBe(true);
+    expect(stars.slice(FULL_ROUNDS_A_DAY, FULL_ROUNDS_A_DAY + HALF_ROUNDS_A_DAY).every((x) => x === 10)).toBe(true);
+    expect(stars.slice(FULL_ROUNDS_A_DAY + HALF_ROUNDS_A_DAY).every((x) => x === 0)).toBe(true);
+    // The same round pays no coins either (roundCoins counts this round).
+    for (const n of before) expect(roundStars(20, n, false) === 0, `round ${n + 1}`).toBe(roundCoins(n + 1, false) === 0);
+    expect(roundStars(20, 50, true)).toBe(20);
   });
 
   it('S3 fishing pays once a round, under the same daily rule', async () => {
@@ -51,5 +63,8 @@ describe('mini-game stars', async () => {
     expect(fishingStars(5, true, FULL_ROUNDS_A_DAY, false)).toBe(10);
     expect(fishingStars(5, true, FULL_ROUNDS_A_DAY, true)).toBe(20);
     expect(fishingStars(0, false, 0, false)).toBe(0);
+    // past the half-pay rounds only a new best pays
+    expect(fishingStars(5, true, FULL_ROUNDS_A_DAY + HALF_ROUNDS_A_DAY, false)).toBe(0);
+    expect(fishingStars(5, true, FULL_ROUNDS_A_DAY + HALF_ROUNDS_A_DAY, true)).toBe(20);
   });
 });

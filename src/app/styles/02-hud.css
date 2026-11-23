@@ -102,6 +102,21 @@
   background: transparent;
   border: 2px solid var(--accent);
 }
+/* The version handshake: calm amber, not red (nothing is wrong with the player's city; SyncNote says why). */
+.dot.updating::before,
+.dot.outdated::before {
+  background: var(--warn);
+}
+/* The one calm line about saving (src/ui/Hud.tsx SyncNote), above the tabs. */
+.sync-note {
+  flex: none;
+  margin: 0;
+  padding: var(--s-2) var(--s-4);
+  font-size: var(--fs-xs);
+  color: var(--ink-soft);
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--line);
+}
 .dot.mock::before {
   background: var(--muted);
 }
@@ -161,9 +176,19 @@
   border-radius: var(--r-lg);
   box-shadow: 0 12px 32px var(--shadow);
   animation: enter var(--dur-2) var(--ease-out);
-  /* Bigger text (⋯ → Text size) makes the menu taller than a short side panel: scroll, never clip. */
+  /* Bigger text (⋯ → Text size) makes the menu taller than a short side panel: scroll, never clip, and show that it
+     scrolls: an always-there scrollbar in a colour you can see (the page's thin --line one all but vanishes here). */
   max-height: calc(100vh - 64px);
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: auto;
+  scrollbar-color: var(--muted) var(--panel);
+  scrollbar-gutter: stable;
+}
+/* A section (Account, Accessibility, Credits) is a labelled group: its items stack like the rest. */
+.menu [role='group'] {
+  display: flex;
+  flex-direction: column;
 }
 .menu-label {
   padding: var(--s-2) var(--s-4) 0;

@@ -25,12 +25,14 @@ import {
   explainAwsError,
   explainDownloadError,
   extensionsPage,
+  BEDROCK_ACCESS_URL,
   hasLocalModel,
   helpText,
   introPlays,
   listProfiles,
   LOCAL_URL,
   localEnv,
+  localModels as claudeModelsFor,
   meaningfulLines,
   parseArgs,
   parsePastedKeys,
@@ -55,7 +57,8 @@ const AWS_DIR = path.join(os.homedir(), '.aws');
 const PROFILE = 'aws-city';
 // Claude's inference-profile ids follow the Region (us./eu./au./in.): the table the setup wizard and the CDK app use
 // (plain erasable TypeScript, no imports, so Node 24 loads it on a fresh clone). The server gets the pair as env.
-const { geoFor, modelsFor, modelsForChoice, unsupportedRegionMessage } = await import(new URL('../infra/lib/models.ts', import.meta.url).href);
+// (Which Regions have Claude, in a player's words: claudeModelsFor (lib.mjs localModels), from the same table.)
+const { geoFor, modelsForChoice } = await import(new URL('../infra/lib/models.ts', import.meta.url).href);
 const interactive = isInteractive();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -222,14 +225,14 @@ async function connectAws(tools, region, prefs, wanted) {
 /** One tiny model call on Bedrock, so missing model access shows up now instead of in the game. */
 async function bedrockHello(tools, profile, region, choice = 'claude') {
   if (choice === 'nova') return novaHello(tools, profile, region);
-  if (!geoFor(region)) return { ok: false, message: unsupportedRegionMessage(region), hint: 'Quit and run npm run live -- --region eu-west-2 (or another Region from that list).' };
-  const { main: MAIN_MODEL, light: LIGHT_MODEL } = modelsFor(region);
+  const models = claudeModelsFor(region);
+  if (!models.ok) return { ok: false, message: models.message, hint: 'Quit and run npm run live -- --region eu-west-2 (or another Region from that list).' };
   try {
     const client = new tools.bedrock.AnthropicBedrock({ awsRegion: region, providerChainResolver: async () => tools.providers.fromIni({ profile }) });
     const hello = (model) => client.messages.create({ model, max_tokens: 64, messages: [{ role: 'user', content: 'Reply with OK.' }] });
-    await hello(LIGHT_MODEL);
+    await hello(models.light);
     // The server falls back to Sonnet when Opus isn't enabled: fine to play, but say so instead of "ready".
-    const main = await hello(MAIN_MODEL).then(
+    const main = await hello(models.main).then(
       () => true,
       () => false,
     );
@@ -238,7 +241,7 @@ async function bedrockHello(tools, profile, region, choice = 'claude') {
     return {
       ok: false,
       message: explainAwsError(err),
-      hint: `Claude on Bedrock in ${region}: https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html`,
+      hint: `If Claude isn't enabled here, open the Bedrock console in ${region}, pick a Claude model in the Model catalog and send the one-time use-case form: ${BEDROCK_ACCESS_URL}`,
     };
   }
 }
@@ -414,6 +417,11 @@ async function runStep(dash, id, fn, { canSkip = false } = {}) {
 }
 
 const OUT_DIR = { chrome: 'chrome-mv3', firefox: 'firefox-mv3', safari: 'safari-mv3' };
+/**
+ * The demo is the in-browser mock whatever the .env files say (`npm run setup` writes .env.production for a deployment,
+ * and every plain build reads it): process env beats .env files in WXT and Vite. It's part of the build's stamp.
+ */
+const DEMO_ENV = { WXT_BACKEND: 'mock' };
 /** Forgets (undefined) or records the fingerprint of what's in .output/<dir>. */
 const rememberBuild = (dir, stamp) => {
   const builds = { ...readPrefs().builds };
@@ -737,7 +745,7 @@ async function main() {
       ],
       choiceLabel(mode, browser),
     );
-    if ((await runStep(dash, 'prepare', prepareStep(dash, browser, mode))) && (await runStep(dash, 'build', buildStep(dash, browser)))) await openAndControl(dash, browser);
+    if ((await runStep(dash, 'prepare', prepareStep(dash, browser, mode))) && (await runStep(dash, 'build', buildStep(dash, browser, DEMO_ENV)))) await openAndControl(dash, browser);
     finish(dash);
   }
 
@@ -750,17 +758,37 @@ async function main() {
   const usesLocal = choice === 'local' || localFallback;
   if (usesLocal && !(await ensureOllama(localModel))) bye('The AI on this computer isn’t ready, so nothing was started.');
   const tools = await awsTools();
+  /** Why a typed Region won't do (not a Region name, or no Claude there), or undefined when it will. */
+  const regionProblem = (v) => {
+    if (!REGION_RE.test(v ?? '')) return 'e.g. us-west-2';
+    const m = claudeModelsFor(v);
+    return m.ok ? undefined : m.message;
+  };
   const region =
     args.region ??
     (plan.kind !== 'ask' && REGION_RE.test(prefs.region ?? '')
       ? prefs.region
       : interactive
-        ? ((sceneDirty = true), await ask(p.text({ message: 'AWS Region (where Claude runs for you)', initialValue: prefs.region ?? 'us-west-2', validate: (v) => (!REGION_RE.test(v ?? '') ? 'e.g. us-west-2' : choice === 'nova' || geoFor(v) ? undefined : unsupportedRegionMessage(v)) })))
+        ? ((sceneDirty = true),
+          await ask(
+            p.text({
+              message: 'AWS Region (where Claude runs for you)',
+              initialValue: prefs.region ?? 'us-west-2',
+              // Amazon Nova runs on demand in the Region itself: any Region name will do. Claude needs a geo profile there.
+              validate: (v) => (choice === 'nova' && REGION_RE.test(v ?? '') ? undefined : regionProblem(v)),
+            }),
+          ))
         : 'us-west-2');
+  // One Region drives Claude and the mirrored account, and not every Region has Claude: say so before signing in.
+  const claude = choice === 'claude' ? claudeModelsFor(region) : undefined;
+  if (claude && !claude.ok) {
+    p.log.error(claude.message);
+    bye(`Run ${pc.cyan('npm start -- --region us-west-2')} (or another Region above) to try again.`);
+  }
   const { profile, account } = await connectAws(tools, region, prefs, args.profile);
   savePrefs({ mode, browser, profile, region, model: choice, localFallback, localModel });
 
-  const cfg = liveConfig(browser);
+  const cfg = liveConfig(browser, { allowFixes: args.allowFixes === true });
   const dash = panel(
     [
       { id: 'aws', title: 'AWS sign-in' },

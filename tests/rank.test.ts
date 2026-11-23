@@ -4,7 +4,13 @@ import { BADGES, earnedBadges, newBadges } from '@/state/badges';
 import { cityPoints, cityRank, LEVEL_POINTS, mayorOf, nextRankLine, RANKS, TOKEN_POINTS } from '@/state/rank';
 import { afterQuests } from '@/state/next';
 import { WORKSHOPS } from '@/world/workshops';
-import { TIER_XP } from '@/world/places';
+import { placeFor, TIER_XP } from '@/world/places';
+import { SERVICES } from '@/world/taxonomy';
+import { CARDS, PUZZLES, QUESTS } from '@/world/content';
+import { REGIONS } from '@/world/culture';
+import { levelOf, MAX_CROWNS } from '@/state/mastery';
+import { TOKENS_PER_CITY } from '@/world/tokens';
+import { isGlobalService } from '@/world/regions';
 
 // The Mayor's city rank grows only with learning (building levels) and walking (golden tokens); badges read progress.
 const city = (xp: Record<string, number>, region = 'us-west-2', extra: Partial<Progress> = {}): Progress =>
@@ -28,15 +34,55 @@ describe('city rank', () => {
     expect(cityRank(city(six), 'us-west-2').rank.id).toBe('town');
     const seven = Object.fromEntries(['lambda', 's3', 'ec2', 'dynamodb', 'sqs', 'vpc', 'rds'].map((id) => [id, TIER_XP[4]]));
     expect(cityRank(city(seven), 'us-west-2').rank.id).toBe('city');
-    expect(RANKS.map((x) => x.at)).toEqual([0, 60, 250, 700, 1400, 2200]);
+    expect(RANKS.map((x) => x.at)).toEqual([0, 60, 250, 700, 1400, 2200, 2800, 3400, 4000]);
     expect(RANKS.map((x) => x.at)).toEqual([...RANKS.map((x) => x.at)].sort((a, b) => a - b));
     expect(mayorOf('us-west-2')).toBe('Mayor of Oregon');
   });
 
-  it('has a sixth rank above Megacity (contract v2.12 sends it as Global City)', () => {
+  it('has Global City above Megacity, then three crown ranks that presence.beat sends as Global City (contract v2.12)', () => {
+    expect(RANKS.map((x) => x.title)).toEqual(['Village', 'Town', 'City', 'Metropolis', 'Megacity', 'Global City', 'Crown City', 'Cloud Capital', 'Legendary City']);
+    // The wire name is one of the contract's six; below the crowns it's the rank's own title.
+    for (const x of RANKS.slice(0, 6)) expect(x.name).toBe(x.title);
+    for (const x of RANKS.slice(6)) expect(x.name).toBe('Global City');
     const top = RANKS.at(-1)!;
-    expect(top).toMatchObject({ id: 'global', name: 'Global City' });
-    expect(nextRankLine({ rank: top, points: 2300, pct: 1 })).toMatch(/^Global City: the top rank/);
+    expect(top).toMatchObject({ id: 'legendary', title: 'Legendary City' });
+    expect(nextRankLine({ rank: top, points: 4090, pct: 1 })).toMatch(/^Legendary City: the top rank/);
+    expect(nextRankLine(cityRank(city({}, 'us-west-2', { finds: {} }), 'us-west-2'))).toMatch(/to Town:/);
+  });
+
+  it('the crown ranks need crowns, and the top is within reach in every Region', () => {
+    const DAY = 86_400_000;
+    // Everything learned: every card remembered for a month, every drawing passed, every quest done, every game played.
+    const knowsAll = (region: string, level: 'master' | 'legend'): Progress => {
+      // Global services (IAM, Route 53…) stand in every city: their buildings live in `landmarks`.
+      const p = city(Object.fromEntries(SERVICES.filter((s) => !isGlobalService(s.id)).map((s) => [s.id, TIER_XP[4]])), region, {
+        landmarks: Object.fromEntries(SERVICES.filter((s) => isGlobalService(s.id)).map((s) => [s.id, { discovered: true, xp: TIER_XP[4] }])),
+        finds: Object.fromEntries(Array.from({ length: TOKENS_PER_CITY }, (_, i) => [`${region}:${i}`, '2026-11-20'])),
+      });
+      if (level === 'master') return p;
+      const cards = Object.fromEntries(Object.values(CARDS).flat().map((c) => [c.id, { interval: 40, ease: 2.5, due: Date.now() + 40 * DAY, reps: 6 }]));
+      const games = Object.fromEntries(SERVICES.flatMap((s) => (placeFor(s.id)?.game ? [[placeFor(s.id)!.game!, { best: 100, plays: 5, scored: 5 }]] : [])));
+      return {
+        ...p,
+        cards,
+        games,
+        puzzles: Object.fromEntries(PUZZLES.map((z) => [z.id, { best: 100 }])),
+        quests: Object.fromEntries(QUESTS.map((q) => [q.id, { status: 'done' as const, step: q.steps.length }])),
+      };
+    };
+    // All 58 at Master: 2,320 + 30 for the tokens is Global City, not yet a crown rank.
+    const master = knowsAll('us-west-2', 'master');
+    expect(cityPoints(master, 'us-west-2')).toBe(SERVICES.length * 4 * LEVEL_POINTS + TOKENS_PER_CITY * TOKEN_POINTS);
+    expect(cityRank(master, 'us-west-2').rank.id).toBe('global');
+    // Every crown: the top, in every Region (a service AWS doesn't offer there still counts what the player knows).
+    for (const r of REGIONS.regions) {
+      const all = knowsAll(r.code, 'legend');
+      expect(SERVICES.every((s) => levelOf(all, s.id, r.code) === 4 + MAX_CROWNS), r.code).toBe(true);
+      const top = cityRank(all, r.code);
+      expect(top.points, r.code).toBe(SERVICES.length * (4 + MAX_CROWNS) * LEVEL_POINTS + TOKENS_PER_CITY * TOKEN_POINTS);
+      expect(top.rank.id, r.code).toBe('legendary');
+      expect(top.points - RANKS.at(-1)!.at, r.code).toBeLessThan(LEVEL_POINTS * 10);
+    }
   });
 });
 

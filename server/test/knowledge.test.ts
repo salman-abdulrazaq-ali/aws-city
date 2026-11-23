@@ -113,7 +113,9 @@ describe('agents stay grounded, never unrestricted', () => {
   it('no generic AWS tool anywhere in the server: no use_aws, no aws___run_script, no strands-agents/tools', async () => {
     const { readdirSync, readFileSync, statSync } = await import('node:fs');
     const { join } = await import('node:path');
-    const root = new URL('../src/', import.meta.url).pathname;
+    const { fileURLToPath } = await import('node:url');
+    // Not URL.pathname: that keeps %20 for a space and a leading slash before a Windows drive letter.
+    const root = fileURLToPath(new URL('../src/', import.meta.url));
     const files: string[] = [];
     const walk = (dir: string) => {
       for (const name of readdirSync(dir)) {
@@ -127,7 +129,7 @@ describe('agents stay grounded, never unrestricted', () => {
       const src = readFileSync(f, 'utf8');
       expect(src, f).not.toMatch(/use_aws|@strands-agents\/tools|vended-tools\/(shell|bash|http-request)/);
       // The managed AWS MCP Server's run_script is named only to be refused.
-      if (!f.endsWith('knowledge/mcp.ts')) expect(src, f).not.toContain('aws___run_script');
+      if (!f.replaceAll('\\', '/').endsWith('knowledge/mcp.ts')) expect(src, f).not.toContain('aws___run_script');
     }
   });
 });

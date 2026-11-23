@@ -256,6 +256,17 @@ const closePopups = async () => {
     await wait(200);
   }
 };
+// A card over everything (a citizen's question that Kai walked into, a finding) closed by its ✕, not Escape: Escape
+// also leaves Decorate. Seen in CI 23 Nov 2026: at 1–2 fps a walk from earlier reached a citizen's "?" while Decorate
+// was open, and its card took the category chip's click.
+const dismissCards = async (p = page) => {
+  for (let i = 0; i < 3 && (await p.locator('.finding-scrim').count()); i++) {
+    const close = p.locator('.finding-scrim button[aria-label="Close"]').first();
+    if (!(await close.count())) break;
+    await close.click().catch(() => {});
+    await wait(200);
+  }
+};
 const clickTab = async (label) => {
   await closePopups();
   await page.locator(`.tabs button[title="${label}"]`).click();
@@ -268,7 +279,7 @@ await shot('14-flashcards');
 await page.locator('.seg button[data-sub="build"]').click();
 // Architecture diagram: a refused drop first (a required card on a bonus spot), then follow the hints.
 // The first hinted card is dragged with the mouse; the rest are tap card → tap spot.
-const hintBtn = page.locator('.arch-row .btn');
+const hintBtn = page.locator('.arch-row .arch-hint');
 await hintBtn.click(); // the free nudge
 await hintBtn.click(); // show the card (−3)
 await page.locator('.tray .card.hinted').click();
@@ -374,7 +385,9 @@ await page.locator('.account-map .seg button', { hasText: 'Services' }).click();
 await page.locator('.account-map .seg button', { hasText: 'Diagram' }).click();
 await wait(300);
 if (await page.locator('.account-map animateMotion').count()) errors.push('my aws diagram: dots move under reduced motion');
-await page.emulateMedia({ reducedMotion: null });
+// Motion back on for the rest of the run: `reducedMotion: null` leaves 'reduce' in place (Playwright 1.63 + Chromium),
+// and under reduced motion the city parks its traffic and sends no learning couriers (src/game/Ambient.ts `still`).
+await page.emulateMedia({ reducedMotion: 'no-preference' });
 await page.getByRole('button', { name: 'Close the map' }).click();
 await city(() => (window.awsCity.setBill(false), window.awsCity.setFlow(false)));
 await wait(200);
@@ -607,7 +620,10 @@ await city(() => window.awsCity.useCity.getState().openBoard(undefined));
 await city(() => window.awsCity.useCity.getState().openLaunch(true));
 await wait(400);
 await page.locator('.launch-card .btn.primary.wide').click();
-await wait(60 * 160 + 1500);
+// The round is 60 ticks of 160 ms, about 11 s here. CI's virtual display draws the game at 1–2 fps and the round's clock
+// follows its frames (seen 23 Nov 2026: no debrief after a fixed 11 s on main and here), so wait for the debrief itself,
+// up to 2 minutes: a fast machine moves on as soon as it shows, and one that never shows still fails below.
+await page.locator('.launch-debrief .grade').waitFor({ timeout: 120_000 }).catch(() => {});
 if (!(await page.locator('.launch-debrief .grade').count())) errors.push('Launch Day: no debrief after the round');
 await shot('38-launch-day');
 await audit('launch day');
@@ -724,6 +740,8 @@ const todayIs = (log) =>
 const todoNow = (p = page) =>
   p.evaluate(() => ({
     rows: [...document.querySelectorAll('#city-tabpanel .todo-row')].map((r) => `${r.classList.contains('done') ? '✓' : '☐'} ${(r.querySelector('.todo-go') ?? r.querySelector('b'))?.textContent.trim()}`),
+    // Rows that can tick (today's goals, a quest step that holds the day open): what "n/m" counts (simple.ts todoProgress).
+    counted: [...document.querySelectorAll('#city-tabpanel .todo-row.counts')].map((r) => (r.classList.contains('done') ? '✓' : '☐')),
     count: document.querySelector('#city-tabpanel .todo-count')?.textContent.trim(),
     hud: document.querySelector('.hud .hud-todo')?.textContent.trim(),
     done: document.querySelector('#city-tabpanel .todo-done')?.textContent.trim(),
@@ -734,12 +752,12 @@ const todoNow = (p = page) =>
     extras: [...document.querySelectorAll('.hud .rank-chip, .hud .hud-lights, .ticker-line, #city-tabpanel .shift, #city-tabpanel .more-fold, .supply-drop')].map((e) => e.className),
     tabs: [...document.querySelectorAll('.tabs button')].map((b) => b.title),
   }));
-/** "n/m done" and the HUD's "To do n/m" count exactly the list's rows (the ones behind "+N more" too). */
+/** "n/m done" and the HUD's "To do n/m" count the rows that can tick (the ones behind "+N more" are goals, so they count too). */
 const todoCounts = (t, where) => {
-  const ticked = t.rows.filter((r) => r.startsWith('✓')).length + t.moreDone;
-  const want = `${ticked}/${t.rows.length + t.more}`;
-  if (t.rows.length && t.count !== `${want} done`) errors.push(`simple mode (${where}): the list says "${t.count}" for ${t.rows.length} rows (+${t.more} more), ${ticked} ticked`);
-  if (t.rows.length && !t.hud?.endsWith(want)) errors.push(`simple mode (${where}): the HUD says "${t.hud}", the list ${want}`);
+  const ticked = t.counted.filter((r) => r === '✓').length + t.moreDone;
+  const want = `${ticked}/${t.counted.length + t.more}`;
+  if (t.counted.length && t.count !== `${want} done`) errors.push(`simple mode (${where}): the list says "${t.count}" for ${t.counted.length} counted rows (+${t.more} more), ${ticked} ticked`);
+  if (t.counted.length && !t.hud?.endsWith(want)) errors.push(`simple mode (${where}): the HUD says "${t.hud}", the list ${want}`);
   if (t.done && t.rows.some((r) => r.startsWith('☐'))) errors.push(`simple mode (${where}): "Done for today" with a row still open`);
 };
 await city(() => window.awsCity.useCity.getState().setPref('simple', undefined));
@@ -981,7 +999,9 @@ await panel.screenshot({ path: `${out}/12-lookout.png` });
       ...extra,
     ];
     for (const [cat, name, kind] of picks) {
+      await dismissCards(p);
       await p.locator('.bd-cats button', { hasText: cat }).click();
+      await dismissCards(p);
       await p.locator('.bd-item').filter({ has: p.locator('.bd-name', { hasText: new RegExp(`^${name}$`) }) }).click();
       const [spot] = await p.evaluate((k) => window.awsCity.build?.spots?.(k, 1) ?? [], kind);
       if (!spot) {
@@ -1179,7 +1199,9 @@ await panel.screenshot({ path: `${out}/12-lookout.png` });
     await closePopups(); // seen in CI 21 Nov: a finding card landed on the bank's job list
     await page.getByRole('button', { name: `Go to the ${t.station} for “${t.title}”` }).click();
     const at = Date.now();
-    while (Date.now() - at < 25_000 && (await city(() => window.awsCity.useCity.getState().clientTaskOpen)) !== t.id) await wait(250);
+    // Up to 3 minutes: Kai's walk follows the game's clock, which runs ~30× slow at CI's 1–2 fps (seen 23 Nov 2026: three
+    // stations timed out at 25 s on main and here); a fast machine returns as soon as the job opens.
+    while (Date.now() - at < 180_000 && (await city(() => window.awsCity.useCity.getState().clientTaskOpen)) !== t.id) await wait(250);
     if ((await city(() => window.awsCity.useCity.getState().clientTaskOpen)) !== t.id) {
       errors.push(`clients: "${t.title}" did not open when Kai reached the ${t.station}`);
       await city((id) => window.awsCity.useCity.getState().openClientTask(id), t.id);
@@ -1226,7 +1248,7 @@ await panel.screenshot({ path: `${out}/12-lookout.png` });
       await page.locator('.job-card .explain-back button[type="submit"]').click();
       await wait(2000);
     } else if (t.type === 'wire') {
-      const hintBtn = page.locator('.job-card .arch-row .btn');
+      const hintBtn = page.locator('.job-card .arch-row .arch-hint');
       for (let i = 0; i < 12 && (await hintBtn.isEnabled()); i++) {
         await hintBtn.click();
         if (!(await page.locator('.job-card .tray .card.hinted').count())) await hintBtn.click();
@@ -1427,9 +1449,11 @@ await panel.screenshot({ path: `${out}/12-lookout.png` });
   const winter = await ctx.newPage();
   winter.on('pageerror', (e) => errors.push(`winter pageerror: ${e.message}`));
   await winter.goto(`chrome-extension://${id}/city.html?season=winter`);
-  await wait(2500);
+  await winter.waitForFunction(() => window.awsCity?.useCity, null, { timeout: 60_000 });
   await winter.evaluate(() => (window.awsCity.useCity.getState().select(undefined), window.awsCity.useCity.getState().enterRegion('eu-west-1'), window.awsCity.bus.emit('hour', { hour: 12 })));
-  await wait(4000);
+  // The city reports the season it drew once its scene is up (the screenshot used to catch the loading bar).
+  await winter.waitForFunction(() => window.awsCity?.ambient?.stats?.()?.season === 'winter', null, { timeout: 60_000 }).catch(() => {});
+  await wait(1500);
   const ws = await winter.evaluate(() => window.awsCity.ambient.stats());
   if (ws?.season !== 'winter') errors.push(`?season=winter drew ${ws?.season}`);
   await winter.screenshot({ path: `${out}/85-winter-city.png` });
@@ -1489,3 +1513,4 @@ await panel.screenshot({ path: `${out}/12-lookout.png` });
 
 console.log(errors.length ? `\n${errors.length} errors:\n` + errors.join('\n') : '\nno page errors');
 await ctx.close();
+process.exit(errors.length ? 1 : 0);

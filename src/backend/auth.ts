@@ -10,6 +10,11 @@
 // panel and the full-city tab hear each other sign in and out.
 
 const SIGN_IN_TIMEOUT_MS = 10 * 60_000;
+/** Calls made on the way out (revoking the refresh token, signing every session out) give up after this. */
+const SIGN_OUT_TIMEOUT_MS = 5_000;
+/** Telling the server the authenticator is on (POST /me/mfa) before every session ends: this many tries, waits doubling. */
+const NOTE_TRIES = 3;
+const NOTE_WAIT_MS = 250;
 
 import { browser } from 'wxt/browser';
 import { vault } from './vault';
@@ -156,7 +161,29 @@ export class CognitoAuth {
     return this.exchange({ grant_type: 'authorization_code', code, code_verifier: verifier, redirect_uri: this.redirectUri });
   }
 
+  /**
+   * Revokes the refresh token at Cognito (the app client has token revocation on: infra/lib/auth-stack.ts), so a copy
+   * of it is useless too, then forgets the tokens here. Best effort and bounded: an offline sign-out still signs out.
+   */
   async signOut() {
+    const refresh = await vault.get(REFRESH_KEY);
+    if (refresh) {
+      try {
+        await fetch(new URL('/oauth2/revoke', this.cfg.domain), {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ token: refresh, client_id: this.cfg.clientId }),
+          signal: AbortSignal.timeout(SIGN_OUT_TIMEOUT_MS),
+        });
+      } catch {
+        // Offline or timed out: still signed out here; the token expires at Cognito on its own.
+      }
+    }
+    await this.forget();
+  }
+
+  /** Forgets this device's tokens (the side panel and the tab hear it: onChange). */
+  private async forget() {
     await browser.storage.session.remove(SESSION_KEY);
     await this.forgetRefresh();
   }
@@ -206,11 +233,12 @@ export class CognitoAuth {
   }
 
   /** Calls the user pool API as the signed-in player (their access token authorises it). */
-  private async idp<T>(op: string, body: Record<string, unknown>): Promise<T> {
+  private async idp<T>(op: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     const res = await fetch(this.idpUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/x-amz-json-1.1', 'x-amz-target': `AWSCognitoIdentityProviderService.${op}` },
       body: JSON.stringify(body),
+      signal,
     });
     const json = (await res.json().catch(() => ({}))) as T & { __type?: string; message?: string };
     if (!res.ok) {
@@ -229,12 +257,44 @@ export class CognitoAuth {
     return { secret: SecretCode, uri: `otpauth://totp/AWS%20City?secret=${SecretCode}&issuer=AWS%20City` };
   }
 
-  /** Step 2: the 6-digit code from the app proves it works; then TOTP becomes the player's MFA. */
-  async confirmTotp(code: string): Promise<void> {
+  /**
+   * Step 2: the 6-digit code from the app proves it works; then TOTP becomes the player's MFA. `beforeSignOut` runs
+   * next (the server looks at once: POST /me/mfa; it throws when that didn't land, and is tried NOTE_TRIES times), then
+   * every session of this player ends (GlobalSignOut: a session a leaked password opened is gone too) and this device
+   * forgets its tokens. The player signs in again with the code, and that session is the one the server's step-up check
+   * accepts (server/src/accounts/mfa.ts). `noted: false`: the server never heard, so it dates the authenticator from when
+   * it first looks, and the player may have to sign in twice.
+   */
+  async confirmTotp(code: string, beforeSignOut?: () => Promise<void>): Promise<{ noted: boolean }> {
     const token = await this.token();
     if (!token) throw new Error('Sign in first.');
     const { Status } = await this.idp<{ Status: string }>('VerifySoftwareToken', { AccessToken: token, UserCode: code.trim(), FriendlyDeviceName: 'AWS City' });
     if (Status !== 'SUCCESS') throw new Error('That code didn’t match. Check your phone’s clock and try the next code.');
     await this.idp('SetUserMFAPreference', { AccessToken: token, SoftwareTokenMfaSettings: { Enabled: true, PreferredMfa: true } });
+    let noted = !beforeSignOut;
+    for (let i = 0; beforeSignOut && !noted && i < NOTE_TRIES; i++) {
+      if (i) await new Promise((r) => setTimeout(r, NOTE_WAIT_MS * 2 ** (i - 1)));
+      noted = await beforeSignOut().then(
+        () => true,
+        () => false,
+      );
+    }
+    const everywhere = await this.idp('GlobalSignOut', { AccessToken: token }, AbortSignal.timeout(SIGN_OUT_TIMEOUT_MS)).then(
+      () => true,
+      () => false,
+    );
+    // GlobalSignOut revoked every refresh token; if it couldn't be reached, at least this device's is revoked.
+    if (everywhere) await this.forget();
+    else await this.signOut();
+    return { noted };
+  }
+
+  /** Whether the player's authenticator is on; `external` = they sign in with Google, which keeps their second step. */
+  async mfaStatus(): Promise<'on' | 'off' | 'external' | undefined> {
+    const token = await this.token();
+    if (!token) return undefined;
+    const user = await this.idp<{ UserMFASettingList?: string[]; UserAttributes?: { Name: string }[] }>('GetUser', { AccessToken: token });
+    if (user.UserAttributes?.some((a) => a.Name === 'identities')) return 'external';
+    return user.UserMFASettingList?.includes('SOFTWARE_TOKEN_MFA') ? 'on' : 'off';
   }
 }

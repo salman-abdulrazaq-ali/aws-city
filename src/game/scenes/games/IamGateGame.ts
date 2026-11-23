@@ -64,6 +64,7 @@ export class IamGateGame extends MiniGame {
     this.wave++;
     this.roleText?.setText(`Role: ${wv.role}`);
     this.policyText?.setText(this.policyLines(wv.policy));
+    this.speak(`New role: ${wv.role}. Its policy: ${wv.policy.join('. ')}.`, true);
     this.queue = [...wv.requests].sort(() => Math.random() - 0.5);
     this.next();
   }
@@ -72,6 +73,7 @@ export class IamGateGame extends MiniGame {
     if (this.over) return;
     if (!this.queue.length) return this.nextWave();
     this.current = this.queue.shift()!;
+    this.speak(`Request: ${this.current.text}. A allows, D denies.`, true);
     const { width: w } = this.scale;
     this.card?.destroy();
     const y = this.cardAt;

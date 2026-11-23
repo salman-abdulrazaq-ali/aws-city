@@ -1,6 +1,7 @@
 // Pure helpers for `npm start` (scripts/start.mjs). No prompts or side effects here, so they're unit-tested
 // (tests/launcher.test.ts).
 import path from 'node:path';
+import { geoFor, modelsFor, SUPPORTED_REGIONS } from '../../infra/lib/models.ts';
 
 /** Browsers AWS City can open in. `cft` is Playwright's Chrome for Testing, the one that loads the extension by itself. */
 export const BROWSERS = [
@@ -18,7 +19,7 @@ export const detectBrowsers = (exists, { platform = process.platform, appDirs = 
     if (b.id === 'cft') return true;
     // Outside macOS, offer Firefox when its command exists; Chrome-family browsers use the AWS City browser.
     if (platform !== 'darwin') return b.id === 'firefox' && exists('firefox');
-    return appDirs.some((d) => exists(path.join(d, b.app)));
+    return appDirs.some((d) => exists(path.posix.join(d, b.app))); // macOS paths, whatever the host
   });
 
 /** Where Chrome-family browsers list extensions (for the "Load unpacked" steps). */
@@ -216,7 +217,24 @@ export const browserFromArg = (value) => {
 export const REGION_RE = /^[a-z]{2}(-gov)?-[a-z]+-\d$/;
 
 /**
- * `npm start` flags → { help, mode?, browser?, intro?, rebuild?, profile?, region?, error? }. Pure, so it's unit-tested.
+ * The Claude models the local server uses for a Region (infra/lib/models.ts, the same table the deploy wizard reads):
+ * `{ ok: true, main, light }`, or `{ ok: false, message }` where Claude has no geo inference profile.
+ */
+export const localModels = (region) => {
+  if (!geoFor(region)) return { ok: false, message: unsupportedRegionText(region) };
+  const { main, light } = modelsFor(region);
+  return { ok: true, main, light };
+};
+
+/** Plain words for a Region Claude can't run in, naming the ones that work. */
+export const unsupportedRegionText = (region) =>
+  `Claude on Bedrock isn't available through ${region} for AWS City. Pick one of these Regions instead: ${SUPPORTED_REGIONS.join(', ')}.`;
+
+/** Where to turn Claude on: Bedrock has no Model access page in commercial Regions; this is AWS's guide to the steps. */
+export const BEDROCK_ACCESS_URL = 'https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html';
+
+/**
+ * `npm start` flags → { help, mode?, browser?, intro?, rebuild?, profile?, region?, allowFixes?, model?, localFallback?, localModel?, error? }. Pure, so it's unit-tested.
  * `intro` is set only by --intro / --no-intro (the intro plays every run unless --no-intro).
  * `npm start --demo` (no `--`) never reaches argv: npm keeps it as npm_config_demo, so that's read too.
  */
@@ -230,6 +248,7 @@ export const parseArgs = (argv, env = {}) => {
     if (env.npm_config_intro === 'false') args.push('--no-intro');
     if (env.npm_config_intro === 'true') args.push('--intro');
     if (env.npm_config_rebuild === 'true') args.push('--rebuild');
+    if (env.npm_config_allow_fixes === 'true') args.push('--allow-fixes');
     if (env.npm_config_browser === 'true') return fail('npm kept the browser name for itself: put -- before the flags, e.g. npm start -- --demo --browser chrome');
     if (env.npm_config_browser) args.push('--browser', env.npm_config_browser);
   }
@@ -244,6 +263,7 @@ export const parseArgs = (argv, env = {}) => {
     } else if (flag === '--no-intro') out.intro = false;
     else if (flag === '--intro') out.intro = true;
     else if (flag === '--rebuild') out.rebuild = true;
+    else if (flag === '--allow-fixes') out.allowFixes = true;
     else if (flag === '--browser' || flag === '-b') {
       const v = value();
       if (!v || v.startsWith('-')) return fail('--browser needs a name, e.g. --browser chrome');
@@ -269,8 +289,8 @@ export const parseArgs = (argv, env = {}) => {
       out.localModel = v;
     } else return fail(`Unknown option "${args[i]}".`);
   }
-  if ((out.profile || out.region || out.model || out.localFallback || out.localModel) && out.mode === 'demo')
-    return fail('--profile, --region, --model and the local model options are for real AWS (--live); the demo needs no AWS account.');
+  if ((out.profile || out.region || out.allowFixes || out.model || out.localFallback || out.localModel) && out.mode === 'demo')
+    return fail('--profile, --region, --allow-fixes, --model and the local model options are for real AWS (--live); the demo needs no AWS account.');
   // Bedrock first, this computer next: behind Amazon Nova only (Claude keeps its own fallback; the server refuses it too).
   if (out.localFallback && out.model && out.model !== 'nova') return fail('--local-fallback goes with --model nova (Bedrock first, the model on this computer when Bedrock is held)');
   return out;
@@ -320,6 +340,7 @@ export const helpText = () =>
     ...BROWSERS.map((b) => `                         ${b.id.padEnd(9)}${HELP_NOTES[b.id] ?? `${b.name} (3 guided clicks the first time)`}`),
     '  --profile <name>     real AWS: the AWS profile to use (default: the one that worked last time)',
     '  --region <name>      real AWS: where Claude runs (default: last time, or us-west-2)',
+    '  --allow-fixes        real AWS: the citizens may fix what they find (you approve each fix; AWS_CITY_ALLOW_FIXES=true)',
     '  --model claude|nova|local',
     '                       real AWS: the agents’ models: Claude or Amazon Nova on Bedrock, or local, a model on this',
     '                       computer (Ollama; it offers to install it and download the model) (default: last time, or claude)',

@@ -5938,7 +5938,7 @@
           }
         ],
         "rejects": {
-          "lambda": "A function run stops after 15 minutes. Each frame takes an hour.",
+          "lambda": "A function run stops after 30 minutes. Each frame takes an hour.",
           "lightsail": "Lightsail servers cost the same each month, busy or idle.",
           "apprunner": "App Runner serves web apps that answer requests, not hour-long jobs."
         }

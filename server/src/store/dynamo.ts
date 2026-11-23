@@ -7,12 +7,12 @@ import { withPresenceCache } from '../social.js';
 import { log } from '../log.js';
 import type { Resource } from '../state/model.js';
 import type { Progress } from '../world.js';
-import { type AccountLocks, type AccountRecord, type BillRecord, DELETED_TOMBSTONE_MS, LockLostError, type Stores } from './types.js';
+import { type AccountLocks, type AccountRecord, type BillRecord, DELETED_TOMBSTONE_MS, type LinkIdentity, LockLostError, type Stores } from './types.js';
 
 /**
  * Single-table design (infra/lib/data-stack.ts):
- *   USER#<sub>    PROGRESS | ACCOUNT | BILL | QUOTA#<day>
- *   QUOTA#GLOBAL  <day>
+ *   USER#<sub>    PROGRESS | ACCOUNT | BILL | QUOTA#<day> | SEEN (first model call) | MFA (authenticator on since)
+ *   QUOTA#GLOBAL… <day>   (QUOTA#GLOBAL, and QUOTA#GLOBAL#NEW for players first seen that day)
  *   AWSACCT#<id>  LOCK | PENDING#<kind:id>
  *   DELETED#<sub> TOMBSTONE   (DELETE /me: refuses the player's still-valid tokens for a while)
  *   PRESENCE#<region>, LB#<board>#<week>, USER#<sub> SOCIAL#…   (v2.11 live city and leaderboards: store/social-dynamo.ts)
@@ -24,12 +24,20 @@ const RENEW_MS = 10_000;
 const isConditional = (err: unknown) => (err as { name?: string })?.name === 'ConditionalCheckFailedException';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const ttl = (ms: number) => Math.floor((Date.now() + ms) / 1000);
+/** The ACCOUNT item is still the link `id` names (sameLink: the same ExternalId, and linkedAt the same or still absent). */
+const sameLinkCondition = (id: LinkIdentity) => ({
+  ConditionExpression: `attribute_exists(pk) AND #r.#e = :e AND ${id.linkedAt === undefined ? 'attribute_not_exists(#r.#l)' : '#r.#l = :l'}`,
+  ExpressionAttributeNames: { '#r': 'record', '#e': 'externalId', '#l': 'linkedAt' },
+  ExpressionAttributeValues: { ':e': id.externalId, ...(id.linkedAt !== undefined ? { ':l': id.linkedAt } : {}) },
+});
 
 export const dynamoStores = (deps: { client: DynamoDBClient; table: string; now?: () => number; renewMs?: number }): Stores => {
   const db = DynamoDBDocumentClient.from(deps.client, { marshallOptions: { removeUndefinedValues: true } });
   const TableName = deps.table;
   const now = deps.now ?? Date.now;
   const user = (sub: string) => `USER#${sub}`;
+  /** A player's daily counter lives under their key; the city's (GLOBAL…) under their own. */
+  const quotaKey = (key: string, day: string) => (key.startsWith('GLOBAL') ? { pk: `QUOTA#${key}`, sk: day } : { pk: user(key), sk: `QUOTA#${day}` });
   const social = withPresenceCache(dynamoSocial(db, TableName, now));
 
   const locks: AccountLocks = {
@@ -143,11 +151,47 @@ export const dynamoStores = (deps: { client: DynamoDBClient; table: string; now?
     },
     accounts: {
       async get(sub) {
-        const out = await db.send(new GetCommand({ TableName, Key: { pk: user(sub), sk: 'ACCOUNT' } }));
+        // Strongly consistent: live() and the once-a-minute re-read must see a Disconnect or a new link another task just wrote.
+        const out = await db.send(new GetCommand({ TableName, Key: { pk: user(sub), sk: 'ACCOUNT' }, ConsistentRead: true }));
         return out.Item?.record as AccountRecord | undefined;
       },
-      async put(sub, record) {
-        await db.send(new PutCommand({ TableName, Item: { pk: user(sub), sk: 'ACCOUNT', record } }));
+      async put(sub, record, ifLink) {
+        // With ifLink: only onto that same link, atomically (a Disconnect, DELETE /me or a new verify on another task wins);
+        // 'new': only while nothing is stored (another task's first link wins).
+        const condition = ifLink === 'new' ? { ConditionExpression: 'attribute_not_exists(pk)' } : ifLink ? sameLinkCondition(ifLink) : {};
+        try {
+          await db.send(new PutCommand({ TableName, Item: { pk: user(sub), sk: 'ACCOUNT', record }, ...condition }));
+          return true;
+        } catch (err) {
+          if (ifLink && isConditional(err)) return false;
+          throw err;
+        }
+      },
+      async update(sub, fields, ifLink) {
+        // Only these fields, in place: whatever else another task wrote on the same link since (a new setup link) stays.
+        const set = Object.entries(fields).filter(([, v]) => v !== undefined);
+        if (!set.length) throw new Error('accounts.update: nothing to set');
+        const same = sameLinkCondition(ifLink);
+        try {
+          const out = await db.send(
+            new UpdateCommand({
+              TableName,
+              Key: { pk: user(sub), sk: 'ACCOUNT' },
+              UpdateExpression: `SET ${set.map((_, i) => `#r.#f${i} = :v${i}`).join(', ')}`,
+              ConditionExpression: same.ConditionExpression,
+              ExpressionAttributeNames: { ...same.ExpressionAttributeNames, ...Object.fromEntries(set.map(([k], i) => [`#f${i}`, k])) },
+              ExpressionAttributeValues: { ...same.ExpressionAttributeValues, ...Object.fromEntries(set.map(([, v], i) => [`:v${i}`, v])) },
+              ReturnValues: 'ALL_NEW',
+            }),
+          );
+          return out.Attributes?.record as AccountRecord | undefined;
+        } catch (err) {
+          if (isConditional(err)) return undefined;
+          throw err;
+        }
+      },
+      async delete(sub) {
+        await db.send(new DeleteCommand({ TableName, Key: { pk: user(sub), sk: 'ACCOUNT' } }));
       },
     },
     // v2.5: the bill switch and the last Cost Explorer read (deleted with the rest of USER#<sub> by deleteUser).
@@ -208,12 +252,11 @@ export const dynamoStores = (deps: { client: DynamoDBClient; table: string; now?
     },
     quota: {
       async consume(key, day, limit) {
-        const isGlobal = key === 'GLOBAL';
         try {
           await db.send(
             new UpdateCommand({
               TableName,
-              Key: isGlobal ? { pk: 'QUOTA#GLOBAL', sk: day } : { pk: user(key), sk: `QUOTA#${day}` },
+              Key: quotaKey(key, day),
               UpdateExpression: 'ADD calls :one SET #ttl = :ttl',
               ConditionExpression: 'attribute_not_exists(calls) OR calls < :limit',
               ExpressionAttributeNames: { '#ttl': 'ttl' },
@@ -227,8 +270,62 @@ export const dynamoStores = (deps: { client: DynamoDBClient; table: string; now?
         }
       },
       async used(key, day) {
-        const out = await db.send(new GetCommand({ TableName, Key: key === 'GLOBAL' ? { pk: 'QUOTA#GLOBAL', sk: day } : { pk: user(key), sk: `QUOTA#${day}` } }));
+        const out = await db.send(new GetCommand({ TableName, Key: quotaKey(key, day) }));
         return (out.Item?.calls as number | undefined) ?? 0;
+      },
+      async refund(key, day) {
+        try {
+          await db.send(
+            new UpdateCommand({
+              TableName,
+              Key: quotaKey(key, day),
+              UpdateExpression: 'ADD calls :minus',
+              ConditionExpression: 'calls > :zero',
+              ExpressionAttributeValues: { ':minus': -1, ':zero': 0 },
+            }),
+          );
+        } catch (err) {
+          if (!isConditional(err)) throw err;
+        }
+      },
+      async firstSeen(sub, day) {
+        // Kept until the player is deleted (under USER#<sub>, no ttl): the new-player limit counts days from it.
+        const out = await db.send(
+          new UpdateCommand({
+            TableName,
+            Key: { pk: user(sub), sk: 'SEEN' },
+            UpdateExpression: 'SET firstDay = if_not_exists(firstDay, :d)',
+            ExpressionAttributeValues: { ':d': day },
+            ReturnValues: 'ALL_NEW',
+          }),
+        );
+        return (out.Attributes?.firstDay as string | undefined) ?? day;
+      },
+      async firstDay(sub) {
+        const out = await db.send(new GetCommand({ TableName, Key: { pk: user(sub), sk: 'SEEN' } }));
+        return out.Item?.firstDay as string | undefined;
+      },
+    },
+    mfa: {
+      async since(sub, at) {
+        // Atomic: two tasks seeing the authenticator at once keep the first time.
+        const out = await db.send(
+          new UpdateCommand({
+            TableName,
+            Key: { pk: user(sub), sk: 'MFA' },
+            UpdateExpression: 'SET since = if_not_exists(since, :t)',
+            ExpressionAttributeValues: { ':t': at },
+            ReturnValues: 'ALL_NEW',
+          }),
+        );
+        return (out.Attributes?.since as number | undefined) ?? at;
+      },
+      async get(sub) {
+        const out = await db.send(new GetCommand({ TableName, Key: { pk: user(sub), sk: 'MFA' } }));
+        return out.Item?.since as number | undefined;
+      },
+      async forget(sub) {
+        await db.send(new DeleteCommand({ TableName, Key: { pk: user(sub), sk: 'MFA' } }));
       },
     },
     locks,

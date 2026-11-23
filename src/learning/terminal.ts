@@ -3,15 +3,20 @@
 // order (`aws lambda create-function`), and every expected flag present in any order. A `<name>` in the expected
 // command takes any value and is captured, so the simulated output can echo it back (`{{name}}`). A flag in brackets
 // (`[--description <text>]`) may be left out. A known mistake (a missing flag, a wrong value) answers with the error the
-// real CLI prints and a teaching note; pasting a real error runs through the same list (`explainError`).
+// real CLI prints and a teaching note; pasting a real error runs through the same list (`explainError`). Only an
+// argument the real CLI requires (`CLI_REQUIRED`) gets its ParamValidation error when it's left out; a flag the step
+// uses but the CLI doesn't require gets a coaching line in the game's voice, never a made-up CLI error.
 
 export interface TerminalError {
   /** The error code or text the real CLI prints (`AccessDeniedException`, `ResourceConflictException`). */
   code: string;
-  /** What the terminal prints when the mistake happens in practice. */
+  /** What the terminal prints when the mistake happens in practice; `{{name}}` takes the value given for `<name>`. */
   message: string;
-  /** When practice triggers it: a flag left out, or a flag given a value that matches the pattern. */
-  when?: { missing?: string; flag?: string; value?: string };
+  /**
+   * When practice triggers it; every condition given must hold: a flag left out, a flag given a value that matches the
+   * pattern, a `<name>` the command uses twice given two different values (`mismatch`).
+   */
+  when?: { missing?: string; flag?: string; value?: string; mismatch?: string };
   explain: string;
   fix: string;
 }
@@ -21,8 +26,15 @@ export interface TerminalStep {
   cli: string;
   /** What a successful run prints; `{{name}}` takes the value the player gave for `<name>`. */
   output: string;
+  /** What a successful run prints instead when a flag's value matches (`--region` us-east-1); the first match wins. */
+  outputs?: { when: { flag: string; value: string }; output: string }[];
+  /** `--item` may be any well-formed DynamoDB item that carries these key attributes, not only the step's own. */
+  itemKey?: string[];
   errors?: TerminalError[];
 }
+
+/** A line in the game's own voice (a coaching note), not something the real CLI prints. */
+export const isCoaching = (text: string) => text.startsWith('Practice terminal:');
 
 export type RunResult =
   | { kind: 'ok'; output: string; values: Record<string, string> }
@@ -67,23 +79,31 @@ export function tokenize(line: string): string[] {
 interface Parsed {
   words: string[];
   flags: Map<string, string | true>;
+  /** Positional arguments after the flags (`get-object … downloaded-sample.txt`), a shell redirect (`> key.pem`) left out. */
+  rest: string[];
 }
 
 /** Positional words until the first flag; `--flag value`, `--flag=value` or a bare `--flag` after that. */
-function parse(tokens: string[]): Parsed {
+function parse(all: string[]): Parsed {
+  // `> file` is the shell's, not the CLI's.
+  const tokens = all.includes('>') ? all.slice(0, all.indexOf('>')) : all;
   const words: string[] = [];
+  const rest: string[] = [];
   const flags = new Map<string, string | true>();
   let i = 0;
   while (i < tokens.length && !tokens[i].startsWith('-')) words.push(tokens[i++]);
   while (i < tokens.length) {
     const t = tokens[i++];
-    if (!t.startsWith('-')) continue; // a stray value: ignored rather than guessed at
+    if (!t.startsWith('-')) {
+      rest.push(t);
+      continue;
+    }
     const eq = t.indexOf('=');
     if (eq > 0) flags.set(t.slice(0, eq), t.slice(eq + 1));
     else if (i < tokens.length && !tokens[i].startsWith('--')) flags.set(t, tokens[i++]);
     else flags.set(t, true);
   }
-  return { words, flags };
+  return { words, flags, rest };
 }
 
 interface Expected extends Parsed {
@@ -105,9 +125,10 @@ const PLACEHOLDER = /<([a-z0-9-]+)>/gi;
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 /**
  * One expected word or value against what the player typed: `<name>` parts take any non-empty text (and are captured
- * into `values`); JSON compares by meaning, not spacing; everything else exactly.
+ * into `values`, the latest one kept; a name already given another value goes into `mismatched`); JSON compares by
+ * meaning, not spacing; everything else exactly.
  */
-function matches(want: string, got: string, values: Record<string, string>) {
+function matches(want: string, got: string, values: Record<string, string>, mismatched?: Set<string>) {
   if (want === got) return true;
   const names: string[] = [];
   const re = want.split(PLACEHOLDER).map((part, i) => (i % 2 ? (names.push(part), '(.+?)') : escape(part))).join('');
@@ -115,7 +136,10 @@ function matches(want: string, got: string, values: Record<string, string>) {
     const m = new RegExp(`^${re}$`, 's').exec(got);
     if (!m) return false;
     if (m.slice(1).some((v) => !v.trim())) return false;
-    names.forEach((n, i) => (values[n] = m[i + 1]));
+    names.forEach((n, i) => {
+      if (values[n] !== undefined && values[n] !== m[i + 1]) mismatched?.add(n);
+      values[n] = m[i + 1];
+    });
     return true;
   }
   try {
@@ -176,31 +200,234 @@ export function run(line: string, step: TerminalStep): RunResult {
   got.words = sameAsCli(want.words, got.words);
   const name = want.words.join(' ');
   const values: Record<string, string> = {};
-  if (got.words.length !== want.words.length || !want.words.every((w, i) => matches(w, got.words[i], values))) {
+  const mismatched = new Set<string>();
+  if (got.words.length !== want.words.length || !want.words.every((w, i) => matches(w, got.words[i], values, mismatched))) {
     if (got.words[0] !== 'aws') return { kind: 'other', output: `${got.words[0] ?? tokens[0]}: this practice terminal only runs the AWS CLI. This step uses \`${name}\`.` };
-    return { kind: 'other', output: `Not this step's command. This step runs \`${name}\`.` };
+    return { kind: 'other', output: parserRefusal(want.words, got.words) ?? `Not this step's command. This step runs \`${name}\`.` };
   }
-  // A taught mistake first: it names the exact thing that went wrong.
-  for (const e of step.errors ?? []) {
-    const w = e.when;
-    if (!w) continue;
-    if (w.missing && !got.flags.has(w.missing)) return { kind: 'error', output: e.message, error: e };
-    if (w.flag && w.value) {
-      const v = got.flags.get(w.flag);
-      if (typeof v === 'string' && new RegExp(w.value).test(v)) return { kind: 'error', output: e.message, error: e };
-    }
-  }
+  // The same settings written another way the CLI reads alike (keys in another order, the JSON form) count as the step's.
   for (const [flag, v] of want.flags) {
     const g = got.flags.get(flag);
-    if (g === undefined) {
-      if (want.optional.has(flag)) continue;
-      return { kind: 'other', output: `aws: [ERROR]: An error occurred (ParamValidation): the following arguments are required: ${flag}` };
-    }
-    if (v === true) continue;
-    if (g === true) return { kind: 'other', output: `aws: [ERROR]: An error occurred (ParamValidation): argument ${flag}: expected one argument` };
-    if (!matches(v, g, values)) return { kind: 'other', output: `Close. This step sets ${flag} to ${v}.` };
+    if (typeof v === 'string' && typeof g === 'string') got.flags.set(flag, sameShape(v, g));
   }
-  return { kind: 'ok', output: fill(step.output, values), values };
+  // Everything given is read first, in the command's order: names fill the messages, and a `<name>` given two values
+  // is a mismatch a taught mistake can name. A positional argument may be any file name.
+  const right = new Set<string>();
+  for (const [flag, v] of want.flags) {
+    const g = got.flags.get(flag);
+    if (typeof v === 'string' && typeof g === 'string' && matches(v, g, values, mismatched)) right.add(flag);
+  }
+  want.rest.forEach((w, i) => got.rest[i] !== undefined && matches(w, got.rest[i], values, mismatched));
+  const item = got.flags.get('--item');
+  if (step.itemKey && typeof item === 'string' && isItem(item, step.itemKey)) right.add('--item');
+  // A taught mistake first: it names the exact thing that went wrong.
+  const fires = (w: TerminalError['when']) => {
+    if (!w || !(w.missing || (w.flag && w.value) || w.mismatch)) return false;
+    if (w.missing && got.flags.has(w.missing)) return false;
+    if (w.flag && w.value) {
+      const v = got.flags.get(w.flag);
+      if (typeof v !== 'string' || !new RegExp(w.value).test(v)) return false;
+    }
+    return !w.mismatch || mismatched.has(w.mismatch);
+  };
+  const taught = (step.errors ?? []).find((e) => fires(e.when));
+  if (taught) return { kind: 'error', output: fill(taught.message, values), error: taught };
+  // What the CLI's own parser refuses: a flag with no value, then the arguments it requires (all of them, like the CLI).
+  for (const [flag, v] of want.flags)
+    if (v !== true && got.flags.get(flag) === true) return { kind: 'other', output: `aws: [ERROR]: An error occurred (ParamValidation): argument ${flag}: expected one argument` };
+  const lacking = requiredBy(want).filter((r) => (r === OUTFILE ? !got.rest.length : !got.flags.has(r)));
+  if (lacking.length) return { kind: 'other', output: `aws: [ERROR]: An error occurred (ParamValidation): the following arguments are required: ${lacking.join(', ')}` };
+  // Anything else the step uses, the CLI runs without: coach, never a made-up CLI error.
+  for (const [flag, v] of want.flags)
+    if (!got.flags.has(flag) && !want.optional.has(flag))
+      return { kind: 'other', output: `Practice terminal: this step also ${v === true ? `uses ${flag}` : `sets ${flag} ${v}`}. Add it and run it again.` };
+  if (got.rest.length < want.rest.length) return { kind: 'other', output: `Practice terminal: this step ends with ${want.rest.slice(got.rest.length).join(' ')}. Add it and run it again.` };
+  for (const [flag, v] of want.flags) if (v !== true && got.flags.has(flag) && !right.has(flag)) return { kind: 'other', output: `Close. This step sets ${flag} to ${v}.` };
+  const shown = step.outputs?.find(({ when }) => {
+    const v = got.flags.get(when.flag);
+    return typeof v === 'string' && new RegExp(when.value).test(v);
+  });
+  return { kind: 'ok', output: fill(shown?.output ?? step.output, values), values };
+}
+
+/** A flat shorthand value (`A=1,B=2`: no lists, no nesting) as its pairs, or undefined. */
+function shorthand(s: string): [string, string][] | undefined {
+  if (!s.includes('=') || /[{}[\]]/.test(s)) return undefined;
+  const pairs = s.split(',').map((p) => (p.indexOf('=') > 0 ? ([p.slice(0, p.indexOf('=')), p.slice(p.indexOf('=') + 1)] as [string, string]) : undefined));
+  return pairs.every(Boolean) ? (pairs as [string, string][]) : undefined;
+}
+
+/**
+ * A value the CLI reads the same as the step's shorthand, rewritten the step's way: the same keys in another order
+ * (`IgnorePublicAcls=true,BlockPublicAcls=true,…`) or the JSON form (`{"LocationConstraint":"eu-west-1"}`). Anything
+ * else comes back as typed.
+ */
+function sameShape(want: string, got: string): string {
+  const keys = shorthand(want)?.map(([k]) => k);
+  if (!keys) return got;
+  let given: Map<string, string> | undefined;
+  const pairs = shorthand(got);
+  if (pairs) given = new Map(pairs);
+  else {
+    try {
+      const o: unknown = JSON.parse(got);
+      if (o && typeof o === 'object' && !Array.isArray(o) && Object.values(o).every((v) => ['string', 'number', 'boolean'].includes(typeof v)))
+        given = new Map(Object.entries(o).map(([k, v]) => [k, String(v)]));
+    } catch {
+      return got;
+    }
+  }
+  if (!given || given.size !== keys.length || !keys.every((k) => given.has(k))) return got;
+  return keys.map((k) => `${k}=${given.get(k)}`).join(',');
+}
+
+const ATTRIBUTE_TYPES = new Set(['S', 'N', 'B', 'BOOL', 'NULL', 'M', 'L', 'SS', 'NS', 'BS']);
+/** A well-formed DynamoDB item (every attribute one typed value) whose key attributes are each a string, number or binary. */
+function isItem(text: string, key: string[]): boolean {
+  try {
+    const o: unknown = JSON.parse(text);
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return false;
+    const item = o as Record<string, unknown>;
+    const typeOf = (a: unknown) => (a && typeof a === 'object' && !Array.isArray(a) && Object.keys(a).length === 1 ? Object.keys(a)[0] : undefined);
+    const attrs = Object.values(item);
+    return attrs.length > 0 && attrs.every((a) => ATTRIBUTE_TYPES.has(typeOf(a) ?? '')) && key.every((k) => ['S', 'N', 'B'].includes(typeOf(item[k]) ?? ''));
+  } catch {
+    return false;
+  }
+}
+
+/** How alike two words are, like Python's difflib ratio (2 × common letters in order ÷ both lengths). */
+function likeness(a: string, b: string): number {
+  const row = new Array<number>(b.length + 1).fill(0);
+  for (const ca of a) {
+    let diag = 0;
+    for (let j = 1; j <= b.length; j++) {
+      const up = row[j];
+      row[j] = ca === b[j - 1] ? diag + 1 : Math.max(row[j], row[j - 1]);
+      diag = up;
+    }
+  }
+  return (2 * row[b.length]) / (a.length + b.length || 1);
+}
+
+const CLI_ERROR = 'aws: [ERROR]: An error occurred (ParamValidation): ';
+/** The CLI's usage block (aws-cli v2 `awscli/argparser.py`: USAGE and HELP_BLURB), printed after a parser error. */
+const CLI_USAGE =
+  'usage: aws [options] <command> <subcommand> [<subcommand> ...] [parameters]\nTo see help text, you can run:\n\n  aws help\n  aws <command> help\n  aws <command> <subcommand> help';
+/** The usage `aws s3` prints for a path that should be an S3 URI (aws-cli v2 `customizations/s3/subcommands.py`). */
+const S3_USAGE: Record<string, string> = {
+  cp: 'usage: aws s3 cp <LocalPath> <S3Uri> or <S3Uri> <LocalPath> or <S3Uri> <S3Uri>',
+  mb: '<S3Uri>',
+  rb: '<S3Uri>',
+};
+/** Commands that exist, so a near miss of the step's (`get-object` for `put-object`) isn't taken for a typo. */
+const S3_COMMANDS = ['cp', 'mv', 'rm', 'rb', 'mb', 'ls', 'sync', 'presign', 'website'];
+const known = (service: string, op: string) =>
+  service === 's3' ? S3_COMMANDS.includes(op) : Object.keys(CLI_REQUIRED).some((k) => k === `${service} ${op}` || k.startsWith(`${service} ${op} `));
+
+/**
+ * What the CLI's own parser prints for a command word typed wrong (aws-cli v2 `argparser.py` `_check_value`: "Found
+ * invalid choice", with the step's word as "Maybe you meant" when difflib would offer it, cutoff 0.8) or an `aws s3`
+ * path without `s3://` ("Error: Invalid argument type"). Undefined when the line is just another command.
+ */
+function parserRefusal(want: string[], got: string[]): string | undefined {
+  const [, service, op] = got;
+  if (got[0] !== 'aws' || service !== want[1] || op === undefined || want[2] === undefined) return undefined;
+  if (op !== want[2]) {
+    if (known(service, op) || likeness(op, want[2]) < 0.8) return undefined;
+    return `${CLI_ERROR}argument ${service === 's3' ? 'subcommand' : 'operation'}: Found invalid choice '${op}'\n\nMaybe you meant:\n\n  * ${want[2]}\n\n${CLI_USAGE}`;
+  }
+  const usage = S3_USAGE[op];
+  if (service !== 's3' || !usage || got.length !== want.length || got.slice(3).some((g) => g.startsWith('s3://'))) return undefined;
+  return want.slice(3).some((w) => w.startsWith('s3://')) ? `${CLI_ERROR}${usage}\nError: Invalid argument type` : undefined;
+}
+
+/** A command's file to save to (`aws s3api get-object … <outfile>`): a positional argument, named so in the CLI's errors. */
+const OUTFILE = 'outfile';
+/**
+ * The arguments the real AWS CLI requires, for the commands the workshops and client jobs use: the options its reference
+ * page's synopsis shows without brackets (in that order), and `outfile` for a command that saves to a file. A command
+ * not listed here, or an option not listed for it, is one the CLI runs without: leaving it out gets a coaching line.
+ */
+const CLI_REQUIRED: Record<string, string[]> = {
+  'athena start-query-execution': ['--query-string'],
+  'autoscaling update-auto-scaling-group': ['--auto-scaling-group-name'],
+  'backup create-backup-vault': ['--backup-vault-name'],
+  'cloudformation deploy': ['--template-file', '--stack-name'],
+  'cloudfront create-invalidation': ['--distribution-id'],
+  'cloudfront create-origin-access-control': ['--origin-access-control-config'],
+  'cloudfront delete-distribution': ['--id'],
+  'cloudfront wait distribution-deployed': ['--id'],
+  'cloudwatch delete-alarms': ['--alarm-names'],
+  'cloudwatch put-metric-alarm': ['--alarm-name', '--evaluation-periods', '--comparison-operator'],
+  'cloudwatch put-metric-data': ['--namespace'],
+  'cloudwatch set-alarm-state': ['--alarm-name', '--state-value', '--state-reason'],
+  'cognito-idp create-user-pool': ['--pool-name'],
+  'dynamodb create-table': ['--attribute-definitions', '--table-name', '--key-schema'],
+  'dynamodb delete-table': ['--table-name'],
+  'dynamodb get-item': ['--table-name', '--key'],
+  'dynamodb put-item': ['--table-name', '--item'],
+  'dynamodb update-table': ['--table-name'],
+  'dynamodb wait table-exists': ['--table-name'],
+  'ec2 create-key-pair': ['--key-name'],
+  'ec2 create-security-group': ['--description', '--group-name'],
+  'ec2 create-tags': ['--resources', '--tags'],
+  'ec2 stop-instances': ['--instance-ids'],
+  'ec2 terminate-instances': ['--instance-ids'],
+  'ecs describe-services': ['--services'],
+  'events delete-rule': ['--name'],
+  'events put-events': ['--entries'],
+  'events put-rule': ['--name'],
+  'events put-targets': ['--rule', '--targets'],
+  'events remove-targets': ['--rule', '--ids'],
+  'iam attach-role-policy': ['--role-name', '--policy-arn'],
+  'kinesis create-stream': ['--stream-name'],
+  'kinesis put-record': ['--data', '--partition-key'],
+  'kms create-alias': ['--alias-name', '--target-key-id'],
+  'kms decrypt': ['--ciphertext-blob'],
+  'kms enable-key-rotation': ['--key-id'],
+  'kms encrypt': ['--key-id', '--plaintext'],
+  'kms generate-data-key': ['--key-id'],
+  'kms schedule-key-deletion': ['--key-id'],
+  'lambda create-function': ['--function-name', '--role'],
+  'lambda delete-function': ['--function-name'],
+  'lambda invoke': ['--function-name', OUTFILE],
+  'lambda publish-version': ['--function-name'],
+  'lambda put-function-concurrency': ['--function-name', '--reserved-concurrent-executions'],
+  'polly synthesize-speech': ['--output-format', '--text', '--voice-id', OUTFILE],
+  'rds create-db-instance': ['--db-instance-identifier', '--db-instance-class', '--engine'],
+  'rds delete-db-instance': ['--db-instance-identifier'],
+  'rds modify-db-instance': ['--db-instance-identifier'],
+  's3api create-bucket': ['--bucket'],
+  's3api delete-bucket': ['--bucket'],
+  's3api delete-object': ['--bucket', '--key'],
+  's3api get-bucket-lifecycle-configuration': ['--bucket'],
+  's3api get-object': ['--bucket', '--key', OUTFILE],
+  's3api put-bucket-policy': ['--bucket', '--policy'],
+  's3api put-bucket-versioning': ['--bucket', '--versioning-configuration'],
+  's3api put-object': ['--bucket', '--key'],
+  's3api put-public-access-block': ['--bucket', '--public-access-block-configuration'],
+  'sagemaker describe-endpoint': ['--endpoint-name'],
+  'sns create-topic': ['--name'],
+  'sns delete-topic': ['--topic-arn'],
+  'sns subscribe': ['--topic-arn', '--protocol'],
+  'sqs create-queue': ['--queue-name'],
+  'sqs delete-message': ['--queue-url', '--receipt-handle'],
+  'sqs delete-queue': ['--queue-url'],
+  'sqs get-queue-attributes': ['--queue-url'],
+  'sqs receive-message': ['--queue-url'],
+  'sqs send-message': ['--queue-url', '--message-body'],
+  'sqs set-queue-attributes': ['--queue-url', '--attributes'],
+  'ssm get-parameter': ['--name'],
+  'sts assume-role': ['--role-arn', '--role-session-name'],
+  'textract detect-document-text': ['--document'],
+};
+
+/** What the CLI requires of the step's command, as far as the step's command uses it (a check never trips the right answer). */
+function requiredBy(want: Expected): string[] {
+  const cmd = want.words.slice(1).join(' ');
+  const key = Object.keys(CLI_REQUIRED).find((k) => cmd === k || cmd.startsWith(`${k} `));
+  return (key ? CLI_REQUIRED[key] : []).filter((r) => (r === OUTFILE ? want.rest.length > 0 : want.flags.has(r) && !want.optional.has(r)));
 }
 
 const S3_KEYED = /^s3:\/\/[^/]+\/([^/<>{}]+)$/;

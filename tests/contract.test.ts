@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { mergeProgress } from '@/state/progress';
 import { MockBackend } from '@/backend/MockBackend';
-import { bearerSubprotocols, CONTRACT_VERSION, isServerEvent, type AwsHealthEvent, type CityFinding, type ServerEvent } from '@/backend/contract';
+import { bearerSubprotocols, CONTRACT_HEADER, CONTRACT_PARAM, CONTRACT_VERSION, isServerEvent, parseContract, type AwsHealthEvent, type CityFinding, type ServerEvent } from '@/backend/contract';
 import { DEMO, demoBill, demoFindings, demoFlow, demoHealth, demoInventory, demoNews } from '@/backend/mockAccount';
 import regionFacts from '../shared/region-facts.json' with { type: 'json' };
 import { ruleById } from '@/world/citizens';
@@ -32,11 +32,14 @@ describe('MockBackend speaks the contract', () => {
   });
 
   it('chat.ask streams chat.answer chunks ending with done=true', async () => {
+    // Fake time: each streamed word is a timer, and a real one lasts a whole OS tick (~15.6 ms on Windows).
+    vi.useFakeTimers();
+    onTestFinished(() => void vi.useRealTimers());
     const mock = new MockBackend({ speed: 200 });
     const events: ServerEvent[] = [];
     mock.onEvent((e) => events.push(e));
     mock.send({ action: 'chat.ask', requestId: 'r1', districtId: 'storage', question: 'When should I use EFS?', context: {} });
-    await new Promise((r) => setTimeout(r, 400));
+    await vi.advanceTimersByTimeAsync(400);
     const chunks = events.filter((e) => e.type === 'chat.answer');
     expect(chunks.length).toBeGreaterThan(3);
     expect(chunks.at(-1)).toMatchObject({ done: true, districtId: 'storage', agentId: 'efs' });
@@ -102,6 +105,30 @@ describe('MockBackend speaks the contract', () => {
         ].sort(),
       );
       expect(findingsIn(events).every((f) => f.status === 'open')).toBe(true);
+    });
+
+    it('a finding the player fixed (Progress.fixes) stays fixed: the demo never sends it open again', async () => {
+      const open = demoFindings().filter((f) => f.status === 'open');
+      const [first, last] = [open[0], open.at(-1)!];
+      const mock = new MockBackend({ speed: 200 });
+      const events: ServerEvent[] = [];
+      mock.onEvent((e) => events.push(e));
+      // Fixed in an earlier session: known before the city opens.
+      mock.putProgress({ version: 2, landmarks: {}, updatedAt: '', fixes: { [first.id]: '2026-11-19T10:00:00.000Z' } });
+      mock.connect();
+      // Fixed on another surface while this one was still sending its findings: it stays away too.
+      await sleep(5);
+      mock.putProgress({ version: 2, landmarks: {}, updatedAt: '', fixes: { [first.id]: '2026-11-19T10:00:00.000Z', [last.id]: '2026-11-20T10:00:00.000Z' } });
+      await sleep(500);
+      mock.disconnect();
+      const sent = findingsIn(events).map((f) => f.id);
+      expect(sent).not.toContain(first.id);
+      expect(sent).not.toContain(last.id);
+      expect(sent).toHaveLength(open.length - 2);
+      // Asking to fix it again: it's already fixed.
+      mock.send({ action: 'finding.fix', requestId: 'again', findingId: first.id });
+      await sleep(20);
+      expect(events.find((e) => e.type === 'error' && e.requestId === 'again')).toMatchObject({ message: 'That one is already fixed.' });
     });
 
     it('builds findings from wa-rules.json, with the right fix scope', () => {
@@ -376,8 +403,8 @@ describe('MockBackend speaks the contract', () => {
   describe('AWS public status (v2.6)', () => {
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-    it('is contract 2.18 (2.6 added these), and both new events pass the frame guard', () => {
-      expect(CONTRACT_VERSION).toBe('2.18');
+    it('is contract 2.19 (2.6 added these), and both new events pass the frame guard', () => {
+      expect(CONTRACT_VERSION).toBe('2.19');
       expect(isServerEvent(demoHealth())).toBe(true);
       expect(isServerEvent(demoNews())).toBe(true);
     });
@@ -541,5 +568,135 @@ describe('Merges that never lose a freeze, a refund or a removal (v2.16)', () =>
     const doc = readFileSync('docs/backend-contract.md', 'utf8');
     for (const f of ['freezesEarned?', 'extra?', 'drops.overtime?', 'bought?', 'spares?', 'refundedBy?', 'gone?']) expect(doc).toContain(f);
     expect(doc).toMatch(/v2\.16 client needs a v2\.16 server[^]*Deploy the server first/);
+  });
+});
+
+describe('The account lifecycle (v2.19)', () => {
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  /** A demo city whose practice account is linked. */
+  const linkedMock = async () => {
+    const mock = new MockBackend({ speed: 200 });
+    const events: ServerEvent[] = [];
+    mock.onEvent((e) => events.push(e));
+    mock.send({ action: 'account.verify', requestId: 'v1', roleArn: '123456789012' });
+    await sleep(50);
+    return { mock, events };
+  };
+  const inventories = (events: ServerEvent[]) => events.filter((e): e is Extract<ServerEvent, { type: 'city.inventory' }> => e.type === 'city.inventory');
+
+  it('the practice account links with fixes on and no role version, and account.unlink disconnects it (its Region links go too)', async () => {
+    const { mock, events } = await linkedMock();
+    const linked = events.find((e) => e.type === 'account.status');
+    expect(linked).toMatchObject({ requestId: 'v1', linked: true, fixes: true });
+    expect(linked).not.toHaveProperty('roleVersion');
+    mock.send({ action: 'account.unlink', requestId: 'u1' });
+    await sleep(50);
+    expect(events.filter((e) => e.type === 'account.status').at(-1)).toMatchObject({ type: 'account.status', requestId: 'u1', linked: false });
+    expect((inventories(events).at(-1)!.links ?? []).every((l) => l.from.region === l.to.region)).toBe(true);
+    expect(events.every(isServerEvent)).toBe(true);
+  });
+
+  it('resource.remove: only something the city built, only after approval; then it leaves the inventory', async () => {
+    const { mock, events } = await linkedMock();
+    // Not the city's (a table the demo account has that the game didn't make), and not there at all: refused at once.
+    mock.send({ action: 'resource.remove', requestId: 'x1', kind: 'table', id: 'sessions' });
+    expect(events.filter((e) => e.type === 'error').at(-1)).toMatchObject({ requestId: 'x1', message: expect.stringMatching(/wasn’t built by the city/) });
+    mock.send({ action: 'resource.remove', requestId: 'x2', kind: 'instance', id: 'i-0123456789abcdef0' });
+    expect(events.filter((e) => e.type === 'error').at(-1)).toMatchObject({ requestId: 'x2', message: expect.stringMatching(/nothing called/) });
+    expect(events.some((e) => e.type === 'deploy.preview')).toBe(false);
+    mock.send({ action: 'resource.remove', requestId: 'r1', kind: 'table', id: 'city-quest-library' });
+    await sleep(20);
+    const preview = events.find((e) => e.type === 'deploy.preview') as Extract<ServerEvent, { type: 'deploy.preview' }>;
+    // Like the server, a take-down wants its name typed before Approve.
+    expect(preview).toMatchObject({ requestId: 'r1', templateId: 'delete_table', changes: [{ action: 'Remove', logicalId: 'city-quest-library' }], confirmText: 'city-quest-library' });
+    const arn = 'arn:aws:dynamodb:us-west-2:123456789012:table/city-quest-library';
+    expect(inventories(events).at(-1)!.items.some((i) => i.arn === arn)).toBe(true);
+    mock.send({ action: 'deploy.approve', deployId: preview.deployId, confirm: 'city-quest-library' });
+    await sleep(50);
+    expect(events.filter((e) => e.type === 'deploy.status').map((e) => (e.type === 'deploy.status' ? e.status : ''))).toEqual(['creating', 'complete']);
+    expect(inventories(events).at(-1)!.items.some((i) => i.arn === arn)).toBe(false);
+    // Gone: asking again is refused.
+    mock.send({ action: 'resource.remove', requestId: 'r2', kind: 'table', id: 'city-quest-library' });
+    expect(events.filter((e) => e.type === 'error').at(-1)).toMatchObject({ requestId: 'r2' });
+    expect(events.every(isServerEvent)).toBe(true);
+  });
+
+  it('resource.remove needs the practice account linked, like the server; a rejected removal leaves it standing', async () => {
+    const mock = new MockBackend({ speed: 200 });
+    const events: ServerEvent[] = [];
+    mock.onEvent((e) => events.push(e));
+    mock.send({ action: 'resource.remove', requestId: 'r0', kind: 'bucket', id: 'aws-city-123456789012-quest' });
+    expect(events.at(-1)).toMatchObject({ type: 'error', requestId: 'r0', code: 'unlinked' });
+    mock.send({ action: 'account.verify', requestId: 'v', roleArn: '123456789012' });
+    await sleep(50);
+    mock.send({ action: 'resource.remove', requestId: 'r1', kind: 'bucket', id: 'aws-city-123456789012-quest' });
+    await sleep(20);
+    const { deployId } = events.find((e) => e.type === 'deploy.preview') as { deployId: string };
+    mock.send({ action: 'deploy.reject', deployId });
+    expect(events.at(-1)).toMatchObject({ type: 'deploy.status', deployId, status: 'rejected' });
+  });
+
+  it('a refused verify is an error for the request, never an account.status (a status with a requestId always means it worked)', async () => {
+    const mock = new MockBackend({ speed: 200 });
+    const events: ServerEvent[] = [];
+    mock.onEvent((e) => events.push(e));
+    mock.send({ action: 'account.verify', requestId: 'bad', roleArn: 'not an account' });
+    await sleep(50);
+    expect(events).toEqual([{ type: 'error', requestId: 'bad', message: expect.stringMatching(/12-digit/) }]);
+    mock.send({ action: 'account.verify', requestId: 'good', roleArn: 'arn:aws:iam::123456789012:role/aws-city-player' });
+    await sleep(50);
+    expect(events.find((e) => e.type === 'account.status')).toMatchObject({ requestId: 'good', linked: true, accountId: '123456789012' });
+  });
+
+  it('Download my data in the demo: the progress this device saved, marked practice', async () => {
+    const mock = new MockBackend({ speed: 200 });
+    const progress = { version: 2 as const, landmarks: { s3: { discovered: true, xp: 12 } }, updatedAt: '2026-11-21T10:00:00.000Z' };
+    expect(await mock.exportMe()).toMatchObject({ contract: CONTRACT_VERSION, progress: null, social: [], practice: true });
+    mock.putProgress(progress);
+    expect((await mock.exportMe()).progress).toEqual(progress);
+  });
+
+  it('Check again in the demo: account.recheck answers the practice account’s fixes on account.status, or unlinked', async () => {
+    const mock = new MockBackend({ speed: 200 });
+    const events: ServerEvent[] = [];
+    mock.onEvent((e) => events.push(e));
+    mock.send({ action: 'account.recheck', requestId: 'c0' });
+    await sleep(50);
+    expect(events.at(-1)).toMatchObject({ type: 'error', requestId: 'c0', code: 'unlinked' });
+    mock.send({ action: 'account.verify', requestId: 'v', roleArn: '123456789012' });
+    await sleep(50);
+    mock.send({ action: 'account.recheck', requestId: 'c1' });
+    await sleep(50);
+    expect(events.filter((e) => e.type === 'account.status').at(-1)).toMatchObject({ requestId: 'c1', linked: true, fixes: true });
+  });
+
+  it('the docs mirror the new commands, fields and REST route', () => {
+    const doc = readFileSync('docs/backend-contract.md', 'utf8');
+    for (const f of ['account.unlink', 'account.recheck', 'resource.remove', 'allowFixes', 'updated', 'broken', 'fixes', 'roleVersion', 'latestRoleVersion', 'templateUrl', 'GET /me/export', 'ConnectsPlayer', 'aiCalls', 'mfaOnSince'])
+      expect(doc).toContain(f);
+    // Every command MFA step-up guards is named where the error code is.
+    const mfa = doc.split('\n').find((l) => l.includes('`mfa_required`'))!;
+    for (const c of ['account.link', 'account.verify', 'deploy.approve', 'finding.fix', 'resource.remove']) expect(mfa).toContain(c);
+  });
+
+  it('the privacy policy lists every row the server keeps and the optional safety check; the guide says how long a deleted stack takes to show', () => {
+    const policy = readFileSync('docs/privacy-policy.md', 'utf8');
+    for (const f of ['TypeSafe', '500 characters', 'authenticator', 'first AI request', 'setup link', 'role version', 'stopped working', 'cached bill'])
+      expect(policy).toContain(f);
+    // What Download my data leaves out (Lookout screenshots), and the deletion marker DELETE /me keeps (server/src/store/dynamo.ts).
+    expect(policy).toMatch(/Screenshots you sent to the Lookout aren't in it/);
+    expect(policy).toMatch(/`DELETED#<sign-in id>`[\s\S]*2 hours/);
+    for (const placeholder of ['{{OPERATOR_NAME}}', '{{CONTACT_EMAIL}}', '{{REGION}}']) expect(policy).toContain(placeholder);
+    expect(readFileSync('docs/connect-aws-account.md', 'utf8')).toMatch(/up to an hour/);
+  });
+});
+
+describe('The version handshake (v2.19)', () => {
+  it('the version is major.minor; the client names it in a query parameter, the server in a header; the docs mirror both', () => {
+    expect(parseContract(CONTRACT_VERSION)).toBeDefined();
+    expect(CONTRACT_PARAM).toBe('contract');
+    expect(CONTRACT_HEADER).toBe('x-aws-city-contract');
+    const doc = readFileSync('docs/backend-contract.md', 'utf8');
+    for (const f of ['?contract=', 'x-aws-city-contract', '409', 'MIN_CLIENT_CONTRACT', '`updating`', '`outdated`', 'Not saved to your account']) expect(doc).toContain(f);
   });
 });

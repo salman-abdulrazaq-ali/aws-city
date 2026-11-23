@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CityFinding } from '@/backend/contract';
 import { demoFindings } from '@/backend/mockAccount';
 import { bus } from '@/state/bus';
-import { ADVANCED_RULES, DRIP_MS, heldFindingIds, MAX_OPEN_FINDINGS, openFindings, severityRank, useCity } from '@/state/store';
+import { ADVANCED_RULES, DRIP_MS, forgetGotIt, heldFindingIds, MAX_OPEN_FINDINGS, openFindings, severityRank, useCity } from '@/state/store';
 import { SERVICES } from '@/world/taxonomy';
 import { landmarkOf } from '@/state/cities';
 
@@ -46,6 +46,68 @@ describe('hardware-choice advice waits for a beginner (round 3 step 5)', () => {
     useCity.setState({ progress: { ...s().progress, quests: { q: { status: 'done', step: 1 } } } });
     await vi.advanceTimersByTimeAsync(DRIP_MS);
     expect(shown().sort()).toEqual(['g1', 'p1']);
+  });
+});
+
+describe('"Got it": a finding with no automatic fix never holds a place forever', () => {
+  beforeEach(() => {
+    // "Got it" is remembered on the device (localStorage).
+    const mem = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v), removeItem: (k: string) => void mem.delete(k) });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+  const plain = demoFindings().find((f) => !f.fix && !ADVANCED_RULES.has(f.ruleId))!;
+  const fixable = demoFindings().find((f) => !!f.fix)!;
+
+  it('resolves it, lets the next one in at once, and it stays read for this player (not for the next one)', () => {
+    expect(plain).toBeTruthy();
+    const fs = [0, 1, 2, 3].map((i): CityFinding => ({ ...plain, id: `n${i}`, severity: 'low' }));
+    fs.forEach(send);
+    s().releaseCare();
+    // Look at each one: City care fills to MAX_OPEN_FINDINGS and the fourth waits.
+    const looked = new Set<string>();
+    for (let i = 0; i < MAX_OPEN_FINDINGS; i++) {
+      const id = shown().find((x) => !looked.has(x))!;
+      looked.add(id);
+      s().openFinding(id);
+    }
+    expect(shown()).toHaveLength(MAX_OPEN_FINDINGS);
+    expect(heldFindingIds()).toHaveLength(1);
+    // Explain-only findings used to hold those places for good. "Got it" on one: it's resolved, and the next comes in.
+    const read = shown()[0];
+    expect(s().ackFinding(read)).toBe(true);
+    expect(s().findings[read].status).toBe('resolved');
+    expect(shown()).toHaveLength(MAX_OPEN_FINDINGS);
+    expect(shown()).not.toContain(read);
+    expect(heldFindingIds()).toEqual([]);
+    // The server (or the demo) sends it again: it stays read.
+    send({ ...fs.find((f) => f.id === read)! });
+    s().releaseCare();
+    // The device remembers it (a reload reads it back): still read when it arrives again.
+    expect(JSON.parse(localStorage.getItem('awscity.findingsGotIt') ?? '[]')).toContain(read);
+    // The session ends without a sign-out (reload, expired token): the "Got it"s stay, so the finding arrives resolved.
+    s().resetSession();
+    expect(JSON.parse(localStorage.getItem('awscity.findingsGotIt') ?? '[]')).toContain(read);
+    send({ ...fs.find((f) => f.id === read)! });
+    s().releaseCare();
+    expect(shown()).not.toContain(read);
+    expect(heldFindingIds()).toEqual([]);
+    // An explicit sign-out forgets them, so the next player sees their own city's.
+    forgetGotIt();
+    expect(localStorage.getItem('awscity.findingsGotIt')).toBeNull();
+    s().resetSession();
+    send({ ...fs.find((f) => f.id === read)! });
+    s().releaseCare();
+    expect(s().findings[read].status).toBe('open');
+  });
+
+  it('a finding with an automatic fix is fixed, not dismissed', () => {
+    send({ ...fixable, id: 'fx', severity: 'low' });
+    s().releaseCare();
+    expect(shown()).toEqual(['fx']);
+    expect(s().ackFinding('fx')).toBe(false);
+    expect(s().findings.fx.status).toBe('open');
+    expect(s().ackFinding('nobody')).toBe(false);
   });
 });
 
@@ -129,7 +191,8 @@ describe('findings wait until city care unlocks', () => {
     findings(5).forEach(send);
     s().releaseCare();
     expect(shown()).toHaveLength(1);
-    s().applyServerEvent({ type: 'account.status', linked: true, accountId: '123456789012', region: 'us-west-2' });
+    // The reply to the player's verify (its requestId): the one status that's toasted.
+    s().applyServerEvent({ type: 'account.status', requestId: 'r1', linked: true, accountId: '123456789012', region: 'us-west-2' });
     expect(shown()).toHaveLength(1);
     send(findings(6)[5]);
     expect(shown()).toHaveLength(1);

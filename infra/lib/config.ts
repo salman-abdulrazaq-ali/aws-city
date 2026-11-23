@@ -17,7 +17,7 @@ export interface EnvConfig {
   hostedZoneId: string;
   zoneName: string;
   cognitoDomainPrefix: string;
-  /** Chrome extension ids (store + dev): Cognito callbacks and the server's EXTENSION_ORIGIN. */
+  /** Chrome/Edge extension ids (Chrome Web Store, Edge Add-ons, the local build): Cognito callbacks and the server's EXTENSION_ORIGIN. */
   extensionIds: string[];
   /** Firefox add-on id (gecko.id, wxt.config.ts); empty/absent = no Firefox sign-in. */
   firefoxAddonId?: string;
@@ -56,6 +56,11 @@ export interface EnvConfig {
   /** `primary`: Bedrock is held, so the server asks only this model (one call and one quota count per answer). */
   aiCpu?: { spot: boolean; primary?: boolean };
   models: { main: string; light: string };
+  /**
+   * Optional: TypeSafe's Jev as a second opinion on agents' writes (docs/jev.md). The key lives in Secrets Manager under
+   * `secretName` as {"apiKey": "..."} (you create it); absent = Jev off. `model` pins the Jev model (server default otherwise).
+   */
+  jev?: { secretName: string; model?: string };
 }
 
 export const loadEnv = (app: App): EnvConfig => {
@@ -83,6 +88,12 @@ export const loadEnv = (app: App): EnvConfig => {
     models: modelsForChoice(aiRegion, raw.modelChoice === 'nova' ? 'nova' : 'claude', { liteOnly: raw.novaLiteOnly }),
   };
 };
+
+/**
+ * The tags every resource carries (bin/app.ts). The budget filters on them (lib/budget-stack.ts), which works only
+ * once they are activated as cost allocation tags in Billing (docs/runbook.md).
+ */
+export const costTags = (env: Pick<EnvConfig, 'name'>) => ({ app: 'aws-city', env: env.name });
 
 /**
  * Role names, one set per environment, so staging and prod can share an account. Players' role

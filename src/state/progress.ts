@@ -208,7 +208,9 @@ export const sameProgress = (a: Progress, b: Progress) => JSON.stringify(mergePr
  * from the order board (City Clients), each only once its area is open; at most SHIFT_MAX of them, and (always a bonus)
  * a Drawing board design. A shift that would have fewer than SHIFT_MIN goals asks for one more job instead. The day's
  * finish line is fixed the first time Home shows goals that day (`set`, see settleToday): an area that opens later in the
- * day is a `bonus` goal, so "2/3 done" never turns into "2/4".
+ * day is a `bonus` goal, so "2/3 done" never turns into "2/4". A goal that can't be done now (`careNow`: no open
+ * finding's fix gate passes; `labsNow`: no workshop step would still pay) is a bonus chip too, unless it's done already,
+ * so it never holds "Done for today" shut.
  */
 export interface TodayGoal {
   id: Exclude<LearningKind, 'talks'>;
@@ -225,16 +227,19 @@ export const SHIFT_MIN = 3;
 export function todayGoals(
   log: DayLog | undefined,
   day: string,
-  open: { learn: boolean; puzzles: boolean; care: boolean; games?: boolean; labs?: boolean; designs?: boolean; jobs?: number },
+  open: { learn: boolean; puzzles: boolean; care: boolean; careNow?: boolean; games?: boolean; labs?: boolean; labsNow?: boolean; designs?: boolean; jobs?: number },
   set?: readonly TodayGoal['id'][],
 ): TodayGoal[] {
   const today = log?.day === day ? log : undefined;
   const goals: TodayGoal[] = [];
-  if (open.learn) goals.push({ id: 'cards', label: `Review ${TODAY_CARDS} cards`, have: Math.min(TODAY_CARDS, today?.cards ?? 0), goal: TODAY_CARDS });
-  if (open.puzzles) goals.push({ id: 'puzzles', label: 'Pass a puzzle', have: Math.min(1, today?.puzzles ?? 0), goal: 1 });
-  if (open.games) goals.push({ id: 'games', label: 'Play a mini-game', have: Math.min(1, today?.games ?? 0), goal: 1 });
-  if (open.labs) goals.push({ id: 'labs', label: 'Do a workshop step', have: Math.min(1, today?.labs ?? 0), goal: 1 });
-  if (open.care) goals.push({ id: 'fixes', label: 'Fix something in the city', have: Math.min(1, today?.fixes ?? 0), goal: 1 });
+  /** Open, but nothing to do there now: a chip, never part of the day's finish line. */
+  const later: TodayGoal[] = [];
+  const add = (g: TodayGoal, now = true) => (now || g.have >= g.goal ? goals.push(g) : later.push({ ...g, bonus: true }));
+  if (open.learn) add({ id: 'cards', label: `Review ${TODAY_CARDS} cards`, have: Math.min(TODAY_CARDS, today?.cards ?? 0), goal: TODAY_CARDS });
+  if (open.puzzles) add({ id: 'puzzles', label: 'Pass a puzzle', have: Math.min(1, today?.puzzles ?? 0), goal: 1 });
+  if (open.games) add({ id: 'games', label: 'Play a mini-game', have: Math.min(1, today?.games ?? 0), goal: 1 });
+  if (open.labs) add({ id: 'labs', label: 'Do a workshop step', have: Math.min(1, today?.labs ?? 0), goal: 1 }, open.labsNow ?? true);
+  if (open.care) add({ id: 'fixes', label: 'Fix something in the city', have: Math.min(1, today?.fixes ?? 0), goal: 1 }, open.careNow ?? true);
   // The order board feeds the shift (`open.jobs`: jobs open on it now; a job pays once ever, so the ones done today
   // still count): one job, two when the shift would otherwise be short and the board has them.
   const jobsDone = today?.jobs ?? 0;
@@ -245,6 +250,7 @@ export function todayGoals(
   }
   // Past SHIFT_MAX, the rest are worth a chip but don't move the finish line.
   for (const g of goals.slice(SHIFT_MAX)) g.bonus = true;
+  goals.push(...later);
   // The Drawing board is free play: worth a chip, never part of the day's finish line.
   if (open.designs) goals.push({ id: 'designs', label: 'Draw a design', have: Math.min(1, today?.designs ?? 0), goal: 1, bonus: true });
   if (!set) return goals;

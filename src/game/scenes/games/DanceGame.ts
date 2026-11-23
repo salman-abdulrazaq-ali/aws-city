@@ -102,6 +102,8 @@ export class DanceGame extends MiniGame {
     );
     const opts = Phaser.Utils.Array.Shuffle([...q.options]);
     this.asking = { q, opts };
+    // Screen readers: the question and its numbered answers (after the last answer's reason).
+    this.speak(`Dancer ${this.round + 1} of ${this.deck.length} asks: ${q.q} ${opts.map((o, i) => `${i + 1} ${o}`).join(', ')}.`, true);
     // Short answers (A, MX) fit in one row; longer ones (Private hosted zone) go in a 2×2 grid so they never overlap.
     const grid = opts.some((o) => o.length > 9) || (w - 20) / opts.length < 90;
     const cols = grid ? 2 : opts.length;
@@ -139,6 +141,7 @@ export class DanceGame extends MiniGame {
     d.play(`${id}:${ok ? 'dance' : 'laugh'}:SE`);
     for (const x of this.ui) (x as Phaser.GameObjects.Container).disableInteractive?.();
     this.reason?.destroy();
+    this.speak(`${ok ? 'Right!' : `Wrong: it’s ${q.answer}.`} ${q.why}`);
     const reason = (this.reason =
       crisp(
         this.add.text(w / 2, this.stage.y0 + this.stage.h * 0.6, `${ok ? '✓ Right!' : `✗ It’s ${q.answer}.`} ${q.why}`, {

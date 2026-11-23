@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import {
   grantLookout,
   startConsoleCopilot,
@@ -7,6 +7,7 @@ import {
   type Layout,
 } from "@/app/runtime";
 import { useCity } from "@/state/store";
+import { AiNote } from "./AiNote";
 import { feel } from "./feedback";
 import { Icon } from "./icons";
 import { offlineReason } from "./logic";
@@ -26,6 +27,7 @@ export function PromptBar({ layout }: { layout: Layout }) {
   const copilotOn = useCity((s) => !!s.copilotTaskId);
   const needsCamera = useCity((s) => s.snap === "needs-permission");
   const offline = useCity((s) => offlineReason(s.backendKind, s.backendStatus));
+  const noteId = useId();
   const send = () => {
     if (!text.trim() || offline) return;
     feel.send();
@@ -62,6 +64,7 @@ export function PromptBar({ layout }: { layout: Layout }) {
         </p>
       )}
       {offline && <p className="composer-note">{offline}</p>}
+      <AiNote id={noteId} />
       <form
         className={`composer ${inConsole ? "console-mode" : ""}`}
         onSubmit={(e) => {
@@ -82,6 +85,7 @@ export function PromptBar({ layout }: { layout: Layout }) {
               ? "What should the agent do in your console?"
               : "Ask the city"
           }
+          aria-describedby={noteId}
         />
         {needsCamera && (
           <button

@@ -53,8 +53,8 @@ export const createLlm = (config: Config) => {
   const notOnConverse = () => new Error(`${config.model} is a Converse model: this route runs on Strands Agents (llm.strands)`);
 
   /** The model on this computer: one model for every slot (a laptop holds one at a time). */
-  const localModel = (opts: StrandsModelOptions, gate: () => Promise<void>) =>
-    new MeteredOpenAIModel({ baseURL: config.localModel.url, modelId: config.localModel.model, maxTokens: opts.maxTokens }, gate);
+  const localModel = (opts: StrandsModelOptions, gate: () => Promise<void>, refund?: (err: unknown) => Promise<void>) =>
+    new MeteredOpenAIModel({ baseURL: config.localModel.url, modelId: config.localModel.model, maxTokens: opts.maxTokens }, gate, refund);
 
   return {
     model: local ? config.localModel.model : config.model,
@@ -74,21 +74,23 @@ export const createLlm = (config: Config) => {
     client: client as unknown as Anthropic,
     /** No limits here; `metered` replaces this with the kill switch and quotas. */
     gate: NO_GATE,
+    /** Gives back a call `gate` took whose failure (`err`) proves the model never ran (nothing to give back here; see `metered`). */
+    refund: async (_err?: unknown): Promise<void> => undefined,
 
     /**
-     * A Strands model for this server's configured family, every call through `gate` (`metered` passes its own).
-     * Claude: Strands' Anthropic model on our Bedrock client. A local model: Strands' OpenAI model on this computer.
-     * Anything else: Strands' Bedrock model (Converse), and with `localFallback` a Strands ModelRouter that tries Bedrock
-     * first and the model on this computer when a call fails (its FallbackStrategy; agents run with no retry strategy,
-     * so it switches on the first failure).
+     * A Strands model for this server's configured family, every call through `gate` and a failure before any event
+     * offered to `refund` (`metered` passes its own). Claude: Strands' Anthropic model on our Bedrock client. A local
+     * model: Strands' OpenAI model on this computer. Anything else: Strands' Bedrock model (Converse), and with
+     * `localFallback` a Strands ModelRouter that tries Bedrock first and the model on this computer when a call fails (its
+     * FallbackStrategy; agents run with no retry strategy, so it switches on the first failure).
      */
-    strands(opts: StrandsModelOptions, gate: () => Promise<void> = NO_GATE): Model | ModelRouter {
-      if (local) return localModel(opts, gate);
+    strands(opts: StrandsModelOptions, gate: () => Promise<void> = NO_GATE, refund?: (err: unknown) => Promise<void>): Model | ModelRouter {
+      if (local) return localModel(opts, gate, refund);
       const modelId = opts.light ? config.lightModel : config.model;
-      if (family === 'anthropic') return new MeteredAnthropicModel({ client: client as unknown as Anthropic, modelId, maxTokens: opts.maxTokens, effort: opts.effort }, gate);
-      const bedrock = new MeteredBedrockModel({ modelId, region: config.bedrockRegion, credentials, maxTokens: opts.maxTokens, maxAttempts: config.localFallback ? 1 : 3 }, gate);
+      if (family === 'anthropic') return new MeteredAnthropicModel({ client: client as unknown as Anthropic, modelId, maxTokens: opts.maxTokens, effort: opts.effort }, gate, refund);
+      const bedrock = new MeteredBedrockModel({ modelId, region: config.bedrockRegion, credentials, maxTokens: opts.maxTokens, maxAttempts: config.localFallback ? 1 : 3 }, gate, refund);
       if (!config.localFallback) return bedrock;
-      return new ModelRouter([new RoutingCandidate({ model: bedrock, name: 'bedrock' }), new RoutingCandidate({ model: localModel(opts, gate), name: 'local' })]);
+      return new ModelRouter([new RoutingCandidate({ model: bedrock, name: 'bedrock' }), new RoutingCandidate({ model: localModel(opts, gate, refund), name: 'local' })]);
     },
 
     /**
@@ -103,11 +105,12 @@ export const createLlm = (config: Config) => {
     /** Whether a refusal on this route can be retried on a different model. */
     canFallBack: (opts: LlmOptions = {}) => !opts.fallback && config.fallbackModel !== modelFor(opts),
 
-    /** Streams text deltas (chat answers, on the light model); resolves with the final message. */
-    async stream(params: Params, onText: (delta: string) => void): Promise<Anthropic.Message> {
+    /** Streams text deltas (chat answers, on the light model); resolves with the final message. `onEvent`: any stream event arrived. */
+    async stream(params: Params, onText: (delta: string) => void, onEvent?: () => void): Promise<Anthropic.Message> {
       if (family !== 'anthropic') throw notOnConverse();
       const stream = client.messages.stream({ ...params, model: config.lightModel });
       stream.on('text', onText);
+      if (onEvent) stream.on('streamEvent', onEvent);
       return stream.finalMessage();
     },
   };

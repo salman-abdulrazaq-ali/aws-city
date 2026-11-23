@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { explainError, fillNames, hintWord, nextWord, run, tabComplete, tokenize, type TerminalStep } from '@/learning/terminal';
+import { explainError, fillNames, hintWord, isCoaching, nextWord, run, tabComplete, tokenize, type RunResult, type TerminalStep } from '@/learning/terminal';
 import { WORKSHOPS, terminalStep } from '@/world/workshops';
 
 // The practice terminal reads a command like a shell, accepts flags in any order, and teaches the real CLI's errors.
@@ -140,7 +140,8 @@ describe('typing help', () => {
       for (const s of w.steps) {
         const t = terminalStep(s);
         if (!t) continue;
-        const names = Object.fromEntries([...t.cli.matchAll(/<([a-z0-9-]+)>/gi)].map((m) => [m[1], `demo-${m[1]}`]));
+        // A Region has to be a real one: S3 answers a bucket outside us-east-1 differently.
+        const names = Object.fromEntries([...t.cli.matchAll(/<([a-z0-9-]+)>/gi)].map((m) => [m[1], m[1] === 'region' ? 'us-east-1' : `demo-${m[1]}`]));
         let line = '';
         for (let i = 0; i < 60; i++) {
           const n = nextWord(line, t.cli, names);
@@ -170,6 +171,72 @@ describe('typing help', () => {
   });
 });
 
+describe('only what the real CLI requires is a CLI error', () => {
+  const stepOf = (workshop: string, id: string) => terminalStep(WORKSHOPS.find((w) => w.id === workshop)!.steps.find((s) => s.id === id)!)!;
+  const required = (args: string) => `aws: [ERROR]: An error occurred (ParamValidation): the following arguments are required: ${args}`;
+
+  it('a flag the step uses but the CLI runs without gets a coaching line, never a made-up ParamValidation', () => {
+    const key = stepOf('ec2-first-instance', 'key');
+    const noQuery = run('aws ec2 create-key-pair --key-name city-key --output text > city-key.pem', key);
+    expect(noQuery).toMatchObject({ kind: 'other', output: 'Practice terminal: this step also sets --query KeyMaterial. Add it and run it again.' });
+    expect(run('aws ec2 create-key-pair --query KeyMaterial --output text > city-key.pem', key)).toMatchObject({ output: required('--key-name') });
+    expect(run('aws ec2 create-key-pair --key-name city-key --query KeyMaterial --output text > city-key.pem', key).kind).toBe('ok');
+    // Every argument the CLI requires is named at once, the way it names them.
+    expect(run('aws s3api put-object --body sample.txt', stepOf('s3-first-bucket', 'upload'))).toMatchObject({ output: required('--bucket, --key') });
+  });
+
+  it('put-object without --body, delete-object without --version-id, s3 rb without --force: the real outcome, coached', () => {
+    const body = run('aws s3api put-object --bucket city-photos-4f9c2a --key sample.txt', stepOf('s3-first-bucket', 'upload'));
+    expect(body.kind).toBe('error');
+    expect(body.kind === 'error' && body.output).toMatch(/^Practice terminal: .*empty object/);
+    const marker = run('aws s3api delete-object --bucket city-photos-4f9c2a --key sample.txt', stepOf('s3-first-bucket', 'delete-version'));
+    expect(marker.kind === 'error' && marker.output).toMatch(/^Practice terminal: .*delete marker/);
+    const rb = run('aws s3 rb s3://city-photos-4f9c2a', stepOf('cloudfront-s3-oac', 'cleanup'));
+    expect(rb.kind === 'error' && rb.output).toBe(
+      'remove_bucket failed: s3://city-photos-4f9c2a An error occurred (BucketNotEmpty) when calling the DeleteBucket operation: The bucket you tried to delete is not empty',
+    );
+    for (const r of [body, marker, rb]) expect('output' in r && r.output).not.toMatch(/ParamValidation/);
+  });
+
+  it('get-object needs the file to save to, as the CLI does; any file name works', () => {
+    const get = stepOf('s3-first-bucket', 'download');
+    expect(run('aws s3api get-object --bucket city-photos-4f9c2a --key sample.txt', get)).toMatchObject({ output: required('outfile') });
+    expect(run('aws s3api get-object --bucket city-photos-4f9c2a --key sample.txt my-copy.txt', get).kind).toBe('ok');
+    expect(run('aws s3api get-object --bucket city-photos-4f9c2a downloaded-sample.txt --key sample.txt', get).kind).toBe('ok');
+  });
+});
+
+describe('the S3 workshop answers like S3', () => {
+  const create = terminalStep(WORKSHOPS.find((w) => w.id === 's3-first-bucket')!.steps.find((s) => s.id === 'create')!)!;
+  const codeOf = (line: string) => {
+    const r = run(line, create);
+    return r.kind === 'error' ? r.error.code : r.kind;
+  };
+
+  it('teaches the naming rules and suggests a name S3 accepts, never the reserved amzn-s3-demo- prefix', () => {
+    const body = WORKSHOPS.find((w) => w.id === 's3-first-bucket')!.steps[0].body;
+    for (const rule of ['3 to 63', 'lowercase', 'no underscores', 'amzn-s3-demo-', 'xn--']) expect(body).toContain(rule);
+    expect(JSON.stringify(create.errors?.map((e) => e.fix))).not.toMatch(/amzn-s3-demo-/);
+    expect(codeOf('aws s3api create-bucket --bucket city-photos-4f9c2a --region us-east-1')).toBe('ok');
+    for (const bad of ['My_Bucket', 'amzn-s3-demo-4f9c2a', 'xn--city', 'ab', 'city..photos', '192.168.5.4', '-city'])
+      expect(codeOf(`aws s3api create-bucket --bucket ${bad} --region us-east-1`), bad).toBe('InvalidBucketName');
+  });
+
+  it('outside us-east-1 needs the same Region in the location constraint', () => {
+    expect(codeOf('aws s3api create-bucket --bucket city-photos-4f9c2a --region eu-west-1 --create-bucket-configuration LocationConstraint=eu-west-1')).toBe('ok');
+    const none = run('aws s3api create-bucket --bucket city-photos-4f9c2a --region us-west-2', create);
+    expect(none.kind === 'error' && none.output).toContain('(IllegalLocationConstraintException) when calling the CreateBucket operation: The unspecified location constraint');
+    const other = run('aws s3api create-bucket --bucket city-photos-4f9c2a --region us-west-2 --create-bucket-configuration LocationConstraint=eu-west-1', create);
+    expect(other.kind === 'error' && other.output).toBe(
+      'An error occurred (IllegalLocationConstraintException) when calling the CreateBucket operation: The eu-west-1 location constraint is incompatible for the region specific endpoint this request was sent to.',
+    );
+    expect(codeOf('aws s3api create-bucket --bucket city-photos-4f9c2a --region us-east-1 --create-bucket-configuration LocationConstraint=us-east-1')).toBe('InvalidLocationConstraint');
+    // No Region named: the practice terminal has no default one, and says so in its own voice.
+    const unnamed = run('aws s3api create-bucket --bucket city-photos-4f9c2a', create);
+    expect(unnamed.kind === 'error' && unnamed.output).toMatch(/^Practice terminal: which Region\?/);
+  });
+});
+
 describe('the real CLI’s other spellings', () => {
   const seat: TerminalStep = { cli: 'aws s3 cp seat-map.png s3://<bucket>/seat-map.png', output: 'upload: ./seat-map.png to s3://{{bucket}}/seat-map.png' };
   it('a copy to s3://bucket, with or without the slash, keeps the file name as its key', () => {
@@ -182,5 +249,79 @@ describe('the real CLI’s other spellings', () => {
   it('a different key is still a different command', () => {
     expect(run('aws s3 cp seat-map.png s3://arena-bucket/other.png', seat).kind).toBe('other');
     expect(run('aws s3 cp other.png s3://arena-bucket', seat).kind).toBe('other');
+  });
+});
+
+const said = (r: RunResult) => ('output' in r ? r.output : '');
+
+describe('the S3 and DynamoDB workshops answer like the CLI reference (Okafor)', () => {
+  const s3 = WORKSHOPS.find((w) => w.id === 's3-first-bucket')!;
+  const stepOf = (w: (typeof WORKSHOPS)[number], id: string) => terminalStep(w.steps.find((s) => s.id === id)!)!;
+  const create = stepOf(s3, 'create');
+
+  it('create-bucket says "/<bucket>" in us-east-1 and the bucket address elsewhere', () => {
+    const east = run('aws s3api create-bucket --bucket city-photos-4f9c2a --region us-east-1', create);
+    expect(east.kind === 'ok' && JSON.parse(said(east))).toEqual({ Location: '/city-photos-4f9c2a' });
+    const west = run('aws s3api create-bucket --bucket city-photos-4f9c2a --region eu-west-1 --create-bucket-configuration LocationConstraint=eu-west-1', create);
+    expect(west.kind === 'ok' && JSON.parse(said(west))).toEqual({ Location: 'http://city-photos-4f9c2a.s3.amazonaws.com/' });
+  });
+
+  it('takes the JSON form of --create-bucket-configuration, and its mistakes are taught the same', () => {
+    expect(run(`aws s3api create-bucket --bucket city-photos-4f9c2a --region eu-west-1 --create-bucket-configuration '{"LocationConstraint":"eu-west-1"}'`, create).kind).toBe('ok');
+    const other = run(`aws s3api create-bucket --bucket city-photos-4f9c2a --region us-west-2 --create-bucket-configuration '{"LocationConstraint": "eu-west-1"}'`, create);
+    expect(other.kind === 'error' && other.error.code).toBe('IllegalLocationConstraintException');
+  });
+
+  it('takes the Block Public Access keys in any order, and still refuses a wrong value', () => {
+    const bpa = stepOf(s3, s3.steps.find((s) => s.cli?.includes('put-public-access-block'))!.id);
+    const line = (cfg: string) => run(`aws s3api put-public-access-block --bucket city-photos-4f9c2a --public-access-block-configuration ${cfg}`, bpa);
+    expect(line('RestrictPublicBuckets=true,BlockPublicPolicy=true,IgnorePublicAcls=true,BlockPublicAcls=true').kind).toBe('ok');
+    expect(line(`'{"BlockPublicAcls":true,"IgnorePublicAcls":true,"BlockPublicPolicy":true,"RestrictPublicBuckets":true}'`).kind).toBe('ok');
+    expect(said(line('RestrictPublicBuckets=false,BlockPublicPolicy=true,IgnorePublicAcls=true,BlockPublicAcls=true'))).toContain('Close.');
+  });
+
+  it('takes any well-formed DynamoDB item that carries the key', () => {
+    const put = stepOf(WORKSHOPS.find((w) => w.steps.some((s) => s.itemKey))!, WORKSHOPS.flatMap((w) => w.steps).find((s) => s.itemKey)!.id);
+    const item = (json: string) => run(`aws dynamodb put-item --table-name orders --item '${json}'`, put);
+    expect(item('{"pk":{"S":"order#7"},"customer":{"S":"Ana"},"paid":{"BOOL":true}}').kind).toBe('ok');
+    expect(said(item('{"pk":"order#7"}'))).toContain('Close.');
+    expect(item('{"total":{"N":"5"}}').kind).toBe('error');
+  });
+
+  it("put-object's answer is the CLI reference's shape, its ETag the MD5 of the 10 bytes it uploads", () => {
+    const up = run('aws s3api put-object --bucket city-photos-4f9c2a --key sample.txt --body sample.txt', stepOf(s3, 'upload'));
+    const out = up.kind === 'ok' ? JSON.parse(said(up)) : {};
+    expect(Object.keys(out)).toEqual(['ETag', 'ChecksumCRC64NVME', 'ChecksumType', 'ServerSideEncryption', 'VersionId']);
+    // echo "Hello, S3" > sample.txt writes "Hello, S3\n": 10 bytes, MD5 34604da2…, CRC64NVME vL37ViPe6JI=.
+    expect(out.ETag).toBe('"34604da2079f37530dc71b117b9cd58b"');
+    const down = run('aws s3api get-object --bucket city-photos-4f9c2a --key sample.txt downloaded-sample.txt', stepOf(s3, 'download'));
+    expect(down.kind === 'ok' && JSON.parse(said(down))).toMatchObject({ ContentLength: 10, ETag: out.ETag });
+  });
+});
+
+describe('a mistyped command gets the CLI parser’s own words (aws-cli v2 argparser.py, customizations/s3)', () => {
+  const s3 = WORKSHOPS.find((w) => w.id === 's3-first-bucket')!;
+  const create = terminalStep(s3.steps.find((s) => s.id === 'create')!)!;
+
+  it('a typo in the operation is "Found invalid choice", with the step’s word as the suggestion', () => {
+    const r = run('aws s3api creat-bucket --bucket city-photos-4f9c2a --region us-east-1', create);
+    expect(said(r)).toMatch(/^aws: \[ERROR\]: An error occurred \(ParamValidation\): argument operation: Found invalid choice 'creat-bucket'\n\nMaybe you meant:\n\n {2}\* create-bucket\n\nusage: aws \[options\]/);
+    // Another real command is just not this step's.
+    expect(said(run('aws s3api delete-bucket --bucket city-photos-4f9c2a', create))).toContain("Not this step's command");
+  });
+
+  it('an aws s3 path without s3:// is "Invalid argument type"', () => {
+    const cp: TerminalStep = { cli: 'aws s3 cp index.html s3://<bucket>/index.html', output: '' };
+    expect(said(run('aws s3 cp index.html city-site/index.html', cp))).toBe(
+      'aws: [ERROR]: An error occurred (ParamValidation): usage: aws s3 cp <LocalPath> <S3Uri> or <S3Uri> <LocalPath> or <S3Uri> <S3Uri>\nError: Invalid argument type',
+    );
+    const rb: TerminalStep = { cli: 'aws s3 rb s3://<bucket> --force', output: '' };
+    expect(said(run('aws s3 rb city-site --force', rb))).toBe('aws: [ERROR]: An error occurred (ParamValidation): <S3Uri>\nError: Invalid argument type');
+    expect(said(run('aws s3 cpp index.html s3://city-site/index.html', cp))).toContain("argument subcommand: Found invalid choice 'cpp'");
+  });
+
+  it('coaching lines are the game’s voice, never the CLI’s', () => {
+    expect(isCoaching(said(run('aws s3api create-bucket --bucket city-photos-4f9c2a', create)))).toBe(true);
+    expect(isCoaching('aws: [ERROR]: An error occurred (ParamValidation): <S3Uri>')).toBe(false);
   });
 });

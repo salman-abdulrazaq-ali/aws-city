@@ -10,10 +10,15 @@ import { mixCatch } from './games/fishDeck';
 import { growthLine, growthOf } from '@/state/growth';
 import { dealRound, expert, expertOpen, pace, relaxed, setExpert } from '../pace';
 import { onSceneEnd } from './lifecycle';
-import { countRound, fishingStars, FULL_ROUNDS_A_DAY } from '@/learning/gameStars';
+import { countRound, fishingStars, FULL_ROUNDS_A_DAY, HALF_ROUNDS_A_DAY } from '@/learning/gameStars';
 import { weeklyChallenge, WEEKLY_BONUS } from '@/state/events';
 import { reducedMotion } from '../motion';
 import { CSS } from '../theme';
+import { keysBelongToUi } from '../keys';
+import { fishingKey } from './games/gameKeys';
+import { fitParent } from './games/column';
+import { endKeysLine, fishLine, growthSaid } from './games/say';
+import { announce } from '@/state/announce';
 
 /** Clicks are ignored this long after the line is reset, so the click that answered doesn't cast at once. */
 const CALM_MS = 300;
@@ -60,6 +65,11 @@ export class FishingScene extends Phaser.Scene {
   private hooked?: Phaser.GameObjects.Container;
   private bites = 0;
   private calmUntil = 0;
+  /** The quiz's answers, so a number key can give one (the buttons call the same thing). */
+  private choose: ((i: number) => void) | undefined;
+  private again: (() => void) | undefined;
+  private expertRound: (() => void) | undefined;
+  private leave: (() => void) | undefined;
 
   constructor() {
     super('fishing');
@@ -67,20 +77,47 @@ export class FishingScene extends Phaser.Scene {
 
   create() {
     syncClock(this);
+    // Lay out at the parent's size now: the side panel's stage has just grown for the game (games/column.ts fitParent).
+    fitParent(this.scale);
     this.state = 'ready';
     this.caught = 0;
     this.correct = 0;
     this.bites = 0;
     this.calmUntil = 0;
     this.swimmers = [];
+    this.choose = this.again = this.expertRound = this.leave = undefined;
     this.summaryCard = undefined;
     this.lastVerdict = '';
     // A mix of storage classes each round (at most two of a kind), so the answer isn't "Standard" four times.
     this.deck = mixCatch(dealRound(FISH, useCity.getState().progress.games?.fishing?.plays ?? 0, ROUND), FISH);
     this.build();
+    // Screen readers: the canvas is named for the game while it runs, and the goal and keys are said first.
+    const canvas = this.game.canvas as HTMLCanvasElement | undefined;
+    const cityLabel = canvas?.getAttribute('aria-label');
+    canvas?.setAttribute('aria-label', 'S3 Lake fishing: mini-game');
+    onSceneEnd(this, () => cityLabel && canvas?.setAttribute('aria-label', cityLabel));
+    announce(
+      `S3 Lake fishing. Each fish is an S3 object: drop it in the right storage class. Press Space to cast, and Space again when a fish bites. Then press 1 to ${CLASSES.length} for a bucket: ${CLASSES.map((c, i) => `${i + 1} ${c.label}`).join(', ')}. ${ROUND} fish a round.`,
+    );
     this.scale.on('resize', this.relayout, this);
     onSceneEnd(this, () => this.scale.off('resize', this.relayout, this));
     this.input.on('pointerdown', (p: Phaser.Input.Pointer, over: Phaser.GameObjects.GameObject[]) => !over.length && this.onClick(p));
+    this.input.keyboard?.on('keydown', this.onKey, this);
+    onSceneEnd(this, () => this.input.keyboard?.off('keydown', this.onKey, this));
+  }
+
+  /** Keyboard play (src/game/scenes/games/gameKeys.ts): the same actions as the pointer, unless a UI control has focus. */
+  private onKey(e: KeyboardEvent) {
+    if (e.repeat || keysBelongToUi(document.activeElement, this.game.canvas)) return;
+    const a = fishingKey(this.state, e.key, CLASSES.length);
+    if (!a) return;
+    if (a.kind === 'bucket') return this.choose?.(a.index);
+    if (a.kind === 'again') return this.again?.();
+    if (a.kind === 'expert') return this.expertRound?.();
+    if (a.kind === 'leave') return this.leave?.();
+    if (this.time.now < this.calmUntil) return;
+    if (a.kind === 'cast') return this.cast(this.scale.width * 0.6, this.waterY + 60);
+    this.hook();
   }
 
   /**
@@ -153,7 +190,7 @@ export class FishingScene extends Phaser.Scene {
       .setOrigin(0.5, 0)
       .setDepth(20);
     this.updateHud();
-    this.setInfo('Click the water to cast. Each fish is an S3 object — choose the right storage class!');
+    this.setInfo('Click the water (or press Space) to cast. Each fish is an S3 object — choose the right storage class!');
   }
 
   private spawnSwimmer(i: number) {
@@ -214,6 +251,7 @@ export class FishingScene extends Phaser.Scene {
         this.state = 'waiting';
         // The last answer's verdict stays up until the next bite: a quick cast never hides it.
         this.setInfo(this.lastVerdict ? `${this.lastVerdict}\nWaiting for a bite…` : 'Waiting for a bite…');
+        announce('Waiting for a bite.');
         this.tweens.add({ targets: this.bobber, y: '+=3', yoyo: true, repeat: -1, duration: 600 });
         this.time.delayedCall(900 + Math.random() * 1600, () => this.approach(x, y));
       },
@@ -234,7 +272,8 @@ export class FishingScene extends Phaser.Scene {
         this.hooked = fish;
         this.tweens.killTweensOf(this.bobber);
         this.tweens.add({ targets: this.bobber, y: this.waterY + 22, yoyo: true, repeat: 3, duration: 110 });
-        this.setInfo('❗ BITE! Click now!');
+        this.setInfo('❗ BITE! Click now (or Space)!');
+        announce('Bite! Press Space now!', { replace: true });
         this.splash();
         if (this.bites === 0) this.firstBite();
         this.biteTimer = this.time.delayedCall(pace(this.bites++ === 0 ? FIRST_BITE_MS : BITE_MS, 3), () => this.miss());
@@ -248,7 +287,7 @@ export class FishingScene extends Phaser.Scene {
    */
   private firstBite() {
     const { width: w } = this.scale;
-    const t = crisp(this.add.text(w / 2, this.waterY - 70, '👆 Click now!', { fontFamily: UI_FONT, fontSize: '34px', fontStyle: '900', color: CSS.gold, stroke: '#140d1f', strokeThickness: 7 }))
+    const t = crisp(this.add.text(w / 2, this.waterY - 70, '👆 Click now! (Space)', { fontFamily: UI_FONT, fontSize: '34px', fontStyle: '900', color: CSS.gold, stroke: '#140d1f', strokeThickness: 7 }))
       .setOrigin(0.5)
       .setDepth(30);
     const gone = () => t.active && t.destroy();
@@ -276,7 +315,8 @@ export class FishingScene extends Phaser.Scene {
     this.hooked = undefined;
     // The one that got away swims back down to its own lane (not along the surface).
     if (fish) this.tweens.add({ targets: fish, y: fish.getData('laneY') as number, duration: 600, ease: 'Quad.easeOut', onComplete: () => fish.setData('target', false) });
-    this.reset('It got away! Click the water to cast again.');
+    this.reset('It got away! Click the water or press Space to cast again.');
+    announce('It got away. Press Space to cast again.', { replace: true });
   }
 
   private hook() {
@@ -299,9 +339,12 @@ export class FishingScene extends Phaser.Scene {
     const card = this.add.container(w / 2, Math.max(40, this.waterY - 200)).setDepth(30);
     const bg = this.add.rectangle(0, 0, cw, 190, 0xffffff).setStrokeStyle(3, 0x161622).setOrigin(0.5, 0);
     const t1 = crisp(this.add.text(0, 12, `📄 ${item.name}`, { fontFamily: UI_FONT, fontSize: '16px', color: '#161622' })).setOrigin(0.5, 0);
-    const t2 = crisp(this.add.text(0, 38, `“${item.hint}”\nWhich bucket (storage class)?`, { fontFamily: UI_FONT, fontSize: '14px', color: '#374151', align: 'center', wordWrap: { width: cw - 24 } })).setOrigin(0.5, 0);
+    const t2 = crisp(this.add.text(0, 38, `“${item.hint}”\nWhich bucket (storage class)? Click one, or press 1–${CLASSES.length}.`, { fontFamily: UI_FONT, fontSize: '14px', color: '#374151', align: 'center', wordWrap: { width: cw - 24 } })).setOrigin(0.5, 0);
     card.add([bg, t1, t2]);
+    announce(fishLine(item, CLASSES));
     const bw = (cw - 40) / 3;
+    // A number key answers like a press that was armed (after the same calm).
+    this.choose = (i) => this.time.now >= this.calmUntil && this.state === 'quiz' && this.answer(item, CLASSES[i].id);
     CLASSES.forEach((c, i) => {
       const x = -cw / 2 + 12 + bw / 2 + i * (bw + 8);
       const b = this.add.rectangle(x, 110, bw, 56, c.color).setStrokeStyle(2, 0x161622).setOrigin(0.5, 0).setInteractive({ useHandCursor: true });
@@ -319,6 +362,7 @@ export class FishingScene extends Phaser.Scene {
   private answer(item: (typeof FISH)[number], choice: ClassId) {
     this.card?.destroy();
     this.card = undefined;
+    this.choose = undefined;
     this.caught++;
     const right = choice === item.answer;
     if (right) {
@@ -335,11 +379,14 @@ export class FishingScene extends Phaser.Scene {
     if (!right) sfx('wrong', { own: true });
     const verdict = right ? `✅ Correct! ${item.why}` : `❌ Not quite: it’s ${CLASSES.find((c) => c.id === item.answer)?.label}. ${item.why}`;
     this.lastVerdict = verdict;
-    if (this.caught >= ROUND) return this.summary(verdict);
-    this.reset(`${verdict}\nClick the water to cast again.`);
+    // Screen readers: the verdict in words (no ✅ / ❌), the catch so far, and what to do next.
+    const said = `${right ? 'Right!' : `Wrong: it’s ${CLASSES.find((c) => c.id === item.answer)?.label}.`} ${item.why} Catches ${this.caught} of ${ROUND}, ${this.correct} right.`;
+    if (this.caught >= ROUND) return this.summary(verdict, said);
+    this.reset(`${verdict}\nClick the water or press Space to cast again.`);
+    announce(`${said} Press Space to cast again.`);
   }
 
-  private summary(last: string) {
+  private summary(last: string, said: string) {
     this.state = 'summary';
     this.bobber.setVisible(false);
     const perfect = this.correct === ROUND;
@@ -374,7 +421,15 @@ export class FishingScene extends Phaser.Scene {
     };
     text(record ? '🏆 New best!' : 'Round over', 16, '#92400e');
     text(`${this.correct}/${ROUND} objects in the right bucket${perfect ? ' — perfect!' : ''}${stars ? `   ·   +${stars} ⭐${coins ? `  +${coins} City Coins` : ''}${weekly ? ' ⚡ weekly' : ''}` : ''}`, 14, '#1b1200');
-    if (halved) text(`Half stars after ${FULL_ROUNDS_A_DAY} rounds a day. Full stars again tomorrow, or beat your best!`, 12, '#6b7280', '600');
+    if (halved)
+      text(
+        stars
+          ? `Half stars after ${FULL_ROUNDS_A_DAY} rounds a day, none after ${FULL_ROUNDS_A_DAY + HALF_ROUNDS_A_DAY}. Full stars again tomorrow, or beat your best!`
+          : "That's all the stars this game pays today. Full stars again tomorrow, or beat your best!",
+        12,
+        '#6b7280',
+        '600',
+      );
     text(last, 13, '#374151', '600');
     text(`🏗️ ${growthLine(g)}`, 13, '#374151');
     const barW = Math.min(260, cw - 60);
@@ -392,14 +447,19 @@ export class FishingScene extends Phaser.Scene {
           .on('pointerdown', run),
       );
     const leave = () => (setExpert(false), useCity.getState().setView({ name: 'city' }));
+    const again = () => (setExpert(false), this.scene.restart());
+    this.leave = leave;
+    this.again = again;
+    const expertRound = () => (setExpert(true), this.scene.restart());
+    this.expertRound = expertOpen('s3') ? expertRound : undefined;
     // S3 Lake at level 3: an Expert round with the harder catches and a shorter bite.
     const dx = Math.min(130, (cw - 40) / 3);
     if (expertOpen('s3')) {
-      button(-dx, '🎣 Play again', '#4a2e07', '#ffb84d', () => (setExpert(false), this.scene.restart()));
-      button(0, '⚡ Expert', '#1b1200', '#f472b6', () => (setExpert(true), this.scene.restart()));
+      button(-dx, '🎣 Play again (Space)', '#4a2e07', '#ffb84d', again);
+      button(0, '⚡ Expert', '#1b1200', '#f472b6', expertRound);
       button(dx, '← City', '#ffffff', '#2d2144', leave);
     } else {
-      button(-Math.min(80, dx), '🎣 Play again', '#4a2e07', '#ffb84d', () => (setExpert(false), this.scene.restart()));
+      button(-Math.min(80, dx), '🎣 Play again (Space)', '#4a2e07', '#ffb84d', again);
       button(Math.min(80, dx), '← City', '#ffffff', '#2d2144', leave);
     }
     const shade = this.add.rectangle(0, 0, w, h, 0x140d1f, 0.5).setOrigin(0).setDepth(28);
@@ -408,6 +468,21 @@ export class FishingScene extends Phaser.Scene {
     for (const o of c.list as unknown as Phaser.GameObjects.Components.Transform[]) o.y -= ch / 2;
     this.summaryCard = { c, shade, w: cw, h: ch };
     this.fitSummary();
+    // The result card in words, and its keys (gameKeys.ts fishingKey), for screen readers: its buttons are on the canvas.
+    announce(
+      [
+        said,
+        record ? 'New best!' : 'Round over.',
+        `${this.correct} of ${ROUND} objects in the right bucket${perfect ? ', perfect!' : '.'}`,
+        stars ? `You earned ${stars} ${stars === 1 ? 'star' : 'stars'}${coins ? ` and ${coins} City Coins` : ''}.` : '',
+        halved ? (stars ? `Half stars after ${FULL_ROUNDS_A_DAY} rounds a day.` : "That's all the stars this game pays today.") : '',
+        growthSaid(g),
+        'Tip: Lifecycle rules can move files to cheaper shelves for you.',
+        endKeysLine(!!this.expertRound).replace('Press Enter', 'Press Space or Enter'),
+      ]
+        .filter(Boolean)
+        .join(' '),
+    );
   }
 
   /** The last answer's verdict, shown until the next bite. */

@@ -1,9 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// AWS City ⇄ backend contract v2.17. SOURCE OF TRUTH — docs/backend-contract.md mirrors this, and the
+// AWS City ⇄ backend contract v2.19. SOURCE OF TRUTH — docs/backend-contract.md mirrors this, and the
 // server (server/) imports it, so drift breaks its build.
 //
 // Transport: ONE WebSocket to the AWS City server (server/src/http.ts): ws://127.0.0.1:<port>/ws locally,
-// wss://<api host>/ws hosted. REST beside it: /progress, /screenshots, /me.
+// wss://<api host>/ws hosted. REST beside it: /progress, /screenshots, /me (v2.19: GET /me/export). Both carry
+// `?contract=<CONTRACT_VERSION>` (v2.19, the version handshake: CONTRACT_PARAM below).
 // Auth (hosted): the Cognito access token in the Sec-WebSocket-Protocol header (never the URL, which ends
 // up in logs):
 //   protocols = ['base64UrlBearerAuthorization.<base64url(jwt)>', 'base64UrlBearerAuthorization']
@@ -16,7 +17,32 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A string since v2.10 (the number 2.10 is 2.1, which reads as older than 2.9). */
-export const CONTRACT_VERSION = '2.18';
+export const CONTRACT_VERSION = '2.19';
+
+/**
+ * v2.19 version handshake. The client names its CONTRACT_VERSION as `?contract=` on the WebSocket URL and on every REST
+ * call: a query parameter, not a header, because a new request header would fail the CORS preflight of a server from
+ * before the handshake. Every REST answer after the Host/Origin checks names the server's version in the
+ * `x-aws-city-contract` header (CORS-exposed). A client the server can't serve (newer than the server, which would
+ * refuse its newer fields; or older than the oldest client it still serves) is refused with HTTP 409: the WebSocket
+ * upgrade (the browser sees 1006, and the client asks GET /progress why), GET /progress and PUT /progress. A client with
+ * no `contract` predates the handshake and is let in. Versions compare as major.minor numbers (compareContract).
+ */
+export const CONTRACT_PARAM = 'contract';
+export const CONTRACT_HEADER = 'x-aws-city-contract';
+
+/** A contract version as [major, minor] numbers ('2.10' → [2, 10]); undefined unless it's exactly major.minor. */
+export function parseContract(v: string | null | undefined): [number, number] | undefined {
+  const m = /^(\d{1,4})\.(\d{1,4})$/.exec(v ?? '');
+  return m ? [Number(m[1]), Number(m[2])] : undefined;
+}
+
+/** Below 0 when `a` is older than `b`, 0 when the same, above 0 when newer (2.10 > 2.9); undefined if either isn't major.minor. */
+export function compareContract(a: string | null | undefined, b: string | null | undefined): number | undefined {
+  const x = parseContract(a);
+  const y = parseContract(b);
+  return x && y ? x[0] - y[0] || x[1] - y[1] : undefined;
+}
 
 // ── Console Copilot shapes (also used by the content script in src/console/) ──
 export type ConsoleAction = 'click' | 'type' | 'select' | 'point' | 'done';
@@ -39,6 +65,11 @@ export interface PageSnapshot {
   url: string;
   title: string;
   heading?: string;
+  /**
+   * v2.19: the page's `<html lang>`, `''` when it has none. The commit rule (`isCommit`) knows only English words, so on
+   * the real console anything but `en*` makes every button press the player's. Absent from older clients.
+   */
+  lang?: string;
   items: SnapshotItem[];
 }
 
@@ -101,19 +132,67 @@ interface ProgressPut {
   progress: Progress;
 }
 
-/** Ask for the CloudFormation quick-create link that connects the player's AWS account. */
+/** Ask for the CloudFormation quick-create link that connects the player's AWS account (answered with account.linkUrl; a refusal is error {requestId}). */
 interface AccountLink {
   action: 'account.link';
   requestId: string;
   region: string;
+  /** v2.19: the quick-create link sets AllowFixes=true (the player ticked "Allow small fixes"). */
+  allowFixes?: boolean;
 }
 
-/** Player finished the quick-create stack; backend verifies it can assume the role. */
+/**
+ * v2.19: Disconnect the linked AWS account. The server forgets the link (role ARN, ExternalId), stops reading the account
+ * and answers every tab of the player with account.status {linked: false} (the asking tab's carries this requestId). No
+ * MFA step-up: taking access away is always allowed. The AWSCity stack stays in the player's account until they delete
+ * it (the UI says how). The local server has nothing to disconnect (it uses the workshop profile) and says so.
+ */
+interface AccountUnlink {
+  action: 'account.unlink';
+  requestId: string;
+}
+
+/**
+ * v2.19: Take down one thing the city built (`managedByGame` in the server's latest read of the account), with no model
+ * call. The server runs it through the ActionService like any write (policy, the gate, the player's approval:
+ * deploy.preview (with this requestId) → deploy.approve, with MFA step-up when hosted) and reports with deploy.status.
+ * Refused before any preview (no such resource, not the city's, no linked account): error {requestId}.
+ */
+export interface ResourceRemove {
+  action: 'resource.remove';
+  requestId: string;
+  kind: 'instance' | 'table' | 'bucket';
+  id: string;
+}
+
+/**
+ * Player finished the quick-create stack; backend verifies it can assume the role. Success: account.status
+ * {requestId, linked: true, …}. v2.19: any refusal (the role can't be used, the link is more than a day old, not the
+ * AWSCity role…) is error {requestId, message} and never an account.status, so an account.status carrying a requestId
+ * always means the request worked; nothing changed (an account already linked stays linked).
+ */
 interface AccountVerify {
   action: 'account.verify';
   requestId: string;
   /** The stack's RoleArn output, or just the 12-digit account id (the role name is fixed per region). */
   roleArn: string;
+  /**
+   * v2.19: the player says they just updated the AWSCity stack with the latest setup link's template ("I've updated the
+   * stack"), so the role version becomes that link's. Without it a verify of the account already linked in that Region
+   * keeps the version it had (a first verify, another Region or another account takes the link's). The account can't be
+   * read for its version: it's the one the player installed from the city's link.
+   */
+  updated?: boolean;
+}
+
+/**
+ * v2.19 "Check again": asks the linked role again, without changing anything, whether it allows fixes (the same EC2
+ * DryRun as verify), and answers account.status {requestId, …, fixes} on every tab. Read-only: no new setup link, no MFA
+ * step-up, and the role version stays as it was. A refusal (nothing linked, the role can't be used) is error {requestId}.
+ */
+interface AccountRecheck {
+  action: 'account.recheck';
+  requestId: string;
 }
 
 interface QuestStart {
@@ -244,7 +323,7 @@ interface WorkshopVerify {
  * open and visible). The server answers with presence.state. A public profile is shown by its Mayor name; a private
  * one is only counted.
  */
-interface PresenceBeat {
+export interface PresenceBeat {
   action: 'presence.beat';
   region: string;
   /** The city's rank name (src/state/rank.ts), shown beside a public Mayor's name. v2.12: adds 'Global City'. */
@@ -274,6 +353,9 @@ export type ClientCommand =
   | ProgressPut
   | AccountLink
   | AccountVerify
+  | AccountRecheck
+  | AccountUnlink
+  | ResourceRemove
   | QuestStart
   | DeployPlan
   | DeployDecision
@@ -394,13 +476,29 @@ interface AccountLinkUrlEvent {
   externalId: string;
 }
 
-interface AccountStatusEvent {
+export interface AccountStatusEvent {
   type: 'account.status';
   requestId?: string;
   linked: boolean;
   accountId?: string;
   region?: string;
   message?: string;
+  /**
+   * v2.19: the link is kept but its role can't be used any more (STS refused AssumeRole on 3 polls in a row over 5 minutes: the AWSCity
+   * stack was deleted or changed): the server stopped reading the account. Sent with linked: false, the account id and
+   * Region. The player links again (account.link clears it) or disconnects (account.unlink).
+   */
+  broken?: boolean;
+  /**
+   * v2.19: whether the player's role allows fixes (AllowFixes), learned at verify without changing anything (an EC2
+   * DryRun); absent = unknown (linked before v2.19, or the check couldn't tell). The local server sends its own setting.
+   */
+  fixes?: boolean;
+  /** v2.19: the player-role template version the player installed (absent = unknown, e.g. linked before v2.19). Hosted only. */
+  roleVersion?: number;
+  /** v2.19: the newest player-role template version, and its template URL (for "Update your AWS City role"). Hosted only. */
+  latestRoleVersion?: number;
+  templateUrl?: string;
 }
 
 export interface DeployChange {
@@ -427,7 +525,7 @@ interface DeployPreviewEvent {
   /** v2.3: a fix for this finding (shown with its rollback; approve runs it). */
   findingId?: string;
   rollback?: string;
-  /** v2.3: the player must type this exactly (a resource the city didn't build, or an account-wide change). */
+  /** v2.3: the player must type this exactly (a resource the city didn't build, an account-wide change, or any destructive write: terminate, delete, a take-down). */
   confirmText?: string;
 }
 
@@ -706,8 +804,11 @@ export interface ErrorEvent {
    * v2.2, optional: why, so the UI can explain it kindly. quota = the player's daily AI calls are used up;
    * paused = the city's AI is switched off (kill switch or global cap); auth = sign in again;
    * unlinked = connect an AWS account first; reauth_required = sign in again (a sign-in within 30 minutes is needed to
-   * link, approve or fix); mfa_required = turn on an authenticator app before linking an
-   * AWS account, approving a write (deploy.approve) or applying a fix (finding.fix) (hosted).
+   * link, approve or fix, and so to take down something the city built, which is approved like any write);
+   * mfa_required = turn on an authenticator app before linking an AWS account (account.link, account.verify), approving
+   * a write (deploy.approve), applying a fix (finding.fix) or taking down something the city built (resource.remove)
+   * (hosted). Both apply: the MFA freshness rule (the session signed in after the authenticator was first seen, else
+   * code auth) and the reauth window.
    */
   code?: 'quota' | 'paused' | 'auth' | 'unlinked' | 'mfa_required' | 'reauth_required';
 }
@@ -980,6 +1081,52 @@ export interface SavedDesign {
 export interface WorkshopProgress {
   steps: Record<string, 'practice' | 'real'>;
   done?: string;
+}
+
+// ── REST: GET /me/export (v2.19) ─────────────────────────────────────────────
+
+/** v2.19: one live-city or leaderboard row the server keeps for the player (filed under a salted hash of their id). */
+export type SocialRow =
+  | { kind: 'presence'; region: string; /** ISO time the row lapses (90 s after the last beat). */ until: string; name?: string; rank?: string }
+  | { kind: 'leaderboard'; board: string; week: string; name: string; score: number };
+
+/**
+ * v2.19: GET /me/export (authenticated like /progress; a JSON download, Content-Disposition: attachment): everything the
+ * server keeps about the player. The account link is its metadata only: never the ExternalId (the role's shared secret).
+ */
+export interface PlayerDataExport {
+  exportedAt: string;
+  contract: string;
+  progress: Progress | null;
+  /**
+   * Absent when no AWS account was ever linked (and always on the local server, which uses the workshop profile).
+   * `linkIssuedAt`: when the last setup link was made; `linkRoleVersion`: the template version it points at;
+   * `pendingRegion`: a Region asked for but not verified yet; `brokenAt`: when the role stopped working.
+   */
+  account?: {
+    status: 'pending' | 'linked';
+    region: string;
+    pendingRegion?: string;
+    accountId?: string;
+    linkedAt?: string;
+    linkIssuedAt?: string;
+    roleVersion?: number;
+    linkRoleVersion?: number;
+    fixes?: boolean;
+    broken?: boolean;
+    brokenAt?: string;
+  };
+  social: SocialRow[];
+  /** The bill switch and the cached month-to-date bill (absent if the bill was never turned on). `readAt`: when it was read. */
+  bill?: { on: boolean; readAt?: string; bill?: CityBillEvent };
+  /** Today's and yesterday's count of AI requests (UTC days; each count expires after 2 days). */
+  aiCalls?: { day: string; calls: number }[];
+  /** The day of the first AI request (the new-player limit counts days from it). */
+  firstSeenDay?: string;
+  /** When the server first saw an authenticator app on (step-up MFA), ISO; absent when it's off or never seen. */
+  mfaOnSince?: string;
+  /** The demo: made on this device from its own progress; no server keeps anything. */
+  practice?: true;
 }
 
 const SERVER_EVENT_TYPES: ServerEvent['type'][] = [

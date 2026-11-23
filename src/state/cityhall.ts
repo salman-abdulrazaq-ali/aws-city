@@ -22,7 +22,7 @@ export const HALL_LEVELS: HallLevel[] = RANKS.map((rank, i) => ({
   seasons: i,
 }));
 
-/** This city's hall level (1 = Village … 6 = Global City). */
+/** This city's hall level (1 = Village … 6 = Global City … 9 = Legendary City). */
 export const hallLevel = (p: Progress, region: string) => RANKS.indexOf(cityRank(p, region).rank) + 1;
 
 /** "Level 3 hall: opens Town houses and 3 past seasons." */
@@ -30,5 +30,5 @@ export function hallNext(p: Progress, region: string): string | undefined {
   const next = HALL_LEVELS[hallLevel(p, region)];
   if (!next) return undefined;
   const what = [...next.items.map((i) => `${i.icon} ${i.name}`), 'one more past season'];
-  return `At ${next.rank.icon} ${next.rank.name}, City Hall reaches level ${next.level}: ${what.join(', ')}.`;
+  return `At ${next.rank.icon} ${next.rank.title}, City Hall reaches level ${next.level}: ${what.join(', ')}.`;
 }

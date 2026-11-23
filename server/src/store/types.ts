@@ -21,17 +21,75 @@ export interface AccountRecord {
   linkedAt?: string;
   /** A linked player asked for a setup link in another Region: verify checks that Region; until then the link stays as is. */
   pendingRegion?: string;
+  /** v2.17: when the last setup link was made (ISO): verify is refused a day after it (a link phished from someone else ages out). */
+  linkIssuedAt?: string;
+  /** v2.17: the player-role template version that link pointed at (`v<N>` of its template URL). */
+  linkRoleVersion?: number;
+  /** v2.17: the template version installed: the link's, recorded at verify. Absent: linked before v2.17. */
+  roleVersion?: number;
+  /** v2.17: whether the role allows fixes (AllowFixes), from a DryRun at verify that changes nothing. Absent: unknown. */
+  fixes?: boolean;
+  /**
+   * v2.17: when STS refused the role on BROKEN_AFTER polls in a row (the stack was deleted or changed): the server stopped
+   * reading the account. A new setup link (back to pending) or a successful verify clears it.
+   */
+  brokenAt?: string;
 }
+
+/** What tells one link apart from the next: a verify sets a new linkedAt, a disconnect forgets the ExternalId. */
+export type LinkIdentity = Pick<AccountRecord, 'externalId' | 'linkedAt'>;
+
+/** Whether `r` is still the link `id` names (same ExternalId and linkedAt). */
+export const sameLink = (r: AccountRecord | undefined, id: LinkIdentity) => r !== undefined && r.externalId === id.externalId && r.linkedAt === id.linkedAt;
+
+/** The fields written in place on a link (`AccountStore.update`): what Check again and a broken mark learn. */
+export type AccountFields = Partial<Pick<AccountRecord, 'fixes' | 'brokenAt'>>;
 
 export interface AccountStore {
+  /** Strongly consistent (DynamoDB ConsistentRead): live() and the once-a-minute re-read must see another task's write. */
   get(sub: string): Promise<AccountRecord | undefined>;
-  put(sub: string, record: AccountRecord): Promise<void>;
+  /**
+   * Saves the record; true when written. `ifLink`: only while the stored record is still that link (sameLink), checked
+   * atomically with the write, so a Disconnect, DELETE /me or a new verify on another task meanwhile is never written
+   * over: false, and nothing written. `'new'`: only while nothing is stored (a first setup link).
+   */
+  put(sub: string, record: AccountRecord, ifLink?: LinkIdentity | 'new'): Promise<boolean>;
+  /**
+   * Sets `fields` on the stored record in place, only while it's still that link (sameLink), atomically: the rest of it
+   * (a new setup link's pendingRegion or window, made on another task meanwhile) stays as it is now. The record as
+   * written, or undefined when it isn't that link any more (nothing written). At least one field is set.
+   */
+  update(sub: string, fields: AccountFields, ifLink: LinkIdentity): Promise<AccountRecord | undefined>;
+  /** v2.17 account.unlink: forgets the link (role ARN, account id and ExternalId); a no-op when there's none. */
+  delete(sub: string): Promise<void>;
 }
 
-/** Daily counters. consume() is atomic: false once `limit` is reached for that key and day. */
+/**
+ * Daily counters. consume() is atomic: false once `limit` is reached for that key and day. Keys are a player's sub,
+ * or GLOBAL… for the whole city's counters (agents/metered.ts).
+ */
 export interface QuotaStore {
   consume(key: string, day: string, limit: number): Promise<boolean>;
   used(key: string, day: string): Promise<number>;
+  /** Gives one call back (a model call that failed before it cost anything); never below zero. */
+  refund(key: string, day: string): Promise<void>;
+  /** The day this player made their first model call: `day` is saved the first time, then always the saved one. */
+  firstSeen(sub: string, day: string): Promise<string>;
+  /** The saved first day, or undefined; a read only, never saves one (GET /me/export). */
+  firstDay(sub: string): Promise<string | undefined>;
+}
+
+/**
+ * Step-up MFA (accounts/mfa.ts): when the server first saw a player with an authenticator on (epoch ms). Only a
+ * session that signed in after it may link an account or approve a write.
+ */
+export interface MfaStore {
+  /** The saved time, or `now` saved and returned the first time. */
+  since(sub: string, now: number): Promise<number>;
+  /** The saved time, or undefined; a read only, never saves one (GET /me/export). */
+  get(sub: string): Promise<number | undefined>;
+  /** The authenticator is off: forget the time, so turning it on again starts a new one. */
+  forget(sub: string): Promise<void>;
 }
 
 /** A deleted player is refused this long: longer than a Cognito access token lives (60 min), so no token outlives it. */
@@ -90,6 +148,7 @@ export interface Stores {
   accounts: AccountStore;
   bills: BillStore;
   quota: QuotaStore;
+  mfa: MfaStore;
   locks: AccountLocks;
   /**
    * Removes everything stored for a player (DELETE /me), leaving a tombstone for DELETED_TOMBSTONE_MS (written first,

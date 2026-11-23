@@ -10,6 +10,7 @@ import {
 } from '@aws-sdk/client-ec2';
 import { type BucketLocationConstraint, CreateBucketCommand, DeleteBucketCommand, PutBucketTaggingCommand } from '@aws-sdk/client-s3';
 import { type AwsClients, classifyAwsError } from '../aws.js';
+import { GuardDeniedError } from '../guard/gate.js';
 import { log, publicErrors } from '../log.js';
 import { bucketPrefix, GAME_TAG, type WorldSnapshot } from '../state/model.js';
 import { LockLostError } from '../store/types.js';
@@ -141,13 +142,14 @@ export const executeAction = async (action: Action, clients: AwsClients, snapsho
           }),
         );
         held();
-        await clients.s3.send(new PutBucketTaggingCommand({ Bucket: name, Tagging: { TagSet: [{ Key: GAME_TAG.key, Value: GAME_TAG.value }] } }));
+        // Bucket names are global: S3 refuses the call unless the bucket is this account's (the gate checks it is ours).
+        await clients.s3.send(new PutBucketTaggingCommand({ Bucket: name, ExpectedBucketOwner: snapshot.accountId, Tagging: { TagSet: [{ Key: GAME_TAG.key, Value: GAME_TAG.value }] } }));
         return { ok: true, message: `Created bucket "${name}".`, resourceId: name };
       }
 
       case 'delete_bucket':
         held();
-        await clients.s3.send(new DeleteBucketCommand({ Bucket: action.name }));
+        await clients.s3.send(new DeleteBucketCommand({ Bucket: action.name, ExpectedBucketOwner: snapshot.accountId }));
         return { ok: true, message: `Deleted bucket "${action.name}".`, resourceId: action.name };
     }
   } catch (err) {
@@ -178,6 +180,8 @@ const SAFE_AWS_TEXT: Record<string, string> = {
  * full text only in the log with a ref (AWS messages carry account ids and role ARNs). Local: the real message.
  */
 export const awsFailure = (err: unknown): string => {
+  // The city's own gate (server/src/guard): its reason is written for players, in every mode.
+  if (err instanceof GuardDeniedError) return err.publicMessage;
   const e = err as { name?: string; message?: string };
   const name = String(e?.name ?? 'Error').replace(/[^\w.:-]/g, '').slice(0, 64) || 'Error';
   const kind = classifyAwsError(err);

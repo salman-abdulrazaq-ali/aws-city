@@ -240,7 +240,7 @@ const TIPS: Record<TipId, { key: string; title: string; body: (layout: Layout) =
   rank: {
     key: 'awscity.tip.rank',
     title: 'You are the Mayor',
-    body: () => 'Your city has a rank, from Village to Global City. Every building level and golden token raises it. Tap it to see everything you have earned.',
+    body: () => 'Your city has a rank, from Village to Global City and on to Legendary City. Every building level and golden token raises it. Tap it to see everything you have earned.',
     target: '.rank-chip',
   },
   workshop: {

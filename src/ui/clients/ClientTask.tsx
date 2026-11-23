@@ -10,6 +10,7 @@ import { choiceOrder } from '@/world/content';
 import { clientById, clientName, levelCount, taskById, taskPay, TASK_ICON, TASK_VERB, type ChooseJob, type ClickJob, type ExplainJob, type FixJob, type TaskRef } from '@/world/clients';
 import { placeFor } from '@/world/places';
 import { serviceById } from '@/world/taxonomy';
+import { AiNote } from '../AiNote';
 import { Builder } from '../ArchitectureBoard';
 import { feel } from '../feedback';
 import { GrowLine } from '../Flashcards';
@@ -289,6 +290,7 @@ function ExplainJobView({ title, job, serviceId, onPass }: { title: string; job:
   const [text, setText] = useState('');
   const [sent, setSent] = useState<{ requestId?: string; text: string }>();
   const fieldId = useId();
+  const noteId = useId();
   const districtId = serviceById(serviceId)?.districtId ?? 'compute';
   const reply = useCity((s) => (sent?.requestId ? s.chats[districtId]?.find((m) => m.id === `a-${sent.requestId}`) : undefined));
   const check = checkKeywords(job.keywords, sent?.text ?? text, job.minWords);
@@ -307,7 +309,8 @@ function ExplainJobView({ title, job, serviceId, onPass }: { title: string; job:
         <label htmlFor={fieldId}>
           <Plain text={job.question} />
         </label>
-        <textarea id={fieldId} rows={3} maxLength={MAX_CHARS} value={text} onChange={(e) => setText(e.target.value)} placeholder="A sentence or two is plenty." />
+        <textarea id={fieldId} rows={3} maxLength={MAX_CHARS} value={text} onChange={(e) => setText(e.target.value)} placeholder="A sentence or two is plenty." aria-describedby={noteId} />
+        <AiNote id={noteId} />
         <button className="btn primary wide" type="submit" disabled={check.tooShort}>
           {check.tooShort ? `A few more words (${job.minWords - check.words} to go)` : 'Check my answer'}
         </button>

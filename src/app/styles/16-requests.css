@@ -43,6 +43,12 @@
 .arch-row .arch-label {
   margin: 0;
 }
+.arch-row .arch-btns {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--s-2);
+}
 .tpl > div {
   flex: 1;
   min-width: 0;

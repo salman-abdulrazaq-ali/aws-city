@@ -8,9 +8,14 @@ the sign-in redirect URL from it: `https://<sha1 of the id>.extensions.allizom.o
 1. **Allow Firefox to sign in.** Run `npm run setup` and tick *Firefox*. The wizard adds the redirect URL to
    Cognito, `moz-extension://*` to the server's allowed origins and to the screenshot bucket's CORS (Firefox gives
    every install a random origin, so players are identified by their sign-in token, not the origin).
-2. **Build.** `npm run zip:firefox` (or tag a release: the *release* workflow attaches both files):
+2. **Build.** `npm run setup` builds both files for your deployment; by hand, a store build sets `WXT_STORE_BUILD=true`
+   and the hosted settings (`npm run setup` writes them to `.env.production`, which the build reads):
+   `WXT_STORE_BUILD=true npm run zip:firefox`. Or tag a release: the *release* workflow attaches both files.
    - `.output/aws-city-<version>-firefox.zip` — the add-on;
-   - `.output/aws-city-<version>-sources.zip` — the source AMO reviewers rebuild it from (`npm ci && npm run zip:firefox`).
+   - `.output/aws-city-<version>-sources.zip` — the source AMO reviewers rebuild it from.
+
+   A store build leaves out the `awsCity` DevTools handles and shows the generic names of branded places, and it
+   stops if a hosted setting is missing (`scripts/release-check.mjs`), so it never ships the demo by accident.
 3. **Check it.** `npm run lint:firefox` runs Mozilla's add-on linter (0 errors expected; the warnings come from
    bundled libraries and are explained in the reviewer notes below).
 4. **Developer account.** Sign in at https://addons.mozilla.org/developers/ (free).
@@ -19,8 +24,12 @@ the sign-in redirect URL from it: `https://<sha1 of the id>.extensions.allizom.o
    - privacy policy: the published [privacy-policy.md](privacy-policy.md);
    - **data collection**: the manifest already declares it (`data_collection_permissions` in `wxt.config.ts`):
      sign-in details, chat messages to the agents, the AWS page you're on, and Lookout screenshots / console labels;
-   - reviewer notes: "Built with WXT (`npm ci && npm run zip:firefox`, Node 24). `innerHTML`/`Function` warnings are in
-     the bundled Phaser game engine and React. A test account is available on request."
+   - reviewer notes (fill in the four values from `.env.production` or the release workflow's variables; they are
+     public, the add-on carries them):
+     "Built with WXT on Node 24: `npm ci`, then
+     `WXT_STORE_BUILD=true WXT_BACKEND=hosted WXT_AWS_WS_URL=<wss://…/ws> WXT_AWS_API_URL=<https://…> WXT_COGNITO_DOMAIN=<…amazoncognito.com> WXT_COGNITO_CLIENT_ID=<…> npm run zip:firefox`
+     (output: `.output/aws-city-<version>-firefox.zip`). `innerHTML`/`Function` warnings are in the bundled Phaser
+     game engine and React. A test account is available on request."
 6. **Review** usually takes a few days. Updates: bump `version` in `package.json`, rebuild, upload both zips.
 
 ## Testing locally

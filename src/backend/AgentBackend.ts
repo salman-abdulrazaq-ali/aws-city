@@ -1,6 +1,14 @@
-import type { ClientCommand, Progress, ServerEvent } from './contract';
+import type { ClientCommand, PlayerDataExport, Progress, ServerEvent } from './contract';
 
-export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error' | 'signed-out';
+/**
+ * `updating`: the server is older than this extension (the v2.19 version handshake refused it), so it waits for the
+ * server's update; `outdated`: the server no longer serves this extension's version, so the extension needs its update.
+ * Progress stays on this device in both.
+ */
+export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error' | 'signed-out' | 'updating' | 'outdated';
+
+/** What became of a progress save: `saved` to the account, or `refused` by it (a 4xx: sending the same copy again can't work). */
+export type SaveState = 'saved' | 'refused';
 
 /**
  * Everything the frontend needs from a backend. MockBackend fakes it in-browser; ServerBackend
@@ -10,6 +18,8 @@ export interface AgentBackend {
   readonly kind: 'mock' | 'server';
   /** 'templates' = curated CloudFormation into a linked account; 'guarded' = the local server's approved actions. */
   readonly deployMode?: 'templates' | 'guarded';
+  /** Signed-in players (the hosted server); absent or false for the mock and the local server. */
+  readonly hosted?: boolean;
   connect(): void;
   disconnect(): void;
   onEvent(cb: (e: ServerEvent) => void): () => void;
@@ -24,13 +34,26 @@ export interface AgentBackend {
   /** null = backend has no progress for this user yet. */
   getProgress(): Promise<Progress | null>;
   putProgress(p: Progress): void;
+  /** Each save's outcome (the server): "Not saved to your account" shows after a refusal, until a save goes through. */
+  onSave?(cb: (s: SaveState) => void): () => void;
+  /**
+   * v2.19 "Download my data": everything the backend keeps about the player (the server: GET /me/export; the demo: this
+   * device's progress, `practice: true`). The account link is metadata only, never the ExternalId.
+   */
+  exportMe(): Promise<PlayerDataExport>;
 
   /** Interactive sign-in (hosted server). Must be called from a user gesture. */
   signIn?(opts?: { fresh?: boolean }): Promise<void>;
   signOut?(): Promise<void>;
   /** Hosted: enrol an authenticator app (step-up MFA before linking an AWS account). */
   startTotp?(): Promise<{ secret: string; uri: string }>;
-  confirmTotp?(code: string): Promise<void>;
+  /**
+   * Turns it on, then ends every session of the player: they sign in again with the code. `signInTwice`: the server
+   * never heard it was turned on, so the sign-in after this one may be asked for too.
+   */
+  confirmTotp?(code: string): Promise<{ signInTwice?: boolean } | undefined>;
+  /** Hosted: whether the player's authenticator is on (`external`: Google sign-in keeps its own second step). */
+  mfaStatus?(): Promise<'on' | 'off' | 'external' | undefined>;
   /** Try connecting again now (after going offline). */
   reconnect?(): void;
   /**

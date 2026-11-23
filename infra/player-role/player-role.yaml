@@ -29,9 +29,12 @@
 # your personal ExternalId. The trusted account and role are fixed in the published template (infra
 # substitutes the __AWS_CITY_*__ placeholders when it uploads it), so a setup link can't be edited to
 # trust someone else. Every change still needs your Approve in the game.
-# Remove access any time: delete the "AWSCity" stack.
+# Who it serves: ConnectsPlayer (v5) names the AWS City player whose setup link this is (their public Mayor name,
+# or a masked id the game shows beside the link). If it isn't you, don't create the stack: someone else's link
+# would let their city into your account. A setup link is only good for a day.
+# Remove access any time: disconnect in the game and delete the "AWSCity" stack.
 AWSTemplateFormatVersion: '2010-09-09'
-Description: AWS City player role (least privilege, game-owned resources only; optional approved fixes). v4
+Description: AWS City player role (least privilege, game-owned resources only; optional approved fixes). v5
 
 Parameters:
   ExternalId:
@@ -46,6 +49,12 @@ Parameters:
     Default: 'false'
     AllowedValues: ['false', 'true']
     Description: Let the citizens apply small, reversible Well-Architected fixes after you approve each one.
+  ConnectsPlayer:
+    Type: String
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '[A-Za-z0-9 ._@*-]+'
+    Description: The AWS City player this role will serve. Don't create the stack if this isn't you.
 
 Conditions:
   FixesOn: !Equals [!Ref AllowFixes, 'true']
@@ -55,7 +64,7 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       RoleName: !Sub __AWS_CITY_PLAYER_ROLE__-${AWS::Region}
-      Description: Lets AWS City agents build small, tagged learning resources after you approve them.
+      Description: !Sub 'Lets AWS City agents build small, tagged learning resources after you approve them. Serves ${ConnectsPlayer}.'
       MaxSessionDuration: 3600
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
@@ -232,5 +241,5 @@ Resources:
 
 Outputs:
   RoleArn:
-    Description: Paste this (or just your account id) into AWS City → Deploy → Connect your AWS.
+    Description: Paste this (or just your account id) into AWS City (⋯ → Account → Connect your AWS account), then verify.
     Value: !GetAtt PlayerRole.Arn

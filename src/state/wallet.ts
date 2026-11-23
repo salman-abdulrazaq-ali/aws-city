@@ -8,7 +8,8 @@
 // coins earned on two surfaces in the same moment, before they sync, count once (the larger). They sync within a
 // second through storage.local, so in play that's never more than a round's pay.
 import type { Progress, Wallet } from '@/backend/contract';
-import { FULL_ROUNDS_A_DAY } from '@/learning/gameStars';
+import { countDaily, deviceLedger, takeDaily, usedToday, type LedgerStore } from '@/learning/dailyLedger';
+import { FULL_ROUNDS_A_DAY, HALF_ROUNDS_A_DAY } from '@/learning/gameStars';
 import { dayKey } from './progress';
 
 export type { Wallet };
@@ -26,7 +27,7 @@ export const COIN_PAY = {
   round: 6,
   /** A workshop step that paid stars (each step once per mode, ever). */
   workshopStep: 5,
-  /** Each service on a passing drawing-board design, once a day per service (at most 8 a design). */
+  /** Each service on a passing drawing-board design, once a day per service (at most 8 a design, DESIGN_COINS_A_DAY a day). */
   drawing: 5,
   /** Today's shift finished (worker 1A's shift summary pays it once a day). */
   shift: 30,
@@ -39,12 +40,32 @@ export const COIN_PAY = {
 /** Watch it done's small pay (COIN_PAY.watch) counts this many repeats a day, then nothing. */
 export const WATCH_PAID_A_DAY = 5;
 
+/** The drawing board pays at most this many City Coins a day across every design: eight services' worth. */
+export const DESIGN_COINS_A_DAY = 40;
+const DESIGN_DAY_KEY = 'design:*';
+
+/**
+ * The services on a passing drawing-board design that pay today (COIN_PAY.drawing each): each service once a day across
+ * every design, at most 8 a design, and no more than DESIGN_COINS_A_DAY in all, so copying designs isn't a coin tap.
+ * Kept in the daily ledger (src/learning/dailyLedger.ts); counts the ones it returns.
+ */
+export function designPay(kinds: readonly string[], day = dayKey(), store: LedgerStore = deviceLedger): string[] {
+  const paid: string[] = [];
+  for (const k of kinds.slice(0, 8)) {
+    // The day's total first, so a service isn't marked paid by a design the total had no room for.
+    if ((usedToday(DESIGN_DAY_KEY, day, store) + 1) * COIN_PAY.drawing > DESIGN_COINS_A_DAY) break;
+    if (!takeDaily(`design:${k}`, 1, day, store)) continue;
+    countDaily(DESIGN_DAY_KEY, day, store);
+    paid.push(k);
+  }
+  return paid;
+}
+
 /**
  * A mini-game round's coins: full (COIN_PAY.round) for the first FULL_ROUNDS_A_DAY rounds of a game a day or a new best,
- * half for the next HALF_ROUNDS_A_DAY, then none (the round still counts, its stars still pay): playing on is for fun
- * and the building, not a coin farm. `roundsToday` counts this round.
+ * half for the next HALF_ROUNDS_A_DAY, then none (the round still counts; its stars stop at the same point,
+ * src/learning/gameStars.ts roundStars): playing on is for fun, not a coin farm. `roundsToday` counts this round.
  */
-export const HALF_ROUNDS_A_DAY = 10;
 export function roundCoins(roundsToday: number, newBest: boolean, full = FULL_ROUNDS_A_DAY): number {
   if (newBest || roundsToday <= full) return COIN_PAY.round;
   return roundsToday <= full + HALF_ROUNDS_A_DAY ? Math.ceil(COIN_PAY.round / 2) : 0;

@@ -53,7 +53,7 @@ export const createStrandsRunner = (deps: {
   const modelFor = (citizen: boolean) => {
     const opts = citizen ? { maxTokens: CITIZEN_TOKENS.maxTokens, effort: 'low' as const } : { maxTokens: AGENT_TOKENS.maxTokens, effort: 'high' as const };
     // A test's stub Anthropic client; otherwise the configured family (Claude, or Amazon Nova through Converse).
-    return deps.client ? new MeteredAnthropicModel({ client: deps.client, modelId: deps.llm.model, ...opts }, deps.llm.gate) : deps.llm.strands(opts);
+    return deps.client ? new MeteredAnthropicModel({ client: deps.client, modelId: deps.llm.model, ...opts }, deps.llm.gate, deps.llm.refund) : deps.llm.strands(opts);
   };
 
   const toolNames = (agentId: string): ActionName[] => (isCitizen(agentId) ? [...READ_ONLY] : actionsForAgent(agentId));

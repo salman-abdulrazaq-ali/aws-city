@@ -46,10 +46,13 @@ export function RequestCard() {
     bus.emit('citizenRequestDone', { answered: answeredRef.current });
     setAsk(undefined);
   };
-  useDialog(!!ask, box, close);
+  // Decorate opened over a question (its HUD button sits outside the scrim): the card waits until the drawer closes.
+  const building = useCity((s) => !!s.build);
+  const shown = !!ask && !building;
+  useDialog(shown, box, close);
   // The backdrop is modal for the city too: a tap on it never selects a building, pans or walks Kai away.
-  useShieldGame(!!ask, scrim);
-  if (!ask) return null;
+  useShieldGame(shown, scrim);
+  if (!ask || building) return null;
   const { request: r, name } = ask;
   const answered = picked !== undefined;
   const right = picked === r.right;

@@ -19,6 +19,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as servicediscovery from 'aws-cdk-lib/aws-servicediscovery';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as subs from 'aws-cdk-lib/aws-sns-subscriptions';
@@ -269,7 +270,12 @@ export class ServiceStack extends Stack {
         AWS_CITY_MODEL: env.models.main,
         AWS_CITY_LIGHT_MODEL: env.models.light,
         AWS_CITY_FALLBACK_MODEL: env.models.light,
+        ...(env.jev?.model ? { AWS_CITY_JEV_MODEL: env.jev.model } : {}),
       },
+      // The one secret: Jev's API key, only when configured (ECS reads it at task start through the execution role).
+      ...(env.jev
+        ? { secrets: { TYPESAFE_API_KEY: ecs.Secret.fromSecretsManager(secretsmanager.Secret.fromSecretNameV2(this, 'JevKey', env.jev.secretName), 'apiKey') } }
+        : {}),
     });
     container.addPortMappings({ containerPort: 8787 });
 
@@ -418,6 +424,16 @@ export class ServiceStack extends Stack {
     alarm('ModelCallSpike', app('ModelCalls'), env.globalDailyModelCalls / 24, 2);
     // Bedrock said "slow down" (429) even after the SDK's retries: players are seeing "the AI is busy".
     alarm('ModelThrottled', app('ModelThrottled'), 10, 2);
+    // Every failure the server logs is a JSON line with level "error" (server/src/log.ts; publicError adds the `ref`
+    // players quote), WebSocket failures included, which the load balancer's 5xx count never sees.
+    const loggedErrors = logGroup
+      .addMetricFilter('ErrorLines', { filterPattern: logs.FilterPattern.stringValue('$.level', '=', 'error'), metricNamespace: 'AWSCity', metricName: 'LoggedErrors', metricValue: '1' })
+      .metric({ statistic: 'Sum', period: Duration.minutes(5) });
+    alarm('LoggedErrors', loggedErrors, 20, 3);
+    // A promise nobody handled (server/src/main.ts logs it and keeps serving): always a bug.
+    alarm('UnhandledRejections', app('UnhandledRejections'), 1, 1);
+    // Several players' roles refused at once (server/src/aws.ts createRefusalBreaker): most likely our task role, not theirs.
+    alarm('RoleRefusalBreaker', app('RoleRefusalBreaker'), 1, 1);
     alarm('TableThrottled', deps.table.metricThrottledRequestsForOperations({
         // The operations the server uses (server/src/store/dynamo.ts); an alarm takes at most 10 metrics.
         operations: [dynamodb.Operation.GET_ITEM, dynamodb.Operation.PUT_ITEM, dynamodb.Operation.UPDATE_ITEM, dynamodb.Operation.DELETE_ITEM, dynamodb.Operation.QUERY, dynamodb.Operation.BATCH_WRITE_ITEM],
@@ -444,6 +460,11 @@ export class ServiceStack extends Stack {
           new cloudwatch.GraphWidget({ title: 'ALB', left: [service.loadBalancer.metrics.activeConnectionCount(), service.loadBalancer.metrics.httpCodeTarget(elbv2.HttpCodeTarget.TARGET_5XX_COUNT)] }),
           new cloudwatch.GraphWidget({ title: 'Service', left: [service.service.metricCpuUtilization(), service.service.metricMemoryUtilization()] }),
         ],
+        [
+          new cloudwatch.GraphWidget({ title: 'Errors', left: [loggedErrors, app('UnhandledRejections')] }),
+          new cloudwatch.GraphWidget({ title: 'Model throttles / refusals', left: [app('ModelThrottled'), app('Refusals')] }),
+          new cloudwatch.GraphWidget({ title: 'Tokens', left: [app('InputTokens'), app('OutputTokens'), app('CacheReadTokens')] }),
+        ],
       ],
     });
 
@@ -463,7 +484,7 @@ export class ServiceStack extends Stack {
     ]);
     ack(taskDef, [
       { id: `${IAM5}[Resource::*]`, reason: 'ecr:GetAuthorizationToken does not support resource-level permissions.' },
-      { id: 'AwsSolutions::AwsSolutions-ECS2', reason: 'Only non-secret configuration is passed as environment variables; the server has no secrets (task role + public JWKS).' },
+      { id: 'AwsSolutions::AwsSolutions-ECS2', reason: 'Only non-secret configuration is passed as environment variables; the one optional secret (the Jev API key) comes from Secrets Manager through `secrets`.' },
     ]);
     ack(this, [
       { id: 'Construct-Annotations::@aws-cdk/core:crossStackReferencesDefaultStrong', reason: 'Strong cross-stack references are intended (Data/Auth outlive Service).' },

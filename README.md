@@ -7,7 +7,6 @@
 ### Learn AWS by living in it.
 
 **🏆 1st place, North Hackathon at Northumbria University**
-<!-- TODO: add the date, the prize and the team's names, e.g. "October 2026 · Team: …" -->
 
 [![CI](https://github.com/salman-abdulrazaq-ali/aws-city/actions/workflows/ci.yml/badge.svg)](https://github.com/salman-abdulrazaq-ali/aws-city/actions/workflows/ci.yml)
 ![Node 24](https://img.shields.io/badge/node-24-339933?logo=nodedotjs&logoColor=white)
@@ -45,7 +44,9 @@ district's crown and a beacon. The building rises floor by floor when you level 
 
 Past Master, stars aren't enough. Three **gold crowns** (Mentor, Architect, Legend) are earned only with real
 knowledge: cards you remember for a week, a passed architecture drawing, a finished quest and rounds of the game.
-The Legend's crown shines a beam over the city at night.
+The Legend's crown shines a beam over the city at night. Your city's **rank** (Village, Town, City, Metropolis,
+Megacity, Global City) keeps climbing past Global City through three crown ranks (Crown City, Cloud Capital, Legendary
+City), which need crowns, not just stars.
 
 <p align="center"><img src="docs/images/growth.webp" alt="S3 Lake and the DynamoDB Library from Novice to Master, then wearing one, two and three gold crowns" width="760"></p>
 
@@ -72,12 +73,16 @@ the Codex, AWS news, Launch Day, the Drawing board)? Open **⋯ → Show everyth
 away again; nothing you've earned is lost either way.
 
 
-- **6 mini-games**, each built for one service: S3 fishing, the Lambda kitchen, the Route 53 dance, the Shield wall,
-  EC2 rush hour and the DynamoDB sorting office. Questions get harder as you play, and an Expert round opens at level 3.
-- **300 flashcards** with spaced repetition, in simple words first and the full answer one tap away.
+- **10 mini-games**, each built for one service: S3 fishing, the Lambda kitchen, the Route 53 dance, the Shield wall,
+  EC2 rush hour, the DynamoDB sorting office, the Red Team Range (Security Agent), the SQS queue juggler, the IAM
+  permission gate and the CloudFront edge cache, plus Launch Day, a builder game. Questions get harder as you play, and an Expert round opens at level 3.
+- **600+ flashcards** with spaced repetition, in simple words first and the full answer one tap away.
 - **Puzzles** (architecture drawings) scored on the 6 Well-Architected pillars, including a "Region goes dark" drill.
 - **45 quests** that together cover all 58 services, each ending with *Explain it back*.
-- **Today's goals**: a few cards, a puzzle, a game and a fix keep your streak alive (a ring on the shift).
+- **Today's goals**: a few cards, a puzzle, a game and a fix fill the day's ring on the shift. Each learning day lights a
+  window in **City Lights** for good; a missed day only dims one until you relight it. Games, puzzles, chat answers and
+  agent tasks pay full stars for the first few a day, then less or none (the card says so), and **City Coins** 🪙, earned
+  by doing things, are spent on Decorate.
 - **Hands-on workshops.** Type each AWS CLI command in a practice terminal (Tab finishes a word, 💡 Hint types the next
   one for a star, *Fill my names* reuses the names you picked), then run it for real in AWS CloudShell and let the city
   check your account, read-only. Finishing one puts an *Established* plaque in front of its building.
@@ -97,7 +102,7 @@ away again; nothing you've earned is lost either way.
   are always your click. In the demo it (and the Lookout's camera) uses the **practice console**, a page inside the
   extension that looks like the AWS console, where nothing touches AWS.
 - **Deploy for real.** Connect *your own* AWS account with a small, restricted role. Every change waits for your
-  **Approve**.
+  **Approve**. [How to connect, update and disconnect it](docs/connect-aws-account.md).
 - **City care.** Citizens spot real issues in your account (a public bucket, a table without backups) and explain
   the fix. You approve each one.
 - **Live AWS status.** Real outages from the public AWS Health Dashboard arrive as a news ticker, a throbbing Region on
@@ -290,32 +295,43 @@ contains no secrets):
 | Web address | A Route 53 domain gives `api.yourdomain.com`; otherwise CloudFront gives free HTTPS. | **No domain** |
 | Sign-in page name | Your Cognito sign-in address. The wizard checks it's free. | Accept the suggestion |
 | Google sign-in | Optional "Sign in with Google" ([guide](docs/google-sign-in.md)). Email + password always works. | Skip; add it later |
+| Your name and a contact email (optional) | Fill in the privacy policy: the wizard writes `.output/privacy-policy-<env>.md`, which you host at a public URL for the store listings ([template](docs/privacy-policy.md)). | Your name and email |
 | Alarm email | Alarms and budget alerts. Click the confirmation email AWS sends. | Your email |
 | Monthly budget | At 100% the AI switches off automatically; everything else keeps working. | 300 (prod) / 50 (staging) |
 | SES sender | Optional: your own "from" address for sign-up emails (Cognito's default sends ~50/day). | Skip |
 | Allow the local (unpacked) build | Lets the extension you build on this computer sign in. On by default for staging, off for prod. | Default |
-| Chrome Web Store id | Only after you publish ([guide](docs/chrome-web-store.md)). Re-run setup to add it. | Leave empty |
-| GitHub deploys | Optional CI/CD with GitHub OIDC (no stored keys). | Skip |
+| Chrome Web Store id, Edge Add-ons id | Only after you publish ([guide](docs/chrome-web-store.md)). Edge Add-ons gives the same zip an id of its own, so it has its own question. Re-run setup to add them. | Leave empty |
+| GitHub deploys | Optional CI/CD with GitHub OIDC (no stored keys). The repo is pre-filled from this clone's `origin` and you confirm it: its `staging` and `prod` environments can then deploy into your account. | Skip |
 
 **What it does for you:**
 1. Asks before every change to AWS.
 2. Bootstraps CDK.
 3. Deploys the stacks, which takes about 15–25 minutes the first time.
 4. Smoke-tests the live API.
-5. Writes `.env.production` and builds the extension, plus a store-ready zip.
+5. Writes `.env.production` and builds the store zips (`WXT_STORE_BUILD=true`: no manifest key, so each store
+   assigns its id), plus a copy to try in `.output/chrome-mv3-<env>` when the local build may sign in.
 
 **When it's done:**
 - **Try it:** answer Yes to setup's last question, or run `npm run open:hosted` any time. It opens your live city in
-  its own browser window. In your everyday Chrome: `chrome://extensions` → **Load unpacked** → `.output/chrome-mv3`.
-- **Publish:** upload `.output/*-chrome.zip` to the Chrome Web Store
-  ([guide](docs/chrome-web-store.md)), then run `npm run setup` again and enter the store id.
+  its own browser window. In your everyday Chrome: `chrome://extensions` → **Load unpacked** → `.output/chrome-mv3-staging`
+  (the keyed copy setup keeps for this environment; `.output/chrome-mv3` is the same build until the demo rebuilds it).
+- **Publish:** upload `.output/*-chrome.zip` to the Chrome Web Store (and, if you like, Edge Add-ons)
+  ([guide](docs/chrome-web-store.md)), then run `npm run setup` again and enter the store ids.
+- **Players connect their own AWS account** from ⋯ → Account: the steps, the role's exact permissions, updating,
+  disconnecting and troubleshooting are in [docs/connect-aws-account.md](docs/connect-aws-account.md) (point your players there).
+- **Builds from now on:** plain builds (`npm run build`, `zip`, `zip:firefox`, `safari:xcode`) read `.env.production`,
+  so they build for your server; `npm start`'s demo, `npm run smoke` and `smoke:copilot` always build the demo
+  (`WXT_BACKEND=mock`). For a store, add `WXT_STORE_BUILD=true`: it leaves out the manifest key and the `awsCity`
+  DevTools handles, shows the generic names of branded places, and fails if a `WXT_*` setting is missing.
 
 **Other commands:**
 - `npm run setup -- --dry-run`: see every question and check without changing anything in AWS (it still
   writes your answers to `aws-city.config.json`). This also works without an AWS login.
 - `npm run setup -- --env staging`: skip the environment question (`--yes` accepts every saved answer).
 - `npm run setup -- --destroy --env staging`: remove that environment's stacks. Tables and buckets are kept,
-  so no data is lost by accident.
+  so no data is lost by accident. That also means a redeploy with the same names fails, and prod's user pool must never be
+  recreated (new players' ids would orphan everyone's progress): read the runbook's
+  [Destroy and redeploy](docs/runbook.md#destroy-and-redeploy) first.
 
 **Cost while idle:**
 - **prod:** roughly **$60–85/month** for two small Fargate tasks, the load balancer, WAF and logs.
@@ -367,9 +383,14 @@ flowchart LR
 - **We never hold your keys.** Agents act in your account only through the role you install
   (`infra/player-role/player-role.yaml`). It's least-privilege: tiny, tagged, name-prefixed
   resources, locked to one Region, and it trusts only this deployment's server role. Delete the
-  `AWSCity` stack to revoke it.
+  `AWSCity` stack to revoke it, or press **Disconnect** (⋯ → Account) to have the city forget the link at once.
+  **Download my data** (⋯ → Account) saves everything the server keeps about you, without the role's secret ExternalId.
+  Players' guide: [docs/connect-aws-account.md](docs/connect-aws-account.md).
 - **Console Copilot runs only when you start it, only on console pages.** It never clicks
   delete / IAM / billing controls and never reads secret fields; press Esc to stop.
+- **A second check on every write.** After you approve, a deterministic gate lets through exactly the approved request,
+  once. Optionally, Jev (a second opinion that can only make a change stricter) looks at each proposed write first:
+  [docs/jev.md](docs/jev.md).
 - **Costs are capped.** Each player has a daily AI quota, and there's a kill switch
   (`/cloud-city/<env>/ai-enabled`). At 100% of the budget, AI is cut off automatically.
 - **Architecture:** [docs/well-architected.md](docs/well-architected.md) is our Well-Architected
@@ -384,7 +405,7 @@ art/          pixel-art generators (characters, city tiles, landmarks) → publi
 server/       the backend (Node + TS): agents on Bedrock, approvals, tenants, stores — local or hosted
 infra/        CDK stacks (data, auth, service, edge WAF, budget, CI) + setup wizard + player role
 scripts/      open / live / smoke tests / asset fetchers
-docs/         contract, runbook, privacy policy, store listing, Google & Chrome Web Store guides
+docs/         contract, runbook, connect-your-AWS-account guide, privacy policy, store listing, Google & Chrome Web Store guides
 ```
 
 | Command | What it does |
@@ -411,7 +432,7 @@ The backend contract is [docs/backend-contract.md](docs/backend-contract.md); it
 | No alarm or budget emails | Click **Confirm subscription** in the AWS Notifications email. |
 | "Sign in" loops in the extension | That build's extension id isn't allowed: re-run `npm run setup` (allow the local build, or add the store id). |
 | "The city's AI is resting" | The kill switch is off or the budget was hit (see the [runbook](docs/runbook.md)). |
-| Player can't link their account | Create the stack from the in-game link *in the same Region*, then paste the 12-digit account id. |
+| Player can't link their account | Create the stack from the in-game link *in the same Region*, then paste the 12-digit account id. More in [docs/connect-aws-account.md](docs/connect-aws-account.md#troubleshooting). |
 
 ## For contributors using Claude Code
 
@@ -430,7 +451,6 @@ development session only, and the game's agents never use it (see `CLAUDE.md`).
 ## The team
 
 Built at the **North Hackathon at Northumbria University**, where AWS City won **1st place**. 🏆
-<!-- TODO: the team's names and links, and a thank-you to the organisers, judges and mentors. -->
 
 ## License
 

@@ -17,6 +17,7 @@ import { offlineReason } from './logic';
 import { Portrait } from './Portrait';
 import { ForLearners, Plain } from './Term';
 import { useDialog } from './useDialog';
+import { FixesOn } from './Account';
 
 /** Severity in the player's words: how soon to look, not a risk score. */
 const SEVERITY_TEXT: Record<FindingView['severity'], string> = { high: 'Urgent', medium: 'Soon', low: 'Later' };
@@ -213,6 +214,10 @@ export function FindingCard({ openTab }: { openTab: Go }) {
   const deploy = useCity((s) => (id ? Object.values(s.deploys).findLast((d) => d.findingId === id) : undefined));
   const close = useCity((s) => s.openFinding);
   const offline = useCity((s) => offlineReason(s.backendKind, s.backendStatus));
+  // v2.19: the linked role doesn't allow fixes (AllowFixes off): said up front, never after an approve and MFA.
+  const fixesOff = useCity((s) => s.account.linked && s.account.fixes === false);
+  const accountRegion = useCity((s) => s.account.region);
+  const hosted = useCity((s) => s.hosted);
   const closeBtn = useRef<HTMLButtonElement>(null);
   const box = useRef<HTMLElement>(null);
   useDialog(!!f, box, () => close(undefined), closeBtn);
@@ -322,8 +327,37 @@ export function FindingCard({ openTab }: { openTab: Go }) {
                   {failed.message}
                 </p>
               )}
-              {f.fix && !gate.ok && c && <Teach f={f} c={c} need={need} openTab={openTab} close={() => close(undefined)} />}
+              {f.fix && fixesOff && (
+                <div className="fixes-off" role="note">
+                  <b>🔒 Fixes are off for your AWS City role</b>
+                  <p className="muted">
+                    <Plain
+                      text={
+                        hosted
+                          ? 'So this can’t be fixed from here yet: an approval would only be refused. Turn small fixes on in CloudFormation (you still approve each fix), then press Check again.'
+                          : 'So this can’t be fixed from here yet: an approval would only be refused.'
+                      }
+                    />
+                  </p>
+                  {accountRegion && <FixesOn region={accountRegion} />}
+                </div>
+              )}
+              {f.fix && !fixesOff && !gate.ok && c && <Teach f={f} c={c} need={need} openTab={openTab} close={() => close(undefined)} />}
               <div className="finding-actions">
+                {/* No automatic fix: once read, it leaves the list (so it never holds a place in City care forever). */}
+                {!f.fix && (
+                  <button
+                    className="btn primary"
+                    title="You’ve read it: it leaves City care (Explain says what to change)"
+                    onClick={() => {
+                      feel.tap();
+                      useCity.getState().ackFinding(f.id);
+                      close(undefined);
+                    }}
+                  >
+                    Got it
+                  </button>
+                )}
                 <button
                   className="btn"
                   disabled={!!care || !!offline}
@@ -342,7 +376,7 @@ export function FindingCard({ openTab }: { openTab: Go }) {
                     'Explain'
                   )}
                 </button>
-                {f.fix && (
+                {f.fix && !fixesOff && (
                   <button
                     className={`btn ${gate.ok ? 'primary' : 'locked'}`}
                     disabled={!gate.ok || !!care || !!offline}

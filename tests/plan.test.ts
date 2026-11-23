@@ -306,8 +306,11 @@ describe('a baked map that isn’t right', () => {
     expect(realPlan(raw)?.kind).toBe('osm');
   });
 
-  it('`?map=legacy` keeps the legacy city', () => {
+  it('`?map=legacy` keeps the legacy city, except in a store build (a dev tool)', () => {
     expect(legacyForced('?map=legacy')).toBe(true);
+    expect(legacyForced('?map=legacy', 'false')).toBe(true);
+    expect(legacyForced('?map=legacy', undefined)).toBe(true);
+    expect(legacyForced('?map=legacy', 'true')).toBe(false);
     expect(legacyForced('?map=osm')).toBe(false);
     expect(legacyForced('')).toBe(false);
   });

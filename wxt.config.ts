@@ -2,11 +2,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { defineConfig } from 'wxt';
 import { FIREFOX_ADDON_ID } from './scripts/extension-id.mjs';
+import { storeBuildProblems } from './scripts/release-check.mjs';
 
 // A fixed public key gives the unpacked Chrome extension the same id on every machine (scripts/extension-id.mjs),
 // so the Cognito callback https://<id>.chromiumapp.org/ always matches. Store uploads leave it out:
-// the Chrome Web Store assigns its own id (release builds set WXT_STORE_BUILD=true).
-const key = process.env.WXT_STORE_BUILD === 'true' ? undefined : readFileSync('extension.pubkey', 'utf8').trim();
+// the Chrome Web Store assigns its own id (release builds set WXT_STORE_BUILD=true). Read when the manifest is made,
+// after WXT has loaded the .env files, so the flag means the same here as in import.meta.env.
+const storeBuild = () => process.env.WXT_STORE_BUILD === 'true';
 
 // Branded Google Chrome ignores --load-extension, so `npm run dev` opened an empty about:blank. Playwright's
 // Chrome for Testing still loads unpacked extensions: use it when installed (npx playwright install chromium).
@@ -28,9 +30,20 @@ export default defineConfig({
     binaries: chromeForTesting ? { chrome: chromeForTesting } : undefined,
     startUrls: ['https://console.aws.amazon.com/s3/home'],
   },
-  // Firefox Add-ons (AMO) reviews the source used to build the extension: only what the build reads goes in
-  // (no server, infra or cdk.out — those hold nothing the extension uses).
-  zip: { excludeSources: ['infra/**', 'server/**', 'art/**', 'tests/**', 'docs/**', 'agentic-city/**', 'backend/**', 'CLAUDE.md', 'aws-city.config.json'] },
+  // Firefox Add-ons (AMO) reviews the source used to build the extension: only what the build reads goes in.
+  // An allowlist, so a developer's local files (CLAUDE.local.md, .omc/, aws-city.config.json…) can never ship.
+  zip: {
+    includeSources: ['src/**', 'shared/**', 'public/**', 'scripts/**', 'package.json', 'package-lock.json', 'tsconfig.json', 'wxt.config.ts', 'extension.pubkey', 'README.md', 'LICENSE'],
+    excludeSources: ['**/*.local.*', 'aws-city.config.json'],
+  },
+  // A store build must carry its backend: a hosted one missing a WXT_* setting would quietly ship the demo
+  // (src/backend/index.ts keeps that fallback for developers' builds). WXT has loaded the .env files by now.
+  hooks: {
+    'build:before': (wxt) => {
+      const problems = storeBuildProblems(process.env, wxt.config.browser);
+      if (problems.length) throw new Error(problems.join('\n'));
+    },
+  },
   // WXT builds Firefox and Safari as MV2 unless told otherwise (core/resolve-config.ts); every browser gets MV3.
   manifestVersion: 3,
   manifest: ({ browser }) => ({
@@ -42,7 +55,7 @@ export default defineConfig({
     // Requested at runtime only if activeTab isn't enough for the Lookout's screenshot.
     optional_host_permissions: ['<all_urls>'],
     action: { default_title: 'Open AWS City' },
-    ...(browser === 'chrome' && key ? { key } : {}),
+    ...(browser === 'chrome' && !storeBuild() ? { key: readFileSync('extension.pubkey', 'utf8').trim() } : {}),
     ...(browser === 'firefox'
       ? {
           browser_specific_settings: {

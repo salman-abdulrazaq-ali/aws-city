@@ -129,6 +129,8 @@ export class KitchenGame extends MiniGame {
     t.on('pointerdown', () => this.invoke(o));
     this.orders.push(o);
     this.layout();
+    // Each order is said as it comes in (the board is only drawn), with how many wait.
+    this.speak(`New order: ${source}. ${this.orders.length} waiting.`, true);
   }
 
   /** When Space last swung (one swing per SWING.cooldownMs). */
@@ -143,6 +145,7 @@ export class KitchenGame extends MiniGame {
     this.wrong();
     this.addScore(SWING.blank);
     this.floater(this.board.x + 80, this.board.y + 10, `no order waiting ${SWING.blank}`, FEEDBACK.wrong);
+    this.speak('No order waiting.');
   }
 
   private layout() {
@@ -157,6 +160,7 @@ export class KitchenGame extends MiniGame {
       this.wrong();
       this.addScore(POINTS.lambda.throttled);
       this.floater(o.t.x + 80, o.t.y, `throttled! (max concurrency) ${POINTS.lambda.throttled}`, FEEDBACK.wrong);
+      this.speak('Throttled: every chef is busy.');
       return;
     }
     const { chef, cold, ms: dur } = run;
@@ -165,6 +169,7 @@ export class KitchenGame extends MiniGame {
     this.orders = this.orders.filter((x) => x !== o);
     o.t.destroy();
     this.layout();
+    this.speak(cold ? `${o.source}: a cold chef, so a cold start first.` : `${o.source}: a warm chef is cooking.`);
     this.time.delayedCall(dur, () => {
       if (this.over) return;
       const waited = this.time.now - o.born;
@@ -172,11 +177,13 @@ export class KitchenGame extends MiniGame {
         this.wrong();
         this.addScore(POINTS.lambda.expired, 'soft');
         this.floater(chef.sprite.x, chef.sprite.y - chef.sprite.displayHeight * 0.85, 'order expired', FEEDBACK.wrong);
+        this.speak(`${o.source} expired before it was served. Score ${this.score}.`);
       } else {
         this.hit();
         this.addScore(cold ? POINTS.lambda.cold : POINTS.lambda.warm, 'soft');
         this.coins++;
         this.floater(chef.sprite.x, chef.sprite.y - chef.sprite.displayHeight * 0.85, cold ? `+${POINTS.lambda.cold} (cold)` : `+${POINTS.lambda.warm}`, FEEDBACK.right);
+        this.speak(`Served ${o.source}, plus ${cold ? POINTS.lambda.cold : POINTS.lambda.warm}. Score ${this.score}.`);
       }
       chef.sprite.play('lambda:idle:SE');
     });
@@ -193,6 +200,7 @@ export class KitchenGame extends MiniGame {
       } else {
         c.provisioned = false;
         this.floater(c.sprite.x, y, 'released: no coins', FEEDBACK.note);
+        this.speak('A provisioned chef went back to on demand: no budget left.');
       }
     }
   }
@@ -200,10 +208,14 @@ export class KitchenGame extends MiniGame {
   private provision() {
     if (this.over) return;
     const c = this.chefs.find((x) => !x.provisioned);
-    if (!c || this.coins < 5) return this.floater(this.scale.width / 2, this.controlsY - 28, 'need $5', FEEDBACK.wrong);
+    if (!c || this.coins < 5) {
+      this.speak(c ? `A provisioned chef costs $5; your budget is $${this.coins}.` : 'Every chef is provisioned already.');
+      return this.floater(this.scale.width / 2, this.controlsY - 28, 'need $5', FEEDBACK.wrong);
+    }
     this.coins -= 5;
     c.provisioned = true;
     this.floater(c.sprite.x, c.sprite.y - c.sprite.displayHeight * 0.85, 'always warm!', '#fde047');
+    this.speak(`One chef is provisioned: always warm. Budget $${this.coins}.`);
   }
 
   override update(t: number, dt: number) {
@@ -223,6 +235,7 @@ export class KitchenGame extends MiniGame {
         this.wrong();
         this.addScore(POINTS.lambda.expired, 'soft');
         this.layout();
+        this.speak(`${o.source} waited too long and expired. Score ${this.score}.`);
       } else if (now - o.born > pace(TIMEOUT_MS) * 0.6) o.t.setColor('#b91c1c').setBackgroundColor('#fee2e2');
     }
     this.coinText?.setText(`Budget $${this.coins}`);

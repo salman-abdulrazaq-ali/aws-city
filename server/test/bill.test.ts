@@ -1,12 +1,13 @@
 import { CostExplorerClient, DataUnavailableException, GetCostAndUsageCommand } from '@aws-sdk/client-cost-explorer';
 import { mockClient } from 'aws-sdk-client-mock';
+import { createHash } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import ceServices from '../../shared/ce-services.json' with { type: 'json' };
 import { BILL_TTL_MS, billPeriod, createBill, readBill, regionForCe, serviceForCe } from '../src/state/bill.js';
-import { fileBills } from '../src/store/local.js';
+import { fileMfa, fileBills } from '../src/store/local.js';
 import type { BillRecord, BillStore } from '../src/store/types.js';
 import { SERVICES, type ServerEvent } from '../src/world.js';
 
@@ -244,5 +245,12 @@ describe('the bill: off by default, at most one read a day', () => {
     expect(await bills.get('someone')).toEqual({ on: true });
     expect(bills.fileFor('local')).toBe(join(dir, 'bill.json'));
     expect(bills.fileFor('someone')).not.toContain('someone');
+  });
+
+  it('MFA files: mfa.json for the local player, mfa-<sha256[:24]>.json for anyone else', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'awscity-mfa-'));
+    const mfa = fileMfa(join(dir, 'progress.json'));
+    expect(mfa.fileFor('local')).toBe(join(dir, 'mfa.json'));
+    expect(mfa.fileFor('someone')).toBe(join(dir, `mfa-${createHash('sha256').update('someone').digest('hex').slice(0, 24)}.json`));
   });
 });

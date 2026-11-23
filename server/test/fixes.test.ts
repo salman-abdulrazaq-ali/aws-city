@@ -11,7 +11,7 @@ import {
 import { GetPublicAccessBlockCommand, PutPublicAccessBlockCommand, S3Client } from '@aws-sdk/client-s3';
 import { mockClient } from 'aws-sdk-client-mock';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { FIXES, PartialFix } from '../src/agents/fixes.js';
+import { FIXES, fixesAllowed, PartialFix } from '../src/agents/fixes.js';
 import { RULES } from '../src/agents/findings.js';
 import type { AwsClients } from '../src/aws.js';
 import type { CityFinding } from '../src/world.js';
@@ -33,6 +33,20 @@ describe('the citizens’ fixes', () => {
   it('every fixable rule has exactly one fix, and every fix belongs to a rule', () => {
     const ids = RULES.flatMap((r) => (r.fix ? [r.fix.fixId] : []));
     expect(ids.sort()).toEqual(Object.keys(FIXES).sort());
+  });
+
+  it('v2.17: fixesAllowed asks with a DryRun that changes nothing: DryRunOperation = yes, UnauthorizedOperation = no, anything else unknown', async () => {
+    const answer = (name: string) => Object.assign(new Error(name), { name });
+    ec2.on(EnableEbsEncryptionByDefaultCommand).rejects(answer('DryRunOperation'));
+    expect(await fixesAllowed(clients.ec2)).toBe(true);
+    expect(ec2.commandCalls(EnableEbsEncryptionByDefaultCommand)[0]!.args[0].input).toEqual({ DryRun: true });
+    ec2.on(EnableEbsEncryptionByDefaultCommand).rejects(answer('UnauthorizedOperation'));
+    expect(await fixesAllowed(clients.ec2)).toBe(false);
+    ec2.on(EnableEbsEncryptionByDefaultCommand).rejects(answer('RequestLimitExceeded'));
+    expect(await fixesAllowed(clients.ec2)).toBeUndefined();
+    ec2.on(EnableEbsEncryptionByDefaultCommand).resolves({});
+    expect(await fixesAllowed(clients.ec2)).toBeUndefined();
+    expect(ec2.commandCalls(EnableEbsEncryptionByDefaultCommand).every((c) => c.args[0].input.DryRun === true)).toBe(true);
   });
 
   it('only tightens: no delete, terminate, disable or authorize calls anywhere in fixes.ts', () => {

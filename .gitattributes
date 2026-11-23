@@ -1,0 +1,16 @@
+# Check text out with LF on every OS (Windows' core.autocrlf would write CRLF): tests read files such as the
+# CloudFormation templates byte for byte. Git stores every file as LF already.
+* text=auto eol=lf
+
+*.png binary
+*.webp binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.zip binary
+*.ogg binary
+*.ttf binary
+# The Health Dashboard feed is UTF-16 with a BOM; the news tests read these bytes as they are.
+server/test/fixtures/news/currentevents.utf16be.json binary

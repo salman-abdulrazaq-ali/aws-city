@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { findExact, isCustomSelect, listboxFor, matchOption, openListbox, optionsIn, press } from '@/console/act';
 import { Pacer, nextSpeed, parseSpeed, SPEEDS } from '@/console/pacing';
 import { mayAct, mayChoose } from '@/console/safety';
+import { isCommit } from '@/console/risk';
 import { isBusy, settle } from '@/console/settle';
 import { elementFor, takeSnapshot } from '@/console/snapshot';
 import { ConsoleMock, flowFor, PRACTICE_ONLY } from '@/backend/consoleMock';
@@ -263,6 +264,34 @@ describe('mock flows are routed by the task’s service, then the console URL, t
   });
 });
 
+describe('Cloudscape controls that open access are the player’s', () => {
+  it('a security group source of Anywhere-IPv4/IPv6 or 0.0.0.0/0 is refused, My IP is fine', async () => {
+    const { trigger } = cloudscapeSelect(['Custom', 'Anywhere-IPv4', 'Anywhere-IPv6', 'My IP']);
+    const opts = optionsIn((await openListbox(trigger))!);
+    for (const o of ['Anywhere-IPv4', 'Anywhere-IPv6']) expect(mayChoose(matchOption(opts, o)!, 'Source'), o).toMatchObject({ ok: false, reason: 'risky' });
+    expect(mayChoose(matchOption(opts, 'My IP')!, 'Source')).toEqual({ ok: true });
+    // the rule's type and CIDR, typed or picked
+    document.body.innerHTML = `<div class="awsui_form-field_1"><label id="c" for="cidr">CIDR blocks</label><input id="cidr" class="awsui_input_1" aria-labelledby="c" /></div>`;
+    const item = snap().items[0]!;
+    expect(mayAct(item, 'type', findExact(document, item)!, '0.0.0.0/0')).toMatchObject({ ok: false, reason: 'risky' });
+    expect(mayAct(item, 'type', findExact(document, item)!, '::/0')).toMatchObject({ ok: false, reason: 'risky' });
+    expect(mayAct(item, 'type', findExact(document, item)!, '203.0.113.7/32')).toEqual({ ok: true });
+    const types = cloudscapeSelect(['HTTPS', 'All traffic']);
+    const t = optionsIn((await openListbox(types.trigger))!);
+    expect(mayChoose(matchOption(t, 'All traffic')!, 'Type')).toMatchObject({ ok: false, reason: 'risky' });
+  });
+
+  it('S3 Block Public Access boxes and the “I acknowledge … public” box are never ticked by the agent', () => {
+    // each on its own, outside the section whose heading would make it risky anyway
+    document.body.innerHTML = `
+      <span class="awsui_checkbox_1"><input type="checkbox" id="bpa" checked aria-labelledby="bpa-l" /><span id="bpa-l">Block <em>all</em> public access</span></span>
+      <span class="awsui_checkbox_1"><input type="checkbox" id="ack" aria-labelledby="ack-l" /><span id="ack-l">I acknowledge that the current settings might result in this bucket and the objects within becoming public.</span></span>`;
+    const items = snap().items;
+    expect(items.map((i) => i.context)).toEqual([undefined, undefined]);
+    for (const item of items) expect(mayAct(item, 'click', findExact(document, item)!), item.name).toMatchObject({ ok: false, reason: 'risky' });
+  });
+});
+
 describe('risk checks can’t be dodged by nesting or long text', () => {
   it('a span inside a Delete button is a Delete click', async () => {
     const { mayAct } = await import('@/console/safety');
@@ -276,5 +305,75 @@ describe('risk checks can’t be dodged by nesting or long text', () => {
     document.body.innerHTML = `<div id="tile" role="button" tabindex="0">Standard ${'lorem ipsum '.repeat(60)} this will delete all existing data</div>`;
     const tile = document.getElementById('tile')!;
     expect(mayAct({ id: 'x', role: 'button', name: 'Standard' }, 'click', tile)).toMatchObject({ ok: false, reason: 'risky' });
+  });
+});
+
+describe('the real console’s commit buttons are the player’s (Cloudscape markup)', () => {
+  const REAL = 'https://us-west-2.console.aws.amazon.com/vpcconsole/home?region=us-west-2#CreateNatGateway:';
+  const PRACTICE = 'chrome-extension://abcdefghijklmnop/practice.html#/vpc/create-nat';
+  // A Cloudscape Form (its actions: Cancel as a link button, the primary commit), a form field, a select, an expandable
+  // section, a ButtonDropdown's open menu and a wizard's primary Next. Every Cloudscape button is type="submit" by default.
+  const PAGE = `
+    <div class="awsui_root_1i0s3"><h1>Create NAT gateway</h1>
+      <div class="awsui_form-field_1"><label class="awsui_label_1">Name - optional</label><input type="text" class="awsui_input_2" /></div>
+      <div class="awsui_form-field_1"><label id="sn">Subnet</label><button type="button" aria-haspopup="listbox" aria-labelledby="sn">Select a subnet</button></div>
+      <div class="awsui_expandable-section-header_2" tabindex="0">Additional settings</div>
+      <button type="submit" class="awsui_button_vjswe_1 awsui_variant-normal_vjswe_4">Actions</button>
+      <ul role="menu"><li role="menuitem"><span>Start instance</span></li><li role="menuitem"><span>Connect</span></li></ul>
+      <div class="awsui_actions_1i0s3">
+        <button type="submit" class="awsui_button_vjswe_1 awsui_variant-link_vjswe_3">Cancel</button>
+        <button type="submit" class="awsui_button_vjswe_1 awsui_variant-primary_vjswe_2"><span class="awsui_content_vjswe_5">Create NAT gateway</span></button>
+        <button type="submit" class="awsui_button_vjswe_1 awsui_variant-primary_vjswe_2">Next</button>
+      </div></div>`;
+  const act = (url: string) => {
+    const items = snap().items;
+    return (name: string, action = 'click', value?: string) => {
+      const item = items.find((i) => i.name === name)!;
+      return mayAct(item, action, findExact(document, item)!, value, url);
+    };
+  };
+
+  it('refuses the primary Create button, a commit in a menu and every submit button; the form, the select and the section stay the Copilot’s', () => {
+    document.body.innerHTML = PAGE;
+    document.documentElement.lang = 'en';
+    const real = act(REAL);
+    expect(real('Create NAT gateway')).toEqual({ ok: false, reason: 'commit', message: 'Your turn: press “Create NAT gateway” when you’re happy with the settings.' });
+    expect(real('Start instance')).toMatchObject({ ok: false, reason: 'commit' });
+    // Asked as a "select", a commit button or menu item is still pressed in the end: still the player's.
+    expect(real('Create NAT gateway', 'select', 'x')).toMatchObject({ ok: false, reason: 'commit' });
+    expect(real('Start instance', 'select', 'x')).toMatchObject({ ok: false, reason: 'commit' });
+    // A real dropdown's pick never presses a commit button: still the Copilot's.
+    expect(real('Subnet', 'select', 'x')).not.toMatchObject({ reason: 'commit' });
+    for (const n of ['Subnet', 'Additional settings']) expect(real(n), n).toEqual({ ok: true });
+    // Neither the main action nor named for a commit by its first word (isCommit)…
+    for (const n of ['Actions', 'Cancel', 'Next']) expect(isCommit(REAL, 'button', n), n).toBe(false);
+    // …and every Cloudscape button is type="submit" whatever it does, so that alone isn't a commit (the plain-submit rule
+    // skips Cloudscape buttons); a commit word anywhere in a name still is, on every page ("Connect", main's merged rule).
+    expect(real('Connect')).toMatchObject({ ok: false, reason: 'commit' });
+    for (const n of ['Actions', 'Cancel', 'Next']) expect(real(n), n).toEqual({ ok: true });
+    expect(real('Name - optional', 'type', 'aws-city-nat')).toEqual({ ok: true });
+    // On the practice console too, commit words are the player's to press; a Cloudscape Next isn't.
+    const practice = act(PRACTICE);
+    for (const n of ['Create NAT gateway', 'Start instance']) expect(practice(n), n).toMatchObject({ ok: false, reason: 'commit' });
+    expect(practice('Next')).toEqual({ ok: true });
+    for (const n of ['Subnet', 'Additional settings']) expect(practice(n), n).toEqual({ ok: true });
+  });
+
+  it('on a console in another language every button and menu item press is the player’s; the select, the section and the fields stay the Copilot’s', () => {
+    document.body.innerHTML = PAGE;
+    document.documentElement.lang = 'de';
+    const real = act(REAL);
+    for (const n of ['Create NAT gateway', 'Actions', 'Start instance', 'Connect', 'Cancel', 'Next']) expect(real(n), n).toMatchObject({ ok: false, reason: 'commit' });
+    expect(real('Connect', 'select', 'x')).toMatchObject({ ok: false, reason: 'commit' });
+    for (const n of ['Subnet', 'Additional settings']) expect(real(n), n).toEqual({ ok: true });
+    expect(real('Subnet', 'select', 'x')).not.toMatchObject({ reason: 'commit' });
+    expect(real('Name - optional', 'type', 'aws-city-nat')).toEqual({ ok: true });
+    // The practice console isn't the real console, so its language changes nothing: only the every-page rule applies.
+    const practice = act(PRACTICE);
+    expect(practice('Create NAT gateway')).toMatchObject({ ok: false, reason: 'commit' });
+    for (const n of ['Actions', 'Next']) expect(practice(n), n).toEqual({ ok: true });
+    expect(JSON.stringify(practice('Create NAT gateway'))).not.toMatch(/isn’t set to English/);
+    for (const n of ['Subnet', 'Additional settings']) expect(practice(n), n).toEqual({ ok: true });
+    document.documentElement.lang = 'en';
   });
 });

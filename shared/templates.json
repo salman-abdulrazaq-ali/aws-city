@@ -528,6 +528,7 @@
       "resources": [
         { "logicalId": "FunctionSecurityGroup", "type": "AWS::EC2::SecurityGroup" },
         { "logicalId": "DatabaseSecurityGroup", "type": "AWS::EC2::SecurityGroup" },
+        { "logicalId": "DatabaseIngress", "type": "AWS::EC2::SecurityGroupIngress" },
         { "logicalId": "EndpointSecurityGroup", "type": "AWS::EC2::SecurityGroup" },
         { "logicalId": "SecretsEndpoint", "type": "AWS::EC2::VPCEndpoint" },
         { "logicalId": "DatabaseSubnets", "type": "AWS::RDS::DBSubnetGroup" },

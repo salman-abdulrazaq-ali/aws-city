@@ -74,7 +74,7 @@ export function Collection() {
           <div className="finding-who">
             <b id="collection-title">My City</b>
             <span className="muted">
-              {mayorOf(region)} · {r.rank.name} · {r.points} points
+              {mayorOf(region)} · {r.rank.title} · {r.points} points
             </span>
           </div>
           <button ref={closeBtn} className="btn icon ghost" aria-label="Close" onClick={close}>
@@ -83,8 +83,8 @@ export function Collection() {
         </header>
         <div className="rank-ladder" aria-label="City ranks">
           {RANKS.map((x) => (
-            <span key={x.id} className={`rank-step ${r.points >= x.at ? 'got' : ''} ${x.id === r.rank.id ? 'now' : ''}`} title={`${x.name}: ${x.at} points`}>
-              <span aria-hidden="true">{x.icon}</span> {x.name}
+            <span key={x.id} className={`rank-step ${r.points >= x.at ? 'got' : ''} ${x.id === r.rank.id ? 'now' : ''}`} title={`${x.title}: ${x.at} points`}>
+              <span aria-hidden="true">{x.icon}</span> {x.title}
             </span>
           ))}
         </div>
@@ -125,7 +125,7 @@ export function Collection() {
                       {cr.rank.icon} {regionInfo(c)?.city ?? c}
                     </span>
                     <b>
-                      {cr.rank.name} · ✨ {foundIn(progress, c)}/{TOKENS_PER_CITY}
+                      {cr.rank.title} · ✨ {foundIn(progress, c)}/{TOKENS_PER_CITY}
                     </b>
                   </li>
                 );
@@ -279,8 +279,8 @@ export function RankChip() {
   const region = useCity((s) => s.cityRegion);
   const r = cityRank(progress, region);
   return (
-    <button className="btn ghost tiny rank-chip" onClick={() => useCity.getState().openCollection(true)} title={`${mayorOf(region)}: ${r.rank.name}, ${r.points} points. ${nextRankLine(r)}`}>
-      <span aria-hidden="true">{r.rank.icon}</span> {r.rank.name}
+    <button className="btn ghost tiny rank-chip" onClick={() => useCity.getState().openCollection(true)} title={`${mayorOf(region)}: ${r.rank.title}, ${r.points} points. ${nextRankLine(r)}`}>
+      <span aria-hidden="true">{r.rank.icon}</span> {r.rank.title}
     </button>
   );
 }

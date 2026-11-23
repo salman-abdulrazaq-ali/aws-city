@@ -4,9 +4,9 @@
 import type { SnapshotItem } from './types';
 
 import { byIdFrom } from './dom';
-import { isCommitControl, isRisky, isRiskyValue } from './risk';
+import { isCommit, isCommitControl, isConsoleUrl, isEnglishPage, isRisky, isRiskyValue, playerOnlyPage } from './risk';
 
-export { isRisky };
+export { isConsoleUrl, isRisky };
 
 const SENSITIVE_NAME = /(password|secret|token|access ?key|private ?key|credential|mfa|otp|card|cvv|iban)/i;
 
@@ -19,19 +19,7 @@ export function isSensitiveInput(el: Element): boolean {
   return SENSITIVE_NAME.test(hint);
 }
 
-/** Only real console pages — never sign-in, never other sites. */
-export function isConsoleUrl(raw: string): boolean {
-  try {
-    const u = new URL(raw);
-    if (u.protocol !== 'https:') return false;
-    if (/(^|\.)signin\.aws\.amazon\.com$/.test(u.hostname)) return false;
-    return u.hostname === 'console.aws.amazon.com' || u.hostname.endsWith('.console.aws.amazon.com');
-  } catch {
-    return false;
-  }
-}
-
-export type Verdict = { ok: true } | { ok: false; reason: 'risky' | 'commit' | 'sensitive' | 'missing' | 'disabled'; message: string };
+export type Verdict = { ok: true } | { ok: false; reason: 'risky' | 'sensitive' | 'missing' | 'disabled' | 'player-only' | 'commit'; message: string };
 
 /**
  * Every label a control carries — a page could name a Delete button "Next" in one place but not all.
@@ -48,8 +36,9 @@ export function riskSignals(el: Element): string {
     el.getAttribute('data-testid'),
     el.getAttribute('name'),
     el.getAttribute('value'),
-    // A <select>'s text is every option glued together; the option actually chosen is checked on its own (optionFor).
-    el.tagName === 'SELECT' ? '' : (h.innerText ?? el.textContent),
+    // A native select's text is every option's; mayAct checks the one it picks (optionFor), so a risky option
+    // elsewhere in the list doesn't refuse a safe pick.
+    el instanceof HTMLSelectElement ? undefined : (h.innerText ?? el.textContent),
     el.closest('label')?.textContent,
     // what a screen reader reads with it (Cloudscape puts option and tile descriptions here)
     ...refs('aria-describedby'),
@@ -91,6 +80,37 @@ export function optionFor(el: Element, value: string): HTMLOptionElement | undef
 }
 
 const DANGER_CLASS = /\b(danger|destructive|delete)\b/i;
+/** Cloudscape's primary button (`awsui_variant-primary_<hash>`), or the older AWS UI's (`awsui-button-variant-primary`). */
+const PRIMARY_CLASS = /\bawsui[_-](button-)?variant-primary/i;
+
+const isSubmit = (e: Element): e is HTMLButtonElement | HTMLInputElement =>
+  (e instanceof HTMLButtonElement || e instanceof HTMLInputElement) && (e.type === 'submit' || e.type === 'image');
+
+/**
+ * The page marks this control (or the button it sits in) as the form's main action: the primary variant, or a native
+ * form's submit button. Cloudscape renders nearly every button `type="submit"` (its formAction defaults to submit), so
+ * for its buttons only the variant counts. A `<button>` with no type is a submit button too, often by accident, so it
+ * counts only as the form's default button (its first submit control, what Enter presses).
+ */
+export function isMainAction(el: Element): boolean {
+  if ([el, ...controlsAround(el)].some((c) => PRIMARY_CLASS.test(c.getAttribute('class') ?? ''))) return true;
+  if (!isSubmit(el) || !el.form || /\bawsui/.test(el.getAttribute('class') ?? '')) return false;
+  return /^(submit|image)$/i.test(el.getAttribute('type') ?? '') || [...el.form.elements].find(isSubmit) === el;
+}
+
+/** What a player looks over before committing: a field, never a search, a table's row boxes or a hidden one. */
+const FIELD = 'input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=image]), select, textarea, [role=radio], [role=checkbox], [role=switch], [role=combobox], [role=textbox], [aria-haspopup=listbox]';
+const NOT_A_SETTING = '[type=search], [role=searchbox], [role=search], table, [role=table], [role=grid], [role=treegrid], [hidden], [aria-hidden=true]';
+
+/**
+ * Whether the commit button has settings to look over: a field in its form, else in the page's main region. A list
+ * page's "Create database" only opens the form (its filter and row boxes aren't settings), so "happy with the
+ * settings" would be wrong there.
+ */
+function hasSettings(el: Element): boolean {
+  const scope = el.closest('form') ?? el.ownerDocument.querySelector('main, [role=main]') ?? el.ownerDocument.body;
+  return [...scope.querySelectorAll(FIELD)].some((f) => !f.closest(NOT_A_SETTING));
+}
 
 /**
  * Phase two of a custom (Cloudscape) select: the option the agent is about to click, checked on all its
@@ -105,13 +125,27 @@ export function mayChoose(option: Element, fieldName = ''): Verdict {
   return { ok: true };
 }
 
-/** A form's submit control: type=submit, or a <button> with no type inside a form (which submits by default). */
-const isSubmitControl = (el: Element) =>
-  el.matches('button[type="submit" i], input[type="submit" i], input[type="image" i]') || (el.tagName === 'BUTTON' && !el.hasAttribute('type') && !!el.closest('form'));
+/** A native <select> or a dropdown that opens a list (act.ts isCustomSelect): picking there never presses a button. */
+const opensAList = (el: Element) => el instanceof HTMLSelectElement || el.getAttribute('aria-haspopup') === 'listbox' || el.getAttribute('role') === 'combobox';
 
-/** Decide whether the agent may act on this element itself. */
-export function mayAct(item: SnapshotItem | undefined, action: string, el?: Element, value?: string): Verdict {
+/**
+ * A form's submit control: type=submit, or a <button> with no type inside a form (which submits by default). Not a
+ * Cloudscape button: Cloudscape renders every button `type="submit"` (Next, Cancel, Actions…), so for those only the
+ * primary variant says "commit" (`isMainAction`), as do the commit words (`isCommit`/`isCommitControl`).
+ */
+const isSubmitControl = (el: Element) =>
+  !/\bawsui/.test(el.getAttribute('class') ?? '') &&
+  (el.matches('button[type="submit" i], input[type="submit" i], input[type="image" i]') || (el.tagName === 'BUTTON' && !el.hasAttribute('type') && !!el.closest('form')));
+
+/**
+ * Decide whether the agent may act on this element itself. `url` is the page's (the element's document by default):
+ * on the real console's player-only pages (`PLAYER_ONLY_PAGES`) every click, pick and keystroke is the player's.
+ */
+export function mayAct(item: SnapshotItem | undefined, action: string, el?: Element, value?: string, url = el?.ownerDocument.location?.href): Verdict {
   if (!item) return { ok: false, reason: 'missing', message: 'I can’t find that on the page.' };
+  const only = playerOnlyPage(url);
+  if (only && (action === 'click' || action === 'select' || action === 'type'))
+    return { ok: false, reason: 'player-only', message: `On ${only.name} pages, changes are yours to make, so this one is your turn. I’ll point and explain.` };
   if (el && (action === 'click' || action === 'select')) {
     const around = controlsAround(el);
     if (isRisky(riskSignals(el)) || DANGER_CLASS.test(el.getAttribute('class') ?? '') || around.some((c) => isRisky(riskSignals(c)) || DANGER_CLASS.test(c.getAttribute('class') ?? '')))
@@ -128,14 +162,30 @@ export function mayAct(item: SnapshotItem | undefined, action: string, el?: Elem
   if (el && action === 'type' && (isRisky(riskSignals(el)) || isRisky(value ?? '') || /\b(confirm|to confirm)\b/i.test(riskSignals(el))))
     return { ok: false, reason: 'risky', message: 'This field confirms something important — please type it yourself.' };
   if (item.disabled) return { ok: false, reason: 'disabled', message: `“${item.name}” is disabled right now.` };
-  // The player presses anything that commits a change, and types anything that opens access (risk.ts isCommit).
-  if (action === 'click' && (isCommitControl(item.role, item.name) || (el !== undefined && isSubmitControl(el))))
-    return { ok: false, reason: 'commit', message: `“${item.name}” makes the change — your turn to press it.` };
+  // The player types any value that opens access widely or names an account (risk.ts isRiskyValue).
   if ((action === 'type' || action === 'select') && isRiskyValue(value ?? ''))
     return { ok: false, reason: 'risky', message: 'That value opens access widely or names an AWS account — please enter it yourself.' };
   if (item.sensitive) return { ok: false, reason: 'sensitive', message: 'That field holds a secret — please fill it in yourself.' };
   if ((action === 'click' || action === 'select' || action === 'type') && (isRisky(item.name, item.context) || isRisky(value ?? ''))) {
     return { ok: false, reason: 'risky', message: `“${item.name}” can change or cost something important — your turn to click it.` };
+  }
+  // The press that commits a change is the player's. On any page (the practice console too): a button, link or menu item
+  // with a commit word anywhere in its name (isCommitControl) and any form submit control. On the real console also the
+  // form's commit by its first word or the page's main action (isCommit), and on a console that isn't in English (or
+  // doesn't say) every press of a button. A "select" on anything that isn't a dropdown ends in the same press (act.ts
+  // choose → press), so it counts too.
+  const lang = el?.ownerDocument.documentElement.getAttribute('lang') ?? '';
+  const presses = action === 'click' || (action === 'select' && !!el && !opensAList(el));
+  if (
+    presses &&
+    (isCommitControl(item.role, item.name) || (el !== undefined && isSubmitControl(el)) || isCommit(url, item.role, item.name, !!el && isMainAction(el), lang))
+  ) {
+    const message = !!url && isConsoleUrl(url) && !isEnglishPage(lang)
+      ? `Your turn: press “${item.name}”. This console isn’t set to English, so I leave its buttons to you.`
+      : el && hasSettings(el)
+        ? `Your turn: press “${item.name}” when you’re happy with the settings.`
+        : `Your turn: press “${item.name}”.`;
+    return { ok: false, reason: 'commit', message };
   }
   return { ok: true };
 }

@@ -44,6 +44,8 @@ export interface TurnHooks {
   onToolEnd?(call: ToolCallReport): void;
   /** Ask the player before any write (contract v2). Omitted = legacy behaviour. */
   approve?: Approve;
+  /** The player's own request for this turn (task.submit's prompt), for the writes' second opinion. Omitted when the text isn't theirs. */
+  intent?: string;
   /** Aborted when the player's socket closes: no further model or tool calls for this turn. */
   signal?: AbortSignal;
 }
@@ -133,6 +135,9 @@ export const outcomeText = (o: SubmitOutcome): string => {
       return JSON.stringify({ status: 'invalid_input', error: o.error });
   }
 };
+
+/** A write's submit options from the turn: the approval channel and, when known, the player's own words. */
+export const submitOpts = (hooks: TurnHooks) => ({ approve: hooks.approve, ...(hooks.intent ? { intent: hooks.intent } : {}) });
 
 export const outcomeMessage = (o: SubmitOutcome) =>
   o.status === 'done' || o.status === 'failed' ? o.result.message : o.status === 'denied' ? o.reason : o.error;
@@ -232,7 +237,7 @@ export const createAgentRunner = (deps: { llm: Llm; actions: ActionService; snap
           const known = allowed.has(use.name);
           hooks.onToolStart?.({ name: use.name, api: known ? AWS_API[use.name as ActionName] : use.name, summary: deps.actions.describe(use.name, use.input) });
           const outcome: SubmitOutcome = known
-            ? await (hooks.approve ? deps.actions.submit(use.name, use.input, { approve: hooks.approve }) : deps.actions.submit(use.name, use.input))
+            ? await (hooks.approve ? deps.actions.submit(use.name, use.input, submitOpts(hooks)) : deps.actions.submit(use.name, use.input))
             : { status: 'invalid', error: `"${use.name}" isn't one of this agent's tools.` };
           const report = toolReport(use.name, use.input, outcome);
           toolCalls.push(report);

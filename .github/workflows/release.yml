@@ -17,7 +17,10 @@ jobs:
         with: { persist-credentials: false }
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 24, cache: npm }
+      - name: The tag is package.json's version
+        run: node scripts/release-check.mjs --tag "$GITHUB_REF_NAME"
       - run: npm ci && npm run check
+      # wxt.config.ts fails this step if a WXT_* variable is missing (a store build never falls back to the demo).
       - name: Build against the hosted backend
         run: npm run zip && npm run zip:firefox
         env:
@@ -27,6 +30,10 @@ jobs:
           WXT_AWS_API_URL: ${{ vars.WXT_AWS_API_URL }}
           WXT_COGNITO_DOMAIN: ${{ vars.WXT_COGNITO_DOMAIN }}
           WXT_COGNITO_CLIENT_ID: ${{ vars.WXT_COGNITO_CLIENT_ID }}
+          # The privacy policy's https address (⋯ → Account, the sign-in card); the stores require one.
+          WXT_PRIVACY_URL: ${{ vars.WXT_PRIVACY_URL }}
+      - name: The built manifests carry that version and no key
+        run: node scripts/release-check.mjs --tag "$GITHUB_REF_NAME" .output/chrome-mv3/manifest.json .output/firefox-mv3/manifest.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: zips

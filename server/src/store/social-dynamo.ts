@@ -1,5 +1,6 @@
-import { type DynamoDBDocumentClient, BatchWriteCommand, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { type DynamoDBDocumentClient, BatchWriteCommand, GetCommand, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { BOARD_TTL_MS, MAX_MAYORS, PRESENCE_MS, type SocialStore, whoOf } from '../social.js';
+import type { SocialRow } from '../world.js';
 
 /**
  * Live city and leaderboards in the player table (no new table, no new IAM: the same actions on the same table).
@@ -83,6 +84,24 @@ export function dynamoSocial(db: DynamoDBDocumentClient, TableName: string, now:
       const who = whoOf(sub);
       const refs = await queryAll(user(sub), 20, 'SOCIAL#');
       await batchDelete([...refs.map((r) => ({ pk: r.target as string, sk: who })), ...refs.map((r) => ({ pk: user(sub), sk: r.sk as string }))]);
+    },
+    async mine(sub) {
+      // The refs under the player's own key name every row (forget() relies on the same); each is read by its own key.
+      const who = whoOf(sub);
+      const targets = (await queryAll(user(sub), 20, 'SOCIAL#')).map((r) => r.target).filter((t): t is string => typeof t === 'string');
+      const rows: SocialRow[] = [];
+      for (let i = 0; i < targets.length; i += 10) {
+        const items = await Promise.all(targets.slice(i, i + 10).map(async (pk) => ({ pk, item: (await db.send(new GetCommand({ TableName, Key: { pk, sk: who } }))).Item })));
+        for (const { pk, item } of items) {
+          if (!item) continue;
+          const presence = /^PRESENCE#(.+)$/.exec(pk);
+          const board = /^LB#(.+)#(\d{4}-W\d{2})$/.exec(pk);
+          if (presence && typeof item.until === 'number' && item.until > now())
+            rows.push({ kind: 'presence', region: presence[1]!, until: new Date(item.until).toISOString(), ...(typeof item.name === 'string' && typeof item.rank === 'string' ? { name: item.name, rank: item.rank } : {}) });
+          else if (board && typeof item.name === 'string' && typeof item.score === 'number') rows.push({ kind: 'leaderboard', board: board[1]!, week: board[2]!, name: item.name, score: item.score });
+        }
+      }
+      return rows;
     },
   };
   return store;

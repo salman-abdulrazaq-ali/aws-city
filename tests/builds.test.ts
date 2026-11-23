@@ -67,4 +67,13 @@ describe('doneLine', () => {
     const practice: DeployView = { deployId: 'p1', templateId: 'static-site', stackName: 'aws-city-site', region: 'us-west-2', changes: [], status: 'complete' };
     expect(doneLine(practice, true)).toBe('aws-city-site is built in the practice account!');
   });
+
+  it('a safety check line on the approval (a detail row) is words, not a second resource: still one card, still "removed"', () => {
+    const term = card('a3', 'terminate_instance', ID, EC2, 'complete');
+    const checked = { ...term, changes: [...term.changes, { action: 'Modify' as const, logicalId: 'Safety check: it holds data', resourceType: 'detail' }] };
+    expect(doneLine(checked, false)).toBe(`Server ${ID} is removed.`);
+    const [one, ...rest] = arrangeBuilds([card('a1', 'launch_instance', 'web', EC2, 'complete', { resourceId: ID }), checked]);
+    expect(rest).toEqual([]);
+    expect(one!.group).toMatchObject({ title: `Server web (${ID})`, exists: false });
+  });
 });

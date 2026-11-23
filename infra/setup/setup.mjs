@@ -10,7 +10,7 @@
 //   npm run setup -- --yes --env staging  non-interactive: reuse aws-city.config.json (CI)
 //   npm run setup -- --destroy --env staging
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,6 +48,7 @@ const YES = flag('--yes');
 
 const saved = existsSync(CONFIG) ? JSON.parse(readFileSync(CONFIG, 'utf8')) : {};
 const { DEV_EXTENSION_ID, FIREFOX_ADDON_ID } = await import(new URL('../../scripts/extension-id.mjs', import.meta.url));
+const { isHttpsUrl } = await import(new URL('../../scripts/release-check.mjs', import.meta.url));
 
 const bye = (msg = 'Stopped. Nothing else was changed.') => {
   p.cancel(msg);
@@ -61,9 +62,15 @@ const ask = async (kind, o, savedValue) => {
   if (p.isCancel(v)) bye();
   return v;
 };
+// npm and npx are .cmd scripts on Windows, which spawn can only start through a shell (as the launcher does: WIN_SHELL
+// in scripts/launcher/open-browser.mjs). A shell joins the words as they are, so a word with a space (the repo's path
+// may have one) is quoted; one command string, not an argument list, also avoids Node's DEP0190 warning.
+const WIN_SHELL = process.platform === 'win32';
 const run = (cmd, argv, cwd = ROOT, env = {}) => {
-  const r = spawnSync(cmd, argv, { cwd, stdio: 'inherit', env: { ...process.env, ...env } });
-  if (r.status !== 0) bye(`${cmd} ${argv.join(' ')} failed (exit ${r.status}). Fix the error above and run setup again — it picks up where it left off.`);
+  const opts = { cwd, stdio: 'inherit', env: { ...process.env, ...env } };
+  const r = WIN_SHELL ? spawnSync([cmd, ...argv].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' '), { ...opts, shell: true }) : spawnSync(cmd, argv, opts);
+  if (r.error) bye(`Couldn't start ${cmd}: ${r.error.message}`);
+  if (r.status !== 0) bye(`${cmd} ${argv.join(' ')} failed (exit ${r.status ?? r.signal}). Fix the error above and run setup again — it picks up where it left off.`);
 };
 /** Like `run`, without blocking: the deploy's progress line keeps ticking while cdk works. */
 const runAsync = async (cmd, argv, cwd = ROOT, env = {}) => {
@@ -484,6 +491,11 @@ const askAll = async (was, kept) => {
   if (!alarmEmail && !emailOptional) bye('prod needs alarmEmail (alarms and the budget cut-off notify it).');
   if (!alarmEmail) p.log.warn('No alarm email: the AI still switches off at 100% of the budget, but nobody is told. Add one before going live.');
   const monthlyBudgetUsd = Number(await ask('text', { message: 'Monthly AWS budget in USD (AI switches off at 100%)', initialValue: String(was.monthlyBudgetUsd ?? (envName === 'prod' ? 300 : 50)), validate: (v) => (Number(v) > 0 ? undefined : 'a number') }, was.monthlyBudgetUsd));
+  // Optional: who the privacy policy names as the operator (docs/privacy-policy.md is a template). Remembered like the rest.
+  const operatorName = (await ask('text', { message: 'Your name or organisation, for the privacy policy (optional; you run this service)', initialValue: was.operatorName ?? '' }, was.operatorName ?? '')).trim();
+  const contactEmail = (await ask('text', { message: 'Contact email for privacy questions (optional)', initialValue: was.contactEmail ?? alarmEmail ?? '', validate: (v) => (!v || /^\S+@\S+\.\S+$/.test(v) ? undefined : 'an email address, or leave empty') }, was.contactEmail ?? '')).trim();
+  // The extension links it (⋯ → Account, the sign-in card) and a store build stops without it (scripts/release-check.mjs).
+  const privacyUrl = (await ask('text', { message: 'Where your privacy policy is published, https (optional now; store builds need it: this run writes the policy for you to host)', initialValue: was.privacyUrl ?? '', validate: (v) => (!v || isHttpsUrl(v) ? undefined : 'an https address, or leave empty') }, was.privacyUrl ?? '')).trim();
   // SES starts in a sandbox (only verified recipients), so while it's there the question defaults to No, even when an
   // earlier run said Yes: otherwise players never get their sign-up code. --yes runs keep the saved answer.
   if (sesSandbox)
@@ -502,7 +514,13 @@ const askAll = async (was, kept) => {
   // Chrome extension ids. The local build's id comes from a public key in this repo, so ANY unpacked copy built from it
   // can sign in (only as the person signing in: the server still checks every request). Until there's a store id it's
   // the only way to try the city, so it's the default then; with a store id, prod keeps the previous answer.
-  const storeId = await ask('text', { message: 'Chrome Web Store extension id (leave empty until you have one)', initialValue: (was.extensionIds ?? []).find((i) => i !== DEV_EXTENSION_ID) ?? '', validate: (v) => (!v || /^[a-p]{32}$/.test(v) ? undefined : '32 letters a–p') }, (was.extensionIds ?? []).find((i) => i !== DEV_EXTENSION_ID) ?? '');
+  // Each store assigns its own id: the Chrome Web Store one, and Edge Add-ons another for the same zip. Both sign in
+  // through https://<id>.chromiumapp.org/ like the local build, so each goes into extensionIds (Cognito callbacks,
+  // the server's allowed origins, the screenshot bucket's CORS).
+  const storeIdCheck = (v) => (!v || /^[a-p]{32}$/.test(v) ? undefined : '32 letters a–p');
+  const prevChromeId = was.chromeStoreId ?? (was.extensionIds ?? []).find((i) => i !== DEV_EXTENSION_ID && i !== was.edgeStoreId) ?? '';
+  const storeId = await ask('text', { message: 'Chrome Web Store extension id (leave empty until you have one)', initialValue: prevChromeId, validate: storeIdCheck }, prevChromeId);
+  const edgeStoreId = await ask('text', { message: 'Microsoft Edge Add-ons extension id (optional: Edge gives the same zip its own id)', initialValue: was.edgeStoreId ?? '', validate: storeIdCheck }, was.edgeStoreId ?? '');
   const hadDev = (was.extensionIds ?? []).includes(DEV_EXTENSION_ID);
   const allowDev = await ask(
     'confirm',
@@ -518,8 +536,8 @@ const askAll = async (was, kept) => {
     },
     was.extensionIds ? hadDev : envName !== 'prod',
   );
-  const extensionIds = [...(allowDev ? [DEV_EXTENSION_ID] : []), ...(storeId ? [storeId] : [])];
-  if (!extensionIds.length) p.log.warn('No extension can sign in, so you won’t be able to try the city: allow the local build, or publish to the Chrome Web Store and run setup again with its id.');
+  const extensionIds = [...new Set([...(allowDev ? [DEV_EXTENSION_ID] : []), ...(storeId ? [storeId] : []), ...(edgeStoreId ? [edgeStoreId] : [])])];
+  if (!extensionIds.length) p.log.warn('No extension can sign in, so you won’t be able to try the city: allow the local build, or publish to the Chrome Web Store (or Edge Add-ons) and run setup again with its id.');
   // Chrome/Edge are always on; Firefox and Safari players sign in with the same accounts when enabled. One yes/no each:
   // a multiselect needed Space before Enter, and Enter alone quietly chose none.
   p.log.info('Browsers: Chrome and Edge always work. Firefox and Safari are optional (the same accounts sign in there).');
@@ -528,21 +546,43 @@ const askAll = async (was, kept) => {
   const browsers = [...(firefox ? ['firefox'] : []), ...(safariOn ? ['safari'] : [])];
 
   // GitHub CI/CD (optional).
+  /** owner/name of a GitHub remote: https://github.com/o/r(.git), git@github.com:o/r.git or ssh://git@github.com/o/r.git. */
+  const githubRepoOf = (url) => /github\.com[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(url ?? '')?.slice(1).join('/');
   let githubRepo = was.githubRepo ?? '';
   const wantCi = await ask('confirm', { message: 'Set up GitHub Actions deploys (OIDC, no stored keys)?', initialValue: Boolean(githubRepo) }, Boolean(githubRepo));
-  if (wantCi) {
-    githubRepo = await ask('text', { message: 'GitHub repo (owner/name)', initialValue: githubRepo || 'salman-abdulrazaq-ali/aws-city', validate: (v) => (/^[\w.-]+\/[\w.-]+$/.test(v) ? undefined : 'owner/name') }, githubRepo);
+  if (!wantCi) githubRepo = '';
+  else {
+    // The repo named here gets a role that deploys into this account (infra/lib/ci-stack.ts: its `staging` and `prod`
+    // GitHub environments), so there is no default: it's pre-filled from this clone's origin, and you confirm it.
+    const originRepo = githubRepoOf(spawnSync('git', ['remote', 'get-url', 'origin'], { cwd: ROOT, encoding: 'utf8' }).stdout?.trim());
+    githubRepo = await ask('text', { message: 'GitHub repo allowed to deploy into this account (owner/name)', placeholder: 'owner/name', initialValue: githubRepo || originRepo || '', validate: (v) => (/^[\w.-]+\/[\w.-]+$/.test(v ?? '') ? undefined : 'owner/name') }, githubRepo);
+    if (githubRepo.toLowerCase() !== originRepo?.toLowerCase())
+      p.log.warn(
+        [
+          `${githubRepo} is NOT this clone's origin (${originRepo ?? 'no GitHub origin found'}).`,
+          `Anyone who can run a workflow in ${githubRepo}'s staging or prod environment could deploy into AWS account ${account}.`,
+          'Only go on if you control that repo.',
+        ].join('\n'),
+      );
+    // A saved answer (--yes) was confirmed when it was saved.
+    const trusted = await ask('confirm', { message: `Let GitHub Actions in ${githubRepo} (environments staging and prod) deploy into AWS account ${account}?`, initialValue: false }, true);
+    if (!trusted) {
+      githubRepo = '';
+      p.log.info('GitHub deploys skipped: no CI stack.');
+    }
+  }
+  if (githubRepo) {
     const providers = offline ? [] : await aws(IAMClient).send(new ListOpenIDConnectProvidersCommand({})).then((r) => r.OpenIDConnectProviderList ?? [], () => []);
     // An OIDC provider's ARN is arn:aws:iam::<account>:oidc-provider/<host>: compare the host exactly.
     if (providers.some((x) => x.Arn?.split(':oidc-provider/')[1] === 'token.actions.githubusercontent.com')) {
       p.log.warn('This account already has a GitHub OIDC provider, so the CI stack is skipped (it would clash). Point your existing deploy role at the CDK bootstrap roles instead.');
       githubRepo = '';
     }
-  } else githubRepo = '';
+  }
 
   return {
-    hostedZoneId: zone ? zoneChoice : '', zoneName, domainName, cognitoDomainPrefix, googleClientId, googleSecret, alarmEmail, monthlyBudgetUsd, sesFromEmail,
-    storeId, allowDev, extensionIds, firefoxAddonId: browsers.includes('firefox') ? FIREFOX_ADDON_ID : '', safari: browsers.includes('safari'), githubRepo,
+    hostedZoneId: zone ? zoneChoice : '', zoneName, domainName, cognitoDomainPrefix, googleClientId, googleSecret, alarmEmail, operatorName, contactEmail, privacyUrl, monthlyBudgetUsd, sesFromEmail,
+    storeId, edgeStoreId, allowDev, extensionIds, firefoxAddonId: browsers.includes('firefox') ? FIREFOX_ADDON_ID : '', safari: browsers.includes('safari'), githubRepo,
   };
 };
 
@@ -575,9 +615,9 @@ for (;;) {
   });
   if (next === 'cancel') bye('Cancelled. Nothing was changed in AWS.');
   if (next === 'go') break;
-  was = { ...A, extensionIds: A.extensionIds };
+  was = { ...A, chromeStoreId: A.storeId, extensionIds: A.extensionIds };
 }
-const { hostedZoneId, zoneName, domainName, cognitoDomainPrefix, googleClientId, alarmEmail, monthlyBudgetUsd, sesFromEmail, extensionIds, allowDev, storeId, firefoxAddonId, safari, githubRepo } = A;
+const { hostedZoneId, zoneName, domainName, cognitoDomainPrefix, googleClientId, alarmEmail, operatorName, contactEmail, privacyUrl, monthlyBudgetUsd, sesFromEmail, extensionIds, allowDev, storeId, edgeStoreId, firefoxAddonId, safari, githubRepo } = A;
 
 // ── 10. Now, and only now, the changes: the Google secret, SES, the saved answers ────────────────────────────
 if (A.googleSecret && (await approve(`store the Google client secret in Secrets Manager as "${GOOGLE_SECRET}"`))) {
@@ -603,7 +643,7 @@ for (const e of deleteSes) {
 }
 
 const envConfig = {
-  modelChoice, aiEnabled, aiRegion, novaLiteOnly, ...(aiCpu ? { aiCpu } : {}), region, domainName, hostedZoneId, zoneName, cognitoDomainPrefix, extensionIds, firefoxAddonId, safari, googleClientId, sesFromEmail, alarmEmail,
+  modelChoice, aiEnabled, aiRegion, novaLiteOnly, ...(aiCpu ? { aiCpu } : {}), region, domainName, hostedZoneId, zoneName, cognitoDomainPrefix, extensionIds, chromeStoreId: storeId, edgeStoreId, firefoxAddonId, safari, googleClientId, sesFromEmail, alarmEmail, operatorName, contactEmail, privacyUrl,
   monthlyBudgetUsd, dailyModelCalls: prev.dailyModelCalls ?? 100, globalDailyModelCalls: prev.globalDailyModelCalls ?? (envName === 'prod' ? 20000 : 5000),
   minTasks: prev.minTasks ?? (envName === 'prod' ? 2 : 1), maxTasks: prev.maxTasks ?? (envName === 'prod' ? 10 : 3),
   // SES addresses this wizard asked AWS to verify, so a later run can offer to remove one nothing uses.
@@ -656,31 +696,59 @@ if (DRY || !existsSync(outputsFile)) {
 // ── 11. Build the extension for this backend ─────────────────────────────────
 const out = JSON.parse(readFileSync(outputsFile, 'utf8'));
 const pick = (stack, key) => out[`AWSCity-${envName}-${stack}`]?.[key];
-const envFile = [
-  'WXT_BACKEND=hosted',
-  `WXT_AWS_WS_URL=${pick('Service', 'WsUrl')}`,
-  `WXT_AWS_API_URL=${pick('Service', 'ApiUrl')}`,
-  `WXT_COGNITO_DOMAIN=${pick('Auth', 'CognitoDomain')}`,
-  `WXT_COGNITO_CLIENT_ID=${pick('Auth', 'CognitoClientId')}`,
-  ...(safari ? [`WXT_COGNITO_REDIRECT_URL=${pick('Data', 'AuthRelayUrl')}`] : []),
-].join('\n');
-writeFileSync(`${ROOT}.env.production`, `${envFile}\n`);
+const buildVars = {
+  WXT_BACKEND: 'hosted',
+  WXT_AWS_WS_URL: pick('Service', 'WsUrl'),
+  WXT_AWS_API_URL: pick('Service', 'ApiUrl'),
+  WXT_COGNITO_DOMAIN: pick('Auth', 'CognitoDomain'),
+  WXT_COGNITO_CLIENT_ID: pick('Auth', 'CognitoClientId'),
+  ...(safari ? { WXT_COGNITO_REDIRECT_URL: pick('Data', 'AuthRelayUrl') } : {}),
+};
+const unset = Object.keys(buildVars).filter((k) => !buildVars[k]);
+if (unset.length) bye(`${outputsFile} has no value for ${unset.join(', ')}: run setup again to finish the deploy.`);
+// Every plain build (npm run build, zip, zip:firefox, safari:xcode) now builds for this deployment; the demo
+// (npm start), npm run smoke and smoke:copilot set WXT_BACKEND=mock, which beats .env files.
+const envVars = privacyUrl ? { ...buildVars, WXT_PRIVACY_URL: privacyUrl } : buildVars;
+writeFileSync(`${ROOT}.env.production`, `${Object.entries(envVars).map(([k, v]) => `${k}=${v}`).join('\n')}\n`);
 if (!existsSync(`${ROOT}node_modules`)) run('npm', ['ci']);
-// The store zip first: it builds into .output/chrome-mv3 too, without the manifest key (the store assigns its own id).
-// The local build goes last, so the folder you load unpacked keeps the fixed id that Cognito lets sign in.
-run('npx', ['wxt', 'zip', '--mode', 'production'], ROOT, { WXT_STORE_BUILD: 'true' });
-run('npx', ['wxt', 'build', '--mode', 'production']);
-const unpacked = JSON.parse(readFileSync(`${ROOT}.output/chrome-mv3/manifest.json`, 'utf8'));
-if (allowDev && !unpacked.key) bye('.output/chrome-mv3 was built without its key, so it would get a random id and couldn’t sign in. Run: npx wxt build --mode production');
-if (firefoxAddonId) run('npx', ['wxt', 'zip', '-b', 'firefox', '--mode', 'production']);
-if (safari) run('npx', ['wxt', 'build', '-b', 'safari', '--mode', 'production']);
+// Store builds (WXT_STORE_BUILD=true: no manifest key, so each store assigns its id; no window.awsCity debug handles;
+// the brand off) each rebuild .output/<browser>-mv3, so the keyed copy for trying it here is built last. They need the
+// privacy policy's address (wxt.config.ts stops without it), so without one they wait for the next run.
+const store = { WXT_STORE_BUILD: 'true' };
+if (privacyUrl) {
+  run('npx', ['wxt', 'zip', '--mode', 'production'], ROOT, store);
+  if (firefoxAddonId) run('npx', ['wxt', 'zip', '-b', 'firefox', '--mode', 'production'], ROOT, store);
+  if (safari) run('npx', ['wxt', 'build', '-b', 'safari', '--mode', 'production'], ROOT, store);
+}
+// The copy to try keeps the repo's key (id DEV_EXTENSION_ID, the one Cognito knows), in a folder of its own: the demo
+// (npm start) builds into .output/chrome-mv3 and would replace it there.
+const tryCopy = `.output/chrome-mv3-${envName}`;
+if (allowDev) {
+  run('npx', ['wxt', 'build', '--mode', 'production'], ROOT, { WXT_STORE_BUILD: 'false' });
+  const unpacked = JSON.parse(readFileSync(`${ROOT}.output/chrome-mv3/manifest.json`, 'utf8'));
+  if (!unpacked.key) bye('.output/chrome-mv3 was built without its key, so it would get a random id and couldn’t sign in. Run: npx wxt build --mode production');
+  rmSync(`${ROOT}${tryCopy}`, { recursive: true, force: true });
+  cpSync(`${ROOT}.output/chrome-mv3`, `${ROOT}${tryCopy}`, { recursive: true });
+}
+
+// The privacy policy, filled in for this deployment (the store listings need it at a public URL).
+const policyFile = `.output/privacy-policy-${envName}.md`;
+mkdirSync(`${ROOT}.output`, { recursive: true });
+writeFileSync(
+  `${ROOT}${policyFile}`,
+  readFileSync(`${ROOT}docs/privacy-policy.md`, 'utf8')
+    .replaceAll('{{OPERATOR_NAME}}', operatorName || '{{OPERATOR_NAME}}')
+    .replaceAll('{{CONTACT_EMAIL}}', contactEmail || '{{CONTACT_EMAIL}}')
+    .replaceAll('{{REGION}}', region),
+);
+if (!operatorName || !contactEmail) p.log.warn(`The privacy policy still has {{OPERATOR_NAME}} / {{CONTACT_EMAIL}} blanks: fill them in (${policyFile}) or run setup again.`);
 
 p.note(
   [
     allowDev
       ? [
           'Try it now:  npm run open:hosted  opens it in its own browser window (Chrome for Testing); then ⋯ → Sign in.',
-          'Your own Chrome: chrome://extensions → Developer mode → Load unpacked → .output/chrome-mv3 (only you can, once).',
+          `Your own Chrome: chrome://extensions → Developer mode → Load unpacked → ${tryCopy} (only you can, once).`,
         ].join('\n')
       : storeId
         ? 'Players sign in with the Chrome Web Store build (the local build is not allowed to).'
@@ -690,15 +758,21 @@ p.note(
     `Server:    ${pick('Service', 'ApiUrl')}  (for the extension; ${pick('Service', 'ApiUrl')}/health shows {"status":"ok"})`,
     `Sign-in:   ${pick('Auth', 'CognitoDomain')}  (the extension's Sign in button opens it)`,
     '',
-    'Publish:   upload .output/*-chrome.zip in the Chrome Web Store dashboard (docs/chrome-web-store.md),',
-    '           then run setup again with the store id so store users can sign in too.',
-    firefoxAddonId ? 'Firefox:   upload .output/*-firefox.zip (+ the -sources.zip) to addons.mozilla.org (docs/firefox-addons.md).' : '',
-    safari ? 'Safari:    npm run safari:xcode, then build and submit the app in Xcode (docs/safari.md).' : '',
+    privacyUrl
+      ? 'Publish:   upload .output/*-chrome.zip to the Chrome Web Store (docs/chrome-web-store.md) and, if you like, Edge Add-ons,'
+      : 'Publish:   no store zips yet: they need your privacy policy’s https address. Host the policy below, then run setup again with it.',
+    privacyUrl ? '           then run setup again with their ids so store players can sign in too.' : '',
+    privacyUrl && firefoxAddonId ? 'Firefox:   upload .output/*-firefox.zip (+ the -sources.zip) to addons.mozilla.org (docs/firefox-addons.md).' : '',
+    safari ? 'Safari:    WXT_STORE_BUILD=true npm run safari:xcode, then build and submit the app in Xcode (docs/safari.md).' : '',
+    'Builds:    npm run build / zip now build for this server (.env.production); npm start’s demo and npm run smoke stay the demo.',
     alarmEmail ? `Confirm:   click the AWS Notification emails sent to ${alarmEmail}.` : '',
     aiEnabled ? '' : `AI:        off for now. Once Bedrock answers, run npm run setup again (or: aws ssm put-parameter --name /cloud-city/${envName}/ai-enabled --value true --overwrite).`,
     aiCpu ? `AI:        ${CPU_MODEL.name} on your Fargate (${aiCpu.spot ? 'Spot' : 'on-demand'}), private to your VPC${missing.length ? ', until Bedrock answers' : ', behind Bedrock'}. Off: npm run ai -- off · on: npm run ai -- on.` : '',
     aiRegion ? `AI:        runs in ${aiRegion}${novaLiteOnly ? ' on Nova Lite' : ''} until ${region} answers; then run npm run setup again to move it back.` : novaLiteOnly ? 'AI:        runs on Nova Lite until Nova Pro answers here; then run npm run setup again.' : '',
     githubRepo ? `GitHub:    add AWS_DEPLOY_ROLE_ARN (see the AWSCity-CI stack) + AWS_REGION=${region} to the ${envName} environment.` : '',
+    privacyUrl
+      ? `Privacy:   ${policyFile}: publish it at ${privacyUrl} (the extension links it; the store listings ask for it too).`
+      : `Privacy:   ${policyFile}: host it at a public https URL; the Chrome, Edge, Firefox and Apple listings all ask for one.`,
     'Kill switch / runbook: docs/runbook.md',
   ]
     .filter((l) => l !== undefined)

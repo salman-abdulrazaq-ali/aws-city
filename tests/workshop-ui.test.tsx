@@ -147,7 +147,7 @@ describe('for real', () => {
     expect(copy.disabled).toBe(true);
     expect(screen.getByText(/in the boxes above, then copy it/)).toBeTruthy();
     fireEvent.change(screen.getByRole('textbox', { name: /Your bucket name/ }), { target: { value: 'aws-city-047463438585-ws-1' } });
-    expect(document.querySelector('.workshop-cmd')?.textContent).toBe('aws s3api create-bucket --bucket aws-city-047463438585-ws-1 --create-bucket-configuration LocationConstraint=us-west-2');
+    expect(document.querySelector('.workshop-cmd')?.textContent).toBe('aws s3api create-bucket --bucket aws-city-047463438585-ws-1 --region us-west-2 --create-bucket-configuration LocationConstraint=us-west-2');
     expect(copy.disabled).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Check my account' }));
     expect(verify).toHaveBeenCalledWith('s3-first-bucket', 'create', { bucket: 'aws-city-047463438585-ws-1' });

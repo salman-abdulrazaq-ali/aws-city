@@ -24,7 +24,9 @@ Differences from Chrome/Firefox:
 1. **Apple Developer Program** membership (US$99/year) and Xcode signed in with that team.
 2. **Allow Safari to sign in:** `npm run setup`, tick *Safari*. It adds the relay page to Cognito and
    `safari-web-extension://*` to the allowed origins, and writes `WXT_COGNITO_REDIRECT_URL` for the build.
-3. `npm run setup` builds `.output/safari-mv3` against your deployment; then `npm run safari:xcode`.
+3. `npm run setup` builds `.output/safari-mv3` against your deployment; then `WXT_STORE_BUILD=true npm run safari:xcode`
+   (a store build: no `awsCity` DevTools handles, generic names for branded places; it stops if a hosted setting is
+   missing).
 4. In Xcode: set the team, a real bundle id (the default is `dev.awscity.AWS-City`), version and app icon; then
    Product → Archive → Distribute App → App Store Connect.
 5. In App Store Connect: listing from [store-listing.md](store-listing.md), privacy details (sign-in email, chat

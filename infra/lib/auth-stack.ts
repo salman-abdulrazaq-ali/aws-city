@@ -10,8 +10,10 @@ import { type EnvConfig, firefoxRedirectUrl } from './config.js';
  * https://<extension-id>.chromiumapp.org/). The server verifies access tokens for this client.
  *
  * Signed-in players can let agents change their own AWS account, so:
- *  - step-up MFA: the server refuses to link an AWS account until the player has TOTP on (the extension
- *    enrols it with the aws.cognito.signin.user.admin scope; server/src/accounts/mfa.ts).
+ *  - step-up MFA: the server refuses to link an AWS account, approve a write or apply a fix until the player has TOTP
+ *    on and signed in after turning it on (the extension enrols it with the aws.cognito.signin.user.admin scope, then
+ *    GlobalSignOut ends every session; server/src/accounts/mfa.ts). Sign-out revokes the refresh token (token
+ *    revocation is on), and an email change waits for its code (keepOriginal).
  *  - prod runs the Plus plan with threat protection enforced: high-risk sign-ins and leaked passwords are
  *    blocked, medium risk asks for MFA.
  */
@@ -39,6 +41,9 @@ export class AuthStack extends Stack {
       signInAliases: { email: true },
       autoVerify: { email: true },
       standardAttributes: { email: { required: true, mutable: true } },
+      // A new email takes effect only once its code is confirmed: until then the verified one stays (and keeps
+      // receiving password resets), so a stolen session can't move the account to an address it controls.
+      keepOriginal: { email: true },
       passwordPolicy: { minLength: 10, requireDigits: true, requireLowercase: true, requireUppercase: true, requireSymbols: true },
       mfa: cognito.Mfa.OPTIONAL,
       mfaSecondFactor: { sms: false, otp: true },

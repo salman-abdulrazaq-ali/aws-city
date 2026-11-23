@@ -4,20 +4,21 @@
 import { browser } from 'wxt/browser';
 import { fromWebPage } from './sender';
 import { createBackend, type AgentBackend } from '@/backend';
-import type { ConsoleStepEvent, PageSnapshot } from '@/backend/contract';
-import { agentName, emptyProgress } from '@/state/store';
+import type { ConsoleStepEvent, PageSnapshot, ResourceRemove } from '@/backend/contract';
+import { agentName, emptyProgress, errorText } from '@/state/store';
 import { uid } from '@/backend/AgentBackend';
 import type { Progress } from '@/backend/contract';
 import { captureVisibleTab, hasCapturePermission, requestCapturePermission } from '@/capture/screenshot';
 import { bus } from '@/state/bus';
 import { mergeProgress, sameProgress } from '@/state/progress';
 import { CITIZEN_XP, fixGate } from '@/state/citizens';
-import { knownAgents, useCity, type CityState } from '@/state/store';
+import { forgetGotIt, knownAgents, useCity, type CityState } from '@/state/store';
 import { ladder, questsDone } from '@/state/ladder';
 import { shows } from '@/state/simple';
 import { consoleUrl, DEFAULT_CONSOLE_SERVICE, matchText, matchUrl } from '@/world/taxonomy';
 import { isPracticeService, isPracticeUrl, PRACTICE_PATH, practiceRoute, practiceUrl } from '@/console/practice';
 import type { CopilotMessage } from '@/console/agent';
+import { isSecretPage, redact, redactConsoleUrl } from '@/console/risk';
 import { isReadingUrl } from '@/world/reading';
 import { isEventUrl } from '@/world/liveEvents';
 import { isWorkshopUrl } from '@/world/workshops';
@@ -46,7 +47,7 @@ export function startRuntime(l: Layout) {
   backend = createBackend({ knownAgents: () => knownAgents(store().progress) });
   const kind = backend.kind;
   demo = kind === 'mock' && isDemo();
-  store().setBackend(kind, 'connecting', backend.deployMode ?? 'templates');
+  store().setBackend(kind, 'connecting', backend.deployMode ?? 'templates', backend.hosted === true);
   let hadSession = false;
   backend.onStatus((s) => {
     const prev = store().backendStatus;
@@ -63,9 +64,23 @@ export function startRuntime(l: Layout) {
       void endSession();
     }
   });
-  backend.onEvent((e) => {
+  // "Not saved to your account" after a refused save, until one goes through (src/ui/Hud.tsx SyncNote).
+  backend.onSave?.((s) => store().setSaveRefused(s === 'refused'));
+  backend.onEvent((raw) => {
+    // An account reply goes to every tab of the player: only the tab that asked hears it as its own (its toast); in the
+    // others it's a quiet update, as if no one asked.
+    const e = raw.type === 'account.status' && raw.requestId && !accountAsks.delete(raw.requestId) ? { ...raw, requestId: undefined } : raw;
     if (e.type === 'error' && e.code === 'mfa_required') mfaRefused = refusedBy(e, stepUps);
+    // A link, verify or Disconnect refused (a failed verify, a setup link over a day old): said in the account card too.
+    // An authenticator request has its own card.
+    if (e.type === 'error' && e.requestId && accountAsks.delete(e.requestId) && e.code !== 'mfa_required') store().patchAccount({ error: errorText(e) });
     store().applyServerEvent(e);
+    // A setup link arrived: the Region and AllowFixes it was asked with are now what the link says (step 2's checkbox).
+    const asked = e.type === 'account.linkUrl' ? stepUps.get(e.requestId) : undefined;
+    if (asked?.action === 'account.link') store().patchAccount({ linkRegion: asked.region, allowFixes: !!asked.allowFixes });
+    // "I've updated the stack": the fresh link is in, so the verify that records the update can go.
+    if (e.type === 'account.linkUrl' && updates.has(e.requestId)) verifyAccount(updates.get(e.requestId)!, { updated: true });
+    if ((e.type === 'account.linkUrl' || e.type === 'error') && e.requestId) updates.delete(e.requestId);
     bus.emit('server', e);
     if (e.type === 'console.step') void relayConsoleStep(e);
   });
@@ -261,6 +276,8 @@ async function endSession() {
   pulled = false;
   storedOwner = '';
   stepUps.clear();
+  updates.clear();
+  accountAsks.clear();
   mfaRefused = undefined;
   // Anything held for this player must not reach the next one.
   clearTimeout(autoSnapTimer);
@@ -273,6 +290,7 @@ async function endSession() {
   // The session died (not a sign-out): keep this device's copy for the same player, out of sight of anyone else.
   if (!explicit && player && !sameProgress(emptyProgress(), progress)) await park(player, progress);
   else if (explicit) await browser.storage.local.remove(PARKED_PROGRESS_KEY);
+  if (explicit) forgetGotIt();
   await browser.storage.local.remove([PROGRESS_STORAGE_KEY, PROGRESS_OWNER_KEY]);
 }
 
@@ -449,12 +467,24 @@ function handleFocus(f: PageFocus) {
   // A screenshot of the last page must not ride along with a task about this one.
   lastScreenshotKey = undefined;
   clearTimeout(autoSnapTimer);
-  // Auto-snap covers AWS pages only (like pageContext): other sites are photographed only when the player asks. Pages
-  // that can show a secret (a new access key, a secret's value) are never photographed on their own either.
-  if (store().autoSnap && isAwsPage(f) && !isSensitivePage(f.url) && layout === 'panel') {
-    autoSnapTimer = setTimeout(() => void snap(), 1500);
+  // Auto-snap covers AWS pages only (like pageContext): other sites are photographed only when the player asks.
+  if (store().autoSnap && autoSnaps(f) && layout === 'panel') {
+    // Checked again when it fires: the page may have moved on to a secret one meanwhile.
+    autoSnapTimer = setTimeout(() => {
+      const now = store().focus;
+      if (now && autoSnaps(now)) void snap();
+    }, 1500);
   }
 }
+
+/**
+ * Pages the Lookout may photograph on its own (auto-snap): AWS pages, never one that can show a secret (risk.ts
+ * `SECRET_PAGES` on the real console: access keys, secret values, SecureStrings, KMS, CloudShell, Lambda environment
+ * variables, RDS database pages, EC2's Windows password, Cognito app-client secrets; and `isSensitivePage`'s
+ * paths: Cognito app clients, Identity Center credentials too). A photo isn't redacted, so those are snapped only on ask.
+ */
+export const autoSnaps = (f: Pick<PageFocus, 'kind' | 'url'>) =>
+  isAwsPage(f) && !isSecretPage(f.url) && !(f.kind !== 'docs' && isSensitivePage(f.url));
 
 async function initSettings() {
   const s = (await browser.storage.local.get(SETTINGS_STORAGE_KEY))[SETTINGS_STORAGE_KEY] as { autoSnap?: boolean } | undefined;
@@ -648,12 +678,54 @@ export function signIn(opts?: { fresh?: boolean }) {
 }
 
 /** Optional backend methods (added to the AgentBackend contract separately) — read defensively. */
-type MaybeRecoverable = { reconnect?: () => void | Promise<void>; signOut?: () => void | Promise<void>; deleteAccount?: () => Promise<void> };
+type MaybeRecoverable = {
+  reconnect?: () => void | Promise<void>;
+  signOut?: () => void | Promise<void>;
+  deleteAccount?: () => Promise<void>;
+};
 const optional = () => backend as (AgentBackend & MaybeRecoverable) | undefined;
 
 export const canSignIn = () => typeof backend?.signIn === 'function';
 export const canReconnect = () => typeof optional()?.reconnect === 'function';
-export const canDeleteAccount = () => typeof optional()?.deleteAccount === 'function';
+/**
+ * "Your data" (sign out, delete my account) is for signed-in players: the local server has no accounts (its one player
+ * runs the developer's own profile, and its sign-out does nothing).
+ */
+export const canDeleteAccount = () => backend?.hosted === true && typeof optional()?.deleteAccount === 'function';
+/** "Download my data" (v2.19 GET /me/export): signed-in players on the hosted server. */
+export const canDownloadData = () => backend?.hosted === true && typeof backend.exportMe === 'function';
+
+/** The file "Download my data" saves (a local download: nothing else is fetched or uploaded). */
+export const exportFileName = (day = new Date().toISOString().slice(0, 10)) => `aws-city-my-data-${day}.json`;
+
+/** Saves everything the server stores about the player as a JSON file on this device (the backend fetches it). */
+export async function downloadMyData() {
+  if (typeof backend?.exportMe !== 'function') return;
+  try {
+    const data = await backend.exportMe();
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = exportFileName();
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    store().toast('🧾', `Your data is saved as ${a.download}.`);
+  } catch (e) {
+    // Players get a sentence, never the raw request error ("Players see no internal errors"); the console keeps the detail.
+    console.warn('download my data failed', e);
+    const tooSoon = (e as { tooSoon?: boolean }).tooSoon;
+    store().toast('⚠️', tooSoon ? 'You downloaded your data a moment ago. Try again in a minute.' : 'Couldn’t download your data just now. Check your connection and try again.', 'error');
+  }
+}
+
+/** Whether the player's authenticator is on (hosted); undefined when unknown (signed out, offline, no sign-in). */
+export async function mfaStatus() {
+  try {
+    return await backend?.mfaStatus?.();
+  } catch {
+    return undefined;
+  }
+}
 
 /** Deletes everything the server stores about the player (privacy policy: "Delete my account"). */
 export async function deleteAccount() {
@@ -664,21 +736,28 @@ export async function deleteAccount() {
     await b.deleteAccount();
     store().toast('🧾', 'Your AWS City account and progress were deleted. Delete the AWSCity stack in CloudFormation to remove the role.');
   } catch (e) {
-    store().log({ kind: 'system', text: `⚠️ Couldn’t delete your account: ${String(e)}` });
+    console.warn('delete account failed', e);
+    store().log({ kind: 'system', text: '⚠️ Couldn’t delete your account just now. Check your connection and try again.' });
   } finally {
     signingOut = false;
   }
 }
 
 export function reconnect() {
-  void Promise.resolve(optional()?.reconnect?.()).catch((e) => store().log({ kind: 'system', text: `⚠️ Reconnect failed: ${String(e)}` }));
+  void Promise.resolve(optional()?.reconnect?.()).catch((e) => {
+    console.warn('reconnect failed', e);
+    store().log({ kind: 'system', text: '⚠️ Couldn’t reconnect just now. Check your connection and try again.' });
+  });
 }
 
 export function signOut() {
   // The backend reports 'signed-out' from inside signOut(), so endSession sees this flag and forgets the device's copy.
   signingOut = true;
   void Promise.resolve(optional()?.signOut?.())
-    .catch((e) => store().log({ kind: 'system', text: `⚠️ Sign-out failed: ${String(e)}` }))
+    .catch((e) => {
+      console.warn('sign-out failed', e);
+      store().log({ kind: 'system', text: '⚠️ Couldn’t sign you out just now. Try again.' });
+    })
     .finally(() => (signingOut = false));
 }
 
@@ -695,7 +774,12 @@ export async function startMfaSetup() {
 }
 
 /** A command the server can refuse with mfa_required (step-up), as sent. */
-export type StepUp = { action: 'account.link'; region: string } | { action: 'account.verify'; roleArn: string } | { action: 'finding.fix' } | { action: 'deploy.approve' };
+export type StepUp =
+  | { action: 'account.link'; region: string; allowFixes?: boolean }
+  | { action: 'account.verify'; roleArn: string; updated?: boolean }
+  | { action: 'finding.fix' }
+  | { action: 'resource.remove' }
+  | { action: 'deploy.approve' };
 /** requestId → the step-up command sent with it (its mfa_required error carries that id; deploy.approve's carries none). */
 const stepUps = new Map<string, StepUp>();
 const noteStepUp = (requestId: string, cmd: StepUp) => {
@@ -710,11 +794,28 @@ export function refusedBy(e: { requestId?: string }, sent: ReadonlyMap<string, S
   return e.requestId ? sent.get(e.requestId) : { action: 'deploy.approve' };
 }
 
+/** What to press once signed in again (a closed socket dropped the pending approval, so that change is asked for anew). */
+const AGAIN: Record<StepUp['action'], string> = {
+  'account.link': ', then press Get my setup link again',
+  'account.verify': ', then press Verify again',
+  'deploy.approve': ', then ask for the change again',
+  'finding.fix': ', then press Fix again',
+  'resource.remove': ', then press Take it down again',
+};
+
 /**
- * What to do once the authenticator is on: resend a refused link or verify as it was sent; an approval or a fix is
- * the player's to press again (the server keeps the preview pending; a refused fix never made one).
+ * What to do once the authenticator is on. The hosted backend then ends every session (`signedOut`): the player signs
+ * in again and presses the button once more. A backend that stays signed in resends a refused link or verify as it
+ * was sent; an approval or a fix is the player's to press again (the server keeps the preview pending; a refused fix
+ * never made one). `signInTwice`: the server never heard it was turned on (POST /me/mfa didn't land), so it may ask
+ * for one more sign-in after this one.
  */
-export function afterMfa(refused: StepUp | undefined): { resend?: StepUp; message: string } {
+export function afterMfa(refused: StepUp | undefined, signedOut = false, signInTwice = false): { resend?: StepUp; message: string } {
+  // Turning it on ended every session (src/backend/auth.ts): nothing can be resent until the player signs in again.
+  if (signedOut) {
+    const twice = signInTwice ? ' The city didn’t hear about your authenticator in time, so it may ask you to sign in once more.' : '';
+    return { message: `Authenticator on. Every older sign-in has ended: sign in again with your app’s code${refused ? AGAIN[refused.action] : ''}.${twice}` };
+  }
   switch (refused?.action) {
     case 'account.link':
       return { resend: refused, message: 'Authenticator on. Linking your AWS account now.' };
@@ -724,6 +825,8 @@ export function afterMfa(refused: StepUp | undefined): { resend?: StepUp; messag
       return { message: 'Authenticator on. Press Approve again: your change is still waiting.' };
     case 'finding.fix':
       return { message: 'Authenticator on. Press Fix again to preview the change.' };
+    case 'resource.remove':
+      return { message: 'Authenticator on. Press Take it down again to preview the change.' };
     default:
       return { message: 'Authenticator on. Your AWS account is protected.' };
   }
@@ -732,13 +835,15 @@ export function afterMfa(refused: StepUp | undefined): { resend?: StepUp; messag
 /** Step 2: confirm with a code, then retry the link or verify the server refused (an approval or fix is pressed again). */
 export async function confirmMfaSetup(code: string) {
   try {
-    await backend!.confirmTotp!(code);
-    const next = afterMfa(mfaRefused);
+    // Read first: turning it on ends the session, and the session's end forgets what was refused.
+    const refused = mfaRefused;
+    const out = await backend!.confirmTotp!(code);
+    const next = afterMfa(refused, store().backendStatus === 'signed-out', out?.signInTwice);
     mfaRefused = undefined;
     store().setMfaRequired(false);
     store().toast('🔐', next.message);
-    if (next.resend?.action === 'account.link') linkAccount(next.resend.region);
-    else if (next.resend?.action === 'account.verify') verifyAccount(next.resend.roleArn);
+    if (next.resend?.action === 'account.link') linkAccount(next.resend.region, { allowFixes: next.resend.allowFixes });
+    else if (next.resend?.action === 'account.verify') verifyAccount(next.resend.roleArn, { updated: next.resend.updated });
     return true;
   } catch (e) {
     store().toast('⚠️', (e as Error).message, 'error');
@@ -746,28 +851,100 @@ export async function confirmMfaSetup(code: string) {
   }
 }
 
-/** Returns the requestId (an error for this request carries it), or undefined if nothing was sent. */
-export function linkAccount(region = 'us-west-2') {
+/**
+ * A setup link for `region` (the player picks it: the key is made there and the city reads that Region). `allowFixes`:
+ * the quick-create link turns AllowFixes on (v2.19). Returns the requestId (an error for this request carries it), or
+ * undefined if nothing was sent.
+ */
+export function linkAccount(region: string, opts: { allowFixes?: boolean } = {}) {
   if (!backend) return undefined;
   const requestId = uid();
-  noteStepUp(requestId, { action: 'account.link', region });
-  backend.send({ action: 'account.link', requestId, region });
+  const allowFixes = opts.allowFixes ? { allowFixes: true } : {};
+  noteStepUp(requestId, { action: 'account.link', region, ...allowFixes });
+  askAccount(requestId);
+  backend.send({ action: 'account.link', requestId, region, ...allowFixes });
+  return requestId;
+}
+
+/**
+ * v2.19: Disconnect the linked account (no MFA: taking access away is always allowed). The answer is account.status
+ * {linked: false} with this requestId; the AWSCity stack stays in the account until the player deletes it.
+ */
+export function unlinkAccount() {
+  if (!backend) return undefined;
+  const requestId = uid();
+  askAccount(requestId);
+  store().patchAccount({ unlinking: requestId });
+  backend.send({ action: 'account.unlink', requestId });
+  return requestId;
+}
+
+/** This tab's account.link / verify / recheck / unlink requests still unanswered (their replies are its own). */
+const accountAsks = new Set<string>();
+/** Notes an account request this tab sent, and clears the card's last refusal (a new try). */
+function askAccount(requestId: string) {
+  accountAsks.add(requestId);
+  if (accountAsks.size > 20) accountAsks.delete(accountAsks.values().next().value!);
+  store().patchAccount({ error: undefined });
+}
+
+/**
+ * "Check again" (after turning AllowFixes on in CloudFormation): v2.19 account.recheck asks the linked role again,
+ * without changing anything, whether it allows fixes. No setup link, no MFA; the role version stays as it was. Returns
+ * the requestId (the answer, account.status, or an error carries it).
+ */
+export function recheckAccount() {
+  const { accountId, region, linked } = store().account;
+  if (!backend || !linked || !accountId || !region) return undefined;
+  const requestId = uid();
+  askAccount(requestId);
+  backend.send({ action: 'account.recheck', requestId });
+  return requestId;
+}
+
+/** "I've updated the stack"'s link requests (requestId → the linked account id to verify, as updated, once the link is in). */
+const updates = new Map<string, string>();
+
+/**
+ * "I've updated the stack" (after updating the AWSCity stack to the newest role): the city can't read the stack's version,
+ * so the player says so. The server verifies only within a day of a setup link, so this asks for a fresh link in the
+ * linked Region (same ExternalId: the stack keeps working) and, as soon as it's in, verifies with `updated` (the role
+ * version becomes that link's). Returns the link's requestId (an error for it carries it).
+ */
+export function confirmRoleUpdate() {
+  const { accountId, region, linked } = store().account;
+  if (!linked || !accountId || !region) return undefined;
+  const requestId = linkAccount(region);
+  if (requestId) updates.set(requestId, accountId);
+  return requestId;
+}
+
+/** v2.19: Take down one thing the city built; the server asks for approval like any write (deploy.preview → deploy.approve). */
+export function removeResource(kind: ResourceRemove['kind'], id: string) {
+  if (!backend) return undefined;
+  const requestId = uid();
+  // Hosted, it starts only with an authenticator on: a refusal says to press Take it down again once it is.
+  noteStepUp(requestId, { action: 'resource.remove' });
+  backend.send({ action: 'resource.remove', requestId, kind, id });
   return requestId;
 }
 
 /**
  * Accepts a 12-digit account id or a role ARN; the value goes to the server unchanged (it accepts either).
- * Returns the requestId, or undefined if the value was refused (or there's no backend).
+ * `updated`: "I've updated the stack" (the role version becomes the latest link's). Returns the requestId, or undefined
+ * if the value was refused (or there's no backend).
  */
-export function verifyAccount(roleArn: string) {
+export function verifyAccount(roleArn: string, opts: { updated?: boolean } = {}) {
   if (!isAccountIdOrRoleArn(roleArn)) {
     store().toast('⚠️', 'That doesn’t look right — paste the 12-digit account ID (or the role ARN arn:aws:iam::123456789012:role/…).', 'error');
     return undefined;
   }
   if (!backend) return undefined;
   const requestId = uid();
-  noteStepUp(requestId, { action: 'account.verify', roleArn: roleArn.trim() });
-  backend.send({ action: 'account.verify', requestId, roleArn: roleArn.trim() });
+  const updated = opts.updated ? { updated: true } : {};
+  noteStepUp(requestId, { action: 'account.verify', roleArn: roleArn.trim(), ...updated });
+  askAccount(requestId);
+  backend.send({ action: 'account.verify', requestId, roleArn: roleArn.trim(), ...updated });
   return requestId;
 }
 
@@ -868,6 +1045,24 @@ export const isOsmUrl = (raw: string) => {
 export function openOsmCopyright(url = OSM_COPYRIGHT_URL) {
   if (!isOsmUrl(url)) return;
   void browser.tabs.create({ url });
+}
+
+/**
+ * The privacy policy's address (the WXT_PRIVACY_URL build setting; a hosted store build must have one:
+ * scripts/release-check.mjs), or undefined when it's unset or isn't a plain https address.
+ */
+export const privacyPolicyUrl = (raw = import.meta.env.WXT_PRIVACY_URL): string | undefined => {
+  try {
+    const u = new URL(raw ?? '');
+    return u.protocol === 'https:' && !u.username && !u.password ? u.href : undefined;
+  } catch {
+    return undefined;
+  }
+};
+/** ⋯ → Account and the sign-in card's "Privacy policy": opens it in a new tab (never fetched by the extension). */
+export function openPrivacyPolicy() {
+  const url = privacyPolicyUrl();
+  if (url) void browser.tabs.create({ url });
 }
 
 /** v2.6: AWS's own status page (a fixed address, never one from a feed). */
@@ -1034,10 +1229,11 @@ async function startPracticeCopilot(text: string, opts: { serviceId?: string; on
  * Start a Copilot task on the console tab the player is looking at (from the side panel / Firefox sidebar). `serviceId`
  * names the task's own service (a workshop step's), which picks the agent and the offline demo's flow; without it, the
  * page's service does. `onStart` gets the new task's id before anything is sent, so a caller links only the task it
- * started. Returns that id, or undefined when no task started.
+ * started. Returns that id, or undefined when no task started. The goal leaves redacted (account ids, access keys,
+ * emails, long tokens: `redact`, as the privacy policy says), and the task card shows it as it was sent.
  */
 export async function startConsoleCopilot(goal: string, opts: { serviceId?: string; onStart?: (taskId: string) => void } = {}): Promise<string | undefined> {
-  const text = goal.trim();
+  const text = redact(goal.trim());
   if (!text || !backend) return;
   if (backend.kind === 'mock') return startPracticeCopilot(text, opts);
   const f = store().focus;
@@ -1061,7 +1257,8 @@ export async function startConsoleCopilot(goal: string, opts: { serviceId?: stri
   store().setCopilot(taskId);
   store().addTask(taskId, `🖥️ ${text}`);
   opts.onStart?.(taskId);
-  backend.send({ action: 'console.start', taskId, goal: text, context: { url: f.url, title: f.title, serviceId: opts.serviceId ?? f.serviceId }, snapshot });
+  // Like the snapshot's, the URL leaves without the account id a multi-session console host carries.
+  backend.send({ action: 'console.start', taskId, goal: text, context: { url: f.url && redactConsoleUrl(f.url), title: f.title, serviceId: opts.serviceId ?? f.serviceId }, snapshot });
   return taskId;
 }
 

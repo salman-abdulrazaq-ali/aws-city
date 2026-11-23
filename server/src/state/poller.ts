@@ -6,7 +6,7 @@ import { ListFunctionsCommand } from '@aws-sdk/client-lambda';
 import { DescribeDBInstancesCommand } from '@aws-sdk/client-rds';
 import { GetPublicAccessBlockCommand, ListBucketsCommand, type PublicAccessBlockConfiguration } from '@aws-sdk/client-s3';
 import { GetPublicAccessBlockCommand as GetAccountPublicAccessBlockCommand } from '@aws-sdk/client-s3-control';
-import { type AwsClients, classifyAwsError } from '../aws.js';
+import { type AwsClients, classifyAwsError, isRoleRefused } from '../aws.js';
 import {
   type AccountSettings,
   bucketPrefix,
@@ -83,7 +83,8 @@ const setting = async <T>(clients: AwsClients, key: string, read: () => Promise<
   } catch (err) {
     const kind = classifyAwsError(err);
     if (kind === 'other') log.warn('setting read failed', { key: key.split(':')[0], err: (err as Error).name });
-    if (kind !== 'expired') cache.set(key, { value: undefined, at: Date.now() });
+    // Nor is a refused role (it says nothing about this setting).
+    if (kind !== 'expired' && !isRoleRefused(err)) cache.set(key, { value: undefined, at: Date.now() });
     return undefined;
   }
 };
@@ -376,13 +377,16 @@ export const createPoller = (opts: {
     const results = await Promise.all(
       SERVICES.map(async (service) => {
         try {
-          return { service, status: 'ok' as ServiceStatus, resources: await COLLECTORS[service](opts.clients, opts.accountId), expired: false };
+          return { service, status: 'ok' as ServiceStatus, resources: await COLLECTORS[service](opts.clients, opts.accountId), expired: false, refused: false, ourSide: false };
         } catch (err) {
-          const kind = classifyAwsError(err);
+          // STS refused the role itself (not this service): every read fails alike. It isn't "IAM locked this service",
+          // so the buildings stay as last seen and no lesson is said six times; the tenant counts these polls (tenants.ts).
+          const refused = isRoleRefused(err);
+          const kind = refused ? 'refused' : classifyAwsError(err);
           if (kind === 'other') log.warn('poll failed', { service, err: (err as Error).name, detail: (err as Error).message?.slice(0, 200) });
           // Keep the last known resources on transient errors so buildings don't flicker away.
           const kept = kind === 'denied' ? [] : (snapshot?.resources.filter((r) => r.service === service) ?? []);
-          return { service, status: (kind === 'denied' ? 'locked' : 'error') as ServiceStatus, resources: kept, expired: kind === 'expired' };
+          return { service, status: (kind === 'denied' ? 'locked' : 'error') as ServiceStatus, resources: kept, expired: kind === 'expired', refused, ourSide: isRoleRefused(err) && err.ourSide };
         }
       }),
     );
@@ -395,6 +399,8 @@ export const createPoller = (opts: {
       services: Object.fromEntries(results.map((r) => [r.service, r.status])) as Record<Service, ServiceStatus>,
       resources: results.flatMap((r) => r.resources),
       account: await accountSettings,
+      ...(results.some((r) => r.refused) ? { roleRefused: true as const } : {}),
+      ...(results.some((r) => r.ourSide) ? { refusedOurSide: true as const } : {}),
     };
     const prev = snapshot;
     snapshot = next;

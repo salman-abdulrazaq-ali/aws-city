@@ -3,13 +3,12 @@ import { readAsset } from '@/backend/assets';
 import type { SavedDesign } from '@/backend/contract';
 import { openDocs } from '@/app/runtime';
 import { backwardArrows, designPasses, passGaps, reviewDesign } from '@/learning/designRules';
-import { takeDaily } from '@/learning/dailyLedger';
 import { isDiscovered } from '@/state/selectors';
 import { useCity } from '@/state/store';
 import { actorIconPath, groupIconPath, iconPath } from '@/world/icons';
 import { placeFor } from '@/world/places';
 import { SERVICES, serviceById } from '@/world/taxonomy';
-import { COIN_PAY } from '@/state/wallet';
+import { COIN_PAY, DESIGN_COINS_A_DAY, designPay } from '@/state/wallet';
 import { feel } from '../feedback';
 import { readPref, writePref } from '../logic';
 import { Coin } from '../icons';
@@ -23,7 +22,8 @@ const CH = 80;
 const BOX = 40;
 /**
  * A passing design pays City Coins (not stars: the drawing board is free play, and stars are knowledge): this many for
- * each service on it, once a day per service across every design, at most 8 services a design.
+ * each service on it, once a day per service across every design, at most 8 services a design and DESIGN_COINS_A_DAY a
+ * day (src/state/wallet.ts designPay).
  */
 const DESIGN_COINS = COIN_PAY.drawing;
 /** The first-time guide was closed (this device). */
@@ -122,11 +122,11 @@ export function Sandbox() {
   const review = () => {
     setReviewed(true);
     const pass = designPasses(design, findings);
-    // Each service pays once a day across every design (the daily ledger), so copying a design or re-checking one
-    // after a tiny change grows nothing new.
+    // Each service pays once a day across every design, up to a daily total (the daily ledger), so copying a design or
+    // re-checking one after a tiny change grows nothing new.
     // A quest's "draw a design" step counts any design that passes, paid or not.
     if (pass) useCity.getState().questEvent((st) => st.kind === 'design');
-    const kinds = pass ? [...new Set(design.nodes.filter((n) => serviceById(n.kind)).map((n) => n.kind))].slice(0, 8).filter((k) => takeDaily(`design:${k}`)) : [];
+    const kinds = pass ? designPay([...new Set(design.nodes.filter((n) => serviceById(n.kind)).map((n) => n.kind))]) : [];
     if (kinds.length) {
       const coins = useCity.getState().earnCoins(DESIGN_COINS * kinds.length, 'a drawing-board design');
       useCity.getState().noteLearning('designs');
@@ -415,7 +415,7 @@ export function Sandbox() {
                   Passed! +{paid.coins} <Coin size={12} label="City Coins" /> for {paid.places}.
                 </>
               ) : (
-                'Passed! These services already paid coins from a design today: full pay again tomorrow, or draw with other services.'
+                `Passed! No coins this time: these services already paid from a design today, or today’s ${DESIGN_COINS_A_DAY} drawing-board coins are used up. Full pay again tomorrow.`
               )}
             </p>
           )}

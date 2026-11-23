@@ -22,11 +22,14 @@ const DONE_WORD: Record<string, string> = {
   delete_bucket: 'removed',
 };
 
+/** What an approval changes: its 'detail' rows are the server's words about it ("Safety check: …"), not resources. */
+const resourcesOf = (d: DeployView) => d.changes.filter((c) => c.resourceType !== 'detail');
+
 /** An approval for one of the agents' changes (not a fix, not a practice template's stack). */
-export const isAgentChange = (d: DeployView) => ACTIONS.has(d.templateId) && !d.findingId && d.changes.length === 1;
+export const isAgentChange = (d: DeployView) => ACTIONS.has(d.templateId) && !d.findingId && resourcesOf(d).length === 1;
 
 /** Which resource a change is about: a launch joins its server's later cards once it knows the instance id. */
-const keyOf = (d: DeployView) => `${d.changes[0]!.resourceType}|${d.resourceId ?? d.changes[0]!.logicalId}`;
+const keyOf = (d: DeployView) => `${resourcesOf(d)[0]!.resourceType}|${d.resourceId ?? resourcesOf(d)[0]!.logicalId}`;
 
 /** Where a card stands, in words that fit what it does. */
 export function statusWord(d: DeployView): string {
@@ -50,7 +53,7 @@ export function statusWord(d: DeployView): string {
 export function doneLine(d: DeployView, practice: boolean): string {
   const where = practice ? 'the practice account' : 'your AWS account';
   if (!isAgentChange(d)) return `${d.stackName} is built in ${where}!`;
-  const c = d.changes[0]!;
+  const c = resourcesOf(d)[0]!;
   const what = `${KIND[c.resourceType] ?? 'Resource'} ${c.logicalId}`;
   return CREATES.has(d.templateId) ? `${what} is built in ${where}!` : `${what} is ${DONE_WORD[d.templateId] ?? 'done'}.`;
 }
@@ -102,9 +105,10 @@ export function arrangeBuilds(deploys: DeployView[]): { d: DeployView; group?: B
     const done = history.filter((d) => d.status === 'complete');
     const lastDone = done.at(-1);
     const exists = !!lastDone && !REMOVES.has(lastDone.templateId);
-    const type = latest.changes[0]!.resourceType;
-    const id = history.map((d) => d.resourceId).find(Boolean) ?? latest.changes[0]!.logicalId;
-    const name = history.find((d) => CREATES.has(d.templateId))?.changes[0]!.logicalId ?? id;
+    const type = resourcesOf(latest)[0]!.resourceType;
+    const id = history.map((d) => d.resourceId).find(Boolean) ?? resourcesOf(latest)[0]!.logicalId;
+    const made = history.find((d) => CREATES.has(d.templateId));
+    const name = made ? resourcesOf(made)[0]!.logicalId : id;
     const title = `${KIND[type] ?? 'Resource'} ${name}${id !== name ? ` (${id})` : ''}`;
     const teardown = exists ? teardownFor(type, id) : undefined;
     return { d: latest, group: { key: o.key, title, latest, history, exists, ...(teardown ? { teardown } : {}) } };

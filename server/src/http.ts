@@ -9,14 +9,15 @@ import { createApprovals } from './contract/approvals.js';
 import { type ConsoleCopilot, Snapshot } from './contract/console.js';
 import type { ProgressStore } from './contract/progress.js';
 import { MAX_UPLOAD_BYTES, type MemoryUploadStore, UPLOAD_PATH } from './contract/uploads.js';
-import { MFA_REQUIRED_MESSAGE, REAUTH_MESSAGE, recentSignIn } from './accounts/mfa.js';
+import { MFA_REQUIRED_MESSAGE, REAUTH_MESSAGE, recentSignIn, SIGN_IN_AGAIN_MESSAGE, type StepUp } from './accounts/mfa.js';
 import { log, publicError, who } from './log.js';
 import { verifyStep } from './workshops/checks.js';
 import { isBoard, memorySocial, socialFor } from './social.js';
 import type { Poller } from './state/poller.js';
 import type { Tenant, TenantHub } from './tenants.js';
 import { redactSecrets } from './secrets.js';
-import { CLOSE_CODES, type ServerEvent } from './world.js';
+import { CLOSE_CODES, compareContract, CONTRACT_HEADER, CONTRACT_PARAM, CONTRACT_VERSION, type ServerEvent } from './world.js';
+import pkg from '../package.json' with { type: 'json' };
 
 const JSON_LIMIT = 64 * 1024;
 const MAX_TASKS_PER_SOCKET = 2;
@@ -29,8 +30,27 @@ const HEARTBEAT_MS = 25_000;
 /** Frames per socket: a burst of 30, refilled at 10 a second. */
 const FRAME_BURST = 30;
 const FRAMES_PER_SECOND = 10;
-/** account.link / account.verify each assume a role and rebuild the player's city: one per this window. */
+/**
+ * account.link / verify / recheck / unlink each rebuild or re-read the player's link (link, verify and recheck assume a
+ * role): one per this window, except a verify that follows this socket's own successful link within LINK_THEN_VERIFY_MS
+ * ("I've updated the stack" sends a link, then a verify as soon as it's in).
+ */
 const ACCOUNT_COOLDOWN_MS = 5_000;
+const LINK_THEN_VERIFY_MS = 2 * 60_000;
+/** GET /me/export reads every row the player has: once a minute per player. */
+const EXPORT_EVERY_MS = 60_000;
+/**
+ * POST /me/mfa asks Cognito (AdminGetUser) each time: the extension's three tries (NOTE_TRIES in src/backend/auth.ts) in
+ * a burst, then one every 5 s per player.
+ */
+const MFA_NOTE_BURST = 3;
+const MFA_NOTE_EVERY_MS = 5_000;
+/**
+ * The look failing for a reason that isn't the server's: Cognito (AdminGetUser) or DynamoDB (the MFA store's since/forget)
+ * throttling us, since anyone can script the call, or a player who's gone. The SDK's own throttling flag
+ * (`$retryable.throttling`) and a 429 count too; DynamoDB's throttles carry neither, hence their names.
+ */
+const MFA_LOOK_REFUSED = new Set(['TooManyRequestsException', 'ThrottlingException', 'ProvisionedThroughputExceededException', 'RequestLimitExceeded', 'UserNotFoundException']);
 /** Tokens are checked at connect; long-lived sockets are closed so the client reconnects with a fresh one. */
 const MAX_CONNECTION_MS = 8 * 60 * 60_000;
 /**
@@ -40,10 +60,16 @@ const MAX_CONNECTION_MS = 8 * 60 * 60_000;
 const EXPIRED_GRACE_MS = 10 * 60_000;
 /** How long this task remembers a deleted player without asking the store again (the tombstone itself lasts longer). */
 const DELETED_CACHE_MS = 10 * 60_000;
-/** How often an open socket re-checks that its player wasn't deleted on another task. */
-const DELETED_CHECK_MS = 60_000;
+/**
+ * Each open socket asks about once a minute whether its player deleted their account: DELETE /me closes the sockets
+ * on the task that handled it, and this closes the rest (other tasks, other devices).
+ */
+export const DELETED_CHECK_MS = 60_000;
 /** A socket's last "not deleted" answer is reused this long for cheap writes (presence, scores); step-up always asks. */
 const HERE_CACHE_MS = 15_000;
+/** score.submit and leaderboard.get per socket: a burst of 5, then one every 5 s (each is a player-table read or write). */
+const SOCIAL_BURST = 5;
+const SOCIAL_PER_SECOND = 1 / 5;
 const IDLE_CHECK_MS = 15_000;
 /** At most one auth.renew per socket in this long (each is a token verification). */
 const RENEW_MIN_MS = 5_000;
@@ -56,6 +82,20 @@ const SCREENSHOT_KEY = /^screenshots\/(local|[0-9a-f]{24})\/[0-9a-f]{8}-[0-9a-f]
 /** WebSocket close codes the extension understands (CLOSE_CODES in src/backend/contract.ts; see ServerBackend). */
 const CLOSE = CLOSE_CODES;
 
+/**
+ * The oldest client contract this server still serves: raise it when a release drops an old client's shapes. Clients
+ * with no `contract` predate the handshake and are always let in (they couldn't read the refusal).
+ */
+export const MIN_CLIENT_CONTRACT = '2.0';
+
+/**
+ * The version handshake (CONTRACT_PARAM in src/backend/contract.ts): why this server can't serve a client that says it
+ * speaks `client`, or undefined when it can. `behind`: the client is newer (this server would refuse its newer fields);
+ * `outdated`: the client is older than MIN_CLIENT_CONTRACT. A missing or malformed version is let in.
+ */
+export const versionRefusal = (client: string | null | undefined, server = CONTRACT_VERSION, min = MIN_CLIENT_CONTRACT): 'behind' | 'outdated' | undefined =>
+  (compareContract(client, server) ?? 0) > 0 ? 'behind' : (compareContract(client, min) ?? 0) < 0 ? 'outdated' : undefined;
+
 /** A token bucket: true while the caller is within its rate. */
 export const rateLimiter = (burst: number, perSecond: number, now = () => Date.now()) => {
   let tokens = burst;
@@ -67,6 +107,19 @@ export const rateLimiter = (burst: number, perSecond: number, now = () => Date.n
     if (tokens < 1) return false;
     tokens--;
     return true;
+  };
+};
+
+/**
+ * A per-player limiter map's cleanup: drops the entries `stale` says are done, at most once per `everyMs` (like
+ * accounts/mfa.ts), so a busy server never scans the whole map on every request.
+ */
+export const sweeper = <V>(map: Map<string, V>, stale: (v: V, now: number) => boolean, everyMs = 60_000) => {
+  let next = 0;
+  return (now: number) => {
+    if (now < next) return;
+    next = now + everyMs;
+    for (const [key, v] of map) if (stale(v, now)) map.delete(key);
   };
 };
 
@@ -94,10 +147,11 @@ interface HubDeps {
   /** The local upload store (PUT /uploads/…); hosted uploads go straight to S3. */
   uploads?: MemoryUploadStore;
   /**
-   * Step-up (hosted): true once the player has TOTP MFA on. Checked before account.link/verify and before every AWS
-   * write (deploy.approve, finding.fix), so turning MFA off after linking stops writes too. Absent = no check.
+   * Step-up (hosted): 'ok' once the player has TOTP MFA on and this session signed in after it was turned on
+   * (accounts/mfa.ts). Checked before account.link/verify and before every AWS write (deploy.approve, finding.fix,
+   * resource.remove), so turning MFA off after linking stops writes too. Absent = no check.
    */
-  mfaReady?: (p: Principal) => Promise<boolean>;
+  mfaReady?: (p: Principal) => Promise<StepUp>;
   /**
    * Hosted: true for a player who deleted their account recently (Stores.deletedRecently). Their access token still
    * verifies until it expires, so the routes that would recreate their data refuse them. Absent = no check.
@@ -129,7 +183,11 @@ const singleTenant = (d: SingleTenantDeps & { config: Config }): TenantHub => {
     uploads: { create: (contentType) => d.uploads.create(contentType, 'local') },
     link: async (requestId, _region, emit) => emit({ type: 'account.status', requestId, linked: true, message: 'The local server uses the workshop AWS profile.' }),
     verify: async (requestId, _arn, emit) => emit({ type: 'account.status', requestId, linked: true, message: 'The local server uses the workshop AWS profile.' }),
+    recheck: async (requestId, emit) => emit({ type: 'account.status', requestId, linked: true, message: 'The local server uses the workshop AWS profile.' }),
+    unlink: async (requestId, emit) => emit({ type: 'account.status', requestId, linked: true, message: 'The local server uses the workshop AWS profile, so there’s no account to disconnect.' }),
+    remove: async ({ requestId }, emit) => emit({ type: 'error', requestId, message: 'This server can’t take things down directly. Ask the building’s agent instead.' }),
     deleteMe: async () => undefined,
+    exportMe: async () => ({ exportedAt: new Date().toISOString(), contract: CONTRACT_VERSION, progress: await d.progress.get(), social: await localSocial.mine('local') }),
   };
   return { acquire: async () => tenant, data: () => tenant, release: () => undefined, closeAll: () => undefined };
 };
@@ -151,9 +209,14 @@ const Command = z.discriminatedUnion('action', [
   z.object({ action: z.literal('console.start'), taskId: Id, goal: z.string().min(1).max(500).transform(redactSecrets), context: Context.default({}), snapshot: Snapshot }),
   z.object({ action: z.literal('console.observe'), taskId: Id, index: z.number().int().min(0).max(100), ok: z.boolean(), note: z.string().max(200).optional(), snapshot: Snapshot }),
   z.object({ action: z.literal('console.stop'), taskId: Id }),
-  // Connecting the player's own AWS account (hosted)
-  z.object({ action: z.literal('account.link'), requestId: Id, region: z.string().min(1).max(32) }),
-  z.object({ action: z.literal('account.verify'), requestId: Id, roleArn: z.string().min(1).max(200) }),
+  // Connecting the player's own AWS account (hosted); v2.19: allowFixes, and disconnecting it
+  z.object({ action: z.literal('account.link'), requestId: Id, region: z.string().min(1).max(32), allowFixes: z.boolean().optional() }),
+  z.object({ action: z.literal('account.verify'), requestId: Id, roleArn: z.string().min(1).max(200), updated: z.boolean().optional() }),
+  z.object({ action: z.literal('account.unlink'), requestId: Id }).strict(),
+  // contract v2.19 "Check again": the linked role's fixes answer, read again (read-only, no MFA)
+  z.object({ action: z.literal('account.recheck'), requestId: Id }).strict(),
+  // contract v2.19: take down one thing the city built (no model; the ActionService and the player's approval)
+  z.object({ action: z.literal('resource.remove'), requestId: Id, kind: z.enum(['instance', 'table', 'bucket']), id: z.string().regex(/^[A-Za-z0-9._-]{1,255}$/) }).strict(),
   // contract v2.3: city care (the citizens' findings)
   z.object({ action: z.literal('finding.explain'), requestId: Id, findingId: Id }),
   z.object({ action: z.literal('finding.fix'), requestId: Id, findingId: Id }),
@@ -199,6 +262,15 @@ const readJson = async (req: IncomingMessage): Promise<unknown> => {
   }
 };
 
+/** This server's version (server/package.json; esbuild inlines it into the bundle). */
+export const SERVER_VERSION: string = pkg.version;
+
+/**
+ * The load balancer's health check: 200 while serving, 503 while draining (so it stops sending new connections).
+ * The body says which build answers: the server's version and the contract version it speaks.
+ */
+export const health = (draining: boolean) => ({ status: draining ? 503 : 200, body: { status: draining ? 'draining' : 'ok', version: SERVER_VERSION, contract: CONTRACT_VERSION } });
+
 /** What a person sees opening the server's address in a browser: what it is, nothing about any player. */
 export const ROOT_INFO = { service: 'AWS City', about: 'This is an AWS City server. Play in the AWS City browser extension.' } as const;
 
@@ -216,6 +288,12 @@ export const createHttpServer = (deps: Deps) => {
   const deleted = 'deleted' in deps ? deps.deleted : undefined;
   /** Players known to be deleted (sub → until): one store read finds out, then it's remembered here. */
   const gone = new Map<string, number>();
+  /** When each player last downloaded their data (GET /me/export, EXPORT_EVERY_MS apart). */
+  const exported = new Map<string, number>();
+  const sweepExported = sweeper(exported, (at, now) => now - at >= EXPORT_EVERY_MS);
+  /** POST /me/mfa per player: a token bucket and when it was last used (a bucket left alone that long is full again). */
+  const mfaNotes = new Map<string, { allow: () => boolean; at: number }>();
+  const sweepMfaNotes = sweeper(mfaNotes, (n, now) => now - n.at >= MFA_NOTE_BURST * MFA_NOTE_EVERY_MS);
   const screenshotLimits = new Map<string, () => boolean>();
   const screenshotRate = (sub: string) => {
     if (screenshotLimits.size > 10_000) screenshotLimits.clear(); // bounded: forgetting a bucket only refills it
@@ -223,16 +301,19 @@ export const createHttpServer = (deps: Deps) => {
     if (!ok) screenshotLimits.set(sub, (ok = rateLimiter(SCREENSHOT_BURST, SCREENSHOTS_PER_SECOND)));
     return ok();
   };
+  /** Whether this player deleted their account recently (a yes is remembered here, a no is asked again). */
+  const isDeleted = async (sub: string) => {
+    if (!deleted) return false;
+    const until = gone.get(sub);
+    if (until !== undefined && until > Date.now()) return true;
+    gone.delete(sub);
+    if (!(await deleted(sub))) return false;
+    gone.set(sub, Date.now() + DELETED_CACHE_MS);
+    return true;
+  };
   /** Refuses a player who deleted their account (410), before anything is stored for them again. */
   const refuseDeleted = async (sub: string) => {
-    if (!deleted) return;
-    const until = gone.get(sub);
-    if (until !== undefined && until > Date.now()) throw new HttpError(410, 'This account was deleted');
-    gone.delete(sub);
-    if (await deleted(sub)) {
-      gone.set(sub, Date.now() + DELETED_CACHE_MS);
-      throw new HttpError(410, 'This account was deleted');
-    }
+    if (await isDeleted(sub)) throw new HttpError(410, 'This account was deleted');
   };
   const allowedHosts = new Set([`127.0.0.1:${config.port}`, `localhost:${config.port}`, `[::1]:${config.port}`, ...config.publicHosts]);
   let draining = false;
@@ -272,12 +353,18 @@ export const createHttpServer = (deps: Deps) => {
 
   const handle = async (req: IncomingMessage, res: ServerResponse) => {
     // Load balancer health checks come from the private network with the task IP as Host.
-    if (req.method === 'GET' && req.url === '/health') return send(res, draining ? 503 : 200, { status: draining ? 'draining' : 'ok' });
+    if (req.method === 'GET' && req.url === '/health') {
+      const h = health(draining);
+      return send(res, h.status, h.body);
+    }
     const url = guard(req);
+    // The version handshake: every answer from here on names this server's contract version.
+    res.setHeader(CONTRACT_HEADER, CONTRACT_VERSION);
     // Someone opened the server's address in a browser: say what this is instead of "Please sign in again".
     if (req.method === 'GET' && url.pathname === '/') return send(res, 200, { ...ROOT_INFO, status: draining ? 'draining' : 'ok' });
     if (req.headers.origin) {
       res.setHeader('access-control-allow-origin', req.headers.origin);
+      res.setHeader('access-control-expose-headers', CONTRACT_HEADER);
       res.setHeader('vary', 'Origin');
     }
     if (req.method === 'OPTIONS') {
@@ -303,7 +390,11 @@ export const createHttpServer = (deps: Deps) => {
 
     const principal = await principalFor(req, url);
 
-    if (route === 'GET /progress' || route === 'PUT /progress' || route === 'POST /screenshots') await refuseDeleted(principal.sub);
+    if (route === 'GET /progress' || route === 'PUT /progress' || route === 'POST /screenshots' || route === 'GET /me/export') await refuseDeleted(principal.sub);
+    // A client this server can't serve neither reads nor writes progress (a copy from a newer client could lose its newer
+    // fields here). 409 + the header above tell it why; DELETE /me, GET /me/export and POST /me/mfa always answer.
+    if ((route === 'GET /progress' || route === 'PUT /progress') && versionRefusal(url.searchParams.get(CONTRACT_PARAM)))
+      throw new HttpError(409, `This server speaks contract ${CONTRACT_VERSION}`);
     if (route === 'GET /progress') {
       const p = await hub.data(principal).progress.get();
       return p ? send(res, 200, p) : send(res, 404, { error: 'No progress yet' });
@@ -322,6 +413,16 @@ export const createHttpServer = (deps: Deps) => {
       if (!screenshotRate(principal.sub)) throw new HttpError(429, 'Too many screenshots. Try again in a moment.');
       return send(res, 200, await hub.data(principal).uploads.create(body.data.contentType));
     }
+    // v2.19: everything we store about the player, as a download (the account link as metadata: never the ExternalId).
+    if (route === 'GET /me/export') {
+      const now = Date.now();
+      if (now - (exported.get(principal.sub) ?? -Infinity) < EXPORT_EVERY_MS) throw new HttpError(429, 'You downloaded your data a moment ago. Try again in a minute.');
+      sweepExported(now);
+      exported.set(principal.sub, now);
+      const body = JSON.stringify(await hub.data(principal).exportMe(), null, 2);
+      res.writeHead(200, { 'content-type': 'application/json', 'content-disposition': 'attachment; filename="aws-city-my-data.json"', 'cache-control': 'no-store' });
+      return res.end(body);
+    }
     // Deletes everything we store about the player (Chrome Web Store / privacy requirement).
     if (route === 'DELETE /me') {
       await hub.data(principal).deleteMe();
@@ -329,6 +430,31 @@ export const createHttpServer = (deps: Deps) => {
       // Their open tabs must not keep acting as a player who no longer exists, nor reconnect (their token still verifies).
       for (const [ws, sub] of owners) if (sub === principal.sub) ws.close(CLOSE.deleted, 'Account deleted');
       return send(res, 204);
+    }
+    // The extension just turned an authenticator on, before it signs every session out: look now, so the sign-in
+    // that follows counts as after it (accounts/mfa.ts). 204 only once the first sight is recorded ('ok' or 'reauth'). An
+    // authenticator Cognito doesn't show yet ('enrol'), Cognito or DynamoDB throttling the look (MFA_LOOK_REFUSED) or a player who's gone is 409: anyone
+    // can send that, so it's never a 5xx (those page and roll a deploy back: the Http5xx alarm). Only a failure that's
+    // ours is 503. Either way the extension tries again and, if it never lands, tells the player they may have to sign
+    // in twice. Past MFA_NOTE_BURST in a row, one every MFA_NOTE_EVERY_MS per player, else 429.
+    if (route === 'POST /me/mfa') {
+      const now = Date.now();
+      sweepMfaNotes(now);
+      const note = mfaNotes.get(principal.sub) ?? { allow: rateLimiter(MFA_NOTE_BURST, 1000 / MFA_NOTE_EVERY_MS), at: now };
+      note.at = now;
+      mfaNotes.set(principal.sub, note);
+      if (!note.allow()) throw new HttpError(429, 'You asked a moment ago. Try again in a few seconds.');
+      let ours = false;
+      const seen = mfaReady
+        ? await mfaReady(principal).catch((err) => {
+            const e = err as { name?: string; $metadata?: { httpStatusCode?: number }; $retryable?: { throttling?: boolean } };
+            ours = !MFA_LOOK_REFUSED.has(e?.name ?? '') && e?.$metadata?.httpStatusCode !== 429 && !e?.$retryable?.throttling;
+            log.warn('mfa look failed', { who: who(principal.sub), err: e?.name });
+            return undefined;
+          })
+        : 'ok';
+      if (seen === 'ok' || seen === 'reauth') return send(res, 204);
+      throw new HttpError(ours ? 503 : 409, 'The city couldn’t see your authenticator yet. Try again in a moment.');
     }
     // Debug view of what the state layer sees (local server only).
     if (route === 'GET /snapshot' && config.authMode === 'token') return send(res, 200, (await withTenant(principal, (t) => t.snapshot())) ?? null);
@@ -390,6 +516,8 @@ export const createHttpServer = (deps: Deps) => {
       if (draining) throw new HttpError(503, 'Server restarting');
       url = guard(req);
       if (url.pathname !== '/ws') throw new HttpError(404, 'WebSocket endpoint is /ws');
+      // The version handshake, before any sign-in or slot: the client asks GET /progress why (409 + its version header).
+      if (versionRefusal(url.searchParams.get(CONTRACT_PARAM))) throw new HttpError(409, `This server speaks contract ${CONTRACT_VERSION}`);
       if (slots >= config.maxSockets) throw new HttpError(429, 'Too many connections');
     } catch (err) {
       return reject(socket, err);
@@ -453,7 +581,10 @@ export const createHttpServer = (deps: Deps) => {
     let lastRenew = 0;
     let alive = true;
     const withinRate = rateLimiter(FRAME_BURST, FRAMES_PER_SECOND);
+    const socialRate = rateLimiter(SOCIAL_BURST, SOCIAL_PER_SECOND);
     let lastAccountCommand = 0;
+    /** When this socket's last account.link succeeded (its account.linkUrl went out): a verify may follow it at once. */
+    let linkedAt = 0;
     const raw = (e: ServerEvent) => sendTo(ws, e);
     const emit = tenant.emitter(raw);
     // Events for a task still running when its socket closes are dropped (accepted limitation).
@@ -463,38 +594,44 @@ export const createHttpServer = (deps: Deps) => {
     const turns = new AbortController();
     /**
      * Deleted elsewhere (DELETE /me lands on one task; this socket may be on another): close with CLOSE.deleted. Only a
-     * confirmed deletion closes it; a store hiccup doesn't.
+     * confirmed deletion closes it; a store hiccup doesn't. `fresh` false reuses a "still here" up to HERE_CACHE_MS old.
      */
     let hereAt = 0;
     const stillHere = async (fresh = true) => {
       if (!fresh && Date.now() - hereAt < HERE_CACHE_MS) return true;
       try {
-        await refuseDeleted(principal.sub);
-        hereAt = Date.now();
-        return true;
-      } catch (err) {
-        if (err instanceof HttpError && err.status === 410) {
+        if (await isDeleted(principal.sub)) {
           ws.close(CLOSE.deleted, 'Account deleted');
           return false;
         }
-        return true;
+        hereAt = Date.now();
+      } catch (err) {
+        log.warn('deleted check failed', { who: who(principal.sub), err: (err as Error).name });
       }
+      return true;
     };
-    let nextDeletedCheck = Date.now() + DELETED_CHECK_MS;
+    type Refusal = 'enrol' | 'reauth' | 'reauth_required' | 'deleted';
     /**
-     * Step-up (hosted) for linking, approving and fixing: MFA on (a failed check counts as "not ready") AND a sign-in in
-     * the last 30 minutes (recentSignIn), so a stolen refresh token can't act on a player's AWS account. A player deleted
-     * on another task is refused (and their socket closed) first.
+     * Step-up (hosted) for linking, approving, fixing and taking down. All of: the player wasn't deleted on another task
+     * (else the socket closes); an authenticator is on ('enrol': a failed check counts as not enrolled); this session
+     * signed in after it was first seen (accounts/mfa.ts: 'reauth', sign out and in again with the code); and the sign-in
+     * is recent (recentSignIn, the last 30 minutes: 'reauth_required', a fresh sign-in on this socket with auth.renew), so
+     * a stolen refresh token can't act on a player's AWS account. Each is checked; none replaces another.
      */
-    const stepUp = async (): Promise<'ok' | 'mfa_required' | 'reauth_required' | 'deleted'> => {
+    const stepUp = async (): Promise<'ok' | Refusal> => {
       if (!(await stillHere())) return 'deleted';
       if (!mfaReady) return 'ok';
-      if (!(await mfaReady(principal).catch(() => false))) return 'mfa_required';
+      const verdict: StepUp = await mfaReady(principal).catch(() => 'enrol' as const);
+      if (verdict !== 'ok') return verdict;
       return recentSignIn(principal) ? 'ok' : 'reauth_required';
     };
-    const refuse = (why: 'mfa_required' | 'reauth_required' | 'deleted', requestId?: string) => {
+    /** What a refused step-up tells the player: turn on an authenticator, sign out and in again, or sign in again here. */
+    const refuse = (why: Refusal, requestId?: string) => {
       if (why === 'deleted') return; // the socket is already closing with CLOSE.deleted
-      emit({ type: 'error', ...(requestId ? { requestId } : {}), code: why, message: why === 'mfa_required' ? MFA_REQUIRED_MESSAGE : REAUTH_MESSAGE });
+      const id = requestId ? { requestId } : {};
+      if (why === 'reauth') return emit({ type: 'error', ...id, code: 'auth', message: SIGN_IN_AGAIN_MESSAGE });
+      if (why === 'reauth_required') return emit({ type: 'error', ...id, code: 'reauth_required', message: REAUTH_MESSAGE });
+      emit({ type: 'error', ...id, code: 'mfa_required', message: MFA_REQUIRED_MESSAGE });
     };
     const copilot = tenant.createCopilot();
     const unsubscribe = tenant.subscribe(emit);
@@ -502,10 +639,6 @@ export const createHttpServer = (deps: Deps) => {
       if (!alive) return ws.terminate();
       alive = false;
       ws.ping();
-      if (deleted && Date.now() >= nextDeletedCheck) {
-        nextDeletedCheck = Date.now() + DELETED_CHECK_MS;
-        void stillHere();
-      }
     }, HEARTBEAT_MS);
     const maxAge = setTimeout(() => ws.close(CLOSE.reauth, 'Session refresh'), MAX_CONNECTION_MS);
     // After the token expires: close when idle, or at the end of the grace period regardless.
@@ -523,9 +656,11 @@ export const createHttpServer = (deps: Deps) => {
             };
             check();
           }, Math.max(0, untilExpiry));
+    const deletedCheck = deleted ? setInterval(() => void stillHere(), DELETED_CHECK_MS) : undefined;
     heartbeat.unref?.();
     maxAge.unref?.();
     expiry?.unref?.();
+    deletedCheck?.unref?.();
     ws.on('pong', () => (alive = true));
     ws.on('close', (code) => {
       log.info('socket closed', { who: who(principal.sub), connId, code, minutes: Math.round((Date.now() - opened) / 60_000) });
@@ -533,6 +668,7 @@ export const createHttpServer = (deps: Deps) => {
       owners.delete(ws);
       release(principal.sub);
       clearInterval(heartbeat);
+      clearInterval(deletedCheck);
       clearTimeout(maxAge);
       clearTimeout(expiry);
       clearTimeout(expiryCheck);
@@ -559,7 +695,11 @@ export const createHttpServer = (deps: Deps) => {
       }
       const parsed = Command.safeParse(json);
       if (!parsed.success) {
-        emit({ type: 'error', message: `Bad command: ${parsed.error.issues[0]?.message ?? 'invalid'}` });
+        // Never the schema's own words (players see no internal errors), and the socket stays open. The handshake keeps
+        // a newer client off an older server, so an unknown action here is a stray or very old client.
+        const action = (json as { action?: unknown } | null)?.action;
+        log.warn('bad command', { who: who(principal.sub), connId, action: typeof action === 'string' ? action.slice(0, 40) : undefined });
+        emit({ type: 'error', message: 'Bad command: this server didn’t understand that request.' });
         return;
       }
       const cmd = parsed.data;
@@ -584,18 +724,41 @@ export const createHttpServer = (deps: Deps) => {
         void stepUp().then((why) => (why === 'ok' ? answer() : refuse(why)));
         return;
       }
-      if (cmd.action === 'account.link' || cmd.action === 'account.verify') {
-        if (Date.now() - lastAccountCommand < ACCOUNT_COOLDOWN_MS) {
+      if (cmd.action === 'account.link' || cmd.action === 'account.verify' || cmd.action === 'account.recheck' || cmd.action === 'account.unlink') {
+        const now = Date.now();
+        // A verify right after this socket's own link went through ("I've updated the stack": link, then verify) isn't spam.
+        const followsLink = cmd.action === 'account.verify' && now - linkedAt < LINK_THEN_VERIFY_MS;
+        if (now - lastAccountCommand < ACCOUNT_COOLDOWN_MS && !followsLink) {
           emit({ type: 'error', message: 'Give it a few seconds before trying that again.', requestId: cmd.requestId });
           return;
         }
-        lastAccountCommand = Date.now();
+        lastAccountCommand = now;
+        if (followsLink) linkedAt = 0; // one verify per link
+        const failed = (err: unknown) => emit({ type: 'error', requestId: cmd.requestId, message: publicError('account change failed', err) });
+        // Taking access away needs no step-up: a player who can't pass MFA can still disconnect. Neither does "Check
+        // again": it only asks the linked role a read-only question and changes nothing.
+        if (cmd.action === 'account.unlink') return void tenant.unlink(cmd.requestId, emit).catch(failed);
+        if (cmd.action === 'account.recheck') return void tenant.recheck(cmd.requestId, emit).catch(failed);
         void (async () => {
           const why = await stepUp();
           if (why !== 'ok') return refuse(why, cmd.requestId);
-          if (cmd.action === 'account.link') return tenant.link(cmd.requestId, cmd.region, emit);
-          return tenant.verify(cmd.requestId, cmd.roleArn, emit);
-        })();
+          if (cmd.action === 'account.link') {
+            const requestId = cmd.requestId;
+            return tenant.link(requestId, cmd.region, (e) => (e.type === 'account.linkUrl' && e.requestId === requestId && (linkedAt = Date.now()), emit(e)), cmd.allowFixes);
+          }
+          return tenant.verify(cmd.requestId, cmd.roleArn, emit, cmd.updated);
+        })().catch(failed);
+        return;
+      }
+      if (cmd.action === 'resource.remove') {
+        // A change the player approves, like an agent's: it counts with this socket's tasks (it may wait minutes for the
+        // approval), never with its request slots, which chats and checks need meanwhile. Started only after step-up
+        // (hosted), and deploy.approve checks it again.
+        if (tasks >= MAX_TASKS_PER_SOCKET) return emit({ type: 'error', message: 'Two tasks or changes are already waiting. Finish or reject one first.', requestId: cmd.requestId });
+        tasks++;
+        const { action: _a, ...remove } = cmd;
+        const job = stepUp().then((why) => (why === 'ok' ? tenant.remove(remove, emit, approvals) : refuse(why, cmd.requestId)));
+        void track(job.catch((err) => emit({ type: 'error', requestId: cmd.requestId, message: publicError('remove failed', err) }))).finally(() => tasks--);
         return;
       }
       if (cmd.action === 'finding.explain' || cmd.action === 'finding.fix' || cmd.action === 'finding.undo') {
@@ -621,6 +784,8 @@ export const createHttpServer = (deps: Deps) => {
         const now = Date.now();
         if (cmd.action === 'presence.beat' && now - lastBeat < BEAT_MIN_MS) return;
         if (cmd.action === 'presence.beat') lastBeat = now;
+        // Scores and boards are rate-limited like frames: a plain refusal, and nothing is read or written.
+        else if (!socialRate()) return emit({ type: 'error', message: 'Too many scores and leaderboard requests. Try again in a few seconds.' });
         const run = (): Promise<ServerEvent> =>
           cmd.action === 'presence.beat'
             ? tenant.social.beat(cmd.region, cmd.rank)

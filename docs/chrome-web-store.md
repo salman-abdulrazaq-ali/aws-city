@@ -4,8 +4,9 @@ The store gives your extension its own permanent id. Players' sign-in works once
 in your deployment: re-run `npm run setup` and enter it.
 
 1. **Build the store zip.** `npm run setup` writes `.output/aws-city-<version>-chrome.zip`. You can
-   also tag a release (`git tag v1.0.0 && git push --tags`), and the *release* workflow attaches the
-   zip.
+   also tag a release (`git tag v1.0.0 && git push --tags`; the tag must be `v` + `package.json`'s version), and the
+   *release* workflow attaches the zip. By hand: `WXT_STORE_BUILD=true npm run zip` after `npm run setup` (it reads
+   the hosted settings from `.env.production` and stops if one is missing).
 2. **Developer account.** Register at https://chrome.google.com/webstore/devconsole. It's a one-time
    fee, and you verify your email.
 3. **New item.** Upload the zip, then fill in the listing from [store-listing.md](store-listing.md):
@@ -24,6 +25,8 @@ in your deployment: re-run `npm run setup` and enter it.
 5. **Copy the item id** from the dashboard URL: 32 letters, a–p.
 6. **Allow it to sign in.** Run `npm run setup`, enter the store id, and let it redeploy. That adds
    `https://<store-id>.chromiumapp.org/` to Cognito and the id to the server's allowed origins.
+   **Edge Add-ons** (Microsoft Partner Center) takes the same zip but gives it an id of its own: enter it at the
+   wizard's Edge question, and it's allowed the same way.
 7. **Submit for review.** Reviews usually take a few days. Updates: bump `version` in
    `package.json`, tag a release, then upload the new zip.
 

@@ -202,9 +202,12 @@ let legacy: CityPlan | undefined;
 /** Today's 3×3 city (layout.ts), built once. */
 export const legacyPlan = (): CityPlan => (legacy ??= buildLegacy());
 
-/** `?map=legacy` in the page's URL (city.html, the side panel) keeps every Region on the legacy city (dev escape hatch). */
-export const legacyForced = (search = (globalThis as { location?: { search?: string } }).location?.search ?? '') =>
-  new URLSearchParams(search).get('map') === 'legacy';
+/**
+ * `?map=legacy` in the page's URL (city.html, the side panel) keeps every Region on the legacy city: a dev escape hatch
+ * (the smoke uses it), so a store build (`storeBuild` is WXT_STORE_BUILD) ignores it.
+ */
+export const legacyForced = (search = (globalThis as { location?: { search?: string } }).location?.search ?? '', storeBuild = import.meta.env.WXT_STORE_BUILD) =>
+  storeBuild !== 'true' && new URLSearchParams(search).get('map') === 'legacy';
 
 /** A Region's real plan from its baked map (raw JSON), or undefined when it has none or it doesn't decode or zone. */
 export function realPlan(raw: unknown): CityPlan | undefined {

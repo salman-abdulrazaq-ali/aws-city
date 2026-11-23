@@ -3,7 +3,7 @@ import { AwsSolutionsChecks } from 'cdk-nag';
 import { AuthStack } from '../lib/auth-stack.js';
 import { BudgetStack } from '../lib/budget-stack.js';
 import { CiStack } from '../lib/ci-stack.js';
-import { loadEnv, readSetupFile } from '../lib/config.js';
+import { costTags, loadEnv, readSetupFile } from '../lib/config.js';
 import { DataStack } from '../lib/data-stack.js';
 import { EdgeStack } from '../lib/edge-stack.js';
 import { ServiceStack } from '../lib/service-stack.js';
@@ -32,6 +32,5 @@ budget.node.addDependency(service); // the budget action targets the task role
 const repo = (app.node.tryGetContext('githubRepo') as string | undefined) || (readSetupFile().githubRepo as string | undefined);
 if (repo) new CiStack(app, 'AWSCity-CI', repo, { env: where });
 
-Tags.of(app).add('app', 'aws-city');
-Tags.of(app).add('env', env.name);
+for (const [key, value] of Object.entries(costTags(env))) Tags.of(app).add(key, value);
 Validations.of(app).addPlugins(new AwsSolutionsChecks(app, { verbose: true }));

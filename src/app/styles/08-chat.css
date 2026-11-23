@@ -126,6 +126,9 @@
 }
 .bubble {
   max-width: 88%;
+  /* A flex item that may shrink: an ARN, a command or a link in a reply wraps inside the 400 px panel, never past it. */
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: var(--s-3) var(--s-5);
   border-radius: var(--r-lg);
   border: 1px solid var(--line-strong);

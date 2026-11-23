@@ -11,8 +11,11 @@ export interface Principal {
   email?: string;
   /** When the token proving this expires (epoch ms); the socket must not outlive it for long. */
   expiresAt?: number;
-  /** When the player last actually signed in (Cognito's auth_time, epoch ms). A refresh keeps it, so step-up can
-   *  demand a recent sign-in: a stolen refresh token can't link an account or approve a write. */
+  /**
+   * When the player signed in for this session (epoch ms, Cognito's auth_time; a refresh keeps it). MFA step-up passes
+   * only for a session that started after the authenticator was turned on (accounts/mfa.ts), and the reauth window
+   * demands a recent sign-in: a stolen refresh token can't link an account or approve a write.
+   */
   authTime?: number;
 }
 
@@ -42,16 +45,15 @@ const safeEqual = (a: string, b: string) => {
 };
 
 /**
- * Local server: only a caller with the token. Never the Origin alone: browsers stop web pages forging it, but any other
- * program on the computer can send any Origin (and the dev extension's id is public, from extension.pubkey). Every
- * local build carries the token (the launcher's .cache/local-token); the server also checks the Origin on top.
+ * Local server: only a caller with the token. An Origin header never authenticates on its own: browsers stop web pages
+ * forging it, but any other program on the computer can send any Origin, and the dev extension's id is public
+ * (scripts/extension-id.mjs, extension.pubkey). Origin stays a browser check on top (http.ts `guard`: a web page can't
+ * reach us). Every local build carries the token the launcher gives it (WXT_AWS_TOKEN, scripts/launcher/live-run.mjs).
  */
-export const tokenAuth = (config: Config): Authenticate => {
-  return async (req) => {
-    // Never from the query string: URLs end up in logs and history.
-    const bearer = req.headers.authorization?.replace(/^Bearer /, '') ?? bearerFromProtocols(req.headers['sec-websocket-protocol']);
-    return bearer && safeEqual(bearer, config.token) ? { sub: 'local' } : undefined;
-  };
+export const tokenAuth = (config: Config): Authenticate => async (req) => {
+  // Never from the query string: URLs end up in logs and history.
+  const bearer = req.headers.authorization?.replace(/^Bearer /, '') ?? bearerFromProtocols(req.headers['sec-websocket-protocol']);
+  return bearer && safeEqual(bearer, config.token) ? { sub: 'local' } : undefined;
 };
 
 export interface JwtVerifier {

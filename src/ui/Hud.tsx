@@ -1,5 +1,21 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
-import { canReconnect, canSignIn, openFullCity, openLeaderboard, reconnect, setAutoSnap, signIn, signOut, type Layout } from '@/app/runtime';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import {
+  canDeleteAccount,
+  canDownloadData,
+  canReconnect,
+  canSignIn,
+  downloadMyData,
+  openFullCity,
+  openLeaderboard,
+  openOsmCopyright,
+  openPrivacyPolicy,
+  privacyPolicyUrl,
+  reconnect,
+  setAutoSnap,
+  signIn,
+  signOut,
+  type Layout,
+} from '@/app/runtime';
 import { chime, isMuted, onMuteChange, setMuted } from '@/game/audio';
 import { isRushNow, subscribeRush } from '@/game/rush';
 import { bus } from '@/state/bus';
@@ -10,14 +26,14 @@ import { coins } from '@/state/wallet';
 import { lightsLine } from '@/state/lights';
 import { glowingNow } from './Loops';
 import { useBump } from './feedback';
-import { connectionLabel, DEMO_KEY, GAME_NAMES, isDemo, readPref, setDemo, TIP_COINS_KEY, writePref } from './logic';
+import { connectionLabel, DEMO_KEY, GAME_NAMES, isDemo, readPref, setDemo, syncLine, TIP_COINS_KEY, writePref } from './logic';
 import { Coin, Icon } from './icons';
 import { RankChip } from './Collection';
 import { openEverything, useLocked } from './useLadder';
-import { OsmCredit } from './Minimap';
 import { BuildToggle } from './BuildDrawer';
 import { isSimple, shows } from '@/state/simple';
 import { useTodo } from './today';
+import { DeleteAccountDialog, openAccountCard } from './Account';
 
 
 /**
@@ -159,9 +175,82 @@ function ConnectionPill() {
   );
 }
 
+/**
+ * The one calm line about saving, above the tabs (src/ui/logic.ts syncLine): the server is being updated, the extension
+ * needs its update (the v2.19 version handshake), or the account refused a save. Progress stays on this device in all three.
+ */
+export function SyncNote() {
+  const line = useCity((s) => syncLine(s.backendKind, s.backendStatus, s.saveRefused));
+  if (!line) return null;
+  return (
+    <p className="sync-note" role="status">
+      {line}
+    </p>
+  );
+}
+
+/**
+ * ⋯ → Account, on the hosted server: the player's own AWS account (its card in Deploy), sign in or out, download their
+ * data, delete their account (asked first, in a dialog: DeleteAccountDialog) and the privacy policy (when the build has
+ * its address, WXT_PRIVACY_URL).
+ */
+function AccountItems({ run, askDelete }: { run: (fn: () => void) => () => void; askDelete: () => void }) {
+  const status = useCity((s) => s.backendStatus);
+  const linked = useCity((s) => s.account.linked);
+  return (
+    <>
+      <div role="group" aria-label="Account">
+        <div className="menu-label" aria-hidden="true">
+          Account
+        </div>
+        {status === 'signed-out' ? (
+          canSignIn() && (
+            <button role="menuitem" onClick={run(signIn)}>
+              Sign in
+            </button>
+          )
+        ) : (
+          <>
+            <button role="menuitem" title="Its card is in the Deploy tab" onClick={run(() => openAccountCard())}>
+              {linked ? '🔗 Your AWS account' : '🔗 Connect your AWS account'}
+            </button>
+            {canDownloadData() && (
+              <button role="menuitem" title="Everything the server keeps about you, as a file on this device" onClick={run(() => void downloadMyData())}>
+                Download my data
+              </button>
+            )}
+            <button role="menuitem" onClick={run(signOut)}>
+              Sign out
+            </button>
+            {canDeleteAccount() && (
+              <button role="menuitem" onClick={run(askDelete)}>
+                Delete my account…
+              </button>
+            )}
+          </>
+        )}
+        {privacyPolicyUrl() && (
+          <button role="menuitem" title="Opens in a new tab" onClick={run(openPrivacyPolicy)}>
+            Privacy policy ↗
+          </button>
+        )}
+      </div>
+      <hr />
+    </>
+  );
+}
+
+/** ⋯ in the demo (Dana, 22 Nov 2026: the demo said nothing about data): what it keeps, and that it sends nothing. */
+export const DEMO_PRIVACY_LINE = 'Demo: your progress stays on this device; nothing is sent anywhere.';
+
+/** The ⋯ menu's items in order (checkbox items too), for its arrow keys. */
+const menuItems = (menu: HTMLElement | null) => [...(menu?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? [])];
+
 /** Everything that isn't needed every minute, in one flat list: sound, chatter, peek, tour, full city, the Lookout. */
 function MoreMenu({ layout }: { layout: Layout }) {
   const [open, setOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const hosted = useCity((s) => s.hosted);
   // Follows the toggle on another surface too (the side panel and the full tab share it).
   const muted = useSyncExternalStore(onMuteChange, isMuted);
   const autoSnap = useCity((s) => s.autoSnap);
@@ -179,15 +268,65 @@ function MoreMenu({ layout }: { layout: Layout }) {
   const builder = useCity((s) => !!s.prefs.builder);
   const setPref = useCity((s) => s.setPref);
   const setTourOpen = useCity((s) => s.setTourOpen);
-  const inDemo = useCity((s) => s.backendKind) === 'mock' && isDemo();
+  const backendKind = useCity((s) => s.backendKind);
+  const inDemo = backendKind === 'mock' && isDemo();
   const signedIn = useCity((s) => s.backendKind !== 'mock' && s.backendStatus !== 'signed-out');
   const locked = useLocked();
   const simple = useCity((s) => isSimple(s.prefs));
   const box = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  /** Where focus goes when the menu opens: its first item (ArrowDown, a click, Enter) or its last (ArrowUp). */
+  const startAt = useRef<'first' | 'last'>('first');
+  const items = () => menuItems(list.current);
+  // Opening moves focus into the menu, so the arrow keys move through it (and never reach the city).
+  useEffect(() => {
+    if (!open) return;
+    const all = menuItems(list.current);
+    (startAt.current === 'last' ? all[all.length - 1] : all[0])?.focus();
+    startAt.current = 'first';
+  }, [open]);
+  /** Escape: the menu closes and focus goes back to ⋯. */
+  const closeToButton = () => {
+    setOpen(false);
+    trigger.current?.focus();
+  };
+  // Arrows, Home and End move between the items; Escape closes. Handled here, the keys go no further (the city and the
+  // game listen on the window).
+  const onMenuKey = (e: ReactKeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      return closeToButton();
+    }
+    const all = items();
+    const at = all.indexOf(document.activeElement as HTMLElement);
+    const to = e.key === 'ArrowDown' ? (at + 1) % all.length : e.key === 'ArrowUp' ? (at <= 0 ? all.length - 1 : at - 1) : e.key === 'Home' ? 0 : e.key === 'End' ? all.length - 1 : undefined;
+    if (to === undefined) return;
+    e.preventDefault();
+    e.stopPropagation();
+    all[to]?.focus();
+  };
+  // ArrowDown / ArrowUp on ⋯ open the menu at its first / last item (or move into it when it's open).
+  const onButtonKey = (e: ReactKeyboardEvent) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (open) {
+      const all = items();
+      return void (e.key === 'ArrowUp' ? all[all.length - 1] : all[0])?.focus();
+    }
+    startAt.current = e.key === 'ArrowUp' ? 'last' : 'first';
+    setOpen(true);
+  };
   useEffect(() => {
     if (!open) return;
     const away = (e: Event) => box.current && !box.current.contains(e.target as Node) && setOpen(false);
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setOpen(false);
+      trigger.current?.focus();
+    };
     document.addEventListener('pointerdown', away);
     document.addEventListener('keydown', esc);
     return () => {
@@ -195,151 +334,186 @@ function MoreMenu({ layout }: { layout: Layout }) {
       document.removeEventListener('keydown', esc);
     };
   }, [open]);
+  // An item closes the menu and focus goes back to ⋯ first, so a dialog it opens (My City, the tour) gives focus back
+  // to ⋯ when it closes, never to <body> (the item is gone by then).
   const run = (fn: () => void) => () => {
+    trigger.current?.focus();
     fn();
     setOpen(false);
   };
+  const accountItems = hosted || (signedIn && canSignIn());
   return (
-    <div className="more" ref={box}>
-      <button className="btn icon ghost" aria-haspopup="menu" aria-expanded={open} aria-label="More" title="More" onClick={() => setOpen((o) => !o)}>
-        <Icon name="more" />
-      </button>
-      {open && (
-        <div className="menu" role="menu">
-          <button
-            role="menuitemcheckbox"
-            aria-checked={!muted}
-            onClick={() => {
-              setMuted(!muted);
-              if (muted) chime();
-            }}
-          >
-            <span>Sound effects</span>
-            <span className={`switch ${muted ? '' : 'on'}`} aria-hidden="true" />
-          </button>
-          <button role="menuitemcheckbox" aria-checked={chatter} onClick={() => setPref('chatter', !chatter)}>
-            <span>Agents chat in the city</span>
-            <span className={`switch ${chatter ? 'on' : ''}`} aria-hidden="true" />
-          </button>
-          <button role="menuitemcheckbox" aria-checked={mapDetails} onClick={() => setPref('mapDetails', !mapDetails)}>
-            <span>Show the map details</span>
-            <span className={`switch ${mapDetails ? 'on' : ''}`} aria-hidden="true" />
-          </button>
-          <hr />
-          <div className="menu-label" role="presentation">
-            Accessibility
-          </div>
-          <button
-            role="menuitem"
-            aria-label={`Text size: ${textSize}%. Choose to make it bigger.`}
-            onClick={() => setPref('textSize', textSize === 100 ? 125 : textSize === 125 ? 150 : undefined)}
-          >
-            <span>Text size</span>
-            <span className="menu-value">{textSize}%</span>
-          </button>
-          <button role="menuitemcheckbox" aria-checked={contrast} onClick={() => setPref('contrast', contrast ? undefined : true)}>
-            <span>High contrast</span>
-            <span className={`switch ${contrast ? 'on' : ''}`} aria-hidden="true" />
-          </button>
-          <button role="menuitemcheckbox" aria-checked={easyFont} onClick={() => setPref('easyFont', easyFont ? undefined : true)}>
-            <span>Easy-read font</span>
-            <span className={`switch ${easyFont ? 'on' : ''}`} aria-hidden="true" />
-          </button>
-          <button
-            role="menuitemcheckbox"
-            aria-checked={relaxed}
-            title="Rounds end when you press Done, and everything moves slower"
-            onClick={() => setPref('relaxed', relaxed ? undefined : true)}
-          >
-            <span>Games without a clock</span>
-            <span className={`switch ${relaxed ? 'on' : ''}`} aria-hidden="true" />
-          </button>
-          <button role="menuitemcheckbox" aria-checked={captions} title="A short caption for each sound" onClick={() => setPref('captions', captions ? undefined : true)}>
-            <span>Sound captions</span>
-            <span className={`switch ${captions ? 'on' : ''}`} aria-hidden="true" />
-          </button>
-          <button
-            role="menuitemcheckbox"
-            aria-checked={builder}
-            title="Every area open, and the deeper “For AWS learners” text shown first"
-            onClick={() => {
-              setPref('builder', builder ? undefined : true);
-              if (!builder) openEverything();
-            }}
-          >
-            <span>I already build on AWS</span>
-            <span className={`switch ${builder ? 'on' : ''}`} aria-hidden="true" />
-          </button>
-          {/* Simple mode (the default) ↔ Everything: one switch, and "Show everything" also opens every locked area. */}
-          {simple ? (
+    <>
+      <div className="more" ref={box}>
+        <button
+          ref={trigger}
+          className="btn icon ghost"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-label="More"
+          title="More"
+          onClick={() => setOpen((o) => !o)}
+          onKeyDown={onButtonKey}
+        >
+          <Icon name="more" />
+        </button>
+        {open && (
+          <div className="menu" role="menu" aria-label="More" ref={list} tabIndex={-1} onKeyDown={onMenuKey}>
+            {/* Where players look for Sign out first (seen 22 Nov 2026): any build that can sign in, once signed in. */}
+            {accountItems && <AccountItems run={run} askDelete={() => setConfirmDelete(true)} />}
             <button
-              role="menuitem"
-              title="Show every extra (rank, City Lights, season road, Codex, news, the Drawing board…) and open every tab and panel now"
-              onClick={run(() => {
-                setPref('simple', false);
-                if (locked.length > 0) openEverything();
-              })}
+              role="menuitemcheckbox"
+              aria-checked={!muted}
+              onClick={() => {
+                setMuted(!muted);
+                if (muted) chime();
+              }}
             >
-              Show everything
+              <span>Sound effects</span>
+              <span className={`switch ${muted ? '' : 'on'}`} aria-hidden="true" />
             </button>
-          ) : (
-            <button role="menuitem" title="Back to a plain To-do list: the extras hide (nothing you earned is lost)" onClick={run(() => setPref('simple', undefined))}>
-              Keep it simple
+            <button role="menuitemcheckbox" aria-checked={chatter} onClick={() => setPref('chatter', !chatter)}>
+              <span>Agents chat in the city</span>
+              <span className={`switch ${chatter ? 'on' : ''}`} aria-hidden="true" />
             </button>
-          )}
-          <hr />
-          <button role="menuitem" onClick={run(() => useCity.getState().openCollection(true))}>
-            🏙️ My City: everything you've earned
-          </button>
-          {linked && (
-            <button role="menuitem" title="What runs where, data that moves, live traffic and this month's cost" onClick={run(() => useCity.getState().openAccountMap(true))}>
-              🗺️ My AWS, live: your account as a map
+            <button role="menuitemcheckbox" aria-checked={mapDetails} onClick={() => setPref('mapDetails', !mapDetails)}>
+              <span>Show the map details</span>
+              <span className={`switch ${mapDetails ? 'on' : ''}`} aria-hidden="true" />
             </button>
-          )}
-          <button role="menuitem" title="Weekly leaderboards, and whether other players can see you" onClick={run(() => openLeaderboard(`mayors:${useCity.getState().cityRegion}`))}>
-            🏆 Leaderboards and live city
-          </button>
-          {cityView && <BuildToggle menu={() => setOpen(false)} />}
-          {inCity && (
-            <button role="menuitem" title="Download a picture of your city as it is now (nothing is uploaded)" onClick={run(() => bus.emit('postcard'))}>
-              📸 Save a postcard of my city
+            <hr />
+            <div role="group" aria-label="Accessibility">
+              <div className="menu-label" aria-hidden="true">
+                Accessibility
+              </div>
+              {/* Its name is what it shows ("Text size 125%", WCAG 2.5.3: label in name); what a press does is its title. */}
+              <button
+                role="menuitem"
+                title={textSize === 150 ? 'Back to 100%' : `Make the text bigger: ${textSize === 100 ? 125 : 150}%`}
+                onClick={() => setPref('textSize', textSize === 100 ? 125 : textSize === 125 ? 150 : undefined)}
+              >
+                <span>Text size</span> <span className="menu-value">{textSize}%</span>
+              </button>
+              <button role="menuitemcheckbox" aria-checked={contrast} onClick={() => setPref('contrast', contrast ? undefined : true)}>
+                <span>High contrast</span>
+                <span className={`switch ${contrast ? 'on' : ''}`} aria-hidden="true" />
+              </button>
+              <button role="menuitemcheckbox" aria-checked={easyFont} onClick={() => setPref('easyFont', easyFont ? undefined : true)}>
+                <span>Easy-read font</span>
+                <span className={`switch ${easyFont ? 'on' : ''}`} aria-hidden="true" />
+              </button>
+              <button
+                role="menuitemcheckbox"
+                aria-checked={relaxed}
+                title="Rounds end when you press Done, and everything moves slower"
+                onClick={() => setPref('relaxed', relaxed ? undefined : true)}
+              >
+                <span>Games without a clock</span>
+                <span className={`switch ${relaxed ? 'on' : ''}`} aria-hidden="true" />
+              </button>
+              <button role="menuitemcheckbox" aria-checked={captions} title="A short caption for each sound" onClick={() => setPref('captions', captions ? undefined : true)}>
+                <span>Sound captions</span>
+                <span className={`switch ${captions ? 'on' : ''}`} aria-hidden="true" />
+              </button>
+              <button
+                role="menuitemcheckbox"
+                aria-checked={builder}
+                title="Everything on (not Simple): every area open, and the deeper “For AWS learners” text shown first"
+                onClick={() => {
+                  // On, it does what the world intro's “I already build on AWS” does (src/ui/WorldIntro.tsx): Everything on
+                  // and every area open. Off, only the deeper text goes; Simple stays as the player set it.
+                  setPref('builder', builder ? undefined : true);
+                  if (builder) return;
+                  setPref('simple', false);
+                  openEverything();
+                }}
+              >
+                <span>I already build on AWS</span>
+                <span className={`switch ${builder ? 'on' : ''}`} aria-hidden="true" />
+              </button>
+              {/* Simple mode (the default) ↔ Everything: one switch, and "Show everything" also opens every locked area. */}
+              {simple ? (
+                <button
+                  role="menuitem"
+                  title="Show every extra (rank, City Lights, season road, Codex, news, the Drawing board…) and open every tab and panel now"
+                  onClick={run(() => {
+                    setPref('simple', false);
+                    if (locked.length > 0) openEverything();
+                  })}
+                >
+                  Show everything
+                </button>
+              ) : (
+                <button role="menuitem" title="Back to a plain To-do list: the extras hide (nothing you earned is lost)" onClick={run(() => setPref('simple', undefined))}>
+                  Keep it simple
+                </button>
+              )}
+            </div>
+            <hr />
+            <button role="menuitem" onClick={run(() => useCity.getState().openCollection(true))}>
+              🏙️ My City: everything you've earned
             </button>
-          )}
-          <button role="menuitem" onClick={run(() => setTourOpen(true))}>
-            Replay the tour
-          </button>
-          {layout === 'panel' && (
-            <button role="menuitem" onClick={run(openFullCity)}>
-              Open the full city in a tab ↗
+            {linked && (
+              <button role="menuitem" title="What runs where, data that moves, live traffic and this month's cost" onClick={run(() => useCity.getState().openAccountMap(true))}>
+                🗺️ My AWS, live: your account as a map
+              </button>
+            )}
+            <button role="menuitem" title="Weekly leaderboards, and whether other players can see you" onClick={run(() => openLeaderboard(`mayors:${useCity.getState().cityRegion}`))}>
+              🏆 Leaderboards and live city
             </button>
-          )}
-          {layout === 'panel' && (
-            <button role="menuitemcheckbox" aria-checked={autoSnap} onClick={() => setAutoSnap(!autoSnap)}>
-              <span>Lookout watches my AWS pages</span>
-              <span className={`switch ${autoSnap ? 'on' : ''}`} aria-hidden="true" />
+            {cityView && <BuildToggle menu={() => setOpen(false)} />}
+            {inCity && (
+              <button role="menuitem" title="Download a picture of your city as it is now (nothing is uploaded)" onClick={run(() => bus.emit('postcard'))}>
+                📸 Save a postcard of my city
+              </button>
+            )}
+            <button role="menuitem" onClick={run(() => setTourOpen(true))}>
+              Replay the tour
             </button>
-          )}
-          {inDemo && (
-            <button role="menuitem" onClick={() => switchDemo(false)}>
-              Sign in to save your city
-            </button>
-          )}
-          {/* Where players look for it first (seen 22 Nov 2026); Deploy → Your data keeps it too. */}
-          {signedIn && canSignIn() && (
-            <button role="menuitem" onClick={run(signOut)}>
-              Sign out
-            </button>
-          )}
-          <hr />
-          <div className="menu-label" role="presentation">
-            Credits
+            {layout === 'panel' && (
+              <button role="menuitem" onClick={run(openFullCity)}>
+                Open the full city in a tab ↗
+              </button>
+            )}
+            {layout === 'panel' && (
+              <button role="menuitemcheckbox" aria-checked={autoSnap} onClick={() => setAutoSnap(!autoSnap)}>
+                <span>Lookout watches my AWS pages</span>
+                <span className={`switch ${autoSnap ? 'on' : ''}`} aria-hidden="true" />
+              </button>
+            )}
+            {inDemo && (
+              <button role="menuitem" onClick={() => switchDemo(false)}>
+                Sign in to save your city
+              </button>
+            )}
+            {/* The demo says where its data goes (nowhere), as a muted item a screen reader reaches with the arrows, and
+                links the privacy policy when the build has one (Account has it otherwise). */}
+            {backendKind === 'mock' && (
+              <div role="group" aria-label="Privacy">
+                <button role="menuitem" aria-disabled="true" className="menu-note">
+                  <small>{DEMO_PRIVACY_LINE}</small>
+                </button>
+                {!accountItems && privacyPolicyUrl() && (
+                  <button role="menuitem" title="Opens in a new tab" onClick={run(openPrivacyPolicy)}>
+                    Privacy policy ↗
+                  </button>
+                )}
+              </div>
+            )}
+            <hr />
+            {/* The street maps' credit is an item too (a menu holds only items): it opens the OpenStreetMap copyright page. */}
+            <div role="group" aria-label="Credits">
+              <div className="menu-label" aria-hidden="true">
+                Credits
+              </div>
+              <button role="menuitem" className="menu-credit" title="Opens openstreetmap.org/copyright in a new tab" onClick={run(() => openOsmCopyright())}>
+                Street maps: © OpenStreetMap contributors (ODbL 1.0) ↗
+              </button>
+            </div>
           </div>
-          <div className="menu-credit" role="presentation">
-            Street maps: <OsmCredit /> (ODbL 1.0)
-          </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+      <DeleteAccountDialog open={confirmDelete} onClose={() => setConfirmDelete(false)} />
+    </>
   );
 }
 

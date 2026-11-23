@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import type { AwsNewsItem, Progress, ServerEvent } from '@/backend/contract';
 import { bus } from '@/state/bus';
+import { announce, stepLine } from '@/state/announce';
 import { agentName, isDiscovered, openFindings, severityRank, taskRunning, tierOf, useCity, type Inventory } from '@/state/store';
 import { bubbleText, failedBubble } from '@/state/watch';
 import { dueFor } from '@/state/srs';
@@ -84,24 +85,32 @@ import { beam, pushIn, windowSpots, type WindowHost } from '../juice';
 import { MAX_ZOOM } from '../camera';
 import { setSeason, addSprite } from '../assets';
 import { SpeechBubble } from '../SpeechBubble';
-import { seasonFor, SEASON_TINT, type Season } from '@/world/seasons';
+import { seasonFor, seasonParam, SEASON_TINT, type Season } from '@/world/seasons';
 import type { Combo } from '@/world/combos';
 import { SCALERS, SURGE_MS, SURGE_WORKERS, type CourierLeg } from '@/world/couriers';
 import { nextLevelPreview } from '@/world/preview';
 import { shows } from '@/state/simple';
 
-/** The season to draw: the `?season=winter` dev param, else prefs.season (testing), else the calendar (seasons.ts). */
+/**
+ * The season to draw: the `?season=winter` dev param (not in store builds: seasonParam), else prefs.season (testing),
+ * else the calendar (seasons.ts).
+ */
 const seasonOverride = (): unknown => {
   try {
-    const q = new URLSearchParams(window.location.search).get('season');
+    const q = seasonParam(window.location.search);
     if (q) return q;
   } catch {
     /* no location: the calendar decides */
   }
   return (useCity.getState().prefs as { season?: string } | undefined)?.season;
 };
-/** The combo / courier lesson card and the next-level line: over the props and labels, under the HUD-like hint. */
+/** The next-level ghost's card: over the props and labels, under the HUD-like hint. */
 const INFO_DEPTH = 58_500;
+/**
+ * The combo / courier lesson bubble: UI like an agent's speech bubble (Agent.ts), so over the night overlay (70_000) and
+ * the window lights (70_001–2). Under them, the lights drew over its words at night (Okafor's playtest).
+ */
+const INFO_BUBBLE_DEPTH = 75_000;
 /** The next-level ghost: its size on its blueprint card, the card's padding and its gap over the building (world px). */
 const GHOST_SCALE = 0.66;
 const GHOST_PAD = 4;
@@ -267,7 +276,7 @@ export class CityScene extends Phaser.Scene {
     this.map.onCombo = (combo, img) => this.onComboProp(combo, img);
     this.landscape = new Landscape(this, this.culler, this.plan);
     this.landscape.setTint(SEASON_TINT[this.season]);
-    this.info = new SpeechBubble(this, 260).setDepth(INFO_DEPTH);
+    this.info = new SpeechBubble(this, 260).setDepth(INFO_BUBBLE_DEPTH);
     this.buildLayer = new BuildLayer(this, this.culler);
     buildProbe.spots = (kind, n) => this.buildSpots(kind, n);
     buildProbe.count = () => this.buildLayer?.count() ?? 0;
@@ -1147,8 +1156,8 @@ export class CityScene extends Phaser.Scene {
     this.flyTo(id);
     this.highlight(id);
     useCity.getState().select(id);
-    const place = placeFor(id);
-    bus.emit('announce', { text: `${place?.place ?? serviceById(id)?.name ?? id}. ${place?.simple ?? ''} ${order.indexOf(id) + 1} of ${order.length}.`.trim() });
+    // Its sign's name, never the raw id; quick presses replace the line still waiting, so the newest is always heard.
+    announce(stepLine(id, this.landmarks.get(id)?.spec.label, order.indexOf(id) + 1, order.length), { replace: true });
   }
 
   /** Keys belong to the UI unless nothing (body) or the game itself has focus: tabs, menus and the tour use arrows too. */

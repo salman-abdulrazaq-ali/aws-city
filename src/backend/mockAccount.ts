@@ -32,7 +32,7 @@ interface DemoAccount {
 export const DEMO = demoJson as unknown as DemoAccount;
 
 /** Items with service ids checked against shared/world.json (an unknown id is an unmapped type). */
-const demoItems = (): InventoryItem[] =>
+export const demoItems = (): InventoryItem[] =>
   DEMO.items.map((it) => {
     const known = it.serviceId && serviceById(it.serviceId);
     return { ...it, serviceId: known ? it.serviceId : null, districtId: known ? serviceById(it.serviceId!)!.districtId : it.districtId };
@@ -43,8 +43,8 @@ const demoItems = (): InventoryItem[] =>
  * links to other Regions (the global table and S3 replication): the world map draws no arcs and no tankers drive out
  * for anything the player hasn't connected yet. Links inside the Region (Multi-AZ standby, load balancer) always show.
  */
-export function demoInventory(now = new Date(), { crossRegion = true }: { crossRegion?: boolean } = {}): CityInventoryEvent {
-  const items = demoItems();
+export function demoInventory(now = new Date(), { crossRegion = true, without }: { crossRegion?: boolean; /** v2.19: ARNs taken down (resource.remove). */ without?: ReadonlySet<string> } = {}): CityInventoryEvent {
+  const items = demoItems().filter((it) => !without?.has(it.arn));
   const counts: Record<string, number> = {};
   const regions: Record<string, number> = {};
   for (const it of items) {

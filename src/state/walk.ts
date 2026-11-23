@@ -1,5 +1,6 @@
 import { bus } from './bus';
 import { taskById } from '@/world/clients';
+import { activeSteps } from './ladder';
 import { useCity } from './store';
 
 /**
@@ -13,18 +14,50 @@ function backToCity() {
   s.setView({ name: 'city' });
 }
 
+/** The building whose card waits for Kai: the press's own `select` (the city sends one at once) doesn't open it. */
+let held: string | undefined;
+/** Stops watching for the last walk's visit to count. */
+let stopWatching: (() => void) | undefined;
+
+/** App's card opener asks this about each `select`: true for the one a walk sent at its press, so no card opens yet. */
+export const cardWaitsForKai = (id: string) => held === id;
+
+const visitOpen = (id: string) => activeSteps(useCity.getState().progress).some((st) => st.kind === 'visit' && st.serviceId === id);
+
 /**
- * Kai walks to a landmark and a quest's visit step counts when he gets there (CityScene's `walkTo`). When the city
- * can't walk him (asleep behind a game or an HQ), the visit counts at once, so a quest never waits on a scene that
- * isn't running.
+ * Kai walks to a landmark and a quest's visit step counts when he gets there (CityScene's `walkTo`). Its card opens
+ * then too, with the step ticked, never while he's still walking (seen 22 Nov 2026: the card opened at the press and the
+ * step stayed unticked). When the city can't walk him (asleep behind a game or an HQ), the visit counts at once, so a
+ * quest never waits on a scene that isn't running.
  */
 export function walkTo(id: string) {
   backToCity();
+  stopWatching?.();
+  stopWatching = undefined;
+  const waits = visitOpen(id);
   let taken = false;
+  held = waits ? id : undefined;
   bus.emit('walkTo', { id, accept: () => (taken = true) });
-  if (taken) return;
-  useCity.getState().select(id);
-  useCity.getState().arrive(id);
+  held = undefined;
+  if (!taken) {
+    useCity.getState().select(id);
+    useCity.getState().arrive(id);
+    return;
+  }
+  if (!waits) return;
+  // He's there when the visit counts: the card opens on the step just ticked. Tapping another building ends the wait.
+  const offStore = useCity.subscribe((s, prev) => {
+    if (s.progress === prev.progress || visitOpen(id)) return;
+    stop();
+    bus.emit('select', { id });
+  });
+  const offSelect = bus.on('select', (e) => e.id !== id && stop());
+  const stop = () => {
+    offStore();
+    offSelect();
+    if (stopWatching === stop) stopWatching = undefined;
+  };
+  stopWatching = stop;
 }
 
 /**

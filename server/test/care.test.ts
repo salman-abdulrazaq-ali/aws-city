@@ -8,6 +8,9 @@ import { citizenLevel, createCityCare } from '../src/agents/care.js';
 import { diffFindings, findingId, findingsFor } from '../src/agents/findings.js';
 import type { AgentRunner } from '../src/agents/runner.js';
 import type { AwsClients } from '../src/aws.js';
+import { targetHash } from '../src/guard/gate.js';
+import { setPublicErrors } from '../src/log.js';
+import { RETIRED_REASON } from '../src/agents/service.js';
 import { createApprovals } from '../src/contract/approvals.js';
 import resourceProps from '../../shared/resource-props.json' with { type: 'json' };
 import { CFN_TYPE, enrich, GEO_RETRY_MS, inventoryEvent, readGeo, readInventory, serviceForArn } from '../src/state/inventory.js';
@@ -311,7 +314,7 @@ describe('city care: fixes with the player in charge', () => {
   const runner: AgentRunner = { turn: vi.fn(async (agentId: string) => ({ agentId, reply: 'Backups let you rewind.', toolCalls: [], refused: false })), reset: () => undefined };
 
   const audit = vi.fn();
-  const setup = (opts: { xp?: number; fixesEnabled?: boolean; lease?: AbortSignal } = {}) => {
+  const setup = (opts: { xp?: number; fixesEnabled?: boolean; lease?: AbortSignal; retired?: AbortSignal; live?: () => Promise<boolean> } = {}) => {
     audit.mockClear();
     const events: ServerEvent[] = [];
     const emit = (e: ServerEvent) => events.push(e);
@@ -325,6 +328,8 @@ describe('city care: fixes with the player in charge', () => {
       refresh: async () => undefined,
       progress: async () => progress,
       fixesEnabled: opts.fixesEnabled ?? true,
+      ...(opts.retired ? { retired: opts.retired } : {}),
+      ...(opts.live ? { live: opts.live } : {}),
       audit,
     });
     care.update(world);
@@ -370,7 +375,9 @@ describe('city care: fixes with the player in charge', () => {
     expect(dynamodb.commandCalls(UpdateContinuousBackupsCommand)).toHaveLength(1);
     expect(resolved(events, pitr)).toBe(true);
     expect(events).toContainEqual(expect.objectContaining({ type: 'deploy.status', status: 'complete' }));
-    expect(audit).toHaveBeenCalledWith({ action: `fix:${pitr.fix!.fixId}`, target: pitr.resource.id, outcome: 'done' });
+    // The target as the gate hashes it, never the resource's name (names can carry the account id).
+    expect(audit).toHaveBeenCalledWith({ action: `fix:${pitr.fix!.fixId}`, target: targetHash(pitr.resource.id), outcome: 'done' });
+    expect(JSON.stringify(audit.mock.calls)).not.toContain(pitr.resource.id);
   });
 
   it('a fix the player says no to changes nothing and is audited as rejected', async () => {
@@ -380,7 +387,7 @@ describe('city care: fixes with the player in charge', () => {
     approvals.answer(preview(events)!.deployId, false);
     await job;
     expect(dynamodb.commandCalls(UpdateContinuousBackupsCommand)).toHaveLength(0);
-    expect(audit.mock.calls).toEqual([[{ action: `fix:${pitr.fix!.fixId}`, target: pitr.resource.id, outcome: 'rejected' }]]);
+    expect(audit.mock.calls).toEqual([[{ action: `fix:${pitr.fix!.fixId}`, target: targetHash(pitr.resource.id), outcome: 'rejected' }]]);
   });
 
   it('re-checks after the approval, inside the lock, and never runs the same fix twice at once', async () => {
@@ -408,6 +415,23 @@ describe('city care: fixes with the player in charge', () => {
     await job;
     expect(dynamodb.commandCalls(UpdateContinuousBackupsCommand)).toHaveLength(0);
     expect(events).toContainEqual(expect.objectContaining({ type: 'deploy.status', status: 'failed', message: expect.stringContaining('stopped before changing anything else') }));
+    expect(resolved(events, pitr)).toBe(false);
+  });
+
+  it('a world retired while the fix re-reads inside the lock (after its live check) mints no grant and changes nothing', async () => {
+    const retired = new AbortController();
+    const { care, events, emit, approvals, pitr } = setup({ retired: retired.signal, live: async () => !retired.signal.aborted });
+    const job = care.fix('r1', pitr.id, emit, approvals);
+    await vi.waitFor(() => expect(preview(events)).toBeDefined());
+    // The re-read inside the lock (live already said yes): the account is disconnected right then.
+    dynamodb.on(DescribeContinuousBackupsCommand).callsFake(() => {
+      retired.abort('That account was disconnected, so nothing changed.');
+      return { ContinuousBackupsDescription: { ContinuousBackupsStatus: 'ENABLED', PointInTimeRecoveryDescription: { PointInTimeRecoveryStatus: 'DISABLED' } } };
+    });
+    approvals.answer(preview(events)!.deployId, true);
+    await job;
+    expect(dynamodb.commandCalls(UpdateContinuousBackupsCommand)).toHaveLength(0);
+    expect(events).toContainEqual({ type: 'deploy.status', deployId: preview(events)!.deployId, status: 'failed', message: RETIRED_REASON });
     expect(resolved(events, pitr)).toBe(false);
   });
 
@@ -450,9 +474,19 @@ describe('city care: fixes with the player in charge', () => {
     await spotter.care.fix('r1', spotter.pitr.id, spotter.emit, spotter.approvals);
     expect(preview(spotter.events)).toBeUndefined();
 
+    // How to switch them on depends on the server: the local one is a start option, a hosted player's is their stack.
     const off = setup({ fixesEnabled: false });
     await off.care.fix('r1', off.pitr.id, off.emit, off.approvals);
-    expect(off.events).toContainEqual(expect.objectContaining({ type: 'agent.message', text: expect.stringContaining('AllowFixes') }));
+    expect(off.events).toContainEqual(expect.objectContaining({ type: 'agent.message', text: expect.stringContaining('AWS_CITY_ALLOW_FIXES=true (npm run live -- --allow-fixes)') }));
+    expect(JSON.stringify(off.events)).not.toContain('AWSCity stack');
+    setPublicErrors(true);
+    try {
+      const hostedOff = setup({ fixesEnabled: false });
+      await hostedOff.care.fix('r1', hostedOff.pitr.id, hostedOff.emit, hostedOff.approvals);
+      expect(hostedOff.events).toContainEqual(expect.objectContaining({ type: 'agent.message', text: expect.stringContaining('set AllowFixes to true') }));
+    } finally {
+      setPublicErrors(false);
+    }
 
     const done = setup();
     dynamodb.on(DescribeContinuousBackupsCommand).resolves({ ContinuousBackupsDescription: { ContinuousBackupsStatus: 'ENABLED', PointInTimeRecoveryDescription: { PointInTimeRecoveryStatus: 'ENABLED' } } });

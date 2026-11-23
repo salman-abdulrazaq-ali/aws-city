@@ -1,4 +1,5 @@
 import { bucketPrefix, type Resource, type WorldSnapshot } from '../state/model.js';
+import { publicErrors } from '../log.js';
 import { type Action, DESTRUCTIVE } from './actions.js';
 
 export const LIMITS = { instances: 3, tables: 5, buckets: 3 } as const;
@@ -31,7 +32,8 @@ export const checkAction = (action: Action, snapshot: WorldSnapshot, opts: { con
   const count = (pred: (r: Resource) => boolean) => snapshot.resources.filter(pred).length;
 
   if (snapshot.credentials === 'expired') {
-    return { verdict: 'deny', reason: 'AWS credentials have expired. Refresh the workshop keys first.' };
+    // Hosted, the player role's short-lived credentials renew themselves; locally the developer's profile keys need a refresh.
+    return { verdict: 'deny', reason: publicErrors() ? "The city's access to your AWS account expired. Try again in a moment." : 'AWS credentials have expired. Refresh the workshop keys first.' };
   }
 
   switch (action.type) {

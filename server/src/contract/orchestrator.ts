@@ -26,7 +26,7 @@ import {
 } from '../world.js';
 import type { UploadStore } from './uploads.js';
 import { log, publicError } from '../log.js';
-import { isCommit } from '../../../src/console/risk.js';
+import { isCommitWord } from '../../../src/console/risk.js';
 
 export type Emit = (event: ServerEvent) => void;
 
@@ -67,13 +67,13 @@ export const planForAgent = (prompt: string, steps: readonly string[]) =>
 
 /**
  * A plan step that changes AWS (the concierge puts those first, one action each: "Create a bucket named X", "Launch a
- * t4g.nano"): its leading verb commits a change (risk.ts isCommit) or removes something. Explanations ("Explain…",
+ * t4g.nano"): its leading verb commits a change (risk.ts isCommitWord) or removes something. Explanations ("Explain…",
  * "Show…") don't.
  */
 const REMOVES = /^(delete|terminate|demolish|remove|make|build|put|turn)$/;
 export const isActionStep = (step: string) => {
   const verb = leadingVerb(step);
-  return isCommit(verb) || REMOVES.test(verb);
+  return isCommitWord(verb) || REMOVES.test(verb);
 };
 
 const PLAN_TOOL = {
@@ -238,6 +238,8 @@ export const createOrchestrator = (deps: {
           emit({ type: 'agent.message', from: agentId, to: 'user', text: `I'll do exactly what you asked: ${req.summary}. Your approval card is waiting in Deploy.` });
           return approvals.request(taskId, req, emit);
         },
+        // Jev (if on) reads the player's own words, as for an agent's write.
+        intent: cmd.prompt,
       });
       call = toolReport(command.name, command.input, outcome);
     } finally {
@@ -314,6 +316,8 @@ export const createOrchestrator = (deps: {
           emit(phase === 'start' ? { type: 'agent.state', agentId, state: 'working', service: 'bedrock', detail: 'InvokeModel — thinking' } : { type: 'agent.state', agentId, state: 'idle' }),
         onToolStart,
         approve,
+        // Jev's state is only the player's own words (never the plan, the reply or anything from AWS).
+        intent: cmd.prompt,
         onToolEnd,
         onText: (text) => emit({ type: 'agent.message', from: agentId, to: 'user', text }),
         signal,

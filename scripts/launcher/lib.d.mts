@@ -24,8 +24,11 @@ export declare const elapsed: (ms: number) => string;
 export declare const parseDownloadProgress: (chunk: string | Buffer) => { fraction: number; total: string } | undefined;
 export declare const explainDownloadError: (output?: string) => string;
 export declare const browserFromArg: (value: unknown) => string | undefined;
-export interface LaunchArgs { help: boolean; intro?: boolean; rebuild?: boolean; mode?: 'demo' | 'live'; browser?: string; profile?: string; region?: string; model?: 'claude' | 'nova' | 'local'; localFallback?: boolean; localModel?: string; error?: string }
+export interface LaunchArgs { help: boolean; intro?: boolean; rebuild?: boolean; mode?: 'demo' | 'live'; browser?: string; profile?: string; region?: string; allowFixes?: boolean; model?: 'claude' | 'nova' | 'local'; localFallback?: boolean; localModel?: string; error?: string }
 export declare const REGION_RE: RegExp;
+export declare const localModels: (region: string) => { ok: true; main: string; light: string } | { ok: false; message: string };
+export declare const unsupportedRegionText: (region: string) => string;
+export declare const BEDROCK_ACCESS_URL: string;
 export type StartPlan = { kind: 'go' | 'again'; mode: 'demo' | 'live'; browser: string } | { kind: 'ask'; browser?: string; mode?: undefined };
 export declare const startPlan: (args: LaunchArgs, prefs?: { mode?: string; browser?: string }, o?: { interactive?: boolean; installed?: string[] }) => StartPlan;
 export declare const introPlays: (args: LaunchArgs) => boolean;

@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { DEFAULT_JEV_MODEL, DEFAULT_JEV_THRESHOLDS, type JevConfig } from './agents/jev-config.js';
 
 /**
  * Two ways to run:
@@ -83,6 +84,8 @@ export interface Config {
   globalDailyModelCalls: number;
   maxSocketsPerUser: number;
   maxSockets: number;
+  /** TypeSafe's Jev, a second opinion on agents' writes that only tightens (agents/jev.ts). On with TYPESAFE_API_KEY. */
+  jev?: JevConfig;
 }
 
 const list = (v?: string) => (v ?? '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -143,6 +146,34 @@ const positiveInt = (name: string, value: string | undefined, fallback: number, 
   return n;
 };
 
+const numberIn = (name: string, value: string | undefined, fallback: number, min: number, max: number): number => {
+  if (value === undefined || value === '') return fallback;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < min || n > max) throw new ConfigError(`${name}=${value} must be a number from ${min} to ${max}`);
+  return n;
+};
+
+/** The old risk-score thresholds: refused, so nobody runs with a setting that's silently ignored. */
+const RETIRED_JEV_ENV = ['AWS_CITY_JEV_BLOCK_BELOW', 'AWS_CITY_JEV_ASK_BELOW', 'AWS_CITY_JEV_ASK_RISK'] as const;
+
+/** Jev is on only with a key. The key is never logged or put in an error message. */
+const jevConfig = (env: NodeJS.ProcessEnv): JevConfig | undefined => {
+  for (const name of RETIRED_JEV_ENV)
+    if (env[name] !== undefined && env[name] !== '')
+      throw new ConfigError(
+        `${name} is no longer read: Jev's thresholds are now AWS_CITY_JEV_NO (default ${DEFAULT_JEV_THRESHOLDS.no}) and AWS_CITY_JEV_YES (default ${DEFAULT_JEV_THRESHOLDS.yes}). Remove it (docs/jev.md).`,
+      );
+  if (env.TYPESAFE_API_KEY === undefined || env.TYPESAFE_API_KEY === '') return undefined;
+  return {
+    apiKey: env.TYPESAFE_API_KEY,
+    model: env.AWS_CITY_JEV_MODEL || DEFAULT_JEV_MODEL,
+    thresholds: {
+      no: numberIn('AWS_CITY_JEV_NO', env.AWS_CITY_JEV_NO, DEFAULT_JEV_THRESHOLDS.no, 0, 1),
+      yes: numberIn('AWS_CITY_JEV_YES', env.AWS_CITY_JEV_YES, DEFAULT_JEV_THRESHOLDS.yes, 0, 1),
+    },
+  };
+};
+
 const MIN_TOKEN_LENGTH = 32;
 
 export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
@@ -197,6 +228,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
     globalDailyModelCalls: positiveInt('GLOBAL_DAILY_MODEL_CALLS', env.GLOBAL_DAILY_MODEL_CALLS, 20_000, 0),
     maxSocketsPerUser: positiveInt('MAX_SOCKETS_PER_USER', env.MAX_SOCKETS_PER_USER, 4),
     maxSockets: positiveInt('MAX_SOCKETS', env.MAX_SOCKETS, hosted ? 1000 : 10),
+    jev: jevConfig(env),
   };
   validate(cfg);
   return cfg;
@@ -239,4 +271,9 @@ export const validate = (c: Config) => {
   if (c.localFallback) need(c.modelProvider === 'bedrock' && !/(^|\.)anthropic\./.test(c.model), 'AWS_CITY_LOCAL_FALLBACK works with Amazon Nova on Bedrock (Claude keeps its own fallback)');
   for (const o of c.extensionOrigins)
     need(!o.includes('*') || (ORIGIN_WILDCARDS as readonly string[]).includes(o), `EXTENSION_ORIGIN ${o}: wildcards only as ${ORIGIN_WILDCARDS.join(' or ')}`);
+  if (c.jev) {
+    need(/^[\x21-\x7e]+$/.test(c.jev.apiKey), 'TYPESAFE_API_KEY must be one printable token (no spaces or line breaks)');
+    need(/^[\w.-]{1,64}$/.test(c.jev.model), `AWS_CITY_JEV_MODEL=${c.jev.model} must be a model name like ${DEFAULT_JEV_MODEL}`);
+    need(c.jev.thresholds.no < c.jev.thresholds.yes, 'AWS_CITY_JEV_NO must be below AWS_CITY_JEV_YES (a Noul at or below NO is a no, at or above YES a yes)');
+  }
 };

@@ -153,6 +153,25 @@ export function Builder({ p, job }: { p: Puzzle; job?: { onPass: () => void } })
     setResult(undefined);
     setPhase('build');
   };
+  /** Anything to clear: a placed card, or a mistake on the way that costs points. */
+  const started = Object.keys(placements).length > 0 || drops.length > 0 || misdrops > 0 || revealed.size > 0;
+  /** Start fresh: an empty board, and the mistakes on the way (and the cards hints showed) forgotten. */
+  const startFresh = () => {
+    feel.tap();
+    payXp();
+    passed.current = false;
+    setPlacements({});
+    setDrops([]);
+    setMisdrops(0);
+    setRevealed(new Set());
+    setHint(undefined);
+    setHintShown(false);
+    setArmed(undefined);
+    setEarned(undefined);
+    setStep(0);
+    changed();
+    setSay('A fresh start: drag a service onto the diagram, or tap a card and then a spot.');
+  };
   const place = (slotId: string, svc: string) => {
     const r = tryPlace(p, placements, slotId, svc);
     if (r.ok) {
@@ -272,27 +291,34 @@ export function Builder({ p, job }: { p: Puzzle; job?: { onPass: () => void } })
         <h4 className="arch-label">
           Your design <span className="muted">· {filledReq}/{required.length} required</span>
         </h4>
-        <button
-          className="btn tiny"
-          disabled={filledReq === required.length}
-          onClick={() => {
-            feel.tap();
-            // First a free nudge (which spot, what job); asking again shows the card, for a few points.
-            if (hintSlot && !placements[hintSlot.id] && !hintShown) {
-              setHintShown(true);
-              setRevealed((cur) => new Set(cur).add(hintSlot.id));
-              setSay(`Hint: ${slotName(p, hintSlot.id, hintSlot.service)} goes in “${hintSlot.role}”.`);
-              return;
-            }
-            const s = nextEmptyRequired(p, placements);
-            setHint(s?.id);
-            // A card you've already been shown stays shown.
-            setHintShown(!!s && revealed.has(s.id));
-            if (s) setSay(`Look at the glowing spot, “${s.role}”. Which service does that job?`);
-          }}
-        >
-          {hintSlot && !placements[hintSlot.id] && !hintShown ? 'Show the card (−3 points)' : 'Need a hint?'}
-        </button>
+        <div className="arch-btns">
+          {started && (
+            <button className="btn ghost tiny" onClick={startFresh} title="Clear the board and the points mistakes cost">
+              ↺ Start fresh
+            </button>
+          )}
+          <button
+            className="btn tiny arch-hint"
+            disabled={filledReq === required.length}
+            onClick={() => {
+              feel.tap();
+              // First a free nudge (which spot, what job); asking again shows the card, for a few points.
+              if (hintSlot && !placements[hintSlot.id] && !hintShown) {
+                setHintShown(true);
+                setRevealed((cur) => new Set(cur).add(hintSlot.id));
+                setSay(`Hint: ${slotName(p, hintSlot.id, hintSlot.service)} goes in “${hintSlot.role}”.`);
+                return;
+              }
+              const s = nextEmptyRequired(p, placements);
+              setHint(s?.id);
+              // A card you've already been shown stays shown.
+              setHintShown(!!s && revealed.has(s.id));
+              if (s) setSay(`Look at the glowing spot, “${s.role}”. Which service does that job?`);
+            }}
+          >
+            {hintSlot && !placements[hintSlot.id] && !hintShown ? 'Show the card (−3 points)' : 'Need a hint?'}
+          </button>
+        </div>
       </div>
       <p className="legend">
         <b>?</b> needed · <b>+</b> bonus · <b>1 2 3</b> data’s path (same number = same time)

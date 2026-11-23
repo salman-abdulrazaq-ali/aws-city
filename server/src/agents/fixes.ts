@@ -10,6 +10,7 @@ import {
 } from '@aws-sdk/client-ec2';
 import { GetPublicAccessBlockCommand, PutPublicAccessBlockCommand } from '@aws-sdk/client-s3';
 import type { AwsClients } from '../aws.js';
+import type { GrantEntry } from '../guard/gate.js';
 import type { CityFinding } from '../world.js';
 
 /**
@@ -34,6 +35,12 @@ export interface FixDef {
   stillOpen(clients: AwsClients, f: CityFinding, ctx: FixContext): Promise<boolean>;
   /** Optional: the exact change (shown on the approval card), or why there's nothing safe to change. */
   plan?(clients: AwsClients, f: CityFinding, ctx: FixContext): Promise<FixPlan>;
+  /**
+   * The one AWS write apply() sends, bound to its resource (and the rule ids approved): care.ts mints the grant for it
+   * after the player's approval, the re-read and the account lock.
+   */
+  entry(f: CityFinding, approved?: string[]): GrantEntry;
+  /** Sends the change. Only inside care.ts's grant: called anywhere else, the gate refuses the write. */
   apply(clients: AwsClients, f: CityFinding, ctx: FixContext, approved?: string[]): Promise<string>;
 }
 
@@ -59,6 +66,24 @@ export const worldAdminRules = async (clients: AwsClients, groupId: string): Pro
 /** The fix ran but deliberately left something for the player (shown as the result, the finding stays open). */
 export class PartialFix extends Error {}
 
+/**
+ * v2.17, at account.verify: may the citizens fix things in this account? Asked without changing anything: EC2's DryRun of
+ * the EBS fix, which IAM checks against ec2:EnableEbsEncryptionByDefault, granted only in the role's aws-city-fix policy
+ * (AllowFixes=true). DryRunOperation = allowed, UnauthorizedOperation = not; anything else (throttled, the network) =
+ * undefined, unknown. The gate lets exactly { DryRun: true } through with no grant (guard/rules.ts `probe`).
+ */
+export const fixesAllowed = async (ec2: AwsClients['ec2']): Promise<boolean | undefined> => {
+  try {
+    await ec2.send(new EnableEbsEncryptionByDefaultCommand({ DryRun: true }));
+    return undefined; // EC2 always answers a DryRun with an error; a plain success says nothing either way
+  } catch (err) {
+    const name = (err as Error)?.name;
+    if (name === 'DryRunOperation') return true;
+    if (name === 'UnauthorizedOperation') return false;
+    return undefined;
+  }
+};
+
 export const FIXES: Record<string, FixDef> = {
   s3_block_public_access: {
     iamAction: 's3:PutBucketPublicAccessBlock',
@@ -71,6 +96,7 @@ export const FIXES: Record<string, FixDef> = {
         throw err;
       }
     },
+    entry: (f) => ({ client: 'S3Client', command: 'PutPublicAccessBlockCommand', target: f.resource.id }),
     async apply({ s3 }, f, ctx) {
       await s3.send(
         new PutPublicAccessBlockCommand({
@@ -105,13 +131,19 @@ export const FIXES: Record<string, FixDef> = {
         ],
       };
     },
+    // The rules the player approved (care.ts always has them: this fix has a plan). None named, none revoked.
+    entry: (f, approved) => ({ client: 'EC2Client', command: 'RevokeSecurityGroupIngressCommand', target: f.resource.id, ids: approved ?? [] }),
     async apply(clients, f, ctx, approved) {
       const fresh = await worldAdminRules(clients, f.resource.id);
       // Only the rules the player saw and approved (a rule added while the card was open waits for its own approval).
       const exact = approved ? fresh.exact.filter((r) => approved.includes(r.SecurityGroupRuleId!)) : fresh.exact;
       const broad = fresh.broad;
       ctx.lease?.throwIfAborted();
-      if (exact.length) await clients.ec2.send(new RevokeSecurityGroupIngressCommand({ GroupId: f.resource.id, SecurityGroupRuleIds: exact.map((r) => r.SecurityGroupRuleId!) }));
+      if (exact.length) {
+        const ids = exact.map((r) => r.SecurityGroupRuleId!);
+        // The grant (entry above) names the rules the player approved: the gate lets nothing else go.
+        await clients.ec2.send(new RevokeSecurityGroupIngressCommand({ GroupId: f.resource.id, SecurityGroupRuleIds: ids }));
+      }
       const closed = exact.length ? `Closed ${exact.length} rule${exact.length === 1 ? '' : 's'} in ${f.resource.name} that let anyone try SSH or RDP.` : '';
       if (broad.length) throw new PartialFix(`${closed} ${f.resource.name} still has ${broad.length === 1 ? 'a rule' : `${broad.length} rules`} opening all traffic or a wide port range to anyone. I left ${broad.length === 1 ? 'it' : 'them'} alone because removing ${broad.length === 1 ? 'it' : 'them'} would close other ports too: narrow ${broad.length === 1 ? 'it' : 'them'} in the EC2 console.`.trim());
       return closed;
@@ -123,6 +155,7 @@ export const FIXES: Record<string, FixDef> = {
       const page = await ec2.send(new DescribeInstancesCommand({ InstanceIds: [f.resource.id] }));
       return page.Reservations?.[0]?.Instances?.[0]?.MetadataOptions?.HttpTokens === 'optional';
     },
+    entry: (f) => ({ client: 'EC2Client', command: 'ModifyInstanceMetadataOptionsCommand', target: f.resource.id }),
     async apply({ ec2 }, f) {
       await ec2.send(new ModifyInstanceMetadataOptionsCommand({ InstanceId: f.resource.id, HttpTokens: 'required' }));
       return `${f.resource.name} now accepts only IMDSv2.`;
@@ -131,6 +164,8 @@ export const FIXES: Record<string, FixDef> = {
   ebs_default_encryption: {
     iamAction: 'ec2:EnableEbsEncryptionByDefault',
     stillOpen: async ({ ec2 }) => !(await ec2.send(new GetEbsEncryptionByDefaultCommand({}))).EbsEncryptionByDefault,
+    // The finding's resource is this Region's setting (ebs-default:<region>).
+    entry: (f) => ({ client: 'EC2Client', command: 'EnableEbsEncryptionByDefaultCommand', target: f.resource.id }),
     async apply({ ec2 }) {
       await ec2.send(new EnableEbsEncryptionByDefaultCommand({}));
       return 'New EBS volumes in this Region are now encrypted by default.';
@@ -142,6 +177,7 @@ export const FIXES: Record<string, FixDef> = {
       const d = (await dynamodb.send(new DescribeContinuousBackupsCommand({ TableName: f.resource.id }))).ContinuousBackupsDescription;
       return d?.PointInTimeRecoveryDescription?.PointInTimeRecoveryStatus !== 'ENABLED';
     },
+    entry: (f) => ({ client: 'DynamoDBClient', command: 'UpdateContinuousBackupsCommand', target: f.resource.id }),
     async apply({ dynamodb }, f) {
       await dynamodb.send(new UpdateContinuousBackupsCommand({ TableName: f.resource.id, PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true } }));
       return `Point-in-time recovery is on for ${f.resource.name}.`;

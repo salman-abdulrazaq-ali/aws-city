@@ -14,14 +14,14 @@ import { browserById } from './open-browser.mjs';
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 export const SERVER_LOG = path.join(ROOT, '.cache/server.log');
 
-// Firefox gives each install a random moz-extension:// UUID; pinning it with a Firefox pref keeps the local server's
-// exact-origin check (on top of the token). Safari's can't be pinned, so it's allowed by scheme.
+// Every build carries a one-off token for this run (WXT_AWS_TOKEN): the local server lets nothing in without it (the dev
+// extension's id is public, so an Origin header proves nothing). Origins stay its browser check: Chrome's pinned id,
+// Firefox's UUID (random per install, pinned here with a Firefox pref) and Safari's scheme (can't be pinned).
 const FIREFOX_DEV_UUID = '6a1c0b5e-3c2d-4f7a-9b8e-a5c17c17c117';
 
 /**
- * The local server's token, which every local build carries (the server never accepts an Origin alone: any program on
- * the computer can forge one). Made once per computer and kept in .cache/local-token, readable only by you, so builds
- * stay cached between runs.
+ * A token kept for this computer in .cache/local-token, readable only by you (the server never accepts an Origin alone:
+ * any program on the computer can forge one). The launcher doesn't use it: liveConfig mints a fresh token every run.
  */
 export function localToken(root = ROOT) {
   const file = path.join(root, '.cache', 'local-token');
@@ -58,10 +58,13 @@ function readOwnSecret(file) {
   }
 }
 
-/** Everything that ties one browser's build to the local server: origin, token, build env, Firefox prefs. */
-export function liveConfig(browser, port = process.env.PORT ?? '8787') {
+/**
+ * Everything that ties one browser's build to the local server: origin, token, build env, Firefox prefs.
+ * `allowFixes`: the citizens may fix findings (AWS_CITY_ALLOW_FIXES=true; each fix is still approved).
+ */
+export function liveConfig(browser, { port = process.env.PORT ?? '8787', allowFixes = false } = {}) {
   const kind = browserById(browser).build;
-  const token = localToken();
+  const token = randomBytes(24).toString('base64url');
   const origin = {
     chrome: `chrome-extension://${process.env.AWS_CITY_EXTENSION_ID ?? DEV_EXTENSION_ID}`,
     firefox: `moz-extension://${FIREFOX_DEV_UUID}`,
@@ -71,6 +74,7 @@ export function liveConfig(browser, port = process.env.PORT ?? '8787') {
     port,
     origin,
     token,
+    allowFixes,
     url: `http://127.0.0.1:${port}`,
     extEnv: { WXT_BACKEND: 'aws', WXT_AWS_WS_URL: `ws://127.0.0.1:${port}/ws`, WXT_AWS_API_URL: `http://127.0.0.1:${port}`, WXT_AWS_TOKEN: token },
     firefoxPrefs: [`extensions.webextensions.uuids=${JSON.stringify({ [FIREFOX_ADDON_ID]: FIREFOX_DEV_UUID })}`],
@@ -102,7 +106,17 @@ export function startServer({ profile, region, models, env = {}, cfg, onLog = ()
     cwd: path.join(ROOT, 'server'),
     shell: !group,
     detached: group,
-    env: { ...process.env, AWS_CITY_PROFILE: profile, ...(region ? { AWS_CITY_REGION: region } : {}), ...(models ? modelEnv(models, process.env) : {}), ...env, EXTENSION_ORIGIN: cfg.origin, PORT: cfg.port, ...(cfg.token ? { AWS_CITY_TOKEN: cfg.token } : {}) },
+    env: {
+      ...process.env,
+      AWS_CITY_PROFILE: profile,
+      ...(region ? { AWS_CITY_REGION: region } : {}),
+      ...(models ? modelEnv(models, process.env) : {}),
+      ...env,
+      EXTENSION_ORIGIN: cfg.origin,
+      PORT: cfg.port,
+      AWS_CITY_TOKEN: cfg.token,
+      ...(cfg.allowFixes ? { AWS_CITY_ALLOW_FIXES: 'true' } : {}),
+    },
   });
   let partial = '';
   const read = (chunk) => {

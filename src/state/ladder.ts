@@ -23,6 +23,11 @@ export interface LadderInput {
   linked: boolean;
   /** Any deploy (preview or stack) exists. */
   hasDeploys: boolean;
+  /**
+   * A real account is being linked (src/state/account.ts `linking`: a setup link is out, the server asked for an
+   * authenticator first, or the link broke): the Deploy tab, where the steps are, stays in sight meanwhile.
+   */
+  linking?: boolean;
   /** A hosted player with no AWS account linked yet: Deploy is where it connects, so it's open from the start. */
   canConnect?: boolean;
   /** Areas the player opened anyway (persisted by the UI as `awscity.opened`). */
@@ -88,7 +93,7 @@ const rules = (i: LadderInput) => {
     worldList: c.discovered >= PLACES_AT,
     // The Day 1 Quarter (Amazon culture) is open from the start: it's part of the welcome, not a reward.
     day1: true,
-    deploy: stepIs('deploy') || c.questsDone >= 1 || i.linked || i.hasDeploys || !!i.canConnect,
+    deploy: stepIs('deploy') || c.questsDone >= 1 || i.linked || i.hasDeploys || !!i.linking || !!i.canConnect,
     care: c.questsDone >= 1 || c.discovered >= CARE_AT || i.linked,
     news: newsOpen(i.progress, i.linked),
     // City Clients' side jobs open after the first quest has taught the basics (a job uses buildings you've put up).

@@ -11,13 +11,14 @@ import { createAuthenticate } from './auth.js';
 import { assumedRole, createAwsClients, getAccountId, SDK_DEFAULTS, serviceCredentials } from './aws.js';
 import { ConfigError, loadConfig } from './config.js';
 import { createS3UploadStore, createUploadStore, type UploadStore } from './contract/uploads.js';
-import { createHttpServer } from './http.js';
+import { createHttpServer, SERVER_VERSION } from './http.js';
 import { createKnowledge } from './knowledge/mcp.js';
 import { log, setPublicErrors } from './log.js';
 import { createNewsFeed } from './news/feed.js';
 import { dynamoStores } from './store/dynamo.js';
 import { localStores } from './store/local.js';
 import { createTenants, playerAws } from './tenants.js';
+import { CONTRACT_VERSION } from './world.js';
 
 let config: ReturnType<typeof loadConfig>;
 try {
@@ -37,8 +38,8 @@ const ours = { ...SDK_DEFAULTS, region: config.region, credentials: serviceCrede
 // ── The player's AWS: the workshop profile (local) or their own linked account (hosted) ──
 let awsFor: Parameters<typeof createTenants>[0]['awsFor'];
 if (config.awsMode === 'profile') {
-  const clients = createAwsClients(config);
-  let accountId: string;
+  let accountId: string | undefined;
+  const clients = createAwsClients(config, () => accountId);
   try {
     accountId = await getAccountId(clients);
   } catch (err) {
@@ -56,6 +57,9 @@ const stores = config.store === 'dynamodb' ? dynamoStores({ client: new DynamoDB
 const memoryUploads = config.uploads === 'memory' ? createUploadStore(config.publicUrl) : undefined;
 const uploads: UploadStore = memoryUploads ?? createS3UploadStore({ s3: new S3Client(ours), bucket: config.screenshotBucket! });
 const cognito = config.cognito ? new CognitoIdentityProviderClient(ours) : undefined;
+// Hosted: a deleted player's access token still verifies for up to an hour; the tombstone refuses it (local mode's one
+// player may start over at once). The linker checks it too: a socket on another task may still be open for a minute.
+const deleted = config.authMode === 'cognito' ? (sub: string) => stores.deletedRecently(sub) : undefined;
 
 const tenants = createTenants({
   config,
@@ -68,25 +72,33 @@ const tenants = createTenants({
   awsFor,
   linker:
     config.awsMode === 'assume-role'
-      ? createAccountLinker({ accounts: stores.accounts, templateUrl: config.playerRoleTemplateUrl!, selfAccountId: config.selfAccountId!, playerRolePrefix: config.playerRolePrefix })
+      ? createAccountLinker({ accounts: stores.accounts, templateUrl: config.playerRoleTemplateUrl!, selfAccountId: config.selfAccountId!, playerRolePrefix: config.playerRolePrefix, deleted })
       : undefined,
   onDelete: cognito ? async (p) => void (await cognito.send(new AdminDeleteUserCommand({ UserPoolId: config.cognito!.userPoolId, Username: p.username ?? p.sub }))) : undefined,
 });
 
 // Agents can change a linked AWS account, so linking it and approving writes to it need MFA (local token mode has no accounts to protect).
-// Hosted, step-up (MFA on + a recent sign-in) always guards linking, approving and fixing: there is no switch to turn it off.
-const mfaReady = cognito && config.awsMode === 'assume-role' ? createMfaCheck({ cognito, userPoolId: config.cognito!.userPoolId }) : undefined;
-// Hosted: a deleted player's access token still verifies for up to an hour; the tombstone refuses it (local mode's one
-// player may start over at once).
-const deleted = config.authMode === 'cognito' ? (sub: string) => stores.deletedRecently(sub) : undefined;
+// Hosted, step-up always guards linking, approving, fixing and taking down (there is no switch to turn it off): MFA on, a
+// session signed in after it was first seen (`since`), and a recent sign-in (http.ts, the reauth window).
+const mfaReady = cognito && config.awsMode === 'assume-role' ? createMfaCheck({ cognito, userPoolId: config.cognito!.userPoolId, since: stores.mfa }) : undefined;
 const http = createHttpServer({ config, tenants, authenticate: createAuthenticate(config), uploads: memoryUploads, mfaReady, deleted });
 
 http.server.listen(config.port, config.host, () => {
-  log.info(`AWS City backend on ${config.host}:${config.port}`, { auth: config.authMode, aws: config.awsMode, store: config.store, uploads: config.uploads, model: config.model });
+  log.info(`AWS City backend on ${config.host}:${config.port}`, {
+    version: SERVER_VERSION,
+    contract: CONTRACT_VERSION,
+    auth: config.authMode,
+    aws: config.awsMode,
+    store: config.store,
+    uploads: config.uploads,
+    model: config.model,
+    jev: config.jev ? config.jev.model : 'off',
+  });
   if (config.authMode === 'token') {
     const base = `http://${config.host}:${config.port}`;
-    console.log(`  frontend .env.local:  WXT_BACKEND=aws  WXT_AWS_WS_URL=ws://${config.host}:${config.port}/ws  WXT_AWS_API_URL=${base}`);
-    // Every caller needs the token (auth.ts tokenAuth). It's never printed: logs are files other programs can read.
+    // Every caller needs the token (auth.ts tokenAuth; an Origin header never authenticates on its own): the extension
+    // carries it as WXT_AWS_TOKEN. It's never printed: logs are files other programs can read.
+    console.log(`  frontend .env.local:  WXT_BACKEND=aws  WXT_AWS_WS_URL=ws://${config.host}:${config.port}/ws  WXT_AWS_API_URL=${base}  WXT_AWS_TOKEN=<AWS_CITY_TOKEN>`);
     console.log(process.env.AWS_CITY_TOKEN ? '  token: from AWS_CITY_TOKEN' : '  token: a random one for this run (set AWS_CITY_TOKEN to choose one; npm run live does)');
   }
 });

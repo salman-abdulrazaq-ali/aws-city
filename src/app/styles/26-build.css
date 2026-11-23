@@ -68,6 +68,12 @@
 }
 .bd-tools .chip,
 .bd-cats .chip {
+  /* At least 24×24 (WCAG 2.5.8 target size; Jay measured 23 px in the panel): 28 px, whatever the text size. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  min-width: 28px;
   padding: var(--s-1) var(--s-3);
 }
 .bd-palette {

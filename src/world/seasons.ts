@@ -27,6 +27,13 @@ export const parseSeason = (s: unknown): Season | undefined => {
   return (SEASONS as string[]).includes(v) ? (v as Season) : undefined;
 };
 
+/**
+ * The `?season=winter` dev param in the page's URL (the smoke uses it), or undefined. A dev tool, so a store build
+ * (`storeBuild` is WXT_STORE_BUILD) ignores it.
+ */
+export const seasonParam = (search: string, storeBuild = import.meta.env.WXT_STORE_BUILD): string | undefined =>
+  storeBuild === 'true' ? undefined : (new URLSearchParams(search).get('season') ?? undefined);
+
 /** A Region city's season now: an override (the `?season=` dev param, or prefs) wins; an unknown Region is temperate north. */
 export function seasonFor(region: string, date: Date = new Date(), override?: unknown): Season {
   return parseSeason(override) ?? seasonAt(date, regionInfo(region)?.lat ?? 45);

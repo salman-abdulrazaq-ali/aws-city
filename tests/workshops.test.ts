@@ -19,12 +19,18 @@ const filled = (cli: string) => cli.replace(PLACEHOLDER, (_, n: string) => `demo
 const quote = (t: string) => `'${t.replace(/'/g, `'\\''`)}'`;
 const line = (tokens: string[]) => tokens.map(quote).join(' ');
 
-/** A value that trips each taught mistake whose `when` matches a flag's value (keyed workshop/step/code). */
-const TRIGGERS: Record<string, string> = {
+/**
+ * A value that trips each taught mistake whose `when` matches a flag's value (keyed workshop/step/code), or the values
+ * to set for several flags at once.
+ */
+const TRIGGERS: Record<string, string | Record<string, string>> = {
   'dynamodb-first-table/create/ResourceInUseException': 'city-demo',
   'dynamodb-first-table/put/One or more parameter values were invalid': '{"total":{"N":"42"}}',
   's3-first-bucket/create/BucketAlreadyExists': 'my-bucket',
-  's3-first-bucket/create/InvalidLocationConstraint': 'LocationConstraint=us-east-1',
+  's3-first-bucket/create/InvalidBucketName': 'My_Bucket',
+  's3-first-bucket/create/The unspecified location constraint': 'us-west-2',
+  's3-first-bucket/create/IllegalLocationConstraintException': 'us-west-2',
+  's3-first-bucket/create/InvalidLocationConstraint': { '--create-bucket-configuration': 'LocationConstraint=us-east-1', '--region': 'us-east-1' },
   's3-first-bucket/download/NoSuchKey': 'Sample.txt',
   'ec2-first-instance/ssh/0.0.0.0/0': '0.0.0.0/0',
   'ec2-first-instance/launch/HttpTokens=optional': 'HttpTokens=optional,HttpEndpoint=enabled',
@@ -94,20 +100,25 @@ describe('workshops', () => {
         for (const e of t.errors ?? []) {
           if (!e.when) continue;
           let attempt = [...tokens];
+          // Every condition holds at once: the flag left out, and the flag's value (or values) set.
           if (e.when.missing) {
             const i = attempt.indexOf(e.when.missing);
             expect(i, `${where}: ${e.when.missing} is in the command`).toBeGreaterThan(-1);
             attempt.splice(i, i + 1 < attempt.length && !attempt[i + 1].startsWith('--') ? 2 : 1);
-          } else if (e.when.flag) {
-            const value = TRIGGERS[`${where}/${e.code}`];
-            expect(value, `${where}: add a trigger for ${e.code}`).toBeDefined();
-            const i = attempt.indexOf(e.when.flag);
-            if (i === -1) attempt = [...attempt, e.when.flag, value];
-            else attempt[i + 1] = value;
+          }
+          if (e.when.flag) {
+            const trigger = TRIGGERS[`${where}/${e.code}`];
+            expect(trigger, `${where}: add a trigger for ${e.code}`).toBeDefined();
+            const set = typeof trigger === 'string' ? { [e.when.flag]: trigger } : trigger;
+            for (const [flag, value] of Object.entries(set)) {
+              const i = attempt.indexOf(flag);
+              if (i === -1) attempt = [...attempt, flag, value];
+              else attempt[i + 1] = value;
+            }
           }
           const r = run(line(attempt), t);
           expect(r.kind, `${where}: ${e.code}`).toBe('error');
-          if (r.kind === 'error') expect(r.error.code, where).toBe(e.code);
+          if (r.kind === 'error') expect(r.error, `${where}: ${e.code}`).toBe(e);
         }
       }
   });

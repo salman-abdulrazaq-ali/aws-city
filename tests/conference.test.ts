@@ -77,6 +77,13 @@ describe('conference talks', () => {
     }
   });
 
+  it('keep the right answer in different places, so tapping one position never passes', () => {
+    const answers = TALKS.flatMap((t) => t.check.map((c) => c.answer));
+    expect(new Set(answers).size).toBeGreaterThan(1);
+    // No position holds most of the answers.
+    for (const k of [0, 1, 2, 3]) expect(answers.filter((a) => a === k).length, `answer ${k}`).toBeLessThanOrEqual(Math.ceil(answers.length / 2));
+  });
+
   it('never use an em dash', () => {
     expect(JSON.stringify(conference)).not.toMatch(/—/);
   });

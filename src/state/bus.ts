@@ -55,6 +55,8 @@ interface BusEvents {
   snap: { phase: 'start' | 'done' | 'failed' };
   /** Game → UI */
   select: { id: string };
+  /** UI outside the tabs (⋯ → Account) shows a tab: App opens it the way a button that names it would. */
+  showTab: { tab: 'home' | 'learn' | 'jobs' | 'deploy' };
   enterHq: { districtId: string };
   questDone: { questId: string };
   /** A quest step was done (not the last: that's questDone): its building bumps with a ✓ (the store toasts it). */

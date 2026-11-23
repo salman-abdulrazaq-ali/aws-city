@@ -76,6 +76,10 @@
   transform: rotateY(180deg);
 }
 .flash-face {
+  /* The small print (the place line, "tap or press F to reveal") at 4.5:1 or better on both paper colours: axe reads
+     the front face's text against the back face's colour, since both share one grid cell. */
+  --paper-meta: #7c2d12;
+  --paper-hint: #4a4540;
   position: relative;
   grid-area: 1 / 1;
   min-height: 160px;

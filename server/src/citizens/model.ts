@@ -1,11 +1,12 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import type { AwsCredentialIdentity, AwsCredentialIdentityProvider } from '@smithy/types';
-import type { Message, StreamOptions } from '@strands-agents/sdk';
+import type { Message, ModelStreamEvent, StreamOptions } from '@strands-agents/sdk';
 import { AnthropicModel } from '@strands-agents/sdk/models/anthropic';
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock';
 import { OpenAIModel } from '@strands-agents/sdk/models/openai';
 import OpenAI from 'openai';
 import { log } from '../log.js';
+import { modelError } from '../agents/metered.js';
 
 /** Token use per model call (EMF): what the bill is made of, and whether prompt caching works. */
 const recordUsage = (usage: { inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number } | undefined) => {
@@ -14,6 +15,28 @@ const recordUsage = (usage: { inputTokens?: number; outputTokens?: number; cache
   log.metric('OutputTokens', usage.outputTokens ?? 0);
   log.metric('CacheReadTokens', usage.cacheReadInputTokens ?? 0);
 };
+
+/** Gives back a gated call whose failure proves the model never ran (metered's `refund`, which checks provenNotRun). */
+type Refund = (err: unknown) => Promise<void>;
+
+/**
+ * One model call's events after the gate let it through: usage recorded, and a failure before any event offered to
+ * `refund` (a stream that sent anything ran the model, so it's never given back) and shown as metered's modelError
+ * (Bedrock's AccessDenied, the budget's deny policy, reads as the city's AI resting).
+ */
+async function* metering(events: AsyncIterable<ModelStreamEvent>, refund: Refund | undefined): AsyncGenerator<ModelStreamEvent> {
+  let answered = false;
+  try {
+    for await (const event of events) {
+      answered = true;
+      if (event.type === 'modelMetadataEvent') recordUsage(event.usage);
+      yield event;
+    }
+  } catch (err) {
+    if (!answered) await refund?.(err).catch(() => undefined);
+    throw modelError(err);
+  }
+}
 
 /**
  * Strands' Bedrock model (the Converse API: Amazon Nova, or any model Converse serves) with the same gate as every other
@@ -25,6 +48,7 @@ export class MeteredBedrockModel extends BedrockModel {
   constructor(
     opts: { modelId: string; region: string; credentials: AwsCredentialIdentity | AwsCredentialIdentityProvider; maxTokens: number; maxAttempts?: number },
     private readonly gate: () => Promise<void>,
+    private readonly refund?: Refund,
   ) {
     // The SDK retries throttling itself (3 attempts); a turn should fail well inside the 100 s deploy drain. With a local
     // fallback behind it, one attempt: the router moves on at once (a held account's 0 tokens a day won't pass on a retry).
@@ -33,10 +57,7 @@ export class MeteredBedrockModel extends BedrockModel {
 
   override async *stream(messages: Message[], options?: StreamOptions) {
     await this.gate();
-    for await (const event of super.stream(messages, options)) {
-      if (event.type === 'modelMetadataEvent') recordUsage(event.usage);
-      yield event;
-    }
+    yield* metering(super.stream(messages, options), this.refund);
   }
 }
 
@@ -50,6 +71,8 @@ export class MeteredAnthropicModel extends AnthropicModel {
   constructor(
     opts: { client: Anthropic; modelId: string; maxTokens: number; effort?: 'low' | 'medium' | 'high' },
     private readonly gate: () => Promise<void>,
+    /** Offered the failure of a call that streamed nothing: gives it back only if it proves the model never ran (metered's provenNotRun). */
+    private readonly refund?: Refund,
   ) {
     super({
       client: opts.client,
@@ -62,10 +85,7 @@ export class MeteredAnthropicModel extends AnthropicModel {
 
   override async *stream(messages: Message[], options?: StreamOptions) {
     await this.gate();
-    for await (const event of super.stream(messages, options)) {
-      if (event.type === 'modelMetadataEvent') recordUsage(event.usage);
-      yield event;
-    }
+    yield* metering(super.stream(messages, options), this.refund);
   }
 }
 
@@ -86,6 +106,7 @@ export class MeteredOpenAIModel extends OpenAIModel {
   constructor(
     opts: { baseURL: string; modelId: string; maxTokens: number },
     private readonly gate: () => Promise<void>,
+    private readonly refund?: Refund,
   ) {
     super({
       api: 'chat',
@@ -104,10 +125,7 @@ export class MeteredOpenAIModel extends OpenAIModel {
     lanes.set(this.gate, before.then(() => mine));
     await before;
     try {
-      for await (const event of super.stream(messages, options)) {
-        if (event.type === 'modelMetadataEvent') recordUsage(event.usage);
-        yield event;
-      }
+      yield* metering(super.stream(messages, options), this.refund);
     } finally {
       release();
     }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { askDistrict, openCloudShell, openPractice, openUrl, openWorkshopSource, startConsoleCopilot, verifyWorkshopStep } from '@/app/runtime';
 import type { Progress } from '@/backend/contract';
 import { redact } from '@/console/risk';
@@ -12,6 +12,7 @@ import { questById } from '@/world/content';
 import { placeFor } from '@/world/places';
 import { serviceById } from '@/world/taxonomy';
 import { commandFor, isChecked, placeholdersIn, terminalStep, workshopById, WORKSHOPS, type Workshop as WorkshopDef, type WorkshopStep } from '@/world/workshops';
+import { AiNote } from './AiNote';
 import { AwsIcon } from './AwsIcon';
 import { feel, useCopy } from './feedback';
 import { GrowLine } from './Flashcards';
@@ -412,6 +413,7 @@ function StepView(props: {
 /** "I got an error": a known one is explained at once (rules first); anything else goes to the building's agent. */
 function ErrorHelp({ w, errors }: { w: WorkshopDef; errors?: TerminalError[] }) {
   const [text, setText] = useState('');
+  const noteId = useId();
   const [known, setKnown] = useState<TerminalError | null>();
   const [asked, setAsked] = useState<{ districtId: string; requestId: string }>();
   const agent = placeFor(w.serviceId)?.agentName.split(' the ')[0] ?? 'the agent';
@@ -435,7 +437,8 @@ function ErrorHelp({ w, errors }: { w: WorkshopDef; errors?: TerminalError[] }) 
   return (
     <details className="workshop-error">
       <summary>I got an error</summary>
-      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} placeholder="Paste the error here" aria-label="The error you got" />
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} placeholder="Paste the error here" aria-label="The error you got" aria-describedby={noteId} />
+      <AiNote id={noteId} />
       <button className="btn tiny" onClick={help}>
         Help me fix it
       </button>
