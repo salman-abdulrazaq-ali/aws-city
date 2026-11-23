@@ -41,7 +41,7 @@ const XP = { task: 15, perWrite: 5, attempted: 3, classify: 3 } as const;
  * the objects in a console bucket, Sally said she couldn't because the city didn't build it; no bucket's objects are read.
  */
 export const CHAT_CAN_DO =
-  "This chat can't change AWS: to build, stop or remove something, the player types it in the city's request box and approves the card. The city only changes what it built; if asked to change something else you can see (notBuiltByTheCity, or a resource with builtByGame false), say you can see it and that the player changes it in the AWS console. The city never sees inside a bucket (no objects or files, the city's or not): asked what's in one, say so and point to the bucket's Objects tab in the S3 console.";
+  "This chat can't change AWS: to build, stop or remove something, the player types it in the city's request box and approves the card. The city only changes what it built; if asked to change something else you can see (notBuiltByTheCity, or a resource with builtByGame false), say you can see it, and that the player can change it in the AWS console or turn on “Let the city change things you made” in Deploy → Your AWS account (servers and empty buckets they made; every removal needs its name typed and their Approve). The city never sees inside a bucket (no objects or files, the city's or not): asked what's in one, say so and point to the bucket's Objects tab in the S3 console.";
 
 /**
  * The landmark agent's words to act on: the player's request (first, unchanged), then the concierge's plan as fenced data

@@ -148,6 +148,26 @@ export const roleUpdateSteps = (templateUrl?: string, label?: string) => [
   'Press Update (or Submit). When it says UPDATE_COMPLETE, press “I’ve updated the stack” here.',
 ];
 
+/**
+ * "Let the city change things you made" (player role v6 AllowCleanup, asked for on 23 Nov 2026): off, the agents change
+ * only what the city built; on, also servers and empty buckets the player made, in the linked Region. Every removal still
+ * needs the name or id typed, MFA and Approve, and nothing reads what's in a bucket.
+ */
+export const CLEANUP_SWITCH = 'Let the city change things you made';
+export const CLEANUP_OFF = 'Off: the agents look at everything in your account, but change only what the city built.';
+export const cleanupOn = (region: string) =>
+  `On: the agents may also stop, start or remove servers, and remove empty buckets, that you made in ${region}. Each removal asks you to type its name or ID, then your MFA code and Approve. Files in your buckets are never read.`;
+/** Changing the switch is a stack update (AllowCleanup), with a newer template first when the role is older than v6. */
+export const cleanupSteps = (on: boolean, newTemplate?: string) => [
+  'In CloudFormation, open the AWSCity stack.',
+  newTemplate ? `Press Update, pick Replace existing template, then Amazon S3 URL, and paste: ${newTemplate}` : 'Press Update, then pick Use existing template.',
+  `Press Next and set AllowCleanup to ${on ? 'true' : 'false'}. Keep the ExternalId${newTemplate ? ' (and set ConnectsPlayer to the name shown here)' : ''} as it is.`,
+  'Press Next, then tick “I acknowledge that AWS CloudFormation might create IAM resources with custom names.”',
+  'Press Update (or Submit). When it says UPDATE_COMPLETE, press “I’ve updated the stack” here.',
+];
+/** The template version that has AllowCleanup. */
+export const CLEANUP_ROLE_VERSION = 6;
+
 /** Turning small fixes on for a stack made without them (AllowFixes=true); each fix is still approved one by one. */
 export const FIXES_ON_STEPS = [
   'In CloudFormation, open the AWSCity stack.',

@@ -40,7 +40,9 @@ describe('parseCommand: a plain request in the player’s own words', () => {
     expect(parseCommand('Create a bucket called ab')).toEqual({ ok: false, name: 'create_bucket', reason: expect.stringContaining('3-40 lowercase') });
     expect(parseCommand(`Create a bucket called ${'a'.repeat(41)}`)?.ok).toBe(false);
     expect(parseCommand('Create a bucket called My_Photos')?.ok).toBe(false);
-    expect(parseCommand('delete the bucket my-company-backups')).toEqual({ ok: false, name: 'delete_bucket', reason: expect.stringContaining('only deletes buckets it built') });
+    // Any bucket name parses: policy decides whose it is ("Let the city change things you made", 23 Nov 2026).
+    expect(parseCommand('delete the bucket my-company-backups')).toEqual({ ok: true, name: 'delete_bucket', input: { name: 'my-company-backups' } });
+    expect(parseCommand('delete the bucket -bad-')).toEqual({ ok: false, name: 'delete_bucket', reason: expect.stringContaining('S3 bucket name') });
     expect(parseCommand('Create a table called scores!!')).toBeUndefined();
   });
 

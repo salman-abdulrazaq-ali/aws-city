@@ -176,9 +176,9 @@ export class MockBackend implements AgentBackend {
   private jobs = new Map<string, number>();
   private deploys = new Map<string, string>();
   /** The linked practice account; `fixes`: whether its pretend role allows small fixes (account.status `fixes`). */
-  private account?: { accountId: string; region: string; fixes: boolean };
+  private account?: { accountId: string; region: string; fixes: boolean; cleanup?: boolean };
   /** The last practice setup link (account.link): the Region it was made for and whether Allow small fixes was ticked. */
-  private practiceLink?: { region: string; allowFixes: boolean };
+  private practiceLink?: { region: string; allowFixes: boolean; allowCleanup?: boolean };
   private copilot = new ConsoleMock((e) => this.emit(e));
   /** City care: the demo account's findings, and the fix previews waiting for approval. */
   private findings = new Map<string, CityFinding>();
@@ -522,12 +522,13 @@ export class MockBackend implements AgentBackend {
         // The practice setup link rehearses the real one (server/src/accounts/link.ts): the Region picked, stack AWSCity,
         // ConnectsPlayer, AllowFixes only when ticked. It's no console address: the Deploy tab opens nothing in the demo.
         const externalId = `aws-city-${Math.random().toString(36).slice(2, 12)}`;
-        this.practiceLink = { region: cmd.region, allowFixes: !!cmd.allowFixes };
+        this.practiceLink = { region: cmd.region, allowFixes: !!cmd.allowFixes, allowCleanup: !!cmd.allowCleanup };
         const params: [string, string][] = [
           ['stackName', 'AWSCity'],
           ['param_ExternalId', externalId],
           ['param_ConnectsPlayer', 'Practice Mayor'],
           ...(cmd.allowFixes ? ([['param_AllowFixes', 'true']] as [string, string][]) : []),
+          ...(cmd.allowCleanup ? ([['param_AllowCleanup', 'true']] as [string, string][]) : []),
         ];
         const url = `${PRACTICE_LINK}?region=${cmd.region}#/stacks/quickcreate?${params.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&')}`;
         return this.emit({ type: 'account.linkUrl', requestId: cmd.requestId, url, externalId });
@@ -544,7 +545,9 @@ export class MockBackend implements AgentBackend {
           // Verified from a practice setup link: small fixes only if it was made with them (off by default, like the real
           // AllowFixes). The one-press practice account allows them. It has no real role, so no role version.
           const fixes = named || !this.practiceLink ? true : this.practiceLink.allowFixes;
-          this.account = { accountId: id, region, fixes };
+          // "Let the city change things you made": as the practice link asked (off by default, like AllowCleanup).
+          const cleanup = !named && this.practiceLink?.allowCleanup === true;
+          this.account = { accountId: id, region, fixes, cleanup };
           this.emit({ type: 'account.status', requestId: cmd.requestId, linked: true, ...this.account, message: 'Practice account linked.' });
           // Linked: the practice account's replication to other Regions shows now (world map arcs, highway tankers).
           this.emit(demoInventory(new Date(), { crossRegion: true, without: this.removed }));

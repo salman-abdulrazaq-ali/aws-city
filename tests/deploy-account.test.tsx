@@ -14,7 +14,7 @@ const rt = vi.hoisted(() => ({
   decideDeploy: vi.fn(),
   verifyAccount: vi.fn((..._a: unknown[]) => 'r-verify'),
   recheckAccount: vi.fn(() => 'r-check'),
-  confirmRoleUpdate: vi.fn(() => 'r-updated'),
+  confirmRoleUpdate: vi.fn((..._a: unknown[]) => 'r-updated'),
   openUrl: vi.fn(),
   deleteAccount: vi.fn(async () => {}),
   openPrivacyPolicy: vi.fn(),
@@ -65,6 +65,51 @@ describe('the Deploy tab’s account cards', () => {
     render(<DeployPanel />);
     expect(screen.queryByText(/console is signed in to account/)).toBeNull();
     expect(screen.getByText(/Switch role into this account/)).toBeTruthy();
+  });
+
+  // Asked for on 23 Nov 2026: an On/Off switch for the agents changing what the player made, off by default.
+  it('"Let the city change things you made" is Off by default; turning it on is the stack update and "I’ve updated the stack"', () => {
+    useCity.setState({ account: { linked: true, accountId: '047463438585', region: 'us-west-2', roleVersion: 6, latestRoleVersion: 6, templateUrl: 'https://t.example/player-role/v6.yaml' } });
+    const { unmount } = render(<DeployPanel />);
+    const card = screen.getByRole('region', { name: /Let the city change things you made/ });
+    expect(card.textContent).toMatch(/Off/);
+    expect(card.textContent).toMatch(/change only what the city built/);
+    fireEvent.click(within(card).getByRole('button', { name: 'Turn on' }));
+    const steps = within(card).getByRole('list', { name: /Turn on/ });
+    expect(steps.textContent).toMatch(/set AllowCleanup to true/);
+    expect(steps.textContent).toMatch(/Use existing template/);
+    fireEvent.click(within(card).getByRole('button', { name: 'I’ve updated the stack' }));
+    expect(rt.confirmRoleUpdate).toHaveBeenCalledWith({ allowCleanup: true });
+    unmount();
+    // On: says what it allows, that every removal is typed and approved, that files are never read; Turn off undoes it.
+    rt.confirmRoleUpdate.mockClear();
+    useCity.setState({ account: { linked: true, accountId: '047463438585', region: 'us-west-2', cleanup: true, roleVersion: 6, latestRoleVersion: 6 } });
+    render(<DeployPanel />);
+    const on = screen.getByRole('region', { name: /Let the city change things you made/ });
+    expect(on.textContent).toMatch(/On/);
+    expect(on.textContent).toMatch(/type its name or ID, then your MFA code and Approve/);
+    expect(on.textContent).toMatch(/never read/);
+    fireEvent.click(within(on).getByRole('button', { name: 'Turn off' }));
+    expect(within(on).getByRole('list', { name: /Turn off/ }).textContent).toMatch(/set AllowCleanup to false/);
+    fireEvent.click(within(on).getByRole('button', { name: 'I’ve updated the stack' }));
+    expect(rt.confirmRoleUpdate).toHaveBeenCalledWith({ allowCleanup: false });
+  });
+
+  it('a role older than v6 has no AllowCleanup: turning it on brings the newer template in the same update', () => {
+    useCity.setState({ account: { linked: true, accountId: '047463438585', region: 'us-west-2', roleVersion: 4, latestRoleVersion: 6, templateUrl: 'https://t.example/player-role/v6.yaml' } });
+    render(<DeployPanel />);
+    const card = screen.getByRole('region', { name: /Let the city change things you made/ });
+    fireEvent.click(within(card).getByRole('button', { name: 'Turn on' }));
+    expect(within(card).getByRole('list', { name: /Turn on/ }).textContent).toMatch(/Replace existing template.*v6\.yaml/);
+  });
+
+  it('the link step asks for it with its own box, off by default', () => {
+    useCity.setState({ account: { linked: false, wantsLink: true, linkUrl: 'https://x.example/#/stacks/quickcreate?param_ConnectsPlayer=P', externalId: 'e' } });
+    render(<DeployPanel />);
+    const box = screen.getByRole('checkbox', { name: /Let the city change things you made/ });
+    expect((box as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(box);
+    expect(rt.linkAccount).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ allowCleanup: true }));
   });
 
   // Asked on 23 Nov 2026: "how do I get to my console?" It opens in the linked Region; the sign-in is the player's.

@@ -8,8 +8,9 @@ import { launchTarget } from './rules.js';
  * Reads need none (undefined). Minted only by ActionService, after policy and the player's approval, for the account the
  * write goes to (the gate refuses it from clients acting in any other).
  */
-export const actionGrant = (action: Action, accountId: string): Grant | undefined => {
-  const mint = (entries: GrantEntry[]) => mintGrant(action.type, entries, { accountId });
+export const actionGrant = (action: Action, accountId: string, opts: { cleanup?: boolean } = {}): Grant | undefined => {
+  // `cleanup`: policy let a bucket the player made through ("Let the city change things you made" on).
+  const mint = (entries: GrantEntry[]) => mintGrant(action.type, entries, { accountId, ...(opts.cleanup && action.type === 'delete_bucket' ? { cleanup: true } : {}) });
   switch (action.type) {
     case 'launch_instance':
       return mint([{ client: 'EC2Client', command: 'RunInstancesCommand', target: launchTarget(action.instanceType, action.name) }]);

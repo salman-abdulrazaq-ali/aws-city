@@ -80,7 +80,7 @@ export function startRuntime(l: Layout) {
     store().applyServerEvent(e);
     // A setup link arrived: the Region and AllowFixes it was asked with are now what the link says (step 2's checkbox).
     const asked = e.type === 'account.linkUrl' ? stepUps.get(e.requestId) : undefined;
-    if (asked?.action === 'account.link') store().patchAccount({ linkRegion: asked.region, allowFixes: !!asked.allowFixes });
+    if (asked?.action === 'account.link') store().patchAccount({ linkRegion: asked.region, allowFixes: !!asked.allowFixes, allowCleanup: !!asked.allowCleanup });
     // "I've updated the stack": the fresh link is in, so the verify that records the update can go.
     if (e.type === 'account.linkUrl' && updates.has(e.requestId)) verifyAccount(updates.get(e.requestId)!, { updated: true });
     if ((e.type === 'account.linkUrl' || e.type === 'error') && e.requestId) updates.delete(e.requestId);
@@ -792,7 +792,7 @@ export async function startMfaSetup() {
 
 /** A command the server can refuse with mfa_required (step-up), as sent. */
 export type StepUp =
-  | { action: 'account.link'; region: string; allowFixes?: boolean }
+  | { action: 'account.link'; region: string; allowFixes?: boolean; allowCleanup?: boolean }
   | { action: 'account.verify'; roleArn: string; updated?: boolean }
   | { action: 'finding.fix' }
   | { action: 'resource.remove' }
@@ -859,7 +859,7 @@ export async function confirmMfaSetup(code: string) {
     mfaRefused = undefined;
     store().setMfaRequired(false);
     store().toast('🔐', next.message);
-    if (next.resend?.action === 'account.link') linkAccount(next.resend.region, { allowFixes: next.resend.allowFixes });
+    if (next.resend?.action === 'account.link') linkAccount(next.resend.region, { allowFixes: next.resend.allowFixes, allowCleanup: next.resend.allowCleanup });
     else if (next.resend?.action === 'account.verify') verifyAccount(next.resend.roleArn, { updated: next.resend.updated });
     return true;
   } catch (e) {
@@ -873,13 +873,14 @@ export async function confirmMfaSetup(code: string) {
  * the quick-create link turns AllowFixes on (v2.19). Returns the requestId (an error for this request carries it), or
  * undefined if nothing was sent.
  */
-export function linkAccount(region: string, opts: { allowFixes?: boolean } = {}) {
+export function linkAccount(region: string, opts: { allowFixes?: boolean; allowCleanup?: boolean } = {}) {
   if (!backend) return undefined;
   const requestId = uid();
-  const allowFixes = opts.allowFixes ? { allowFixes: true } : {};
-  noteStepUp(requestId, { action: 'account.link', region, ...allowFixes });
+  // `allowCleanup`: the link sets AllowCleanup=true ("Let the city change things you made").
+  const asked = { ...(opts.allowFixes ? { allowFixes: true } : {}), ...(opts.allowCleanup ? { allowCleanup: true } : {}) };
+  noteStepUp(requestId, { action: 'account.link', region, ...asked });
   askAccount(requestId);
-  backend.send({ action: 'account.link', requestId, region, ...allowFixes });
+  backend.send({ action: 'account.link', requestId, region, ...asked });
   return requestId;
 }
 
@@ -928,10 +929,11 @@ const updates = new Map<string, string>();
  * linked Region (same ExternalId: the stack keeps working) and, as soon as it's in, verifies with `updated` (the role
  * version becomes that link's). Returns the link's requestId (an error for it carries it).
  */
-export function confirmRoleUpdate() {
-  const { accountId, region, linked } = store().account;
+export function confirmRoleUpdate(opts: { allowCleanup?: boolean } = {}) {
+  const { accountId, region, linked, cleanup, allowCleanup } = store().account;
   if (!linked || !accountId || !region) return undefined;
-  const requestId = linkAccount(region);
+  // The update's link says what the stack now has: "Let the city change things you made" as asked, else as it was.
+  const requestId = linkAccount(region, { allowCleanup: opts.allowCleanup ?? allowCleanup ?? cleanup === true });
   if (requestId) updates.set(requestId, accountId);
   return requestId;
 }

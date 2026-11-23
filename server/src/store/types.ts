@@ -29,6 +29,14 @@ export interface AccountRecord {
   roleVersion?: number;
   /** v2.17: whether the role allows fixes (AllowFixes), from a DryRun at verify that changes nothing. Absent: unknown. */
   fixes?: boolean;
+  /** Whether the last setup link asked for AllowCleanup=true ("Let the city change things you made", player role v6). */
+  linkCleanup?: boolean;
+  /**
+   * Whether the agents may change servers and buckets the player made: the link's AllowCleanup, recorded at verify when the
+   * stack was installed or updated from that link (like roleVersion: the account can't be read for it). AWS has the last
+   * word: a role without it refuses (AccessDenied). Absent: off.
+   */
+  cleanup?: boolean;
   /**
    * v2.17: when STS refused the role on BROKEN_AFTER polls in a row (the stack was deleted or changed): the server stopped
    * reading the account. A new setup link (back to pending) or a successful verify clears it.

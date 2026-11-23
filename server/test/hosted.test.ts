@@ -415,6 +415,25 @@ describe('account linking', () => {
     expect(await fresh.linker.verify('u2', '111122223333')).toMatchObject({ region: 'eu-west-1', roleVersion: 5 });
   });
 
+  // Asked for on 23 Nov 2026: "Let the city change things you made" (player role v6 AllowCleanup), recorded like the
+  // role version: from the link the stack was installed or updated from, off unless asked, and off again when a link says so.
+  it('the switch is the link’s AllowCleanup: asked for only when the player turned it on, kept by a plain verify', async () => {
+    const { linker, stores, link } = setup(ok);
+    const off = await link('u1', 'us-west-2');
+    expect(off.url).not.toContain('AllowCleanup');
+    expect(await linker.verify('u1', '111122223333')).not.toHaveProperty('cleanup');
+    const on = await linker.link('u1', 'us-west-2', { label: 'Player u1', allowCleanup: true });
+    expect(on.url).toContain('param_AllowCleanup=true');
+    // Not yet: the stack in the account hasn't changed until the player says they updated it.
+    expect(await linker.verify('u1', '111122223333')).not.toHaveProperty('cleanup');
+    expect(await linker.verify('u1', '111122223333', { updated: true })).toMatchObject({ cleanup: true });
+    // A plain verify keeps it; a link without it, then "I've updated the stack", turns it off.
+    expect(await linker.verify('u1', '111122223333')).toMatchObject({ cleanup: true });
+    await link('u1', 'us-west-2');
+    expect(await linker.verify('u1', '111122223333', { updated: true })).not.toHaveProperty('cleanup');
+    expect(await stores.accounts.get('u1')).not.toHaveProperty('cleanup');
+  });
+
   it('v2.19 Check again (recheck): asks the linked role about fixes again, read-only: no new link window, the role version stays', async () => {
     let answer: boolean | undefined = false;
     const { linker, stores, link, canFix } = setup(ok, { canFix: async () => answer });
@@ -1440,9 +1459,9 @@ describe('MFA step-up for writes', () => {
       const ws2 = new WebSocket(`ws://127.0.0.1:${port}/ws`, bearerSubprotocols('x'), { origin: EXT });
       ws2.on('message', (raw) => events.push(JSON.parse(raw.toString())));
       await new Promise((r) => ws2.on('open', r));
-      ws2.send(JSON.stringify({ action: 'account.link', requestId: 'l1', region: 'us-west-2', allowFixes: true }));
+      ws2.send(JSON.stringify({ action: 'account.link', requestId: 'l1', region: 'us-west-2', allowFixes: true, allowCleanup: true }));
       await until(() => !!reply('l1'));
-      expect(link).toHaveBeenCalledWith('l1', 'us-west-2', expect.any(Function), true);
+      expect(link).toHaveBeenCalledWith('l1', 'us-west-2', expect.any(Function), true, true);
       ws2.close();
     } finally {
       ws.close();

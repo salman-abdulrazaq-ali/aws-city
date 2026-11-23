@@ -80,6 +80,11 @@ export const createActionService = (deps: {
   retired?: AbortSignal;
   /** Called once per write asked for, whatever happened (an audit line); never for reads or input that didn't parse. */
   audit?: Audit;
+  /**
+   * "Let the city change things you made" (hosted: the link's AllowCleanup, player role v6): true lets policy act on servers
+   * and buckets the player made; false refuses them and names the switch; undefined (local) refuses as before.
+   */
+  cleanup?: () => boolean | undefined;
 }) => {
   const locks = deps.locks ?? memoryLocks();
   const accountKey = deps.accountKey ?? (() => deps.poller.current()?.accountId ?? 'local');
@@ -102,7 +107,8 @@ export const createActionService = (deps: {
   const run = (action: Action, confirmed: boolean) =>
     serialised(async (lease): Promise<SubmitOutcome> => {
       const snapshot = await withJustCreated(deps.poller.current() ?? (await deps.poller.refresh()));
-      const decision = checkAction(action, snapshot, { confirmed });
+      const cleanup = deps.cleanup?.();
+      const decision = checkAction(action, snapshot, { confirmed, ...(cleanup !== undefined ? { cleanup } : {}) });
       if (decision.verdict === 'deny') return { status: 'denied', reason: decision.reason };
       if (decision.verdict === 'confirm') return { status: 'denied', reason: NEEDS_APPROVAL_REASON };
       // The account may have been disconnected or changed while the player decided (or another task changed the link).
@@ -117,7 +123,7 @@ export const createActionService = (deps: {
       if (!live) return { status: 'denied', reason: RETIRED_REASON };
 
       // Past policy and the player's approval: the gate lets through exactly this action's writes, once each.
-      const grant = confirmed ? actionGrant(action, snapshot.accountId) : undefined;
+      const grant = confirmed ? actionGrant(action, snapshot.accountId, { cleanup: cleanup === true }) : undefined;
       const execute = () => executeAction(action, deps.clients, snapshot, deps.region, lease);
       const result = await (grant ? withGrant(grant, execute) : execute());
       await remember(action, result);
@@ -134,7 +140,8 @@ export const createActionService = (deps: {
   const write = async (action: Action, approve: Approve | undefined, intent: string | undefined): Promise<SubmitOutcome> => {
     if (!approve) return { status: 'denied', reason: NEEDS_APPROVAL_REASON };
     const snapshot = await withJustCreated(deps.poller.current() ?? (await deps.poller.refresh()));
-    const pre = checkAction(action, snapshot, { confirmed: true });
+    const cleanup = deps.cleanup?.();
+    const pre = checkAction(action, snapshot, { confirmed: true, ...(cleanup !== undefined ? { cleanup } : {}) });
     if (pre.verdict === 'deny') return { status: 'denied', reason: pre.reason };
     const summary = describeAction(action);
     const destructive = DESTRUCTIVE.has(action.type);

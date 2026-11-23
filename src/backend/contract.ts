@@ -139,6 +139,8 @@ interface AccountLink {
   region: string;
   /** v2.19: the quick-create link sets AllowFixes=true (the player ticked "Allow small fixes"). */
   allowFixes?: boolean;
+  /** The quick-create link sets AllowCleanup=true ("Let the city change things you made"; an older server ignores it). */
+  allowCleanup?: boolean;
 }
 
 /**
@@ -496,6 +498,11 @@ export interface AccountStatusEvent {
   fixes?: boolean;
   /** v2.19: the player-role template version the player installed (absent = unknown, e.g. linked before v2.19). Hosted only. */
   roleVersion?: number;
+  /**
+   * "Let the city change things you made" (player role v6 AllowCleanup): the agents may stop, start or remove servers and
+   * remove empty buckets the player made, each with the typed name, MFA and Approve. Hosted only; absent from an older server.
+   */
+  cleanup?: boolean;
   /** v2.19: the newest player-role template version, and its template URL (for "Update your AWS City role"). Hosted only. */
   latestRoleVersion?: number;
   templateUrl?: string;

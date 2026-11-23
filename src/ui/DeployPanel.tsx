@@ -50,7 +50,7 @@ import { TEMPLATES } from '@/world/content';
 import { serviceById } from '@/world/taxonomy';
 import { TemplateView } from './TemplateView';
 import { offered, perUnit, pricesFor } from '@/world/regions';
-import { DeleteConfirm, FixesOn, RoleUpdate, StackLink } from './Account';
+import { CleanupSwitch, DeleteConfirm, FixesOn, RoleUpdate, StackLink } from './Account';
 import { useCopy } from './feedback';
 import { costLine, offlineReason } from './logic';
 import { usePending } from './usePending';
@@ -417,7 +417,8 @@ export function DeployPanel() {
     const requestId = verifyAccount(accountInput(role));
     if (requestId) pending.start('verify', requestId);
   };
-  const getLink = (where: string, allowFixes: boolean) => pending.start('link', linkAccount(where, { allowFixes }));
+  const getLink = (where: string, allowFixes: boolean, allowCleanup = !!account.allowCleanup) =>
+    pending.start('link', linkAccount(where, { allowFixes, ...(allowCleanup ? { allowCleanup } : {}) }));
   const restart = () => {
     setPicked(undefined);
     useCity.getState().restartLink();
@@ -486,6 +487,16 @@ export function DeployPanel() {
               onChange={(e) => getLink(setupRegion, e.target.checked)}
             />
             <span>Allow small fixes (you still approve each one)</span>
+          </label>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={!!account.allowCleanup}
+              disabled={pending.is('link') || !!offline}
+              // Part of the setup link too (AllowCleanup): a new link is made for it.
+              onChange={(e) => getLink(setupRegion, !!account.allowFixes, e.target.checked)}
+            />
+            <span>Let the city change things you made: servers and empty buckets (you type the name and approve each removal)</span>
           </label>
           <details className="why fix-grants">
             <summary>What small fixes allow</summary>
@@ -710,6 +721,7 @@ export function DeployPanel() {
                   <FixesOn region={account.region} />
                 </details>
               ))}
+            {account.region && <CleanupSwitch region={account.region} />}
             {update && account.region && <RoleUpdate region={account.region} {...update} />}
             {canUnlink && !wantsLink && (
               <div className="row account-actions">

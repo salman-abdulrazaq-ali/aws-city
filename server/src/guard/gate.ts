@@ -44,6 +44,8 @@ export interface Grant {
   readonly reason: string;
   /** The AWS account it was minted for: clients acting in any other account (or one not known yet) can't use it. */
   readonly accountId: string;
+  /** For something the player made, with "Let the city change things you made" on (WireContext.cleanup). */
+  readonly cleanup?: boolean;
   readonly entries: readonly GrantEntry[];
 }
 
@@ -57,11 +59,12 @@ const states = new WeakMap<Grant, GrantState>();
 const current = new AsyncLocalStorage<Grant>();
 
 /** A grant for `entries` in one account. Everything in it is a frozen copy: changing the caller's arrays later changes nothing. */
-export const mintGrant = (reason: string, entries: readonly GrantEntry[], scope: { accountId: string }): Grant => {
+export const mintGrant = (reason: string, entries: readonly GrantEntry[], scope: { accountId: string; cleanup?: boolean }): Grant => {
   const grant: Grant = Object.freeze({
     id: randomBytes(4).toString('hex'),
     reason,
     accountId: scope.accountId,
+    ...(scope.cleanup ? { cleanup: true } : {}),
     entries: Object.freeze(entries.map((e): GrantEntry => Object.freeze({ ...e, ...(e.ids ? { ids: Object.freeze([...e.ids]) } : {}) }))),
   });
   states.set(grant, { used: new Set(), ended: false });
@@ -125,7 +128,8 @@ export const decide = (req: GateRequest, ctx: GateContext, grant: Grant | undefi
   const probe = rule.probe?.safeParse(req.input ?? {});
   if (probe?.success) return { allow: true, kind: 'probe', input: probe.data as Record<string, unknown> };
 
-  const wire: WireContext = { region: req.region, accountId: ctx.accountId?.() };
+  // Only a real grant (made by mintGrant) can widen what a bucket write may name.
+  const wire: WireContext = { region: req.region, accountId: ctx.accountId?.(), ...(grant?.cleanup && states.has(grant) ? { cleanup: true } : {}) };
   const parsed = rule.wire(wire).safeParse(req.input ?? {});
   if (!parsed.success) {
     // Field names and issue codes only (never values): what didn't match, for the audit log.

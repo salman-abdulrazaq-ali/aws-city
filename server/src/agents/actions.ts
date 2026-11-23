@@ -34,9 +34,12 @@ export const ACTION_SCHEMAS = {
     .strict()
     .describe('Build a warehouse: create an S3 bucket named aws-city-<account>-<suffix>. suffix: 3-40 lowercase letters, digits or hyphens.'),
   delete_bucket: z
-    .object({ name: z.string().startsWith('aws-city-') })
+    // Any S3 bucket name: policy decides whose it is (the city's, or the player's with "Let the city change things you made" on).
+    .object({ name: z.string().regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, 'must be an S3 bucket name') })
     .strict()
-    .describe('Demolish a warehouse: delete an empty S3 bucket built by the game. The player must approve.'),
+    .describe(
+      'Demolish a warehouse: delete an empty S3 bucket built by the game (or one the player made, when they allow it). The player types its name and approves.',
+    ),
   describe_resource: z
     .object({ id: z.string().min(1).max(255) })
     .strict()

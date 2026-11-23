@@ -14,10 +14,25 @@ const LIVE_INSTANCE_STATES = new Set(['pending', 'running', 'stopping', 'stopped
 const find = (snapshot: WorldSnapshot, kind: Resource['kind'], id: string) =>
   snapshot.resources.find((r) => r.kind === kind && r.id === id);
 
-const requireGameOwned = (r: Resource | undefined, label: string, id: string): PolicyDecision | null => {
+/** What the switch is called where the player turns it on (Deploy → Your AWS account). */
+export const CLEANUP_SWITCH = 'Let the city change things you made';
+
+/**
+ * Only what the city built may change, unless `cleanup`: the player turned on "Let the city change things you made" and
+ * their AWS role allows it (AllowCleanup, player role v6). It covers servers and buckets the player made, never tables
+ * (asked for on 23 Nov 2026). Every removal still needs the typed name, MFA and Approve.
+ */
+const requireGameOwned = (r: Resource | undefined, label: string, id: string, cleanup?: boolean): PolicyDecision | null => {
   if (!r) return { verdict: 'deny', reason: `There is no ${label} "${id}" in the city right now.` };
   if (!r.managedByGame) {
-    return { verdict: 'deny', reason: `"${r.name}" wasn't built by the game, so players and agents can look at it but not change it.` };
+    if (cleanup) return null;
+    return {
+      verdict: 'deny',
+      reason:
+        cleanup === false
+          ? `"${r.name}" wasn't built by the city, so the agents can look at it but not change it. To let them, turn on “${CLEANUP_SWITCH}” in Deploy → Your AWS account.`
+          : `"${r.name}" wasn't built by the game, so players and agents can look at it but not change it.`,
+    };
   }
   return null;
 };
@@ -28,7 +43,9 @@ const requireGameOwned = (r: Resource | undefined, label: string, id: string): P
  *  - count limits keep the workshop account small and cheap
  *  - destructive actions need explicit player approval (`confirmed`)
  */
-export const checkAction = (action: Action, snapshot: WorldSnapshot, opts: { confirmed: boolean }): PolicyDecision => {
+export const checkAction = (action: Action, snapshot: WorldSnapshot, opts: { confirmed: boolean; cleanup?: boolean }): PolicyDecision => {
+  // Servers and buckets the player made: false names the switch in the refusal, true lets them through.
+  const cleanup = opts.cleanup ?? false;
   const count = (pred: (r: Resource) => boolean) => snapshot.resources.filter(pred).length;
 
   if (snapshot.credentials === 'expired') {
@@ -53,7 +70,7 @@ export const checkAction = (action: Action, snapshot: WorldSnapshot, opts: { con
     case 'start_instance':
     case 'terminate_instance': {
       const r = find(snapshot, 'instance', action.instanceId);
-      const denied = requireGameOwned(r, 'house (EC2 instance)', action.instanceId);
+      const denied = requireGameOwned(r, 'house (EC2 instance)', action.instanceId, cleanup);
       if (denied) return denied;
       if (r!.state === 'terminated' || r!.state === 'shutting-down') return { verdict: 'deny', reason: `"${r!.name}" is already being demolished.` };
       break;
@@ -82,10 +99,19 @@ export const checkAction = (action: Action, snapshot: WorldSnapshot, opts: { con
     }
 
     case 'delete_bucket': {
+      const r = find(snapshot, 'bucket', action.name);
       if (!action.name.startsWith(bucketPrefix(snapshot.accountId))) {
-        return { verdict: 'deny', reason: `"${action.name}" isn't one of this city's warehouses.` };
+        if (!r) return { verdict: 'deny', reason: `There is no warehouse (S3 bucket) "${action.name}" in your account.` };
+        // A bucket the player made: only with the switch on, and only in the home Region (the role allows no other).
+        const denied = requireGameOwned({ ...r, managedByGame: false }, 'warehouse (S3 bucket)', action.name, cleanup);
+        if (denied) return denied;
+        const where = r.meta.bucketRegion;
+        if (typeof where === 'string' && where !== snapshot.region) {
+          return { verdict: 'deny', reason: `"${r.name}" is in ${where}; the city changes things only in your home Region (${snapshot.region}).` };
+        }
+        break;
       }
-      const denied = requireGameOwned(find(snapshot, 'bucket', action.name), 'warehouse (S3 bucket)', action.name);
+      const denied = requireGameOwned(r, 'warehouse (S3 bucket)', action.name);
       if (denied) return denied;
       break;
     }

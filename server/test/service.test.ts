@@ -5,7 +5,7 @@ import type { Poller } from '../src/state/poller.js';
 import type { Judgement, WriteReview } from '../src/agents/jev.js';
 import type { ApprovalRequest } from '../src/agents/service.js';
 import { targetHash } from '../src/guard/gate.js';
-import { instance, snapshot } from './fixtures.js';
+import { bucket, instance, snapshot } from './fixtures.js';
 
 const { executeAction } = vi.hoisted(() => {
   let launched = 0;
@@ -32,6 +32,35 @@ describe('action service', () => {
     const outcomes = await Promise.all(Array.from({ length: LIMITS.instances + 3 }, (_, n) => service.submit('launch_instance', { name: `house ${n}` }, { approve })));
     expect(outcomes.filter((o) => o.status === 'done')).toHaveLength(LIMITS.instances);
     expect(outcomes.filter((o) => o.status === 'denied')).toHaveLength(3);
+  });
+
+  // Asked for on 23 Nov 2026: "Let the city change things you made". Off: as before, naming the switch. On: servers and
+  // empty buckets the player made, each with its approval (a removal: the typed name or id, approvals.ts).
+  it('acts on what the player made only with "Let the city change things you made" on', async () => {
+    executeAction.mockClear();
+    const theirs = instance('i-0000000000000002b', 'running', false, 'from-the-console');
+    const consoleBucket = bucket('test-demo-7k2');
+    const elsewhere = { ...bucket('test-demo-ireland'), meta: { bucketRegion: 'eu-west-1' } };
+    let cleanup: boolean | undefined = false;
+    const asked: ApprovalRequest[] = [];
+    const approve = async (r: ApprovalRequest) => (asked.push(r), true);
+    const service = createActionService({ clients: {} as AwsClients, poller: pollerFor(snapshot([theirs, consoleBucket, elsewhere])), region: 'us-west-2', cleanup: () => cleanup });
+    const off = await service.submit('terminate_instance', { instanceId: theirs.id }, { approve });
+    expect(off).toMatchObject({ status: 'denied', reason: expect.stringContaining('turn on “Let the city change things you made”') });
+    expect(await service.submit('delete_bucket', { name: consoleBucket.name }, { approve })).toMatchObject({ status: 'denied', reason: expect.stringContaining('Let the city change things you made') });
+    expect(asked).toEqual([]);
+    cleanup = true;
+    expect(await service.submit('terminate_instance', { instanceId: theirs.id }, { approve })).toMatchObject({ status: 'done' });
+    expect(await service.submit('delete_bucket', { name: consoleBucket.name }, { approve })).toMatchObject({ status: 'done' });
+    expect(asked.map((r) => [r.action.type, r.destructive])).toEqual([['terminate_instance', true], ['delete_bucket', true]]);
+    // Only in the home Region, and never something that isn't there.
+    expect(await service.submit('delete_bucket', { name: elsewhere.name }, { approve })).toMatchObject({ status: 'denied', reason: expect.stringContaining('eu-west-1') });
+    expect(await service.submit('delete_bucket', { name: 'not-in-this-account' }, { approve })).toMatchObject({ status: 'denied', reason: expect.stringContaining('no warehouse') });
+    // Tables stay the city's own: the switch doesn't reach them.
+    expect(executeAction).toHaveBeenCalledTimes(2);
+    // Local (no switch): the old words, nothing about a switch.
+    cleanup = undefined;
+    expect(await service.submit('terminate_instance', { instanceId: theirs.id }, { approve })).toMatchObject({ status: 'denied', reason: expect.not.stringContaining('switch') });
   });
 
   it('refuses every write without an approval channel; only reads run', async () => {

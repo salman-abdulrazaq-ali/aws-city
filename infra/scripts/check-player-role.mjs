@@ -4,8 +4,10 @@
  * (iam:SimulatePrincipalPolicy). Nothing in the account changes. Organization SCPs are part of the answer.
  *
  *   cd infra && AWS_PROFILE=aws-city node scripts/check-player-role.mjs \
- *     --account 047463438585 --region us-west-2 [--assume arn:aws:iam::047463438585:role/OrganizationAccountAccessRole]
+ *     --account 047463438585 --region us-west-2 [--assume arn:aws:iam::047463438585:role/OrganizationAccountAccessRole] [--cleanup]
  *
+ * --cleanup: the stack has AllowCleanup=true ("Let the city change things you made", role v6): servers and empty buckets
+ * the player made are then allowed too (only this account's, in this Region); everything else stays as without it.
  * --assume: a role in that account allowed to call iam:SimulatePrincipalPolicy (default: the caller's own credentials).
  * Exit code 1 when any line doesn't match what the city relies on.
  */
@@ -13,7 +15,8 @@ import { IAMClient, SimulatePrincipalPolicyCommand } from '@aws-sdk/client-iam';
 import { fromNodeProviderChain, fromTemporaryCredentials } from '@aws-sdk/credential-providers';
 import { parseArgs } from 'node:util';
 
-const { values } = parseArgs({ options: { account: { type: 'string' }, region: { type: 'string', default: 'us-west-2' }, assume: { type: 'string' } } });
+const { values } = parseArgs({ options: { account: { type: 'string' }, region: { type: 'string', default: 'us-west-2' }, assume: { type: 'string' }, cleanup: { type: 'boolean', default: false } } });
+const cleanup = values.cleanup;
 const account = values.account;
 const region = values.region;
 if (!account || !/^\d{12}$/.test(account)) {
@@ -34,6 +37,9 @@ const instance = (r = region) => `arn:aws:ec2:${r}:${account}:instance/i-0123456
 const table = (name) => `arn:aws:dynamodb:${region}:${account}:table/${name}`;
 const bucket = (name) => `arn:aws:s3:::${name}`;
 const city = `aws-city-${account}-livetest`;
+const owned = (a = account) => s('aws:ResourceAccount', a);
+/** Allowed only when the stack has AllowCleanup=true. */
+const ifCleanup = cleanup ? 'allowed' : 'denied';
 
 /** [what the city relies on, action, resource, context, expected] */
 const CASES = [
@@ -46,7 +52,7 @@ const CASES = [
   ['start a server the city tagged', 'ec2:StartInstances', instance(), [inRegion(), tagged], 'allowed'],
   ['terminate a server the city tagged', 'ec2:TerminateInstances', instance(), [inRegion(), tagged], 'allowed'],
   ['create a bucket with any other name', 's3:CreateBucket', bucket('company-backups'), [inRegion()], 'denied'],
-  ['delete another account’s city bucket', 's3:DeleteBucket', bucket('aws-city-111122223333-x'), [inRegion()], 'denied'],
+  ['delete another account’s city bucket', 's3:DeleteBucket', bucket('aws-city-111122223333-x'), [inRegion(), owned('111122223333')], 'denied'],
   ['create a city bucket in another Region', 's3:CreateBucket', bucket(city), [inRegion('eu-west-1')], 'denied'],
   ['read objects in a city bucket', 's3:GetObject', `${bucket(city)}/photo.jpg`, [inRegion()], 'denied'],
   ['make a city bucket public (bucket policy)', 's3:PutBucketPolicy', bucket(city), [inRegion()], 'denied'],
@@ -57,7 +63,12 @@ const CASES = [
   ['launch without the city tag', 'ec2:RunInstances', instance(), [inRegion(), s('ec2:InstanceType', 't4g.nano'), s('ec2:MetadataHttpTokens', 'required')], 'denied'],
   ['launch with IMDSv1', 'ec2:RunInstances', instance(), [inRegion(), s('ec2:InstanceType', 't4g.nano'), s('ec2:MetadataHttpTokens', 'optional'), tagging], 'denied'],
   ['launch in another Region', 'ec2:RunInstances', instance('eu-west-1'), [inRegion('eu-west-1'), s('ec2:InstanceType', 't4g.nano'), s('ec2:MetadataHttpTokens', 'required'), tagging], 'denied'],
-  ['terminate a server the city didn’t tag', 'ec2:TerminateInstances', instance(), [inRegion()], 'denied'],
+  ['terminate a server the city didn’t tag (allowed only with AllowCleanup)', 'ec2:TerminateInstances', instance(), [inRegion()], ifCleanup],
+  ['stop a server the city didn’t tag (allowed only with AllowCleanup)', 'ec2:StopInstances', instance(), [inRegion()], ifCleanup],
+  ['delete a bucket you made (allowed only with AllowCleanup)', 's3:DeleteBucket', bucket('test-demo-livetest'), [inRegion(), owned()], ifCleanup],
+  ['delete a bucket you made, in another Region', 's3:DeleteBucket', bucket('test-demo-livetest'), [inRegion('eu-west-1'), owned()], 'denied'],
+  ['delete another account’s bucket', 's3:DeleteBucket', bucket('company-backups'), [inRegion(), owned('111122223333')], 'denied'],
+  ['terminate a server in another Region', 'ec2:TerminateInstances', instance('eu-west-1'), [inRegion('eu-west-1')], 'denied'],
   ['create an IAM user', 'iam:CreateUser', `arn:aws:iam::${account}:user/x`, [], 'denied'],
   ['attach a policy to a role', 'iam:AttachRolePolicy', `arn:aws:iam::${account}:role/x`, [], 'denied'],
   ['pass a role to a service', 'iam:PassRole', `arn:aws:iam::${account}:role/x`, [], 'denied'],

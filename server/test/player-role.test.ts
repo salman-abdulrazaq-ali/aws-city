@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { parseDocument } from 'yaml';
 import { connectsPlayerLabel } from '../src/accounts/link.js';
 import { FIXES } from '../src/agents/fixes.js';
-import { RULES } from '../src/guard/rules.js';
+import { CLEANUP_IAM, RULES } from '../src/guard/rules.js';
 
 /**
  * The player role (infra/player-role/player-role.yaml) must allow every AWS call the server makes for a
@@ -28,6 +28,7 @@ interface Statement {
   Effect?: string;
   Action?: string | string[];
   NotAction?: unknown;
+  Resource?: unknown;
   Condition?: Record<string, Record<string, unknown>>;
 }
 interface Policy {
@@ -60,11 +61,15 @@ const parseRole = (text: string) => {
   return { t, role, problems, statements, conditions, actionsOf };
 };
 
-/** The gate's IAM actions of one kind (server/src/guard/rules.ts). */
-const gateIam = (kind: 'read' | 'write' | 'fix') =>
-  [...new Set(Object.values(RULES).flatMap((commands) => Object.values(commands).flatMap((rule) => (rule.kind === kind ? [...rule.iam] : []))))].sort();
+/** The gate's IAM actions of one kind (server/src/guard/rules.ts); `cleanup` is CLEANUP_IAM, a part of the writes. */
+const gateIam = (kind: 'read' | 'write' | 'fix' | 'cleanup') =>
+  kind === 'cleanup'
+    ? [...CLEANUP_IAM].sort()
+    : [...new Set(Object.values(RULES).flatMap((commands) => Object.values(commands).flatMap((rule) => (rule.kind === kind ? [...rule.iam] : []))))].sort();
 /** Which gate kind each of the role's policies must match exactly. */
-const POLICIES = { 'aws-city-read': 'read', 'aws-city-build': 'write', 'aws-city-fix': 'fix' } as const;
+const POLICIES = { 'aws-city-read': 'read', 'aws-city-build': 'write', 'aws-city-fix': 'fix', 'aws-city-cleanup': 'cleanup' } as const;
+/** The condition each optional policy sits behind (the rest are unconditional). */
+const CONDITION: Partial<Record<keyof typeof POLICIES, string>> = { 'aws-city-fix': 'FixesOn', 'aws-city-cleanup': 'CleanupOn' };
 
 /**
  * Everything wrong with a template, as the role's own words: empty means it grants exactly the gate's read, write and
@@ -79,7 +84,8 @@ const roleProblems = (text: string): string[] => {
     const got = actionsOf(name);
     const want = gateIam(kind);
     if (got.join() !== want.join()) problems.push(`${name} grants [${got.join(', ')}], the gate's ${kind} actions are [${want.join(', ')}]`);
-    if (conditions[name] !== (kind === 'fix' ? 'FixesOn' : undefined)) problems.push(`${name}: condition ${String(conditions[name])}`);
+    if (conditions[name] !== CONDITION[name as keyof typeof POLICIES]) problems.push(`${name}: condition ${String(conditions[name])}`);
+    void kind;
   }
   // No wildcard action and no NotAction anywhere in the template (any resource, any policy, the trust policy too).
   const walk = (node: unknown, path: string) => {
@@ -150,7 +156,7 @@ const IAM_FOR: Record<string, string> = {
 describe('player role template', () => {
   it('parses cleanly, every short tag read as a plain value', () => {
     expect(role.problems).toEqual([]);
-    expect(Object.keys(role.statements)).toEqual(['aws-city-read', 'aws-city-build', 'aws-city-fix']);
+    expect(Object.keys(role.statements)).toEqual(['aws-city-read', 'aws-city-build', 'aws-city-fix', 'aws-city-cleanup']);
   });
 
   it('allows every AWS call the server makes for a player', () => {
@@ -210,9 +216,26 @@ describe('player role template', () => {
     }
   });
 
+  // Asked for on 23 Nov 2026: a switch to let the agents change what the player made (Deploy → Your AWS account).
+  it('v6: changing what the player made is opt-in (AllowCleanup, off by default): servers and empty buckets only, in this Region, never object access', () => {
+    expect(template).toMatch(/AllowCleanup:\s*\n\s*Type: String\s*\n\s*Default: 'false'/);
+    expect(template).toContain("CleanupOn: !Equals [!Ref AllowCleanup, 'true']");
+    expect(role.conditions['aws-city-cleanup']).toBe('CleanupOn');
+    expect(role.actionsOf('aws-city-cleanup')).toEqual(['ec2:StartInstances', 'ec2:StopInstances', 'ec2:TerminateInstances', 's3:DeleteBucket']);
+    // Each is a write the gate already knows (the same commands, grants and approval as the city's own things).
+    for (const action of CLEANUP_IAM) expect(gateIam('write')).toContain(action);
+    const statements = role.statements['aws-city-cleanup'] ?? [];
+    expect(JSON.stringify(statementFor(statements, 'ec2:TerminateInstances')?.Resource)).toContain(':instance/*');
+    expect(statementFor(statements, 's3:DeleteBucket')?.Condition?.StringEquals?.['aws:RequestedRegion']).toBeDefined();
+    // Bucket names are global: IAM itself holds it to buckets this account owns.
+    expect(statementFor(statements, 's3:DeleteBucket')?.Condition?.StringEquals?.['aws:ResourceAccount']).toBeDefined();
+    // Never anything that reads or deletes what's in a bucket, a table, or IAM.
+    for (const s of statements) for (const a of [s.Action ?? []].flat()) expect(a).not.toMatch(/Object|dynamodb:|iam:/);
+  });
+
   it('v5: names the player it serves (ConnectsPlayer: visible, required, used), and every label the server writes fits it', () => {
     const t = role.t as { Description?: string; Parameters?: Record<string, Record<string, unknown>> };
-    expect(t.Description).toMatch(/\bv5$/);
+    expect(t.Description).toMatch(/\bv6$/);
     const p = t.Parameters?.ConnectsPlayer;
     expect(p).toMatchObject({ Type: 'String', Description: "The AWS City player this role will serve. Don't create the stack if this isn't you." });
     expect(p).not.toHaveProperty('NoEcho');

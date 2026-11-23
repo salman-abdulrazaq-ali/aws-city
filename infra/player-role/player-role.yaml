@@ -23,6 +23,10 @@
 #     it can't limit S3 Block Public Access or DynamoDB backups to "on", or security-group changes to SSH/RDP rules.
 #     AWS City's server only ever sends HttpTokens=required, turns those on, and removes the SSH/RDP rules you approved
 #     (server/test/fixes.test.ts). You undo a fix yourself in the AWS console
+#   - change things YOU made, ONLY if you set AllowCleanup to true (default false; v6): stop, start or terminate your
+#     own EC2 instances and delete your own empty S3 buckets in this region, not only the ones the game built. Each one
+#     is shown to you first and needs you to type its name or id, your MFA code and your Approve. It never reads what's
+#     in a bucket (no object access at all), and never touches tables, IAM or anything else
 #   - only in the region you installed it in (except the account-wide reads above); no IAM, no billing changes, no
 #     passing roles
 # Who can use it: only the AWS City service role (AWSCityTaskRole-<env> in the AWS City account), and only with
@@ -34,7 +38,7 @@
 # would let their city into your account. A setup link is only good for a day.
 # Remove access any time: disconnect in the game and delete the "AWSCity" stack.
 AWSTemplateFormatVersion: '2010-09-09'
-Description: AWS City player role (least privilege, game-owned resources only; optional approved fixes). v5
+Description: AWS City player role (least privilege, game-owned resources only; optional approved fixes and cleanup). v6
 
 Parameters:
   ExternalId:
@@ -49,6 +53,11 @@ Parameters:
     Default: 'false'
     AllowedValues: ['false', 'true']
     Description: Let the citizens apply small, reversible Well-Architected fixes after you approve each one.
+  AllowCleanup:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['false', 'true']
+    Description: Let the city stop or remove servers and empty buckets you made yourself, after you type the name and approve each one.
   ConnectsPlayer:
     Type: String
     MinLength: 1
@@ -58,6 +67,7 @@ Parameters:
 
 Conditions:
   FixesOn: !Equals [!Ref AllowFixes, 'true']
+  CleanupOn: !Equals [!Ref AllowCleanup, 'true']
 
 Resources:
   PlayerRole:
@@ -237,6 +247,26 @@ Resources:
                   Effect: Allow
                   Action: dynamodb:UpdateContinuousBackups
                   Resource: !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/*'
+          - !Ref AWS::NoValue
+        - !If
+          - CleanupOn
+          - PolicyName: aws-city-cleanup
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                # "Let the city change things you made": the same writes as aws-city-build, on servers and buckets you
+                # made yourself, in this region. Every call waits for your approval, and a removal for the name or id you
+                # type. S3 ExpectedBucketOwner is always this account (the server sends it; bucket names are global).
+                - Sid: ManageYourInstances
+                  Effect: Allow
+                  Action: [ec2:StopInstances, ec2:StartInstances, ec2:TerminateInstances]
+                  Resource: !Sub 'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*'
+                - Sid: DeleteYourEmptyBuckets
+                  Effect: Allow
+                  Action: s3:DeleteBucket
+                  Resource: 'arn:aws:s3:::*'
+                  # Bucket names are global: only a bucket this account owns, in this region.
+                  Condition: { StringEquals: { 'aws:RequestedRegion': !Ref 'AWS::Region', 'aws:ResourceAccount': !Ref 'AWS::AccountId' } }
           - !Ref AWS::NoValue
 
 Outputs:

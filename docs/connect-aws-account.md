@@ -129,6 +129,19 @@ The card shows "Small fixes: off" with **Turn small fixes on**. In CloudFormatio
 fixes, and changes nothing. City care also says up front when fixes are off, so you aren't asked to approve something
 that can't run.
 
+### Let the city change things you made (on or off)
+
+Off by default: the agents look at everything in your account but change only what the city built. The card's **Let the
+city change things you made: Off · Turn on** shows how to turn it on, in your own AWS account (the city can't turn it on
+itself): in CloudFormation open the `AWSCity` stack → **Update** → **Use existing template** (or, on a role older than v6,
+**Replace existing template** with the address shown) → **Next** → set `AllowCleanup` to `true` (keep the ExternalId) →
+tick the IAM acknowledgement → **Update**. When it says `UPDATE_COMPLETE` press **I've updated the stack** in the game.
+
+On, the agents may also stop, start or terminate servers, and delete empty buckets, that you made yourself in that
+Region (only buckets your account owns). Every removal asks you to type its name or ID, then your MFA code and Approve,
+exactly as for what the city built. Nothing ever reads what's in a bucket, and tables stay the city's own. Turn it off
+the same way (`AllowCleanup` = `false`).
+
 ### Update your role (v3 → v5 and so on)
 
 When a newer role exists the card shows **Update your AWS City role (vN → v5)** (N is the version you installed from the
