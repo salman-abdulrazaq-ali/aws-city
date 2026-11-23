@@ -14,9 +14,12 @@ import { offlineReason } from "./logic";
 
 /**
  * The composer: one row that never crowds the panel. In the side panel, the "Do it in my console" switch above it
- * turns the prompt into the Console Copilot (the agent works in your open AWS console tab).
+ * turns the prompt into the Console Copilot (the agent works in your open AWS console tab). The switch stands where it's
+ * useful (`consoleHere`: the City tab), and wherever the page beside is an AWS console or the Copilot is on. The AI note
+ * folds into the composer: it shows while the box has focus or words in it (styles/08-chat.css), and the box always
+ * names it (aria-describedby), so a screen reader hears it too.
  */
-export function PromptBar({ layout }: { layout: Layout }) {
+export function PromptBar({ layout, consoleHere = true }: { layout: Layout; consoleHere?: boolean }) {
   const [text, setText] = useState("");
   const [inConsole, setInConsole] = useState(false);
   /** Counts sends; the Send icon re-mounts on each one so its little hop replays. */
@@ -36,12 +39,13 @@ export function PromptBar({ layout }: { layout: Layout }) {
     setText("");
     setSent((n) => n + 1);
   };
+  const showSwitch = layout === "panel" && (consoleHere || onConsole || inConsole || copilotOn);
   const consoleTip = onConsole
     ? "An agent clicks through your open AWS console tab and explains each step. It asks before changing anything."
     : "An agent clicks through your AWS console tab and explains each step. Open a console tab first.";
   return (
-    <>
-      {layout === "panel" && (
+    <div className="prompt-bar">
+      {showSwitch && (
         // A real switch: a name you can read, its state for screen readers, Space/Enter from the keyboard (a button).
         <button
           type="button"
@@ -64,6 +68,7 @@ export function PromptBar({ layout }: { layout: Layout }) {
         </p>
       )}
       {offline && <p className="composer-note">{offline}</p>}
+      {/* Above the box, so showing it never moves the box under the pointer. */}
       <AiNote id={noteId} />
       <form
         className={`composer ${inConsole ? "console-mode" : ""}`}
@@ -118,6 +123,6 @@ export function PromptBar({ layout }: { layout: Layout }) {
           </span>
         </button>
       </form>
-    </>
+    </div>
   );
 }

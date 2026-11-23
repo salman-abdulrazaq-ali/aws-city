@@ -1,6 +1,6 @@
 import { ClientsBoard } from '@/ui/clients/ClientsPanel';
 import { ClientDone, ClientTask } from '@/ui/clients/ClientTask';
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type UIEvent } from 'react';
 import { REGIONS } from '@/world/culture';
 import { bus } from '@/state/bus';
 import { openFindings, useCity } from '@/state/store';
@@ -63,6 +63,9 @@ const TABS: [Tab, IconName, string][] = [
 
 const labelOf = (t: Tab) => TABS.find(([id]) => id === t)![2];
 
+/** The side panel's map at its smallest (styles/01-layout.css): it shrinks there while the tab below is scrolled. */
+const STAGE_FLOOR = 150;
+
 /** After the city has arrived, the first-run tour waits this long at most for the `arrived` moment. */
 const TOUR_FALLBACK_MS = 900;
 
@@ -102,6 +105,8 @@ export function App({ layout }: { layout: Layout }) {
   const [jobsAt, setJobsAt] = useState('');
   const [learn, setLearn] = useState<'cards' | 'build' | 'sandbox'>('cards');
   const [place, setPlace] = useState(false);
+  /** Where the side panel's tab was scrolled down (view and tab): there the map steps back to its floor so the reading gets the room. */
+  const [readingAt, setReadingAt] = useState<string>();
   const [deployBadge, setDeployBadge] = useState(false);
   const [homeBadge, setHomeBadge] = useState(false);
   const due = useCity((s) => badgeCount(s.progress));
@@ -126,6 +131,19 @@ export function App({ layout }: { layout: Layout }) {
   // A saved tab that isn't earned (another player's, before the ladder, or hidden in Simple) shows City.
   const shownTab: Tab = earned.has(tab) || visiting ? tab : 'home';
   const tabs = TABS.filter(([t]) => earned.has(t) || t === shownTab);
+  // Only in the view and tab where it was scrolled.
+  const readingKey = `${view.name}:${shownTab}`;
+  const reading = layout === 'panel' && readingAt === readingKey;
+  /**
+   * Panel only: scrolled down far enough (and with enough below that the map's room is read, not just a jump back),
+   * the map shrinks to its floor; back at the top, it grows again.
+   */
+  const onBodyScroll = (e: UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (reading) return void (el.scrollTop <= 2 && setReadingAt(undefined));
+    const map = el.closest('.app')?.querySelector('.stage')?.getBoundingClientRect().height ?? 0;
+    if (el.scrollTop > 32 && el.scrollHeight - el.clientHeight > map - STAGE_FLOOR + 64) setReadingAt(readingKey);
+  };
   /** Tabs that just unlocked: a dot until they're opened. */
   const [fresh, setFresh] = useState<ReadonlySet<Tab>>(new Set());
   const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
@@ -146,10 +164,23 @@ export function App({ layout }: { layout: Layout }) {
     writePref(TAB_KEY, t);
     if (t === 'deploy') setDeployBadge(false);
     if (t === 'home') setHomeBadge(false);
-    // Every tab starts at its top, never half-scrolled.
+    // Every tab starts at its top, never half-scrolled (and the map comes back to its size).
     body.current?.scrollTo({ top: 0 });
+    setReadingAt(undefined);
   };
 
+
+  useEffect(
+    () =>
+      useCity.subscribe((s, p) => {
+        // Another view (an HQ's chat, a game, the world map) gives the map its size back.
+        if (s.view.name !== p.view.name) setReadingAt(undefined);
+        // Decorate clears the picked building: the side column goes back to the shift, never a "Pick a place" card
+        // waiting for one (during or after decorating).
+        if (s.build && !p.build) setPlace(false);
+      }),
+    [],
+  );
   // A building tapped (in the city or a list): its card opens in the City tab, in place of the shift. A "Walk to" opens
   // it when Kai gets there (src/state/walk.ts), not at the press.
   useEffect(() => bus.on('select', ({ id }) => !cardWaitsForKai(id) && setTab('info')), []);
@@ -259,18 +290,24 @@ export function App({ layout }: { layout: Layout }) {
 
   const badge = (t: Tab) => (t === 'deploy' && deployBadge) || (t === 'home' && homeBadge) || fresh.has(t);
   return (
-    <div className={`app app-${layout} stage-${stage} view-${view.name}${building ? ' building' : ''}`}>
+    <div
+      className={`app app-${layout} stage-${stage} view-${view.name}${building ? ' building' : ''}${reading ? ' reading' : ''}`}
+      // The panel's rows slid (reading, a bigger or smaller map): the city redraws at its new size now, not at Phaser's
+      // next half-second size check, so no black band shows under it.
+      onTransitionEnd={(e) => e.target === e.currentTarget && e.propertyName === 'grid-template-rows' && window.dispatchEvent(new Event('resize'))}
+    >
       <Hud layout={layout} />
       <div className="stage">
         <GameCanvas />
         {/* Not while a quest's celebration card is up: the first quest opens AWS news, and it arrives after the card. */}
-        {l.news && shows('news', prefs) && !celebrating && (view.name === 'city' || view.name === 'world') && <NewsTicker />}
+        {l.news && shows('news', prefs) && !celebrating && (view.name === 'city' || view.name === 'world') && <NewsTicker layout={layout} />}
         <Toasts />
         <CityAnnouncer />
         <SoundCaptions />
         <CarrierCard />
         <RequestCard />
-        <WorldIntro />
+        {/* The panel's map is short: Connie's card stands just under it (in the side column), never over the dots. */}
+        {layout === 'full' && <WorldIntro />}
         <Minimap layout={layout} />
         <MapCredit />
         {view.name === 'city' && <BuildDrawer />}
@@ -293,6 +330,7 @@ export function App({ layout }: { layout: Layout }) {
       </div>
       <aside className="side" ref={side}>
         <SyncNote />
+        {layout === 'panel' && <WorldIntro docked />}
         {view.name === 'interior' && view.districtId !== 'spheres' ? (
           <ChatPanel districtId={view.districtId} />
         ) : (
@@ -330,7 +368,7 @@ export function App({ layout }: { layout: Layout }) {
                 </button>
               ))}
             </div>
-            <div ref={body} className="tab-body" role="tabpanel" id="city-tabpanel" aria-labelledby={`tab-${shownTab}`} tabIndex={0}>
+            <div ref={body} className="tab-body" role="tabpanel" id="city-tabpanel" aria-labelledby={`tab-${shownTab}`} tabIndex={0} onScroll={layout === 'panel' ? onBodyScroll : undefined}>
               <ErrorBoundary what="This tab" resetKey={shownTab}>
               {shownTab === 'home' &&
                 (place ? (
@@ -368,7 +406,8 @@ export function App({ layout }: { layout: Layout }) {
               {shownTab === 'deploy' && <DeployPanel />}
               </ErrorBoundary>
             </div>
-            <PromptBar layout={layout} />
+            {/* The Copilot's switch stands on the City tab (and wherever a console page or the Copilot is on). */}
+            <PromptBar layout={layout} consoleHere={shownTab === 'home'} />
             <ErrorBoundary what="This card">
               <FindingCard openTab={setTab} />
             </ErrorBoundary>

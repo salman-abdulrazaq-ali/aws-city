@@ -38,6 +38,16 @@
   font-size: var(--fs-xl);
   line-height: 1;
 }
+/* The side panel's map is short (150–290 px): a toast takes less of it. One shows at a time (the store's queue), and
+   the news ticker steps aside for it there (src/ui/NewsTicker.tsx). */
+.app-panel .toast {
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4) var(--s-3) var(--s-5);
+  font-size: var(--fs-sm);
+}
+.app-panel .toast-icon {
+  font-size: var(--fs-lg);
+}
 /* countdown: a thin bar drains along the bottom */
 .toast::after {
   content: '';
@@ -105,7 +115,7 @@
 }
 .toast-detail {
   display: block;
-  margin-top: 2px;
+  margin-top: var(--s-1);
   font-weight: 600;
   font-size: var(--fs-sm, 0.85rem);
   color: var(--ink-soft, var(--ink));

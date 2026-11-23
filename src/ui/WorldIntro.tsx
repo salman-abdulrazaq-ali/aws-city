@@ -9,8 +9,9 @@ const CITY_PANEL_ID = 'city-tabpanel';
 /**
  * A first run opens on the world map: Connie says one line and offers the suggested Region (it pulses on the map),
  * so a new player never has to understand Regions before they can play. Gone once any Region is picked.
+ * `docked`: the side panel's map is short, so the card stands just under it (App.tsx) and never covers the dots.
  */
-export function WorldIntro() {
+export function WorldIntro({ docked = false }: { docked?: boolean }) {
   const onWorld = useCity((s) => s.view.name === 'world');
   const picked = useCity((s) => !!s.prefs.region);
   const enterRegion = useCity((s) => s.enterRegion);
@@ -27,7 +28,7 @@ export function WorldIntro() {
     });
   };
   return (
-    <div className="world-intro" role="region" aria-label="Where to start">
+    <div className={`world-intro${docked ? ' docked' : ''}`} role="region" aria-label="Where to start">
       <Portrait id="concierge" size={32} />
       <p>
         <b>Connie:</b> AWS is Amazon’s cloud: the computers that run much of the internet. Build a city and learn how it works. Every glowing dot is a place AWS runs. Pick one to build your city there!

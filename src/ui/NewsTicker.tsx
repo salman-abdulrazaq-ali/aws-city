@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { openDocs } from '@/app/runtime';
+import { openDocs, type Layout } from '@/app/runtime';
 import type { AwsIncident, AwsNewsItem } from '@/backend/contract';
 import { useCity } from '@/state/store';
 import { ago, incidentLine, plainIncidentLead, severityRank } from '@/world/incidents';
@@ -39,14 +39,17 @@ const prefersReducedMotion = () => typeof window.matchMedia === 'function' && wi
 /**
  * One slim line over the city: AWS's own status (Health Dashboard) and launches (What's New). Tapping an incident
  * opens its card; tapping a launch opens the announcement on aws.amazon.com. It pauses while hovered or focused.
+ * In the side panel's short map one thing sits over the top edge at a time: it steps aside while a toast shows (the
+ * toast takes its place) and comes back, on the same line, when the toast goes.
  */
-export function NewsTicker() {
+export function NewsTicker({ layout }: { layout?: Layout } = {}) {
   const health = useCity((s) => s.health);
   const news = useCity((s) => s.news);
   const open = useCity((s) => s.openIncident);
   const [at, setAt] = useState(0);
   const [paused, setPaused] = useState(false);
   const region = useCity((s) => s.cityRegion);
+  const toastUp = useCity((s) => layout === 'panel' && s.toasts.some((t) => !t.leaving));
   const items = tickerItems(health?.incidents ?? [], news?.items ?? [], Date.now(), region);
   const n = items.length;
 
@@ -57,7 +60,7 @@ export function NewsTicker() {
     return () => clearInterval(t);
   }, [n, paused]);
 
-  if (!n) return null;
+  if (!n || toastUp) return null;
   const item = items[at % n];
   const tone = item.kind === 'news' ? 'news' : item.incident.status === 'resolved' ? 'resolved' : item.incident.severity;
   const icon = item.kind === 'news' ? '🚀' : item.incident.status === 'resolved' ? '✅' : item.incident.severity === 'disruption' ? '⛈️' : item.incident.severity === 'degradation' ? '🌧️' : 'ℹ️';
