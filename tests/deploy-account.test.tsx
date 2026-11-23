@@ -52,8 +52,8 @@ describe('the Deploy tab’s account cards', () => {
   it('says when the console is signed in to another account than the linked one, with Switch role', () => {
     useCity.setState({ account: { linked: true, accountId: '047463438585', region: 'us-west-2' }, consoleAccount: '422929814205' });
     const { unmount } = render(<DeployPanel />);
-    expect(screen.getByRole('alert').textContent).toMatch(/console is signed in to account 4229-2981-4205, but the city is linked to 0474-6343-8585 \(US West \(Oregon\)\)/);
-    fireEvent.click(screen.getByRole('button', { name: 'Switch role into 0474-6343-8585' }));
+    expect(screen.getByRole('alert').textContent).toMatch(/console is signed in to account 4229-2981-4205, but the city is linked to AWSCity-8585 \(0474-6343-8585\) \(US West \(Oregon\)\)/);
+    fireEvent.click(screen.getByRole('button', { name: 'Switch role into AWSCity-8585 (0474-6343-8585)' }));
     expect(rt.openSwitchRole).toHaveBeenCalledOnce();
     unmount();
     // The same account, or one the city can't tell: nothing to say.
@@ -73,7 +73,7 @@ describe('the Deploy tab’s account cards', () => {
     const { unmount } = render(<DeployPanel />);
     fireEvent.click(screen.getByRole('button', { name: /Open the AWS console/ }));
     expect(rt.openConsole).toHaveBeenCalledOnce();
-    expect(screen.getByText(/Sign in as account 0474-6343-8585 with your own AWS sign-in/)).toBeTruthy();
+    expect(screen.getByText(/Sign in as account AWSCity-8585 \(0474-6343-8585\) with your own AWS sign-in/)).toBeTruthy();
     unmount();
     useCity.setState({ backendKind: 'mock' });
     render(<DeployPanel />);
@@ -186,7 +186,7 @@ describe('a linked account (v2.19)', () => {
   it('shows its Region by name, and "Use another Region or account" starts again with the Region picker', () => {
     useCity.setState({ account: { ...linked } });
     render(<DeployPanel />);
-    expect(screen.getByText('111122223333').closest('p')!.textContent).toMatch(/Europe \(Ireland\).*eu-west-1/);
+    expect(screen.getByText('AWSCity-3333 (1111-2222-3333)').closest('p')!.textContent).toMatch(/Europe \(Ireland\).*eu-west-1/);
     expect(screen.queryByLabelText('Region')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Use another Region or account' }));
     expect((screen.getByLabelText('Region') as HTMLSelectElement).value).toBe('eu-west-1');

@@ -2,7 +2,7 @@
 // contract change on the frontend breaks this build instead of silently drifting.
 export * from '../../src/backend/contract.js';
 export { DISTRICTS, SERVICES, districtById, matchText, serviceById, servicesIn, type DistrictId } from '../../src/world/taxonomy.js';
-export { placeFor } from '../../src/world/places.js';
+export { cardPlace, placeFor } from '../../src/world/places.js';
 export { isLive, LIVE_EVENTS } from '../../src/world/liveEvents.js';
 
 import type { Service as AwsService } from './state/model.js';

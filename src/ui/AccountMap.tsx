@@ -118,6 +118,8 @@ function DiagramView({ map, layout }: { map: Map; layout: Layout }) {
           Built by the city
         </button>
       </div>
+      {/* Seen 23 Nov 2026: a bucket made in the console wasn't under "Built by the city", and read as missing. */}
+      {builtOnly && d.nodes.length > 0 && <p className="muted small built-only-note">Only what the city built. What you made yourself (the console, CloudShell) is under Everything.</p>}
       {builtOnly && !d.nodes.length && (
         <p className="muted" role="status">
           <Plain text="Nothing built by the city yet. Ask an agent to build something (try “Create a bucket called photos-1”), then look again." />
