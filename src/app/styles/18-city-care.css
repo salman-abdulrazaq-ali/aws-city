@@ -237,6 +237,7 @@
   border: 1px dashed var(--line-strong);
 }
 .chip-link {
+  min-height: 24px; /* a 24 px target (SC 2.5.8): it measured 23 */
   padding: var(--s-1) var(--s-4);
   border: 1px solid var(--info);
   border-radius: var(--r-pill);

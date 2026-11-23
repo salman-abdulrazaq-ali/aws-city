@@ -174,7 +174,7 @@
   border-top: 3px solid var(--good);
 }
 .incident-icon {
-  font-size: 28px;
+  font-size: calc(var(--fs-md) * 28 / 13);
   line-height: 1;
 }
 .incident-card .finding-title {

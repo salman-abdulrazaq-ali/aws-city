@@ -59,7 +59,7 @@
 }
 .map-node-count {
   font-variant-numeric: tabular-nums;
-  color: var(--ink-soft); /* --muted is ~4:1 on --panel-hi; axe wants 4.5 */
+  color: var(--ink-soft); /* counts are data: a step brighter than the --muted label beside them */
 }
 .map-node-meta {
   display: flex;

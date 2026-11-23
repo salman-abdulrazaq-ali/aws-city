@@ -3,14 +3,14 @@
 .clients-card,
 .job-card {
   max-width: 560px;
-  gap: 8px;
+  gap: var(--s-4);
   padding: var(--s-4);
 }
 .job-card.job-wire {
   max-width: 760px;
 }
 .clients-emoji {
-  font-size: 24px;
+  font-size: calc(var(--fs-md) * 24 / 13);
   line-height: 1;
 }
 .clients-list {
@@ -19,16 +19,16 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--s-3);
 }
 .clients-row {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: var(--s-4);
+  padding: var(--s-4) var(--s-5);
   border: 1px solid var(--line);
-  border-radius: var(--r-md, 8px);
+  border-radius: var(--r-md);
   background: var(--panel-hi);
   color: var(--ink);
   text-align: left;
@@ -42,13 +42,13 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--s-1);
   min-width: 0;
 }
 .clients-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--s-4);
 }
 .clients-story {
   margin: 0;
@@ -57,7 +57,7 @@
 .clients-level {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--s-3);
 }
 .clients-pip {
   width: 14px;
@@ -73,31 +73,35 @@
   border-color: var(--gold);
 }
 .clients-goal {
-  margin: 4px 0 0;
+  margin: var(--s-2) 0 0;
 }
 .clients-all-done {
   margin: 0;
   color: var(--good-ink);
 }
 .clients-sources ul {
-  margin: 4px 0 0;
-  padding-left: 18px;
+  margin: var(--s-2) 0 0;
+  padding-left: var(--s-6);
   font-size: var(--fs-sm);
 }
 .clients-sources a {
   color: var(--info);
+}
+/* One link a row: rows far enough apart that each link is a 24 px target by spacing (SC 2.5.8). */
+.clients-sources li + li {
+  margin-top: var(--s-4);
 }
 
 /* "3 of 5": the level's jobs. */
 .jobs-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--s-4);
 }
 .jobs-track {
   flex: 1;
   height: 8px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: var(--sunken);
   border: 1px solid var(--line);
   overflow: hidden;
@@ -121,14 +125,14 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--s-2);
 }
 .job {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 8px;
+  gap: var(--s-4);
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--r-lg);
   background: var(--panel-hi);
   border: 1px solid var(--line);
 }
@@ -171,7 +175,7 @@
 .job-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--s-4);
 }
 .job-body > p,
 .job-why {
@@ -184,9 +188,9 @@
 .job-done {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
-  border-radius: 8px;
+  gap: var(--s-3);
+  padding: var(--s-4) var(--s-5);
+  border-radius: var(--r-lg);
   border: 1px solid var(--good);
   background: var(--sunken);
 }
@@ -196,7 +200,7 @@
 .job-click .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--s-3);
 }
 
 /* "Fix it": a settings checklist. */
@@ -206,16 +210,16 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--s-3);
 }
 .fix-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--r-lg);
   background: var(--panel-hi);
 }
 .fix-row.right {
@@ -229,7 +233,7 @@
 }
 .fix-pick {
   display: flex;
-  gap: 4px;
+  gap: var(--s-2);
 }
 .fix-pick .btn.on {
   background: var(--accent);
