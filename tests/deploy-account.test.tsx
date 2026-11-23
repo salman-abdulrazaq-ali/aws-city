@@ -75,6 +75,9 @@ describe('the Deploy tab’s account cards', () => {
     expect(card.textContent).toMatch(/Off/);
     expect(card.textContent).toMatch(/change only what the city built/);
     fireEvent.click(within(card).getByRole('button', { name: 'Turn on' }));
+    // The quickest way first: one command for CloudShell or a terminal (the console steps fold under it).
+    expect(within(card).getByText(/update-stack --region us-west-2 --stack-name AWSCity --use-previous-template/).textContent).toContain('AllowCleanup,ParameterValue=true');
+    expect(within(card).getByRole('button', { name: 'Copy the command' })).toBeTruthy();
     const steps = within(card).getByRole('list', { name: /Turn on/ });
     expect(steps.textContent).toMatch(/set AllowCleanup to true/);
     expect(steps.textContent).toMatch(/Use existing template/);

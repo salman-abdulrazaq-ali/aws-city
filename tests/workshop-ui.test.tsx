@@ -149,6 +149,7 @@ describe('for real', () => {
     expect(screen.getByText(/account verification is in progress/).textContent).toMatch(/your own terminal/);
     expect(screen.getByRole('button', { name: 'Ask AWS Support ↗' })).toBeTruthy();
     expect(screen.getByText(/--output text drops the JSON/)).toBeTruthy();
+    expect(screen.getByText(/In your own terminal instead\?/).textContent).toMatch(/export AWS_PROFILE=<your profile>/);
     expect([...document.querySelectorAll('.workshop-account .workshop-cmd')].map((c) => c.textContent)).toEqual(['aws sts get-caller-identity --query Account --output text']);
     expect(screen.getByRole('alert').textContent).toMatch(/signed in to account 4229-2981-4205/);
   });

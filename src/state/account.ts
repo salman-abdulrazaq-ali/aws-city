@@ -168,6 +168,29 @@ export const cleanupSteps = (on: boolean, newTemplate?: string) => [
 /** The template version that has AllowCleanup. */
 export const CLEANUP_ROLE_VERSION = 6;
 
+/**
+ * One command for CloudShell or a terminal signed in to the player's account: update the AWSCity stack with AllowCleanup
+ * on or off, then wait until it's done (asked for on 23 Nov 2026: "I wish it just does the job"). What the installed role
+ * already has keeps its value (UsePreviousValue: AllowFixes since v4, ConnectsPlayer since v5); a role older than v6
+ * gets the newer template, and one older than v5 the ConnectsPlayer name, without which there's no command (the
+ * console steps stay). Unknown version: nothing is assumed.
+ */
+export function cleanupCommand(a: { region?: string; roleVersion?: number; templateUrl?: string; fixes?: boolean }, on: boolean, label?: string): string | undefined {
+  if (!a.region || !/^[a-z]{2}(-[a-z]+)+-\d$/.test(a.region)) return undefined;
+  const v = a.roleVersion ?? 0;
+  if (v < CLEANUP_ROLE_VERSION && !a.templateUrl) return undefined;
+  if (v < 5 && !(label && /^[A-Za-z0-9 ._@*-]{1,64}$/.test(label))) return undefined;
+  const params = [
+    'ParameterKey=ExternalId,UsePreviousValue=true',
+    v >= 4 ? 'ParameterKey=AllowFixes,UsePreviousValue=true' : `ParameterKey=AllowFixes,ParameterValue=${a.fixes === true}`,
+    v >= 5 ? 'ParameterKey=ConnectsPlayer,UsePreviousValue=true' : `"ParameterKey=ConnectsPlayer,ParameterValue=${label}"`,
+    `ParameterKey=AllowCleanup,ParameterValue=${on}`,
+  ];
+  const template = v >= CLEANUP_ROLE_VERSION ? '--use-previous-template' : `--template-url ${a.templateUrl}`;
+  const where = `--region ${a.region} --stack-name AWSCity`;
+  return `aws cloudformation update-stack ${where} ${template} --capabilities CAPABILITY_NAMED_IAM --parameters ${params.join(' ')} && aws cloudformation wait stack-update-complete ${where}`;
+}
+
 /** Turning small fixes on for a stack made without them (AllowFixes=true); each fix is still approved one by one. */
 export const FIXES_ON_STEPS = [
   'In CloudFormation, open the AWSCity stack.',
