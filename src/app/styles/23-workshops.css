@@ -361,13 +361,14 @@
   border-color: var(--bad-line);
   color: var(--bad-ink);
 }
-/* "Show the CloudFormation" (src/ui/TemplateView.tsx). */
+/* "Show the CloudFormation" (src/ui/TemplateView.tsx): the one disclosure look ("For AWS learners", `.why summary`). */
 .template-view summary {
   cursor: pointer;
   min-height: 24px; /* WCAG 2.2 target size */
   padding-block: var(--s-2);
   box-sizing: border-box;
-  color: var(--info);
+  color: var(--ink-soft);
+  font-weight: 700;
   margin-top: var(--s-2);
 }
 .template-yaml {

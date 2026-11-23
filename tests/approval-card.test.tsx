@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
 // The approval card (Impeccable batch C, finding 3): where it writes first, one plain line per resource with its template
-// name second, one "For AWS learners" fold, a plain-text Approve, and waiting approvals above My builds' Take it down rows.
+// name second, one "For AWS learners" fold, a plain-text Approve, and waiting approvals above My builds' Take it down rows;
+// a demo fix card names the practice account too.
 import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+// The fix card's citizen portrait draws with Phaser: not under jsdom.
+vi.mock('@/ui/Portrait', () => ({ Portrait: () => <span data-testid="portrait" /> }));
 
 const { useCity } = await import('@/state/store');
 const { ChangeTarget, DeployPanel, plainType } = await import('@/ui/DeployPanel');
@@ -70,5 +74,32 @@ describe('the approval card in Deploy', () => {
     expect(headings.indexOf('Waiting for your OK')).toBeLessThan(headings.indexOf('My builds'));
     const settled = container.querySelector('.card.stack.complete')!;
     expect(card.compareDocumentPosition(settled) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+describe('a fix card in City care', () => {
+  it('names the practice account in the demo, like a build preview', async () => {
+    const { FindingCard } = await import('@/ui/FindingCard');
+    const { demoFindings } = await import('@/backend/mockAccount');
+    const f = demoFindings().find((x) => !!x.fix)!;
+    useCity.setState({
+      backendKind: 'mock',
+      account: { linked: true, accountId: '123456789012', region: 'us-west-2', fixes: true },
+      findings: { [f.id]: { ...f, seenAt: 1 } },
+      findingOpen: f.id,
+      deploys: {
+        'fix-1': {
+          deployId: 'fix-1',
+          findingId: f.id,
+          templateId: 'fix',
+          stackName: 'fix',
+          region: 'us-west-2',
+          status: 'preview',
+          changes: [{ action: 'Modify', logicalId: 'Bucket', resourceType: 'AWS::S3::Bucket' }],
+        },
+      },
+    });
+    const { container } = render(<FindingCard openTab={() => {}} />);
+    expect(container.querySelector('.finding-preview .change-target')!.textContent).toBe('Changes the practice account 1234-5678-9012 · us-west-2');
   });
 });

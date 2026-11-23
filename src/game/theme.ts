@@ -48,6 +48,12 @@ export const withAlpha = (c: ThemeColor, alpha: number) => `${CSS[c]}${Math.roun
 /** Text sizes on the canvas: small labels, body (bubbles), headings / rewards. */
 export const FONT_SIZE = { sm: '11px', md: '13px', lg: '16px' } as const;
 
+/**
+ * The boot screen's loading tip: the panel's small text size (`--fs-sm`, 12 px) in ink-soft on a solid graphite chip,
+ * so it reads on whatever the stage shows behind it (never small muted text straight on the stage).
+ */
+export const TIP_STYLE = { fontSize: '12px', color: CSS.inkSoft, backgroundColor: CSS.bg, padding: { x: 8, y: 4 } } as const;
+
 /** Every sign and tag on the map: ink on a translucent graphite chip. */
 export const LABEL_BG = withAlpha('bg', 0.85);
 

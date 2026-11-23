@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { CSS, TIP_STYLE } from '@/game/theme';
 
 const dir = path.resolve(__dirname, '../src/app/styles');
 const css = (f: string) => fs.readFileSync(path.join(dir, f), 'utf8');
@@ -29,10 +30,15 @@ describe('the style floor', () => {
         expect(contrast(muted, token(base, surface)!), `${muted} on ${surface}`).toBeGreaterThanOrEqual(4.5);
   });
 
+  // The HUD's rank chip in Decorate's panel shows only its icon (`font-size: 0`: its name stays its accessible name).
+  const EXEMPT: Record<string, RegExp> = { '26': /\.hud \.rank-chip \{\s*font-size: 0;\s*\}/ };
+
   it('font sizes come from the --fs-* tokens (or follow one), so the text-size setting reaches them', () => {
-    for (const prefix of ['00', '04', '10', '12', '15', '18', '21', '22', '23', '24', '25', '27', '29', '30']) {
+    for (const prefix of ['00', '02', '04', '10', '12', '15', '18', '20', '21', '22', '23', '24', '25', '26', '27', '29', '30']) {
       const f = file(prefix);
-      for (const [, value] of rules(css(f)).matchAll(/(?<![-\w])font-size:\s*([^;]+);/g))
+      const src = EXEMPT[prefix] ? rules(css(f)).replace(EXEMPT[prefix], '') : rules(css(f));
+      if (EXEMPT[prefix]) expect(src, `${f}: the exemption still matches`).not.toBe(rules(css(f)));
+      for (const [, value] of src.matchAll(/(?<![-\w])font-size:\s*([^;]+);/g))
         expect(/var\(--fs-|^[\d.]+em$|^inherit$/.test(value.trim()), `${f}: font-size: ${value}`).toBe(true);
     }
   });
@@ -40,6 +46,22 @@ describe('the style floor', () => {
   it('every disclosure row is at least 24 px tall', () => {
     const rule = /(?:^|\n)summary \{([^}]*)\}/.exec(rules(css('00-base.css')))?.[1] ?? '';
     expect(Number(/min-height:\s*(\d+)px/.exec(rule)?.[1])).toBeGreaterThanOrEqual(24);
+  });
+
+  it('disclosures share one look: ink-soft and bold (Show the CloudFormation, Deploy’s “What the role can do”)', () => {
+    for (const [f, selector] of [['23', '.template-view summary'], ['13', '.why summary']]) {
+      const body = rules(css(file(f))).split(`\n${selector} {`)[1]?.split('}')[0] ?? '';
+      expect(body, selector).toMatch(/color:\s*var\(--ink-soft\)/);
+      expect(body, selector).toMatch(/font-weight:\s*700/);
+    }
+  });
+
+  it('the loading tip reads at --fs-sm on a solid chip (BootScene)', () => {
+    expect(TIP_STYLE.fontSize).toBe(/--fs-sm:\s*(\d+px)/.exec(css('00-base.css'))![1]);
+    expect(TIP_STYLE.backgroundColor).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(contrast(TIP_STYLE.color, TIP_STYLE.backgroundColor)).toBeGreaterThanOrEqual(4.5);
+    expect(TIP_STYLE.color).not.toBe(CSS.muted);
+    expect(fs.readFileSync(path.resolve(__dirname, '../src/game/scenes/BootScene.ts'), 'utf8')).toMatch(/\.\.\.TIP_STYLE/);
   });
 
   it('the shared entrance starts readable (opacity 0.6 or more), however slowly the panel draws', () => {

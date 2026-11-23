@@ -1,6 +1,6 @@
 import { ruleById } from '@/world/citizens';
 import { WaReview } from './WaReview';
-import { ChangeTarget, CostNote } from './DeployPanel';
+import { ChangeTarget, CostNote, usePracticeAccount } from './DeployPanel';
 import { useEffect, useRef, useState } from 'react';
 import { decideDeploy, explainFinding, fixFinding, openDocs, wasExplained } from '@/app/runtime';
 import { bus } from '@/state/bus';
@@ -119,13 +119,14 @@ function Approve({ d, offline, preview }: { d: DeployView; offline?: string; pre
   useEffect(() => {
     if (mfaRequired) setSent(false);
   }, [mfaRequired]);
+  const practice = usePracticeAccount();
   const ok = !d.confirmText || typed === d.confirmText;
   const details = d.changes.filter((c) => c.resourceType === 'detail');
   const resources = d.changes.filter((c) => c.resourceType !== 'detail');
   return (
     <div className="finding-preview">
       <b>Check this change</b>
-      <ChangeTarget d={d} />
+      <ChangeTarget d={d} practice={practice} />
       {preview && (
         <p>
           <Plain text={preview} />

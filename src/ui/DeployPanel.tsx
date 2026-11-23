@@ -86,6 +86,9 @@ export const accountLabel = (id: string) => id.replace(/^(\d{4})(\d{4})(\d{4})$/
  * `practice`: the demo's linked practice account, for its previews (MockBackend sends no accountId); a real server's
  * preview always names its own.
  */
+/** The demo's previews carry no accountId: they name the practice account the player linked (the mock backend only). */
+export const usePracticeAccount = () => useCity((s) => (s.backendKind === 'mock' ? s.account.accountId : undefined));
+
 export function ChangeTarget({ d, practice }: { d: Pick<DeployView, 'accountId' | 'region'>; practice?: string }) {
   const id = d.accountId ?? practice;
   if (!id) return null;
@@ -1047,8 +1050,7 @@ function BuildPreview({ d, grouped, offline, deciding, onDecide }: {
 }) {
   const [typed, setTyped] = useState('');
   const kind = useCity((s) => s.backendKind);
-  // The demo's previews carry no accountId: they name the practice account the player linked.
-  const practice = useCity((s) => (kind === 'mock' ? s.account.accountId : undefined));
+  const practice = usePracticeAccount();
   const details = d.changes.filter((c) => c.resourceType === 'detail');
   const resources = d.changes.filter((c) => c.resourceType !== 'detail');
   const ok = !d.confirmText || typed.trim() === d.confirmText;
