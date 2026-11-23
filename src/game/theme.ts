@@ -12,7 +12,7 @@ export const CSS = {
   ink: '#e6e2d8',
   inkHi: '#fff8ee',
   inkSoft: '#c9c4b8',
-  muted: '#8b8f98',
+  muted: '#969aa3',
   accent: '#f0a63a',
   accentInk: '#2a1a04',
   good: '#5db39e',

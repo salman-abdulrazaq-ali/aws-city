@@ -44,6 +44,10 @@ const BAR_H = 34;
 /** The end card's keys wait this long, so a key still pressed when the round ended doesn't start the next one. */
 const END_KEYS_CALM_MS = 800;
 
+/** A round that didn't count: the end card's first line says what to do next time (the floor and its numbers follow). */
+export const nextTryLine = (short: boolean) =>
+  short ? `Next try: make at least ${RELAXED_MIN_CALLS} calls before Done to score a round` : 'Next try: take your time and make surer calls';
+
 /**
  * Shared chrome for mini-games: a title bar with score and timer chips, a hint strip, a draining timer
  * bar, pixel buttons, and a paper end screen with the lesson, stars and best score.
@@ -476,6 +480,17 @@ export abstract class MiniGame extends Phaser.Scene {
     const bestNow = Math.max(best, gate.ok ? paid : 0);
     const bestText = bestNow > 0 || gate.ok ? `best ${bestNow}` : short ? `${RELAXED_MIN_CALLS} calls to set a best` : `pass at ${gate.need}% to set a best`;
     const capNote = (str: string) => (notes.push(/[.!?]$/.test(str) ? str : `${str}.`), str);
+    if (!gate.ok) {
+      // A round that didn't count leads with what to do next, in ink; the floor and its numbers come second, calm.
+      const next = text(y, capNote(nextTryLine(short)), 16, PAL.paperInk);
+      items.push(next);
+      y += next.height + 4;
+      if (!short) {
+        const why = text(y, capNote(gateLine(gate, this.wrongWord, this.accuracyWord)), 13, '#92400e');
+        items.push(why);
+        y += why.height + 8;
+      } else y += 4;
+    }
     const score = text(y, `Score ${this.score}   ·   +${xp} ⭐${coins ? `  +${coins} coins` : ''}${weekly ? ' ⚡ weekly' : ''}   ·   ${bestText}`, 16, PAL.paperInk);
     items.push(score);
     y += score.height + 6;
@@ -494,11 +509,6 @@ export abstract class MiniGame extends Phaser.Scene {
       );
       items.push(cap);
       y += cap.height + 6;
-    }
-    if (!gate.ok) {
-      const why = text(y, capNote(short ? `Make at least ${RELAXED_MIN_CALLS} calls before Done to score a round` : gateLine(gate, this.wrongWord, this.accuracyWord)), 14, '#991b1b');
-      items.push(why);
-      y += why.height + 6;
     }
     // The building this game grows, and how far (src/state/growth.ts): the reason to play another round.
     const g = growthOf(useCity.getState().progress, this.serviceId, useCity.getState().cityRegion);

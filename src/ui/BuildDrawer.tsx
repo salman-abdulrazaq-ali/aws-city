@@ -1,5 +1,5 @@
 import { Coin, withCoins } from './icons';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { bus } from '@/state/bus';
 import { CATALOGUE, CATEGORIES, cityDecor, coinsToSpend, counterText, forSale, itemOfKind, lockedBecause, priceFor, type BuildCategory } from '@/state/buildmode';
 import { useCity, type BuildTool } from '@/state/store';
@@ -107,25 +107,22 @@ export function BuildDrawer() {
           Done
         </button>
       </div>
-      <div className="bd-tools" role="group" aria-label="Tool">
-        {TOOLS.map((t) => (
-          <button key={t.id} aria-pressed={build.tool === t.id} className={`chip ${build.tool === t.id ? 'on' : ''}`} onClick={() => buildTool(t.id)}>
-            {t.icon} {t.label}
-          </button>
-        ))}
-        <button className="chip" onClick={() => bus.emit('buildKey', { key: 'place' })} title="Use the tool on the highlighted tile (Enter)">
+      {/* The tool is a mode (one segmented switch); "Here" is an action on the highlighted tile, beside it. */}
+      <div className="bd-tools">
+        <div className="seg" role="group" aria-label="Tool">
+          {TOOLS.map((t) => (
+            <button key={t.id} aria-pressed={build.tool === t.id} onClick={() => buildTool(t.id)}>
+              <span aria-hidden="true">{t.icon}</span> {t.label}
+            </button>
+          ))}
+        </div>
+        <button className="btn tiny" onClick={() => bus.emit('buildKey', { key: 'place' })} title="Use the tool on the highlighted tile (Enter)">
           ✔ Here
         </button>
       </div>
       {build.tool === 'place' && (
         <>
-          <div className="bd-cats" role="group" aria-label="Categories">
-            {CATEGORIES.map((c) => (
-              <button key={c.id} className={`chip ${cat === c.id ? 'on' : ''}`} aria-pressed={cat === c.id} onClick={() => setCat(c.id)}>
-                {c.icon} {c.name}
-              </button>
-            ))}
-          </div>
+          <CategoryRow cat={cat} setCat={setCat} />
           <ul className="bd-palette" aria-label={CATEGORIES.find((c) => c.id === cat)?.name}>
             {CATALOGUE.filter((it) => it.category === cat).map((it) => {
               const locked = lockedBecause(progress, region, it);
@@ -170,5 +167,57 @@ export function BuildDrawer() {
       </p>
       <p className="bd-keys">Arrows move · Enter builds · R turns · Esc leaves · drag to look around</p>
     </section>
+  );
+}
+
+/**
+ * The categories as one row of chips that scrolls sideways (the side panel shows three or four at a time): the edge
+ * with more behind it fades, the picked one is scrolled into sight, and the mouse wheel scrolls the row.
+ */
+function CategoryRow({ cat, setCat }: { cat: BuildCategory; setCat: (c: BuildCategory) => void }) {
+  const row = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ left: false, right: false });
+  const measure = useCallback(() => {
+    const el = row.current;
+    if (!el) return;
+    const left = el.scrollLeft > 2;
+    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 2;
+    setEdges((e) => (e.left === left && e.right === right ? e : { left, right }));
+  }, []);
+  useEffect(() => {
+    const el = row.current;
+    if (!el) return;
+    measure();
+    if (typeof ResizeObserver !== 'function') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [measure]);
+  // The picked category in sight (the row only: scrollIntoView would move the stage too).
+  useEffect(() => {
+    const el = row.current;
+    const on = el?.querySelector<HTMLElement>('[aria-pressed="true"]');
+    if (el && on && (on.offsetLeft < el.scrollLeft || on.offsetLeft + on.offsetWidth > el.scrollLeft + el.clientWidth)) {
+      el.scrollLeft = Math.max(0, on.offsetLeft - (el.clientWidth - on.offsetWidth) / 2);
+    }
+  }, [cat]);
+  return (
+    <div
+      ref={row}
+      className={`chips bd-cats ${edges.left ? 'more-left' : ''} ${edges.right ? 'more-right' : ''}`}
+      role="group"
+      aria-label="Categories"
+      onScroll={measure}
+      onWheel={(e) => {
+        const el = row.current;
+        if (el && Math.abs(e.deltaY) > Math.abs(e.deltaX) && el.scrollWidth > el.clientWidth) el.scrollLeft += e.deltaY;
+      }}
+    >
+      {CATEGORIES.map((c) => (
+        <button key={c.id} className={`chip ${cat === c.id ? 'on' : ''}`} aria-pressed={cat === c.id} onClick={() => setCat(c.id)}>
+          <span aria-hidden="true">{c.icon}</span> {c.name}
+        </button>
+      ))}
+    </div>
   );
 }

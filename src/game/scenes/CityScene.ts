@@ -84,7 +84,7 @@ import { dayKey as juiceDay } from '@/state/progress';
 import { beam, pushIn, windowSpots, type WindowHost } from '../juice';
 import { MAX_ZOOM } from '../camera';
 import { setSeason, addSprite } from '../assets';
-import { SpeechBubble } from '../SpeechBubble';
+import { BUBBLE_HOLD_MAX_MS, setBubbleRules, SpeechBubble } from '../SpeechBubble';
 import { seasonFor, seasonParam, SEASON_TINT, type Season } from '@/world/seasons';
 import type { Combo } from '@/world/combos';
 import { SCALERS, SURGE_MS, SURGE_WORKERS, type CourierLeg } from '@/world/couriers';
@@ -277,6 +277,7 @@ export class CityScene extends Phaser.Scene {
     this.landscape = new Landscape(this, this.culler, this.plan);
     this.landscape.setTint(SEASON_TINT[this.season]);
     this.info = new SpeechBubble(this, 260).setDepth(INFO_BUBBLE_DEPTH);
+    this.bubbleRules(surfaceFor(this.scale.width));
     this.buildLayer = new BuildLayer(this, this.culler);
     buildProbe.spots = (kind, n) => this.buildSpots(kind, n);
     buildProbe.count = () => this.buildLayer?.count() ?? 0;
@@ -480,6 +481,7 @@ export class CityScene extends Phaser.Scene {
       onLearnSeen: (at) => this.courierHint(at),
       onSurface: (s) => {
         this.weather?.setSurface(s);
+        this.bubbleRules(s);
         this.citizens?.trim(this.citizenTarget());
         this.citizens?.ensure(this.citizenTarget());
       },
@@ -939,9 +941,11 @@ export class CityScene extends Phaser.Scene {
       this.buildLayer?.hideGhost();
       this.buildLayer?.showFree(undefined);
       if (prev.build?.moving) this.syncBuild(s.progress);
+      if (prev.build) this.syncLabels();
       return;
     }
     if (!prev.build) {
+      this.syncLabels();
       // Building starts on the free ground nearest Kai (the Town Square's lawn, or a lot): never over water. Close
       // enough to see a bench (zoom 2 at least), the drawer under it.
       const me = this.player.tile;
@@ -1743,30 +1747,77 @@ export class CityScene extends Phaser.Scene {
    * the most urgent one's "!" tag (the rest from zoom 2, or on the building the player is looking at).
    * From zoom 2 (or hovered): landmark names, and the Well-Architected citizens' first names (their pillar on hover).
    * With map details on: AZ IDs and counts, the network label, link notes, distance signs (RegionOverlay, Landscape)
-   * and the "? N more" signs (else on hover of their district). Signs that would overlap give way, most important first,
-   * and the "E · Visit X" hint stands in for its landmark's sign.
+   * and the "? N more" signs (else on hover of their district). Signs that would overlap once slid into view give way
+   * (placeSigns: the picked building, then the nearest the middle), the "E · Visit X" hint stands in for its landmark's
+   * sign, and while decorating no building names show.
    */
   private syncLabels() {
     const zoom = this.cameras.main.zoom;
     const all = zoom >= 2;
+    // While decorating, the map is the player's canvas: no building names, walkers' tags or "? N more" (the locked
+    // districts' signs stay: nothing can be built there).
+    const building = !!useCity.getState().build;
     const selected = useCity.getState().selected;
     const must = (id: string) => id === selected || id === this.focusedId || id === this.hoveredId;
-    const want = [...this.landmarks].filter(([id]) => id !== this.hintLandmark && (all || must(id)));
-    for (const [id, lm] of this.landmarks) lm.showSign(want.some(([w]) => w === id));
-    if (want.length > 1) {
-      // Most important first: selected / focused / hovered, then the highest tier, then the nearest the front.
-      const order = [...want].sort(([a, la], [b, lb]) => Number(must(b)) - Number(must(a)) || lb.spec.tier - la.spec.tier || lb.img.y - la.img.y);
-      const keep = nonOverlapping(order, ([, lm]) => lm.signBounds(), 2 / zoom);
-      for (const item of want) if (!keep.has(item)) item[1].showSign(false);
-    }
-    this.patrols?.setTagsShown(all);
+    const want = building ? [] : [...this.landmarks.keys()].filter((id) => id !== this.hintLandmark && (all || must(id)));
+    this.labelWant.landmarks = new Set(want);
+    this.patrols?.setTagsShown(all && !building);
     this.markers?.setTagsShown(all, must);
-    this.resources?.setMoreShown(all || this.details);
+    this.resources?.setMoreShown((all || this.details) && !building);
     const gate = this.plan.globalLandmarks.some((l) => this.landmarks.has(l.id) && must(l.id));
-    this.gateSign?.setVisible(all || gate || this.gateHover);
+    this.labelWant.gate = !building && (all || gate || this.gateHover);
     // "? N more": only where the player is looking (their district hovered), or with map details on.
     const looking = this.hoveredId ? this.districtOf(this.hoveredId) : undefined;
-    for (const [where, sign] of this.unknownSigns) sign.setVisible(this.details || where === looking || where === this.hoveredSign);
+    this.labelWant.unknown = new Set(building ? [] : [...this.unknownSigns.keys()].filter((where) => this.details || where === looking || where === this.hoveredSign));
+    // Shown at once; where each one stands, and which give way, is the next frame's (placeSigns).
+    for (const [id, lm] of this.landmarks) lm.showSign(this.labelWant.landmarks.has(id));
+    this.gateSign?.setVisible(this.labelWant.gate);
+    for (const [where, sign] of this.unknownSigns) sign.setVisible(this.labelWant.unknown.has(where));
+    this.labelKey = '';
+  }
+
+  /** What the label budget shows (syncLabels); placeSigns hides the ones that would overlap once slid into view. */
+  private labelWant = { landmarks: new Set<string>(), unknown: new Set<string>(), gate: false };
+  /** The view (and budget) the signs were last placed for: placed again only when either changes. */
+  private labelKey = '';
+
+  /**
+   * Slides every sign the budget shows into view, then lets overlapping ones give way: the picked building (selected,
+   * focused, hovered) first, then the nearest the middle of the view, so a sign pulled in from a building off-screen
+   * never sits on one standing on its own building. Landmark names, the gate, the locked districts and "? N more".
+   */
+  private placeSigns(view: Phaser.Geom.Rectangle, ui: number, inset: number) {
+    const selected = useCity.getState().selected;
+    const must = (id: string) => id === selected || id === this.focusedId || id === this.hoveredId;
+    const signs: { must: boolean; at: Pt; bounds: () => Phaser.Geom.Rectangle | undefined; hide: () => void }[] = [];
+    for (const [id, lm] of this.landmarks) {
+      const on = this.labelWant.landmarks.has(id);
+      lm.showSign(on);
+      if (!on) continue;
+      lm.keepInView(view, inset);
+      // The service's 16 px icon stands on the sign's middle (Landmark.placeExtras): it takes room too.
+      const bounds = () => {
+        const b = lm.signBounds();
+        if (!b || !lm.spec.icon) return b;
+        const x = Math.min(b.x, b.centerX - 8);
+        return new Phaser.Geom.Rectangle(x, b.y - 17, Math.max(b.right, b.centerX + 8) - x, b.height + 17);
+      };
+      signs.push({ must: must(id), at: { x: lm.img.x, y: lm.img.y }, bounds, hide: () => lm.showSign(false) });
+    }
+    const text = (t: Phaser.GameObjects.Text, at: Pt | undefined, on: boolean, picked = false) => {
+      t.setVisible(on);
+      if (!on || !at) return;
+      keepTextInView(t, at, view, ui, inset);
+      signs.push({ must: picked, at, bounds: () => t.getBounds(), hide: () => t.setVisible(false) });
+    };
+    if (this.gateSign) text(this.gateSign, this.gateAnchor, this.labelWant.gate, this.gateHover);
+    for (const t of this.plotSigns.values()) text(t, this.signAnchors.get(t), true);
+    for (const [where, t] of this.unknownSigns) text(t, this.signAnchors.get(t), this.labelWant.unknown.has(where), where === this.hoveredSign);
+    if (signs.length < 2) return;
+    const d2 = (p: Pt) => (p.x - view.centerX) ** 2 + (p.y - view.centerY) ** 2;
+    signs.sort((a, b) => Number(b.must) - Number(a.must) || d2(a.at) - d2(b.at));
+    const keep = nonOverlapping(signs, (s) => s.bounds(), 2 / this.cameras.main.zoom);
+    for (const s of signs) if (!keep.has(s)) s.hide();
   }
 
   /** The plot a landmark stands in, as the "? N more" signs key it: a district id, or 'square' for the Town Square. */
@@ -1780,13 +1831,28 @@ export class CityScene extends Phaser.Scene {
   private keepLabelsInView(view: Phaser.Geom.Rectangle, ui: number, inset: number) {
     this.region?.keepInView(view, inset);
     this.landscape?.keepInView(view, inset);
-    for (const lm of this.landmarks.values()) lm.keepInView(view, inset);
     this.drill?.keepInView(view, inset);
+    // The view moved or the budget changed: place the signs again and let the overlapping ones give way.
+    const key = `${Math.round(view.x)},${Math.round(view.y)},${Math.round(view.width)},${Math.round(view.height)},${inset},${ui}`;
+    if (key !== this.labelKey) {
+      this.labelKey = key;
+      return this.placeSigns(view, ui, inset);
+    }
+    // Still: the shown ones keep in view (a sign's text can grow on hover, a bounce ends).
+    for (const lm of this.landmarks.values()) lm.keepInView(view, inset);
     if (this.gateSign && this.gateAnchor) keepTextInView(this.gateSign, this.gateAnchor, view, ui, inset);
     for (const t of [...this.plotSigns.values(), ...this.unknownSigns.values()]) {
       const a = this.signAnchors.get(t);
       if (a) keepTextInView(t, a, view, ui, inset);
     }
+  }
+
+  /**
+   * How bubbles share the map on this surface (src/game/SpeechBubble.ts): the side panel's ~290 px map holds one at a
+   * time and none for long; the tab's wide map lets several stand, a little longer.
+   */
+  private bubbleRules(surface: 'panel' | 'tab') {
+    setBubbleRules(this, { solo: surface === 'panel', maxHoldMs: BUBBLE_HOLD_MAX_MS[surface] });
   }
 
   /** A level-up bubble, unless another one is still up (that one goes to the feed only): never a flood of six. */
@@ -1935,7 +2001,7 @@ export class CityScene extends Phaser.Scene {
         // Agents talking among themselves with no task of yours running are ambient: a bubble only with chatter on.
         const ambient = e.to !== 'user' && !taskRunning(useCity.getState());
         // Only a line to the player blips: agents talking among themselves are seen, not heard.
-        from.say(firstLine(e.text), { caption: `→ ${to}`, priority: ambient ? 'ambient' : 'normal', silent: e.to !== 'user' });
+        from.say(firstLine(e.text), { caption: `to ${to}`, priority: ambient ? 'ambient' : 'normal', silent: e.to !== 'user' });
         const a = this.agentTile(e.from);
         const b = this.agentTile(e.to);
         // A bright packet is a real message (work); chatter gets none (the dim baseline packets are the ambience).

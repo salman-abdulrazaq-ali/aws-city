@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, type CSSProperties, type KeyboardEvent } from 'react';
 import { isFilled, shortName, slotName, slotsOf, type Placements, type Slot } from '@/learning/diagram';
 import { reducedMotion } from '@/game/motion';
 import type { DiagramEdge, DiagramGroup, DiagramNode, Puzzle } from '@/world/content';
@@ -16,13 +16,13 @@ const GROUP_COLOR: Record<DiagramGroup['kind'], string> = {
   public: '#7aa116',
   private: '#00a4a6',
   edge: '#8c4fff',
-  generic: '#8b8f98',
+  generic: '#969aa3',
 };
 const DASHED = new Set<DiagramGroup['kind']>(['region', 'az', 'edge', 'generic']);
 
 export const serviceColor = (id?: string) => {
   const d = id ? districtById(serviceById(id)?.districtId ?? '') : undefined;
-  return d ? hexColor(d.color) : '#8b8f98';
+  return d ? hexColor(d.color) : '#969aa3';
 };
 const cityLabel = (s: string) => s.replace('{cityRegion}', REGIONS.cityRegion);
 
@@ -121,7 +121,9 @@ export function DiagramBoard({ puzzle, placements, edges, armed, hinted, rejecte
   const pct = (v: number, of: number) => `${(v / of) * 100}%`;
 
   return (
-    <div className="diagram" style={{ aspectRatio: `${w} / ${h}`, minWidth: `${d.cols * 62}px` }}>
+    // Never drawn smaller than its natural size times the text size, so its 11-unit labels read at --fs-xs or more
+    // (17-diagram.css; the column scrolls sideways for a wide one, the big board draws it larger).
+    <div className="diagram" style={{ aspectRatio: `${w} / ${h}`, '--dw': w } as CSSProperties}>
       <svg viewBox={`0 0 ${w} ${h}`} shapeRendering="crispEdges" role="img" aria-label={`Architecture diagram: ${puzzle.title}`}>
         {d.groups.map((g) => (
           <Group key={g.id} d={d} g={g} filled={g.service ? placements[g.id] : undefined} />
@@ -231,11 +233,12 @@ function Node({ d, n, placements, required }: { d: Puzzle['diagram'] & object; n
   const x = c.x - size / 2;
   const y = c.y - size / 2;
   const svc = n.service ? placements[n.id] : n.mirrorOf ? placements[n.mirrorOf] : undefined;
-  const lines = twoLines(n.role);
+  // 11-unit labels: lines of ten letters or so fit the 72-unit cell, and two fit under the box.
+  const lines = twoLines(n.role, 10);
   const caption = !n.attachTo && (
-    <text className="node-label" x={c.x} y={c.y + size / 2 + 9} textAnchor="middle">
+    <text className="node-label" x={c.x} y={c.y + size / 2 + 11} textAnchor="middle">
       {lines.map((l, i) => (
-        <tspan key={i} x={c.x} dy={i ? 9 : 0}>
+        <tspan key={i} x={c.x} dy={i ? 11 : 0}>
           {l}
         </tspan>
       ))}
