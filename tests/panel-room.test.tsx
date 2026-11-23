@@ -124,3 +124,15 @@ describe('the first screen', () => {
     expect(app).toMatch(/layout === 'panel' && <WorldIntro docked \/>/);
   });
 });
+
+// perf.md plan B: city.html under ~420 px gave the map 2 px beside the 400 px panel (its canvas 0 wide, which Chromium
+// then draws once a second). jsdom can't lay a grid out, so this reads the rule: under 720 px the tab stacks like the panel.
+describe('the tab in a narrow window', () => {
+  it('stacks the map above the panel instead of squeezing it to nothing', () => {
+    const css = readFileSync('src/app/styles/01-layout.css', 'utf8');
+    const narrow = css.slice(css.indexOf('@media (max-width: 719px)'));
+    expect(narrow.length).toBeGreaterThan(0);
+    expect(narrow).toMatch(/\.app-full \{[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*grid-template-rows: auto minmax\(220px, 45%\) minmax\(0, 1fr\);[^}]*grid-template-areas: 'hud' 'stage' 'side';/);
+    expect(narrow).toMatch(/\.app-full\.view-game \.side \{\s*display: none;/);
+  });
+});

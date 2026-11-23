@@ -6,13 +6,16 @@ import type { Tile } from '@/world/layout';
 import { Agent, type AgentWorld } from './Agent';
 import { crowdSheet } from './assets';
 import { click } from './audio';
+import { Stillness, STILL_TIME } from './stillness';
 
 /** At most this many visiting Mayors walk at once (tab / side panel). */
 export const VISITOR_CAP = { tab: 4, panel: 2 } as const;
 
+/** Under reduced motion visiting Mayors stand where they are (Stillness), still tappable. */
 export class Visitors {
   readonly list: Agent[] = [];
   private names: string[] = [];
+  private calm = new Stillness();
 
   constructor(
     private scene: Phaser.Scene,
@@ -49,7 +52,10 @@ export class Visitors {
   }
 
   update(time: number, dt: number) {
-    for (const v of this.list) v.update(time, dt);
+    const still = this.calm.check(time, () => {
+      for (const v of this.list) v.goTo(v.tile);
+    });
+    for (const v of this.list) v.update(still ? STILL_TIME : time, dt);
   }
 
   setUiScale(s: number) {

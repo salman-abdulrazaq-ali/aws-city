@@ -131,6 +131,9 @@ export function Minimap({ layout }: { layout: Layout }) {
     bus.emit('panTo', { x: Math.round(p.x), y: Math.round(p.y) });
   };
   const city = state?.plan.city;
+  // The box waits for the city's first answer: while a city is still being built there's nothing to draw, and an empty
+  // dark box would stand over the sea for a second (the first run's dive).
+  if (!state) return toggle;
   return (
     <>
       {toggle}

@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import type { Tile } from '@/world/layout';
 import { Agent, type AgentWorld } from './Agent';
 import { crowdSheet, hasAnim } from './assets';
+import { Stillness } from './stillness';
 
 /** A discovered service's place in the city: where its workers clock in, and the services it works with. */
 export interface WorkerPost {
@@ -22,12 +23,14 @@ const DWELL_MS = 6000;
  * Each discovered service's workers, dressed as its agent (the crowd-size copy of its sheet): they walk between their
  * own building and the ones their service works with (Lambda ⇄ API Gateway, DynamoDB ⇄ Lambda…), so the crowd shows
  * how AWS fits together. Tapping one calls `onTap` (the scene opens the building and the worker shares a tip).
- * Movement is rule-driven: no model call ever comes from walking.
+ * Movement is rule-driven: no model call ever comes from walking. Under reduced motion they wait where they stand (at
+ * their building, or wherever the setting found them) and run no errands, still tappable.
  */
 export class Workers {
   readonly list: Agent[] = [];
   private posts = new Map<Agent, WorkerPost>();
   private nextErrand = new Map<Agent, number>();
+  private calm = new Stillness();
 
   constructor(
     private scene: Phaser.Scene,
@@ -88,7 +91,7 @@ export class Workers {
         wanders: false,
       });
       w.onClick(() => this.onTap(serviceId, w));
-      w.emote('jump', 900);
+      if (!this.calm.on) w.emote('jump', 900);
       this.list.push(w);
       this.posts.set(w, post);
       this.nextErrand.set(w, now + 1000);
@@ -108,11 +111,20 @@ export class Workers {
     for (const w of [...this.until.keys()]) this.drop(w);
   }
 
+  /** Reduced motion turned on: every worker stops where it stands, its errand dropped. */
+  private park() {
+    for (const w of this.list) {
+      w.goTo(w.tile);
+      w.pin(false);
+    }
+  }
+
   update(time: number, dt: number) {
+    const still = this.calm.check(time, () => this.park());
     for (const [w, t] of [...this.until]) if (time >= t && !w.isBusy) this.drop(w);
     for (const w of this.list) {
       w.update(time, dt);
-      if (w.isBusy || time < (this.nextErrand.get(w) ?? 0)) continue;
+      if (still || w.isBusy || time < (this.nextErrand.get(w) ?? 0)) continue;
       const post = this.posts.get(w)!;
       // Errands alternate: out to a partner service, then back to their own building.
       const atHome = Math.abs(w.gx - post.workSpot.x) + Math.abs(w.gy - post.workSpot.y) <= 1;
