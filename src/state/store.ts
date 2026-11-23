@@ -1386,7 +1386,7 @@ export const useCity = create<CityState>()((set, get) => ({
             ...s.deploys,
             [e.deployId]: { deployId: e.deployId, templateId: e.templateId, stackName: e.stackName, region: e.region, accountId: e.accountId, ...(e.taskId ? { taskId: e.taskId } : {}), changes: e.changes, costNote: e.costNote, status: 'preview', ...care },
           },
-          // The Deploy tab brings a new approval up and focuses Approve when it next shows (a fix is approved on its finding's card).
+          // The Deploy tab brings a new approval up and focuses its title (never Approve) when it next shows (a fix is approved on its finding's card).
           ...(e.findingId ? {} : { deployFocus: e.deployId }),
         });
         if (e.findingId) get().noteCare(e.findingId);

@@ -1,8 +1,9 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { openDocs, type Layout } from '@/app/runtime';
 import type { InventoryItem } from '@/backend/contract';
+import { regionName } from '@/state/account';
 import { useCity } from '@/state/store';
-import { monthName } from '@/world/accountCost';
+import { dollars, monthName } from '@/world/accountCost';
 import { accountDiagram, totalLine } from '@/world/accountDiagram';
 import { accountMap, itemLine, type AccountMap as Map, type MapNode } from '@/world/accountMap';
 import { layoutArch } from '@/world/archDiagram';
@@ -17,8 +18,6 @@ import { Plain } from './Term';
 import { useDialog } from './useDialog';
 
 const ITEMS_SHOWN = 12;
-
-const money = (n: number, currency: string) => `${currency === 'USD' ? '$' : `${currency} `}${n.toFixed(2)}`;
 
 /** What the listing saw that the city has no building for, by name (the types read like "guardduty:detector"). */
 function UnmappedList({ items }: { items: InventoryItem[] }) {
@@ -47,7 +46,7 @@ function Node({ node, currency }: { node: MapNode; currency?: string }) {
       </button>
       {(node.cost !== undefined || node.rates.length > 0) && (
         <div className="map-node-meta">
-          {node.cost !== undefined && currency && <span>💲 {money(node.cost, currency)} this month</span>}
+          {node.cost !== undefined && currency && <span>💲 {dollars(node.cost, currency)} this month</span>}
           {node.rates.map((r) => (
             <span key={r.label} className={r.perMin > 0 ? 'live' : ''}>
               {r.perMin > 0 ? '● ' : ''}
@@ -103,6 +102,12 @@ function DiagramView({ map, layout }: { map: Map; layout: Layout }) {
   const nodeItems = node ? (builtOnly ? node.items.filter((i) => i.managedByGame) : node.items) : [];
   const unmappedPicked = picked === 'unmapped' && map.unmappedItems.length > 0;
   const pickedLinks = d.links.filter((l) => l.title && (l.from === picked || l.to === picked));
+  // What a picked box shows sits below the drawing and the legend, often off-screen in the side panel: bring it into
+  // view (focus stays on the box, so the arrow keys still move between boxes).
+  const pickedRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (picked) pickedRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [picked]);
   return (
     <div className="arch-view">
       <div className="seg" role="group" aria-label="What to draw">
@@ -114,7 +119,7 @@ function DiagramView({ map, layout }: { map: Map; layout: Layout }) {
         </button>
       </div>
       {builtOnly && !d.nodes.length && (
-        <p className="muted">
+        <p className="muted" role="status">
           <Plain text="Nothing built by the city yet. Ask an agent to build something (try “Create a bucket called photos-1”), then look again." />
         </p>
       )}
@@ -126,7 +131,7 @@ function DiagramView({ map, layout }: { map: Map; layout: Layout }) {
       {d.nodes.length > 0 && (
         <ArchDiagram
           layout={drawn}
-          label={builtOnly ? `Diagram of what the city built in ${map.region}` : `Diagram of your AWS services in ${map.region}`}
+          label={builtOnly ? `Diagram of what the city built in ${regionName(map.region)}` : `Diagram of your AWS services in ${regionName(map.region)}`}
           selected={picked}
           onSelect={(id) => setPicked((p) => (p === id ? undefined : id))}
         />
@@ -148,13 +153,14 @@ function DiagramView({ map, layout }: { map: Map; layout: Layout }) {
         </li>
       </ul>
       {node && (
-        <section className="arch-picked" aria-label={node.name}>
+        <section ref={pickedRef} className="arch-picked" aria-label={node.name}>
           <h4>
-            <AwsIcon serviceId={node.serviceId} size={20} /> {node.name} <span className="muted small">×{node.count}</span>
+            {/* Under "Built by the city", what the city built: the same number as the box's badge. */}
+            <AwsIcon serviceId={node.serviceId} size={20} /> {node.name} <span className="muted small">×{builtOnly ? nodeItems.length : node.count}</span>
           </h4>
           {node.cost !== undefined && d.total && (
             <p className="small">
-              {money(node.cost, d.total.currency)} so far this month (AWS’s estimate, all Regions).
+              {dollars(node.cost, d.total.currency)} so far this month (AWS’s estimate, all Regions).
             </p>
           )}
           {node.rates.map((r) => (
@@ -182,7 +188,7 @@ function DiagramView({ map, layout }: { map: Map; layout: Layout }) {
         </section>
       )}
       {unmappedPicked && (
-        <section className="arch-picked" aria-label="No building yet">
+        <section ref={pickedRef} className="arch-picked" aria-label="No building yet">
           <h4>
             No building yet <span className="muted small">×{map.unmapped}</span>
           </h4>
@@ -279,7 +285,7 @@ export function AccountMap({ layout = 'full' }: { layout?: Layout }) {
             <b id="account-map-title">My AWS, live</b>
             <span className="muted">
               {account.accountId ? `Account ${accountLabel(account.accountId)} · ` : ''}
-              {region}
+              {regionName(region)} ({region})
             </span>
           </div>
           <button ref={closeBtn} className="btn ghost tiny" onClick={close} aria-label="Close the map">
@@ -292,7 +298,7 @@ export function AccountMap({ layout = 'full' }: { layout?: Layout }) {
           <FlowLine />
           {map.total && view === 'services' && (
             <p className="map-total">
-              💲 <b>{money(map.total.amount, map.total.currency)}</b> so far in {monthName(map.total.month)} (all Regions, estimated)
+              💲 <b>{dollars(map.total.amount, map.total.currency)}</b> so far in {monthName(map.total.month)} (all Regions, estimated)
             </p>
           )}
         </div>
@@ -311,7 +317,7 @@ export function AccountMap({ layout = 'full' }: { layout?: Layout }) {
           <p className="muted">Reading your account… (it’s read when you link it, then every few minutes).</p>
         ) : map.empty ? (
           <p>
-            <Plain text={`Nothing in ${region} yet. Ask an agent to build something (try “Create a bucket called photos-1”), then look again.`} />
+            <Plain text={`Nothing in ${regionName(region)} yet. Ask an agent to build something (try “Create a bucket called photos-1”), then look again.`} />
           </p>
         ) : view === 'diagram' ? (
           <DiagramView map={map} layout={layout} />
@@ -378,7 +384,7 @@ export function AccountMap({ layout = 'full' }: { layout?: Layout }) {
 
             {map.elsewhere.length > 0 && (
               <p className="muted small">
-                Also in your account: {map.elsewhere.map((e) => `${e.count} in ${e.region}`).join(', ')} (each Region is its own city on the world map).
+                Also in your account: {map.elsewhere.map((e) => `${e.count} in ${regionName(e.region)}`).join(', ')} (each Region is its own city on the world map).
               </p>
             )}
           </>

@@ -4,6 +4,7 @@ import type { Progress } from '@/backend/contract';
 import { redact } from '@/console/risk';
 import { explainError, type TerminalError } from '@/learning/terminal';
 import { stepReward, workshopStatus } from '@/learning/workshopRewards';
+import { regionName } from '@/state/account';
 import { bus } from '@/state/bus';
 import { growthLine, growthOf } from '@/state/growth';
 import { levelOf } from '@/state/mastery';
@@ -93,7 +94,15 @@ function ModeIntro({ mode, demo, names }: { mode: Mode; demo: boolean; names: Re
     );
   return (
     <p className="muted small workshop-intro" role="note">
-      ☁️ Run each command in AWS CloudShell, then let the city check your account (read-only).{same} Region: {account.region ?? 'the one your console shows'}.
+      ☁️ Run each command in AWS CloudShell, then let the city check your account (read-only).{same} Region:{' '}
+      {account.region ? (
+        <>
+          {regionName(account.region)} <span className="muted">({account.region})</span>
+        </>
+      ) : (
+        'the one your console shows'
+      )}
+      .
       {!account.linked && ' Link your account in the Deploy tab first, so the city can look.'}
     </p>
   );
@@ -227,8 +236,10 @@ function StepView(props: {
   // The check reads only the name it looks for (the table, the bucket): the form asks for that one, filled in already.
   const asks = isChecked(step) ? [step.verify.value] : [];
   // For real, the Region is the linked account's (the city checks that Region); every other name is typed once, below.
+  // Before the account says its Region (not linked yet, or its status still on the way), the Region gets a box too:
+  // otherwise Copy waited for a <region> there was nowhere to type.
   const linkedRegion = useCity((s) => s.account.region);
-  const typed = placeholdersIn(step.cli).filter((n) => n !== 'region');
+  const typed = placeholdersIn(step.cli).filter((n) => n !== 'region' || !linkedRegion);
   const [form, setForm] = useState<Record<string, string>>(() => Object.fromEntries([...new Set([...typed, ...asks])].map((n) => [n, names[n] ?? ''])));
   const [copied, copyText] = useCopy();
   const remember = (patch: { names?: Record<string, string>; line?: string }) => useCity.getState().rememberWorkshop(w.id, patch);
@@ -278,8 +289,8 @@ function StepView(props: {
         <div className="workshop-names">
           {typed.map((n) => (
             <label key={n}>
-              <span className="label">{n === 'bucket' || n === 'table' || n === 'function' ? `Your ${n} name` : `Your ${n}`}</span>
-              <input value={form[n] ?? ''} onChange={(e) => setForm((v) => ({ ...v, [n]: e.target.value }))} spellCheck={false} autoCapitalize="off" placeholder={n} />
+              <span className="label">{n === 'bucket' || n === 'table' || n === 'function' ? `Your ${n} name` : n === 'region' ? 'Your Region code' : `Your ${n}`}</span>
+              <input value={form[n] ?? ''} onChange={(e) => setForm((v) => ({ ...v, [n]: e.target.value }))} spellCheck={false} autoCapitalize="off" placeholder={n === 'region' ? 'us-west-2' : n} />
             </label>
           ))}
         </div>

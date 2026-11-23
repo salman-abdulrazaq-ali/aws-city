@@ -1,6 +1,7 @@
 import archJson from '../../shared/city-architecture.json' with { type: 'json' };
 import { dollars } from './accountCost';
 import type { ArchColumn, ArchLinkIn, ArchNodeIn } from './archDiagram';
+import { monthly } from './regions';
 
 /**
  * My AWS → How AWS City runs: the city's own hosted architecture (shared/city-architecture.json, from infra/lib), drawn
@@ -38,16 +39,13 @@ export interface CityArchitectureData {
 
 export const CITY_ARCH = archJson as unknown as CityArchitectureData;
 
-/** Hours in a month, as src/world/regions.ts counts them. */
-const HOURS_PER_MONTH = 730;
-
 /** What a Fargate service costs an hour on demand: tasks × (vCPU × vCPU-hour + GB × GB-hour). */
 export const fargateHourly = (f: FargateSize, price = CITY_ARCH.price) => f.tasks * ((f.cpu / 1024) * price.vcpuHour + (f.memoryMiB / 1024) * price.gbHour);
 
 const costText = (c: CityComponent): string[] => {
   if (c.fargate && (c.cost === 'fargate' || c.cost === 'fargate-while-on')) {
     const hour = fargateHourly(c.fargate);
-    return c.cost === 'fargate' ? [`${dollars(hour * 24)} a day`, `${dollars(hour * HOURS_PER_MONTH)} a month`] : [`${dollars(hour * 24)} a day while on`];
+    return c.cost === 'fargate' ? [`${dollars(hour * 24)} a day`, `${dollars(monthly(hour))} a month`] : [`${dollars(hour * 24)} a day while on`];
   }
   return c.cost === 'per-use' ? ['pay per use'] : [];
 };
@@ -64,4 +62,4 @@ export function cityArchitecture(data: CityArchitectureData = CITY_ARCH): { colu
 
 /** The line under the drawing: what's priced here, what isn't, and the project's own idle estimate. */
 export const cityCostLine = (a: { serversHour: number; aiHour: number }, data: CityArchitectureData = CITY_ARCH) =>
-  `The servers: ${dollars(a.serversHour * 24)} a day, ${dollars(a.serversHour * HOURS_PER_MONTH)} a month; the city's own AI ${dollars(a.aiHour * 24)} a day while it's on (Fargate list price in ${data.price.region}). The rest is pay per use. The project's own estimate while idle: about $${data.idle.low}–${data.idle.high} a month.`;
+  `The servers: ${dollars(a.serversHour * 24)} a day, ${dollars(monthly(a.serversHour))} a month; the city's own AI ${dollars(a.aiHour * 24)} a day while it's on (Fargate list price in ${data.price.region}). The rest is pay per use. The project's own estimate while idle: about $${data.idle.low}–${data.idle.high} a month.`;

@@ -418,8 +418,16 @@ export const createHttpServer = (deps: Deps) => {
       const now = Date.now();
       if (now - (exported.get(principal.sub) ?? -Infinity) < EXPORT_EVERY_MS) throw new HttpError(429, 'You downloaded your data a moment ago. Try again in a minute.');
       sweepExported(now);
+      // Set before the read (two at once still get one export), and cleared if it fails, so a retry isn't told
+      // "a moment ago" when nothing was downloaded.
       exported.set(principal.sub, now);
-      const body = JSON.stringify(await hub.data(principal).exportMe(), null, 2);
+      let body: string;
+      try {
+        body = JSON.stringify(await hub.data(principal).exportMe(), null, 2);
+      } catch (err) {
+        if (exported.get(principal.sub) === now) exported.delete(principal.sub);
+        throw err;
+      }
       res.writeHead(200, { 'content-type': 'application/json', 'content-disposition': 'attachment; filename="aws-city-my-data.json"', 'cache-control': 'no-store' });
       return res.end(body);
     }

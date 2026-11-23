@@ -45,6 +45,9 @@ export function walkTo(id: string) {
     return;
   }
   if (!waits) return;
+  // Already there (no path to walk): the city counted the visit inside the emit, before anything below listened. The
+  // card opens now, on the step just ticked.
+  if (!visitOpen(id)) return void bus.emit('select', { id });
   // He's there when the visit counts: the card opens on the step just ticked. Tapping another building ends the wait.
   const offStore = useCity.subscribe((s, prev) => {
     if (s.progress === prev.progress || visitOpen(id)) return;

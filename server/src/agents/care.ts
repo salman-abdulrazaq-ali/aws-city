@@ -216,7 +216,9 @@ export const createCityCare = (deps: {
       // v2.5: the real AZ map and Region opt-ins (cached a day; a Region that can't be read is left out).
       const geo = await readGeo(deps.clients, deps.region, enrich(inv, snapshot, deps.region).items);
       listing = { inv, geo };
-      return publish(build(listing, snapshot));
+      // The newest snapshot, not the one from before readGeo: a poll that reconciled meanwhile (a server terminated)
+      // must not be overwritten by older state, which brought the server back on the map until the next listing.
+      return publish(build(listing, deps.snapshot?.() ?? snapshot));
     },
 
     /**
