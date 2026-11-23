@@ -136,10 +136,18 @@ describe('untrusted names in the model prompt', () => {
     expect(cityFor({ small: false }, s)).toBe(snapshotForModel(s));
   });
 
-  it('servers the player made themselves are named too, so an agent can say it sees them (not terminated ones)', async () => {
+  it('servers, buckets and tables the player made themselves are named too, so an agent can say it sees them (not ones on their way out)', async () => {
     const { snapshotSummary } = await import('../src/agents/runner.js');
-    const { snapshot, instance } = await import('./fixtures.js');
-    const s = snapshot([{ ...instance('i-0abc', 'running', false), name: 'test-console' }, { ...instance('i-0old', 'terminated', false), name: 'gone' }]);
-    expect(JSON.parse(snapshotSummary(s)).otherServers).toEqual([{ id: 'i-0abc', name: 'test-console', state: 'running' }]);
+    const { snapshot, instance, bucket, table } = await import('./fixtures.js');
+    const s = snapshot([
+      { ...instance('i-0abc', 'running', false), name: 'test-console' },
+      { ...instance('i-0old', 'terminated', false), name: 'gone' },
+      { ...bucket('testawscity047463438585console1'), managedByGame: false },
+      { ...table('orders', 'DELETING'), managedByGame: false },
+    ]);
+    expect(JSON.parse(snapshotSummary(s)).notBuiltByTheCity).toEqual([
+      { id: 'i-0abc', kind: 'instance', name: 'test-console', state: 'running' },
+      { id: 'testawscity047463438585console1', kind: 'bucket', name: 'testawscity047463438585console1', state: expect.any(String) },
+    ]);
   });
 });

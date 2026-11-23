@@ -89,6 +89,51 @@ describe('poller caps', () => {
     expect(snap.resources.filter((r) => r.kind === 'table').map((r) => r.meta.pitr)).toEqual([null, null]);
     expect(snap.account?.ebsEncryptionByDefault).toBeUndefined();
   });
+
+  // Seen 23 Nov 2026: buckets made in the console and in CloudShell never reached My AWS.
+  it('a bucket made outside the city lands in the snapshot, even when its public-access setting is refused', async () => {
+    const { clients } = fakeClients((cmd, input) => {
+      if (cmd === 'ListBucketsCommand')
+        return { Buckets: [{ Name: 'aws-city-123456789012-photos', BucketRegion: 'us-east-1' }, { Name: 'testawscity123456789012console1', BucketRegion: 'us-east-1' }] };
+      if (cmd === 'GetPublicAccessBlockCommand' && input.Bucket === 'testawscity123456789012console1') throw Object.assign(new Error('Access Denied'), { name: 'AccessDenied' });
+      return undefined;
+    });
+    const poller = createPoller({ clients, accountId: '123456789012', region: 'us-east-1', intervalMs: 60_000, onSnapshot: () => {} });
+    const snap = await poller.refresh();
+    expect(snap.services.s3).toBe('ok');
+    expect(snap.resources.filter((r) => r.kind === 'bucket').map((r) => [r.id, r.managedByGame])).toEqual([
+      ['aws-city-123456789012-photos', true],
+      ['testawscity123456789012console1', false],
+    ]);
+  });
+
+  it('a refused read is said once in the log (never silently locked), and again after a read worked in between', async () => {
+    let refuse = true;
+    const { clients } = fakeClients((cmd) => {
+      if (cmd === 'ListBucketsCommand') {
+        if (refuse) throw Object.assign(new Error('User: arn:aws:sts::123456789012:assumed-role/r/x is not authorized to perform: s3:ListAllMyBuckets'), { name: 'AccessDenied' });
+        return { Buckets: [] };
+      }
+      return undefined;
+    });
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    try {
+      const poller = createPoller({ clients, accountId: '123456789012', region: 'us-east-1', intervalMs: 60_000, onSnapshot: () => {} });
+      expect((await poller.refresh()).services.s3).toBe('locked');
+      await poller.refresh();
+      const said = () => warn.mock.calls.filter(([msg]) => msg === 'poll refused');
+      expect(said()).toHaveLength(1);
+      expect(said()[0]![1]).toMatchObject({ service: 's3', err: 'AccessDenied' });
+      expect(JSON.stringify(said()[0]![1])).not.toContain('123456789012');
+      refuse = false;
+      await poller.refresh();
+      refuse = true;
+      await poller.refresh();
+      expect(said()).toHaveLength(2);
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
 
 describe('a refused role (v2.17)', () => {

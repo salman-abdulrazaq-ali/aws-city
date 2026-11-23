@@ -371,19 +371,29 @@ export const createPoller = (opts: {
   let snapshot: WorldSnapshot | null = null;
   let inFlight: Promise<WorldSnapshot> | null = null;
   let timer: NodeJS.Timeout | undefined;
+  /** Services whose refusal (AccessDenied: `locked`) has been logged; said again only after a read works in between. */
+  const refusalSaid = new Set<string>();
 
   const pollOnce = async (): Promise<WorldSnapshot> => {
     const accountSettings = collectAccount(opts.clients, opts.accountId);
     const results = await Promise.all(
       SERVICES.map(async (service) => {
         try {
-          return { service, status: 'ok' as ServiceStatus, resources: await COLLECTORS[service](opts.clients, opts.accountId), expired: false, refused: false, ourSide: false };
+          const resources = await COLLECTORS[service](opts.clients, opts.accountId);
+          refusalSaid.delete(service);
+          return { service, status: 'ok' as ServiceStatus, resources, expired: false, refused: false, ourSide: false };
         } catch (err) {
           // STS refused the role itself (not this service): every read fails alike. It isn't "IAM locked this service",
           // so the buildings stay as last seen and no lesson is said six times; the tenant counts these polls (tenants.ts).
           const refused = isRoleRefused(err);
           const kind = refused ? 'refused' : classifyAwsError(err);
           if (kind === 'other') log.warn('poll failed', { service, err: (err as Error).name, detail: (err as Error).message?.slice(0, 200) });
+          // A refused read marks the service locked and keeps the map as it was, so say it (once until a read works):
+          // seen 23 Nov 2026, buckets made in the console never reached the map and nothing in the log said why.
+          if (kind === 'denied' && !refusalSaid.has(service)) {
+            refusalSaid.add(service);
+            log.warn('poll refused', { service, err: (err as Error).name, detail: (err as Error).message?.replace(/\d{12}/g, '<account>').slice(0, 200) });
+          }
           // Keep the last known resources on transient errors so buildings don't flicker away.
           const kept = kind === 'denied' ? [] : (snapshot?.resources.filter((r) => r.service === service) ?? []);
           return { service, status: (kind === 'denied' ? 'locked' : 'error') as ServiceStatus, resources: kept, expired: kind === 'expired', refused, ourSide: isRoleRefused(err) && err.ourSide };
