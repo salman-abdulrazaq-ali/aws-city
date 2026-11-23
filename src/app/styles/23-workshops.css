@@ -751,3 +751,40 @@
   color: var(--good-ink);
   font-weight: 600;
 }
+/* For real: help picking a bucket name nobody has (bucket names are global). */
+.workshop-name-help {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+/* "Help me fix it": the agent's portrait while it reads the error, then commands with their own Copy. */
+.workshop-thinking {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.workshop-answer .code-row {
+  margin: 4px 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .thinking-dots span {
+    animation: thinking-dot 1.2s infinite;
+  }
+  .thinking-dots span:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+  .thinking-dots span:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+}
+@keyframes thinking-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.2;
+  }
+  30% {
+    opacity: 1;
+  }
+}

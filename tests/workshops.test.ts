@@ -174,3 +174,26 @@ describe('commandFor: the command as typed (practice) or run (real AWS)', () => 
     expect(placeholdersIn(S3)).toEqual(['bucket', 'region']);
   });
 });
+
+// Seen 23 Nov 2026 in CloudShell: "testdemo" was taken, and a name S3 refuses was only found out there.
+describe('bucket names for real', () => {
+  it('says what S3 would refuse, and nothing for a good name', async () => {
+    const { bucketNameProblem, freeBucketName } = await import('@/world/workshops');
+    for (const good of ['city-workshop-1a2b3c4d', 'testdemo64646464646', 'my.bucket-1', '']) expect(bucketNameProblem(good), good).toBeUndefined();
+    for (const bad of ['Test_Demo', 'ab', 'a'.repeat(64), '-start', 'end-', 'two..dots', '192.168.1.1', 'xn--name', 'name-s3alias'])
+      expect(bucketNameProblem(bad), bad).toBeTruthy();
+    expect(freeBucketName(() => '0123456789abcdef')).toBe('city-workshop-01234567');
+    expect(bucketNameProblem(freeBucketName(() => 'deadbeef'))).toBeUndefined();
+  });
+
+  it('a step with a setup has a command, and its setup only writes a file', async () => {
+    const { WORKSHOPS } = await import('@/world/workshops');
+    const withSetup = WORKSHOPS.flatMap((w) => w.steps.filter((s) => s.setup));
+    expect(withSetup.map((s) => s.id).sort()).toEqual(['encrypt', 'upload', 'upload']);
+    for (const s of withSetup) {
+      expect(s.cli).toBeTruthy();
+      expect(s.setup).toMatch(/^echo "[^"]*" > [a-z.-]+$/);
+    }
+  });
+});
+
