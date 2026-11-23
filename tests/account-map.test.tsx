@@ -137,6 +137,22 @@ describe('the map on screen', () => {
     expect(screen.queryByText(/Which resource talks to which comes next/)).toBeNull();
   });
 
+  it('Diagram → Built by the city: only what the city built, and an empty note when there is nothing', () => {
+    render(<AccountMap />);
+    fireEvent.click(screen.getByRole('button', { name: 'Diagram' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Built by the city' }));
+    expect(screen.getByRole('img', { name: /Diagram of what the city built in us-west-2/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^No building yet/ })).toBeNull();
+    expect(screen.getByText(/No costs here: AWS bills each service for the whole account/)).toBeTruthy();
+    cleanup();
+    useCity.setState({ inventory: { ...inventory, items: inventory.items.map((i) => ({ ...i, managedByGame: false })) } });
+    render(<AccountMap />);
+    fireEvent.click(screen.getByRole('button', { name: 'Diagram' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Built by the city' }));
+    expect(screen.getByText(/Nothing built by the city yet/)).toBeTruthy();
+    expect(screen.queryByRole('img', { name: /Diagram of/ })).toBeNull();
+  });
+
   it('Diagram: dots move along the links, and sit still under reduced motion', () => {
     const typed: Inventory = { ...inventory, items: [...inventory.items, { ...inventory.items[0]!, arn: 'arn:fn', name: 'fn', type: 'AWS::Lambda::Function', serviceId: 'lambda', az: undefined }], counts: { ...inventory.counts, lambda: 1 } };
     useCity.setState({ inventory: typed });
