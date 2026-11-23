@@ -20,7 +20,7 @@ npm run check     # tsc --noEmit && vitest run (tests/**/*.test.{ts,tsx}; React 
 npx vitest run tests/ladder.test.ts              # one test file (the form every Proof below uses)
 npx vitest run tests/ladder.test.ts -t "<name>"  # one test by name
 npm run lint      # ESLint: rules of hooks + jsx-a11y (CI: --max-warnings 10)
-npm run smoke     # build + Playwright Chromium demo run; screenshots in .output/smoke; must print "no page errors" (exits 1 on errors only with SMOKE_STRICT=1: CI lists 6 Linux-only ones to fix first)
+npm run smoke     # build + Playwright Chromium demo run; screenshots in .output/smoke; must print "no page errors"
 npm run smoke:copilot  # the 8 Console Copilot flows on the practice console (practice.html) + the demo Lookout; must print "no page errors"
 npm run dev       # WXT dev with Chrome for Testing (`npx playwright install chromium` once; branded Chrome opens blank)
 npm run live      # local server with real AWS (workshop profile) + the extension wired to it
