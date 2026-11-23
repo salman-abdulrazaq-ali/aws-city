@@ -552,8 +552,14 @@ When a change touches a decision, update its entry and run its Proof.
 - **Text is crisp in a pixelArt world:** use `crisp()` from `src/game/SpeechBubble.ts` (LINEAR filter
   plus DPR resolution) and counter-scale by `1/zoom`. Camera zoom stays on integers, and sprites on whole-number scales:
   a mini-game's play group is 1× in the side panel and 2× in the tab (`playScale`, `src/game/scenes/games/stageFx.ts`;
-  `fitScale`, `cast.ts`), never 1.5×. Canvas text is never under 11 px (`MIN_TEXT_PX`, `textPx` in `src/game/theme.ts`)
-  and follows ⋯ → Text size. Proof: `npx vitest run tests/game-stage.test.ts tests/game-theme.test.ts`.
+  `fitScale`, `cast.ts`), never 1.5×. The city's starting zoom follows its map's CSS size (`viewZoom`,
+  `src/game/camera.ts`: the largest whole number that still shows `START_VIEW` 720×400 world px, so 2 on a 1920×1080
+  window's map and 1 up to 1536 px and in the side panel), on the whole core when it fits, else on the Town Square
+  (`frameTarget`). In the tab a resized map keeps the view's centre and takes that zoom again until the player zooms
+  (+/−, the wheel) during that visit (`zoomOnResize`, `CityScene.onResize`; not while decorating or mid push-in); the
+  side panel keeps its top-left and zoom. Canvas text is never under 11 px (`MIN_TEXT_PX`, `textPx` in
+  `src/game/theme.ts`) and follows ⋯ → Text size. Proof: `npx vitest run tests/game-stage.test.ts tests/game-theme.test.ts
+  tests/camera.test.ts`.
 - **Sound:** SFX only, no music; on by default and soft. One mixing path (synth voices play through Phaser's audio
   context), nothing scheduled before the first gesture (dropped, never queued), nothing while the page is hidden, a
   priority mixer so one action makes one sound (a big clip holds lower sounds for its own length), and mute synced across
@@ -638,7 +644,8 @@ When a change touches a decision, update its entry and run its Proof.
   ring's land and sea come from the baked water mask; the ring river, islands, highway, park and airport keep their rules.
   The city shows "© OpenStreetMap contributors" (bottom-left, every zoom; ⋯ credits; postcards), linking only
   openstreetmap.org/copyright through `openOsmCopyright` (no map requests: the data is bundled). Minimap: `src/game/minimap.ts`
-  + `src/ui/Minimap.tsx` (M toggles; on in the tab, a 🗺 button in the panel; click pans).
+  + `src/ui/Minimap.tsx` (M toggles; on in the tab when its map has room, `MINI_ROOM` 600×400 CSS px, else a 🗺 button as
+  in the panel; the player's choice wins; click pans).
   Proof: `npx vitest run tests/plan.test.ts tests/plan-snapshot.test.ts tests/minimap.test.tsx tests/terrain.test.ts tests/roadgraph.test.ts`,
   `npm run smoke` (section "street maps": three real cities, day/night, tab/panel, `?map=legacy`).
 - **The city stands in a landscape.** `src/world/terrain.ts` (pure, the same per Region every time) rings the core (40×40 legacy, 64×64 street map):
@@ -1277,9 +1284,11 @@ When a change touches a decision, update its entry and run its Proof.
   and other sites never make the moment and pay nothing.
   Proof: `npx vitest run tests/browse-growth.test.ts`.
 - **Surfaces.** The side panel (Chrome/Edge), the Firefox sidebar (same entrypoint) and the full tab at
-  `/city.html` run the same app and merge progress through `storage.local`. Under 720 px wide the tab stacks like the
-  panel (`src/app/styles/01-layout.css`: the map `minmax(220px, 45%)` over the side column, a mini-game the whole
-  height), so a narrow window never squeezes the map to nothing. The toolbar opens the panel, the
+  `/city.html` run the same app and merge progress through `storage.local`. Beside the map, the tab's side column
+  (`--side-w`, `src/app/styles/01-layout.css`) gives way first: 400 px on a laptop, narrowing to 320 px between ~1270 and
+  ~910 px wide, growing to 20 % (480 px at most) past 2000 px. Under 720 px wide the tab stacks like the panel (the map
+  `minmax(220px, 45%)` over the side column, a mini-game the whole height), so a narrow window never squeezes the map
+  narrower than the panel's own. The toolbar opens the panel, the
   sidebar, or (Safari, which has neither) the tab: `src/app/surface.ts`. With a real account the Lookout and Console
   Copilot need the panel/sidebar (they see the console tab beside it). In the demo both use the practice console inside
   the extension (`practice.html`, `src/console/practice.ts`; nothing there touches AWS) from every surface; if the

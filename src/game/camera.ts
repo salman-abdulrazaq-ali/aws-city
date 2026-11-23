@@ -1,6 +1,6 @@
-// Camera framing for the city (pure, no Phaser): the largest whole-number zoom that shows the whole core, or the
-// Town Square at zoom 1 when even that doesn't fit (the 400 px side panel). Zoom stays on integers so pixel art
-// stays crisp (CLAUDE.md).
+// Camera framing for the city (pure, no Phaser): the starting zoom follows the map's size (a bigger map, bigger pixels),
+// on the whole core when it fits at that zoom, else on the Town Square (the 400 px side panel: zoom 1). Zoom stays on
+// integers so pixel art stays crisp (CLAUDE.md).
 import { GRID } from '@/world/layout';
 import { legacyPlan, type CityPlan } from '@/world/plan';
 import { CITY_ISO, cornerScreen, toScreen } from './iso';
@@ -28,6 +28,19 @@ export function fitZoom(viewW: number, viewH: number, core = CORE): number {
   return 0;
 }
 
+/**
+ * The least world (px at zoom 1) a starting zoom leaves in view: a bit less than a laptop tab's map shows at zoom 1
+ * (862×654 at 1280×720). A bigger map starts closer in, so it shows about as much city with bigger pixels instead of
+ * more sea: zoom 2 from a 1440×800 map (a 1920×1080 window's is 1502×1014), zoom 1 up to a 1536 px window.
+ */
+export const START_VIEW = { w: 720, h: 400 } as const;
+
+/** The starting zoom for a viewW×viewH map (CSS px): the largest whole number in [1, 4] that still shows START_VIEW. */
+export function viewZoom(viewW: number, viewH: number): number {
+  for (let z = MAX_ZOOM; z > MIN_ZOOM; z--) if (viewW / z >= START_VIEW.w && viewH / z >= START_VIEW.h) return z;
+  return MIN_ZOOM;
+}
+
 export interface Frame {
   zoom: number;
   /** World point to centre on. */
@@ -36,15 +49,25 @@ export interface Frame {
   target: 'core' | 'square';
 }
 
-/** Where the camera should start: the whole core at the best zoom, else the Town Square at zoom 1. */
+/**
+ * Where the camera should start: the map's starting zoom (viewZoom), on the whole core when it fits at that zoom, else
+ * on the Town Square. The core is never smaller than START_VIEW, so it never fits a zoom closer in than viewZoom.
+ */
 export function frameTarget(viewW: number, viewH: number, plan: CityPlan = legacyPlan()): Frame {
   const core = plan.size === GRID ? CORE : coreFor(plan.size);
-  const z = fitZoom(viewW, viewH, core);
-  if (z) return { zoom: z, x: core.x, y: core.y, target: 'core' };
+  const z = viewZoom(viewW, viewH);
+  if (fitZoom(viewW, viewH, core) >= z) return { zoom: z, x: core.x, y: core.y, target: 'core' };
   const r = plan.square;
   const c = toScreen(CITY_ISO, r.x + (r.w - 1) / 2, r.y + (r.h - 1) / 2);
-  return { zoom: MIN_ZOOM, x: c.x, y: c.y, target: 'square' };
+  return { zoom: z, x: c.x, y: c.y, target: 'square' };
 }
+
+/**
+ * The zoom a resized map takes (the tab's window grew or shrank): its starting zoom again, unless the player zoomed
+ * (+/−, the wheel) since the city last showed, whose choice stays.
+ */
+export const zoomOnResize = (viewW: number, viewH: number, plan: CityPlan, zoom: number, playerZoomed: boolean) =>
+  playerZoomed ? zoom : frameTarget(viewW, viewH, plan).zoom;
 
 /**
  * The world y to centre on when the camera goes to a building whose ground is at `groundY` and whose top (its roof, or

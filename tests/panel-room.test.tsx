@@ -218,4 +218,22 @@ describe('the tab in a narrow window', () => {
     expect(narrow).toMatch(/\.app-full \{[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*grid-template-rows: auto minmax\(220px, 45%\) minmax\(0, 1fr\);[^}]*grid-template-areas: 'hud' 'stage' 'side';/);
     expect(narrow).toMatch(/\.app-full\.view-game \.side \{\s*display: none;/);
   });
+
+  it('beside the map, the side column narrows to 320 px before the map is squeezed, and grows a little past 2000 px', () => {
+    // Adapt pass (23 Nov 2026): the column kept 400 px down to 720, so a 760 px window's map was 342 px.
+    const css = readFileSync('src/app/styles/01-layout.css', 'utf8');
+    const m = css.match(/--side-w: max\(clamp\((\d+)px, (\d+)px \+ (\d+)vw, (\d+)px\), min\((\d+)vw, (\d+)px\)\);/);
+    expect(m).toBeTruthy();
+    const [lo, base, slope, hi, wide, cap] = m!.slice(1).map(Number);
+    const side = (w: number) => Math.max(Math.min(Math.max(lo, base + (slope * w) / 100), hi), Math.min((wide * w) / 100, cap));
+    // The stage's margins and border take 18 px.
+    const mapW = (w: number) => w - side(w) - 18;
+    expect(side(720)).toBe(320);
+    expect(mapW(720)).toBeGreaterThanOrEqual(382);
+    expect(mapW(760)).toBe(422);
+    for (const w of [1280, 1366, 1536, 1920]) expect(side(w), `${w}`).toBe(400);
+    expect(side(2560)).toBe(480);
+    for (let w = 720; w <= 3840; w += 10) expect(mapW(w)).toBeGreaterThanOrEqual(mapW(w - 10));
+    expect(css).toMatch(/\.app-full \{[^}]*grid-template-columns: minmax\(0, 1fr\) var\(--side-w\);/);
+  });
 });

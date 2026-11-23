@@ -316,10 +316,14 @@ The app is one CSS grid with two surfaces:
   `minmax(150px, 34%)` of the height (54 % when the player asks for a taller map); the side column below takes the rest.
   While the player scrolls the side column, the compact map slides to its 150 px floor; it grows back at the top, on a
   tab change or on a view change. A mini-game takes the whole height under the HUD.
-- **Full tab** (`.app-full`, 1400 × 880 reference): `hud` across the top, then the stage (`1fr`) beside a fixed
-  400 px side column with a 1 px left hairline. The side column's content is the same as the panel's. Under 720 px wide
-  the tab stacks like the panel instead (the map `minmax(220px, 45%)`, the side column below with a top hairline, a
-  mini-game the whole height), so a narrow window never squeezes the map to nothing.
+- **Full tab** (`.app-full`, 1400 × 880 reference): `hud` across the top, then the stage (`1fr`) beside the side
+  column (`--side-w`) with a 1 px left hairline. The column is 400 px on a laptop and gives way before the map does:
+  it narrows to 320 px (the panel's own narrowest) between ~1270 and ~910 px wide, and past 2000 px grows to 20 %
+  (480 px at most). A 760 px window's map is 422 px, not 342. The side column's content is the same as the panel's.
+  Under 720 px wide the tab stacks like the panel instead (the map `minmax(220px, 45%)`, the side column below with a
+  top hairline, a mini-game the whole height), so a narrow window never squeezes the map to nothing.
+- **Minimap** (168 × 92, bottom right over the stage): on in the tab when its map has room (600 × 400 px or more);
+  on a smaller map, as in the panel, it waits behind its 🗺 button (M toggles it). The player's choice wins.
 
 The side column stacks: tabs (City · Learn · Jobs · Deploy, opened by the unlock ladder), a scrolling `.tab-body`
 (12 px sides, 16 px bottom, a stable scrollbar gutter), then the footer: one row, the prompt bar. Its AI note shows
@@ -331,8 +335,11 @@ included); gaps between cards are 8 px, card padding 12 px. Breakpoints are narr
 adjustments only: `max-width: 480px` hides the connection word, `max-width: 420px` hides the City Lights count and the
 rush-hour word.
 
-In the canvas, the camera zoom is always an integer (the largest that fits the core; the panel falls back to zoom 1
-on the Town Square), and in-world text is counter-scaled by the zoom so it stays readable at 400 px. Sprites keep whole
+In the canvas, the camera zoom is always an integer. The city starts at the zoom its map's size gives (the largest
+that still shows 720 × 400 world px: 2 on a 1920 × 1080 window's map, 1 up to a 1536 px window and in the panel), on
+the whole core when it fits, else on the Town Square, so a big screen shows about as much city as a laptop, bigger,
+instead of more sea. A resized tab keeps the view's centre and takes that zoom again, until the player zooms (+/−, the
+wheel) during that visit. In-world text is counter-scaled by the zoom so it stays readable at 400 px. Sprites keep whole
 numbers too: a mini-game lays its play group out at 1× and draws it at the biggest whole-number scale that fits
 (`playScale`, `fitScale`): 1× in the 400 px panel, 2× in the tab, never 1.5×. Its props, people and 9-slice frames take
 that scale, its text does not (text follows Text size alone), and the group sits in a centred column (`column`) so the

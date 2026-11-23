@@ -30,8 +30,12 @@
 .app-panel.view-game .side {
   display: none;
 }
+/* The tab: the side column is 400 px on a laptop. It gives way before the map does, narrowing to 320 px (the panel's
+   own narrowest) between ~1270 and ~910 px wide, so a 760 px window's map is 422 px, not 342; past 2000 px it grows
+   a little with the screen (20 %, 480 px at most). */
 .app-full {
-  grid-template-columns: minmax(0, 1fr) 400px;
+  --side-w: max(clamp(320px, 120px + 22vw, 400px), min(20vw, 480px));
+  grid-template-columns: minmax(0, 1fr) var(--side-w);
   grid-template-rows: auto 1fr;
   grid-template-areas: 'hud hud' 'stage side';
 }
@@ -87,10 +91,10 @@
 .game canvas {
   display: block;
 }
-/* The tab in a narrow window (city.html under 720 px, e.g. a phone-width browser or a docked window): beside a 400 px
-   panel the map would get under 320 px, and at 400 px none at all (its canvas 0 wide, which Chromium then draws once a
-   second). Stack it like the side panel instead: the map on top with a usable height, the panel below; a mini-game
-   takes the whole height, as in the side panel. */
+/* The tab in a narrow window (city.html under 720 px, e.g. a phone-width browser or a docked window): beside even the
+   320 px column the map would be narrower than the side panel's own (under 382 px), and at 340 px nothing at all (its
+   canvas 0 wide, which Chromium then draws once a second). Stack it like the side panel instead: the map on top with a
+   usable height, the panel below; a mini-game takes the whole height, as in the side panel. */
 @media (max-width: 719px) {
   .app-full {
     grid-template-columns: minmax(0, 1fr);

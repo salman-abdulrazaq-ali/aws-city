@@ -47,7 +47,7 @@ import { reducedMotion } from '../motion';
 import { crisp, TEXT_FONT } from '../SpeechBubble';
 import { mayAutoPan } from '../calm';
 import { Stillness, STILL_TIME } from '../stillness';
-import { buildingFocusY, frameTarget } from '../camera';
+import { buildingFocusY, frameTarget, zoomOnResize } from '../camera';
 import { Landscape } from '../Landscape';
 import { Culler, setCityPerf } from '../cull';
 import { Park } from '../Park';
@@ -268,6 +268,8 @@ export class CityScene extends Phaser.Scene {
   private pushUntil = 0;
   /** The zoom the night lift was last set for (Landmark.setNight). */
   private liftZoom = -1;
+  /** The player zoomed (+/−, the wheel) since the city last showed: a resized map keeps their zoom (onResize). */
+  private playerZoomed = false;
   /** The buildings one action from their next level (src/state/next.ts), for the signs' order: worked out per progress. */
   private readyFor?: { progress: Progress; region: string; ids: Set<string> };
 
@@ -1086,10 +1088,29 @@ export class CityScene extends Phaser.Scene {
   private setupCamera() {
     const cam = this.cameras.main;
     this.setCameraBounds();
-    // The whole core at the best whole-number zoom, or the Town Square at zoom 1 (the side panel).
+    // The map's starting zoom (bigger on a big map), on the whole core when it fits, else on the Town Square.
     const f = frameTarget(this.scale.width, this.scale.height, this.plan);
     cam.setZoom(f.zoom);
     cam.centerOn(f.x, f.y);
+    this.playerZoomed = false;
+    this.scale.on(Phaser.Scale.Events.RESIZE, this.onResize, this);
+    this.offs.push(() => this.scale.off(Phaser.Scale.Events.RESIZE, this.onResize, this));
+  }
+
+  /**
+   * The map was resized (the window). In the tab, at any width, the view keeps its centre (Phaser keeps its top-left,
+   * so a wider window showed more sea on the right and below), and its zoom follows the map's size until the player
+   * zooms (zoomOnResize); not while decorating, during an upgrade's push-in or the arrival's zoom. The side panel's map
+   * grows and shrinks as the player reads: it keeps its top-left and zoom, as before.
+   */
+  private onResize(size: Phaser.Structs.Size, _base: Phaser.Structs.Size, _display: Phaser.Structs.Size, prevW: number, prevH: number) {
+    if (!this.sys.isActive() || this.game.canvas.closest('.app-panel') || (size.width === prevW && size.height === prevH)) return;
+    const cam = this.cameras.main;
+    cam.scrollX += Math.round((prevW - size.width) / 2);
+    cam.scrollY += Math.round((prevH - size.height) / 2);
+    if (useCity.getState().build || this.time.now < this.pushUntil || cam.zoomEffect.isRunning) return;
+    const z = zoomOnResize(size.width, size.height, this.plan, cam.zoom, this.playerZoomed);
+    if (z !== cam.zoom) cam.setZoom(z);
   }
 
   /** The player is steering: automatic camera moves wait (src/game/calm.ts). */
@@ -1169,6 +1190,7 @@ export class CityScene extends Phaser.Scene {
     const nearest = ZOOMS.reduce((a, b) => (Math.abs(b - cam.zoom) < Math.abs(a - cam.zoom) ? b : a));
     const to = ZOOMS[Phaser.Math.Clamp(ZOOMS.indexOf(nearest) + by, 0, ZOOMS.length - 1)];
     this.pushUntil = 0;
+    this.playerZoomed = true;
     if (to !== nearest) cam.zoomTo(to, 150);
   }
 
@@ -2413,6 +2435,7 @@ export class CityScene extends Phaser.Scene {
     };
     const from = takeDiveFrom(useCity.getState().cityRegion);
     const f = frameTarget(this.scale.width, this.scale.height, this.plan);
+    this.playerZoomed = false;
     if (reducedMotion()) {
       cam.setZoom(f.zoom);
       cam.centerOn(f.x, f.y);
