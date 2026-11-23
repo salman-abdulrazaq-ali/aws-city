@@ -832,7 +832,7 @@ When a change touches a decision, update its entry and run its Proof.
   (`art/tiles/legend_art.py`; the Legend's beam is night-lights only) and the sign stands above them; the building card
   lists the next crown's steps. Proof: `npx vitest run tests/mastery.test.ts tests/learning.test.ts tests/art.test.ts`.
 - **Walking counts.** A quest's visit step counts when Kai *arrives* (`store.arrive`, from `goTo`'s callback or stepping
-  on the work spot), not on a tap; "Walk there", "Walk to <place>" and the tour walk him there (`src/state/walk.ts` `walkTo`; the building's card opens as the visit counts, never at the press: `cardWaitsForKai`), and a city that
+  on the work spot), not on a tap; "Walk there", "Walk to <place>" and the tour walk him there (`src/state/walk.ts` `walkTo`; the building's card opens as the visit counts, never at the press: `cardWaitsForKai`; a walk that arrives at once, Kai already on the spot, opens it too), and a city that
   can't (asleep behind a game or HQ) counts it at once, so a quest never sticks. Now and then one existing citizen has a
   question (`src/state/requests.ts`, `src/game/Requests.ts`: a gold "?", at most 5 a day, no new walkers): reaching them
   opens `RequestCard`, an ordinary flashcard review plus a 2⭐ thank-you (never over Decorate: the citizen waits while it's open, and a card already up is held until the drawer closes); the "?" stays until it's answered, and only

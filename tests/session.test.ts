@@ -106,6 +106,24 @@ describe('quests and puzzles', () => {
     off();
   });
 
+  // Review 23 Nov 2026: Kai already on the spot (no path): the city counts the visit inside the emit.
+  it('a walk that arrives at once still opens the card, on the step just ticked', async () => {
+    const { walkTo } = await import('@/state/walk');
+    const { bus } = await import('@/state/bus');
+    useCity.setState({ progress: { version: 1, landmarks: {}, updatedAt: '2026-01-01T00:00:00Z', quests: { 'compute-first-function': { status: 'active', step: 0, count: 0 } } } });
+    const selects: string[] = [];
+    const offSelect = bus.on('select', ({ id }) => selects.push(id));
+    const off = bus.on('walkTo', ({ id, accept }) => {
+      accept();
+      useCity.getState().arrive(id);
+    });
+    walkTo('lambda');
+    expect(useCity.getState().progress.quests?.['compute-first-function']?.step).toBe(1);
+    expect(selects).toEqual(['lambda']);
+    off();
+    offSelect();
+  });
+
   it('a walk asked for from a mini-game goes back to the city first, so Kai walks where the player can see', async () => {
     const { walkTo } = await import('@/state/walk');
     const { bus } = await import('@/state/bus');

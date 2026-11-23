@@ -60,6 +60,19 @@ describe('WorldIntro', () => {
     });
   }
 
+  // Review 23 Nov 2026: the tour says "Walk with the arrow keys"; the canvas the city gave the keys to keeps them.
+  it('leaves focus on the city canvas when the city scene took the keys', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.tabIndex = 0;
+    document.body.append(canvas);
+    render(<Page />);
+    fireEvent.click(screen.getByRole('button', { name: /^Start in / }));
+    canvas.focus(); // createGame's focusSoon
+    await frame();
+    expect(document.activeElement).toBe(canvas);
+    canvas.remove();
+  });
+
   it('leaves focus alone when the player already moved it', async () => {
     render(
       <>
