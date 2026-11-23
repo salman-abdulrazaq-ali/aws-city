@@ -29,6 +29,18 @@ describe('matchUrl', () => {
     expect(matchUrl('https://example.aws.amazon.com/lightsail').kind).toBe('other');
   });
 
+  // Asked on 23 Nov 2026: the console opened in London while the city builds in Oregon.
+  it('opens the console in the linked account’s Region, and reads those pages back', () => {
+    expect(consoleUrl('s3', 'us-west-2')).toBe('https://us-west-2.console.aws.amazon.com/s3/home?region=us-west-2');
+    expect(consoleUrl('transitgateway', 'us-west-2')).toBe('https://us-west-2.console.aws.amazon.com/vpcconsole/home?region=us-west-2#TransitGateways:');
+    expect(consoleUrl('', 'us-west-2')).toBe('https://us-west-2.console.aws.amazon.com/console/home?region=us-west-2');
+    expect(consoleUrl('lightsail', 'us-west-2')).toBe('https://lightsail.aws.amazon.com/ls/webapp/home');
+    // Only a Region code reaches the URL.
+    expect(consoleUrl('s3', 'evil.example.com/x')).toBe('https://console.aws.amazon.com/s3/home');
+    for (const id of ['s3', 'transitgateway', 'vpc', 'aurora']) expect(matchUrl(consoleUrl(id, 'us-west-2')), id).toEqual({ kind: 'console', serviceId: id });
+    expect(matchUrl(consoleUrl('', 'us-west-2')).kind).toBe('console-home');
+  });
+
   it('recognises the console home page', () => {
     expect(matchUrl('https://eu-west-2.console.aws.amazon.com/console/home?region=eu-west-2').kind).toBe('console-home');
   });

@@ -108,13 +108,23 @@ export function matchUrl(rawUrl: string): PageMatch {
   return { kind: 'other' };
 }
 
-/** The page "Open the console" opens for a service: its first console path (a hash route or its own host, see Service). */
-export function consoleUrl(serviceId: string): string {
+/** A Region code as AWS writes it ("us-west-2", "ap-southeast-4", "us-gov-west-1"); anything else never reaches a URL. */
+const REGION_CODE = /^[a-z]{2}(-[a-z]+)+-\d$/;
+
+/**
+ * The page "Open the console" opens for a service: its first console path (a hash route or its own host, see Service).
+ * With `region` (the linked account's), it opens there: the console otherwise opens in the last Region the browser
+ * used (seen 23 Nov 2026: London, while the city builds in Oregon). A console on its own host (Lightsail) takes none.
+ */
+export function consoleUrl(serviceId: string, region?: string): string {
+  const r = region && REGION_CODE.test(region) ? region : undefined;
+  const host = r ? `${r}.console.aws.amazon.com` : 'console.aws.amazon.com';
+  const query = r ? `?region=${r}` : '';
   const first = serviceById(serviceId)?.consolePaths[0];
-  if (!first) return 'https://console.aws.amazon.com/console/home';
+  if (!first) return `https://${host}/console/home${query}`;
   const [base, route] = first.split('#');
   if (/^[a-z0-9-]+(\.[a-z0-9-]+)+\//.test(base)) return `https://${base}/home`;
-  return `https://console.aws.amazon.com/${base}/home${route ? `#${route}` : ''}`;
+  return `https://${host}/${base}/home${query}${route ? `#${route}` : ''}`;
 }
 
 /**
