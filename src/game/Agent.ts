@@ -290,6 +290,34 @@ export class Agent {
     return new Phaser.Geom.Rectangle(x - w / 2, y + 3, w, this.tag.displayHeight);
   }
 
+  /**
+   * Where the name tag stands while it's wanted (shown at rest, hovered or working), whether or not the overlap pass
+   * muted it (world px): the scene's one pass over every tag (src/game/labels.ts keepTags).
+   */
+  tagBox(): Phaser.Geom.Rectangle | undefined {
+    if (!this.tagWanted()) return undefined;
+    const w = this.tag.displayWidth;
+    const h = this.tag.displayHeight;
+    return new Phaser.Geom.Rectangle(this.tag.x - w / 2, this.tagAbove ? this.tag.y - h : this.tag.y, w, h);
+  }
+
+  /** Hovered: the pass keeps this tag before any other of its kind. */
+  get tagHovered() {
+    return this.hovered;
+  }
+
+  /** The overlap pass hides a tag that would sit on one it kept first (a hovered tag always shows). */
+  private tagMuted = false;
+  muteTag(on: boolean) {
+    if (on === this.tagMuted) return;
+    this.tagMuted = on;
+    this.syncTag();
+  }
+
+  private tagWanted() {
+    return !!this.cfg.showTag || this.hovered || this.mode === 'working';
+  }
+
   /** Whether the name tag shows at rest (the scene's label budget). Hover and work always show it. */
   setTagShown(on: boolean) {
     if (this.cfg.showTag === on) return;
@@ -301,7 +329,7 @@ export class Agent {
   private syncTag() {
     const base = this.hovered ? this.name : (this.cfg.tagName ?? this.name);
     this.tag.setText(this.detail ? `${base} · ${this.detail}` : base);
-    this.tag.setVisible(!!this.cfg.showTag || this.hovered || this.mode === 'working');
+    this.tag.setVisible(this.hovered || (this.tagWanted() && !this.tagMuted));
   }
 
   setUiScale(s: number) {

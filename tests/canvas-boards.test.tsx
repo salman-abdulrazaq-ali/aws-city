@@ -55,11 +55,11 @@ describe('map signs give way', () => {
     expect([...nonOverlapping([picked, near, apart], (s) => s.b)]).toEqual([picked, apart]);
   });
 
-  it('signs are placed after sliding into view (picked, then nearest the middle), and none show while decorating', () => {
+  it('signs are placed after sliding into view (picked, then in view, ready, nearest Kai: tests/city-view.test.ts), and none show while decorating', () => {
     const scene = read('src/game/scenes/CityScene.ts');
     const place = scene.slice(scene.indexOf('  private placeSigns('), scene.indexOf('  /** The plot a landmark stands in'));
-    expect(place).toMatch(/keepInView\(view, inset\)[\s\S]*nonOverlapping\(signs/);
-    expect(place).toMatch(/Number\(b\.must\) - Number\(a\.must\) \|\| d2\(a\.at\) - d2\(b\.at\)/);
+    expect(place).toMatch(/keepInView\(view, inset\)[\s\S]*keepTags\(tags/);
+    expect(place).toMatch(/signRank\(\{ inView: view\.contains\(at\.x, at\.y\), ready: up, toKai: toKai\(at\) \}\)/);
     const sync = scene.slice(scene.indexOf('  private syncLabels() {'), scene.indexOf('  private placeSigns('));
     expect(sync).toMatch(/const want = building \? \[\] :/);
     expect(sync).toMatch(/setTagsShown\(all && !building\)/);
