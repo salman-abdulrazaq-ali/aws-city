@@ -43,7 +43,7 @@ import { GUARDED_BLUEPRINTS, isPracticeDeploy } from '@/backend/ServerBackend';
 import { TEMPLATES } from '@/world/content';
 import { serviceById } from '@/world/taxonomy';
 import { TemplateView } from './TemplateView';
-import { offered, perUnit, pricesFor, regionInfo } from '@/world/regions';
+import { offered, perUnit, pricesFor } from '@/world/regions';
 import { DeleteConfirm, FixesOn, RoleUpdate, StackLink } from './Account';
 import { useCopy } from './feedback';
 import { costLine, offlineReason } from './logic';
@@ -126,7 +126,7 @@ function PendingButton({ pending, busyLabel, children, className = 'btn', disabl
 export const linkRegion = (url?: string): { code: string; name: string } | undefined => {
   try {
     const code = url ? new URL(url).searchParams.get('region') : null;
-    return code ? { code, name: regionInfo(code)?.name ?? code } : undefined;
+    return code ? { code, name: regionName(code) } : undefined;
   } catch {
     return undefined;
   }

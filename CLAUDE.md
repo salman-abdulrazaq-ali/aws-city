@@ -358,7 +358,8 @@ When a change touches a decision, update its entry and run its Proof.
   a masked email, else "Player " + 8 characters of the sub: `connectsPlayerLabel`), and verify is refused 24 h after the link.
   A refused link or verify (the 24 h one included) is `error {requestId}`, never an `account.status`: a status with a requestId always means success. `resource.remove` takes down one game-owned thing with no model (approved
   like any write). `GET /me/export` (once a minute per player on each server task, an in-memory map in `server/src/http.ts`,
-  so with N tasks up to N a minute; 429 otherwise) downloads everything the privacy policy lists:
+  so with N tasks up to N a minute; 429 otherwise; a failed download doesn't count, so a retry works at once)
+  downloads everything the privacy policy lists:
   progress, link metadata (never the ExternalId or role ARN), social rows, the bill, AI counts, the first AI day and the
   MFA time (`firstDay`/`mfa.get` are plain reads).
   Serverless quest templates (`hello-api`, `queue-worker`) are practice builds on the server (`ServerBackend.planPractice`),
@@ -574,16 +575,24 @@ When a change touches a decision, update its entry and run its Proof.
   `MAX_PER_SERVICE`). A table listed and then not found mid-poll is skipped, not a failed DynamoDB read. A poll that
   creates, removes or changes a server, table or bucket (`movesInventory`, `server/src/state/diff.ts`) re-sends the
   mirror from the last listing (`care.reconcile`, no AWS call), and the mirror's "changed?" signature includes the items,
-  so a terminate plus a launch with the same counts is still sent. An agent's write re-polls at once and after 4 s, so the
-  map follows it within seconds. The feed says each kind's and state's lesson once per session (`feedEvents(e, said)`,
+  so a terminate plus a launch with the same counts is still sent. A listing builds from the newest snapshot once its
+  `readGeo` is done, never the one from before it (seen 22 Nov 2026: a terminated server came back until the next
+  listing). An agent's write re-polls at once and after 4 s (not once its world is retired), so the map follows it
+  within seconds. The feed says each kind's and state's lesson once per session (`feedEvents(e, said)`,
   `server/src/contract/aws-feed.ts`), then just the change. HQ chat on the CPU model names servers the player made
   themselves (`otherServers` in `snapshotSummary`), and every chat answer knows it can't change AWS and that the city
   only changes what it built (`CHAT_CAN_DO`, `server/src/contract/orchestrator.ts`; seen 22 Nov 2026: asked to delete a
   console-made server, Eddie said he couldn't see it). An audit line hashes a new bucket's real name (never the `<account>` placeholder), so it matches the gate's line. A plain request's
   task ends at `task.done`: the agent's few words after it run on their own (`explainAfter`), so the task's slot (two a
-  socket) is free at once (seen 22 Nov 2026: "Two tasks are already running" right after a card said done).
-  Proof: `cd server && npx vitest run test/bill.test.ts test/care.test.ts test/player-role.test.ts`, `cd server && npx vitest
-  run test/care.test.ts -t "DescribeInstances|bucket or table" test/diff.test.ts test/poller.test.ts test/contract.test.ts -t "lesson|chat answers" test/runner.test.ts`, `npx vitest run tests/contract.test.ts`.
+  socket) is free at once (seen 22 Nov 2026: "Two tasks are already running" right after a card said done). They're
+  skipped on the CPU model (`llm.small`: one call per player at a time, so they held the next chat answer 30–75 s; the
+  card's result line says what changed; chosen 23 Nov 2026) and never said once the world is retired (Disconnect, a new
+  link: the orchestrator's `retired`). A retired world says nothing more either: `onSnapshot` returns first thing, and
+  a listing that lands after it isn't broadcast.
+  Proof: `cd server && npx vitest run test/bill.test.ts test/care.test.ts test/player-role.test.ts test/diff.test.ts
+  test/poller.test.ts test/runner.test.ts`, `cd server && npx vitest run test/care.test.ts test/contract.test.ts -t
+  "DescribeInstances|bucket or table|newer snapshot|lesson|chat answers|explanation|retired"`, `cd server && npx vitest run
+  test/tenants.test.ts test/service.test.ts -t "after account.unlink|retired"`, `npx vitest run tests/contract.test.ts`.
 - **Street plans come from OpenStreetMap, baked.** A Region with `shared/city-maps/<region>.json` (v1, ODbL, © OpenStreetMap
   contributors) gets a 64×64 core of its real downtown's streets: `src/world/citymap.ts` decodes and validates it,
   `src/world/zoning.ts` zones it (superblocks keep today's insides, blocks → water/park/building, 3×3 lots fronting a
@@ -863,7 +872,8 @@ When a change touches a decision, update its entry and run its Proof.
   coaching line ("Practice terminal: this step also sets …"), never a made-up CLI error; a step's `outputs` pick the answer by a flag's value (create-bucket's `"/<bucket>"` in us-east-1, the bucket address elsewhere), shorthand keys in any order and the JSON form count as the step's (`sameShape`), `itemKey` takes any well-formed DynamoDB item with the key; a command word one typo off gets the CLI parser's "Found invalid choice … Maybe you meant" and an `aws s3` path without `s3://` "Error: Invalid argument type" (`parserRefusal`, from aws-cli v2's argparser.py and customizations/s3); coaching lines ("Practice terminal: …", `isCoaching`) show as help, not errors; a step that comes up after a pass takes the terminal's focus, so typing never reaches the city; nothing touches AWS) or AWS CloudShell, where `workshop.verify` checks it with a
   read-only look at the poller's snapshot (`server/src/workshops/checks.ts`: a fixed registry, no SDK calls of its own, no
   new IAM). For real, each name a command needs is typed once in a box that fills both the command and the check;
-  `<region>` is the linked account's Region, and optional parts are kept once filled (`commandFor`,
+  `<region>` is the linked account's Region (until the account says it, the Region gets a box too, so Copy never waits
+  for a gap with nowhere to type it), and optional parts are kept once filled (`commandFor`,
   `src/world/workshops.ts`), so S3 keeps `LocationConstraint` outside us-east-1 and Copy waits until nothing is left as
   `<x>` (seen 22 Nov 2026: Oregon got `--bucket <bucket>` with no constraint, and CloudShell refused it). Pasted errors
   match the step's known ones first, then go to the building's agent as quoted, redacted data, and its answer shows under
@@ -970,7 +980,7 @@ When a change touches a decision, update its entry and run its Proof.
   `server/src/tenants.ts`: the player as `who(sub)`, the Region, the action and its outcome, the target as the gate's
   `targetHash`; never a resource name or the account id). The card can't be missed: a task card with one waiting says "⏳ Waiting for your Approve" with
   Approve in Deploy → (`openDeployAt`, leaving an HQ first), elsewhere a toast opens it, and Deploy brings the card up with
-  focus on Approve (`deployFocus`). "My builds" is one card per resource for the agents' changes (`arrangeBuilds`,
+  focus on its title (`deployFocus`, `.stack-title`), never Approve, so no approval happens by accident (#105). "My builds" is one card per resource for the agents' changes (`arrangeBuilds`,
   `src/state/builds.ts`: a launch joins its server's later cards by `deploy.status.outputs.ResourceId`; status words fit
   the action; Tear down only while it exists, sent as a plain request, and not when My builds' inventory list already
   offers Take it down for the same resource: one removal button each). The card says where the task is: "Watch Sally
@@ -1017,8 +1027,10 @@ When a change touches a decision, update its entry and run its Proof.
   are real buttons. Sign out is in the ⋯ menu too (signed in and able to sign out), not only Deploy → Your data.
   The Diagram draws Everything or **Built by the city** (`accountDiagram(…, { builtOnly })`, asked for on 22 Nov 2026:
   your own project): only services with something the city built, counted by those, with the usual links between them,
-  and no cost lines (AWS bills a service for the whole account, not each thing the city built); nothing built yet says
-  so. Proof:
+  and no cost lines (AWS bills a service for the whole account, not each thing the city built); a picked service counts
+  what the city built, like its box; nothing built yet says so (`role="status"`). A picked box's details scroll into
+  view (focus stays on the box). Regions read by name with the code beside them ("US West (Oregon) (us-west-2)",
+  `regionName`, as Deploy shows them; seen 22 Nov 2026: Oregon vs us-west-2 confused). Proof:
   `npx vitest run tests/account-map.test.tsx tests/account-diagram.test.ts tests/menu-signout.test.tsx`, `npm run smoke` (`18b-my-aws-map`,
   `18c-my-aws-diagram`, `18c2-built-by-the-city`, `18e-my-aws-diagram-panel`, axe, still dots under reduced motion). A third view, **How AWS City
   runs** (`shared/city-architecture.json`, `src/world/cityArchitecture.ts`), draws the city's own hosted parts the same

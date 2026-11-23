@@ -39,7 +39,7 @@ const XP = { task: 15, perWrite: 5, attempted: 3, classify: 3 } as const;
  * city only changes what it built (the player role allows only its own tagged resources).
  */
 export const CHAT_CAN_DO =
-  "This chat can't change AWS: to build, stop or remove something, the player types it in the city's request box and approves the card. The city only changes what it built; if asked to change something else you can see (otherServers), say you can see it and that the player changes it in the AWS console.";
+  "This chat can't change AWS: to build, stop or remove something, the player types it in the city's request box and approves the card. The city only changes what it built; if asked to change something else you can see (otherServers, or a resource with builtByGame false), say you can see it and that the player changes it in the AWS console.";
 
 /**
  * The landmark agent's words to act on: the player's request (first, unchanged), then the concierge's plan as fenced data
@@ -147,6 +147,8 @@ export const createOrchestrator = (deps: {
   /** Time the agent gets to walk to its landmark before work starts (mock uses ~4.5 s). */
   walkMs?: number;
   paceMs?: number;
+  /** The world's `retired` (tenants.ts): aborted on Disconnect or a new link, after which nothing more is said about it. */
+  retired?: AbortSignal;
 }) => {
   const walkMs = deps.walkMs ?? 4000;
   const paceMs = deps.paceMs ?? 600;
@@ -249,11 +251,16 @@ export const createOrchestrator = (deps: {
     const ok = call.outcome === 'done';
     emit({ type: 'task.step', taskId, index: 1, text: ok ? summary : `${summary} — ${call.message}`, status: ok ? 'done' : 'failed' });
     emit({ type: 'task.done', taskId, ok, result: call.message.slice(0, 400), xp: [{ serviceId: agentId, amount: ok ? XP.task + XP.perWrite : XP.attempted }] });
-    if (!ok || signal?.aborted) return;
+    if (!ok || signal?.aborted || deps.retired?.aborted) return;
+    // On the CPU model, skipped: it serves one call per player at a time, so this held the player's next chat answer
+    // 30–75 s, and the card's result line already says what changed (chosen 23 Nov 2026 for the workshop).
+    if (deps.llm.small) return;
     // A few words on what was just built, from the agent (its persona, no tools). The change is done either way, so this
     // runs on its own: the task (and its slot, two a socket) ends at task.done. Seen 22 Nov 2026: a card said done while
     // its slot was held ~30 s by this call on the CPU model, and the next request got "Two tasks are already running".
-    void explainAfter(cmd.prompt, call.message, agentId, taskId, emit, signal);
+    void explainAfter(cmd.prompt, call.message, agentId, taskId, emit, signal).catch((err) =>
+      log.warn('explain after a change failed', { taskId, err: (err as Error)?.name }),
+    );
   };
 
   const explainAfter = async (prompt: string, done: string, agentId: string, taskId: string, emit: Emit, signal?: AbortSignal) => {
@@ -264,7 +271,8 @@ export const createOrchestrator = (deps: {
       (d) => void (text += d),
       600,
     ).catch((err) => log.warn('explain after a change skipped', { taskId, err: (err as Error).name })); // the AI resting, a quota
-    if (text.trim() && !signal?.aborted) emit({ type: 'agent.message', from: agentId, to: 'user', text: text.trim().slice(0, 600) });
+    // Not after a Disconnect or a new link: the change it explains was in the account the city no longer uses.
+    if (text.trim() && !signal?.aborted && !deps.retired?.aborted) emit({ type: 'agent.message', from: agentId, to: 'user', text: text.trim().slice(0, 600) });
   };
 
   /** `signal`: aborted when the socket that asked closes, so the agent stops making model calls for nobody. */

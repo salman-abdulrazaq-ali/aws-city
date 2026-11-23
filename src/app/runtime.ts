@@ -671,8 +671,10 @@ export function signIn(opts?: { fresh?: boolean }) {
     .catch((e: unknown) => {
       const msg = e instanceof Error ? e.message : String(e);
       if (/cancel|closed|did not approve/i.test(msg)) return store().log({ kind: 'system', text: 'Sign-in cancelled.' });
-      store().log({ kind: 'system', text: `⚠️ Sign-in failed: ${msg}` });
-      store().toast('⚠️', `Sign-in didn’t finish: ${msg}. If it keeps happening, this build’s sign-in redirect may not be registered with the server.`, 'error');
+      // Players get a sentence, never the raw browser or token error (#105's plain errors); the console keeps the detail.
+      console.warn('sign-in failed', e);
+      store().log({ kind: 'system', text: '⚠️ Sign-in didn’t finish.' });
+      store().toast('⚠️', 'Sign-in didn’t finish. Check your connection and try again. If it keeps happening, this browser’s sign-in address may not be set up on the city’s server yet.', 'error');
     })
     .finally(() => store().setSigningIn(false));
 }

@@ -122,7 +122,7 @@ describe('for real', () => {
     open();
     render(<Workshop />);
     fireEvent.click(screen.getByRole('button', { name: /For real in CloudShell/ }));
-    expect(screen.getByRole('note').textContent).toMatch(/Use the same names: table shop\. Region: eu-west-2/);
+    expect(screen.getByRole('note').textContent).toMatch(/Use the same names: table shop\. Region: Europe \(London\) \(eu-west-2\)/);
     fireEvent.click(screen.getByRole('button', { name: /Create the table/ }));
     // One box for the name: it fills the command and the account check (never asked twice).
     const input = screen.getByRole('textbox', { name: /Your table name/ }) as HTMLInputElement;
@@ -151,6 +151,21 @@ describe('for real', () => {
     expect(copy.disabled).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Check my account' }));
     expect(verify).toHaveBeenCalledWith('s3-first-bucket', 'create', { bucket: 'aws-city-047463438585-ws-1' });
+  });
+
+  // Found reviewing our code against #105 (23 Nov 2026): before the account said its Region, Copy waited for a <region>
+  // that had no box to type it in.
+  it('before the account says its Region, the Region gets a box too, and Copy waits for it', () => {
+    useCity.setState({ backendKind: 'server', account: { linked: false } });
+    act(() => useCity.getState().openWorkshop('s3-first-bucket'));
+    render(<Workshop />);
+    fireEvent.click(screen.getByRole('button', { name: /For real in CloudShell/ }));
+    const copy = screen.getByRole('button', { name: 'Copy' }) as HTMLButtonElement;
+    fireEvent.change(screen.getByRole('textbox', { name: /Your bucket name/ }), { target: { value: 'aws-city-047463438585-ws-1' } });
+    expect(copy.disabled).toBe(true);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Your Region code' }), { target: { value: 'us-west-2' } });
+    expect(document.querySelector('.workshop-cmd')?.textContent).toBe('aws s3api create-bucket --bucket aws-city-047463438585-ws-1 --region us-west-2 --create-bucket-configuration LocationConstraint=us-west-2');
+    expect(copy.disabled).toBe(false);
   });
 });
 

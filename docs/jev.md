@@ -106,7 +106,8 @@ Hosted, the key reaches the ECS task only as a Secrets Manager secret, never a p
    --secret-string '{"apiKey":"<your key>"}'`.
 2. Add `"jev": { "secretName": "aws-city/jev" }` to the environment's settings (`staging` or `prod` in
    `aws-city.config.json`, or `-c prod='{…}'`); `"model"` beside it pins a model other than the server's default.
-3. Deploy (`npm run setup`, or the deploy workflow). Remove the `jev` block and deploy again to turn it off.
+3. Deploy (`npm run setup`, or the deploy workflow). `npm run setup` keeps the `jev` block on every later run (it
+   doesn't ask about it). Remove the block and deploy again to turn it off.
 
 Each decision is logged once (`jev`): a decision id, the model that answered, each Noul by question id, the verdict,
 the row that decided it, the latency and the token usage. A failure is logged as a warning with its kind

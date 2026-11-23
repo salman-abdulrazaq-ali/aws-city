@@ -105,7 +105,7 @@ describe('the map on screen', () => {
       ['How AWS City runs', 'false'],
     ]);
     fireEvent.click(screen.getByRole('button', { name: 'Diagram' }));
-    expect(screen.getByRole('img', { name: /Diagram of your AWS services in us-west-2/ })).toBeTruthy();
+    expect(screen.getByRole('img', { name: /Diagram of your AWS services in US West \(Oregon\)/ })).toBeTruthy();
     expect(screen.getByRole('button', { name: /Amazon EC2, 1 resource, \$0\.01 a day est\., \$0\.16 a month est\./ })).toBeTruthy();
     expect(screen.getByText(/Dashed line: how these services usually connect/)).toBeTruthy();
     expect(screen.getByText(/Solid line: data AWS reports moving/)).toBeTruthy();
@@ -141,7 +141,7 @@ describe('the map on screen', () => {
     render(<AccountMap />);
     fireEvent.click(screen.getByRole('button', { name: 'Diagram' }));
     fireEvent.click(screen.getByRole('button', { name: 'Built by the city' }));
-    expect(screen.getByRole('img', { name: /Diagram of what the city built in us-west-2/ })).toBeTruthy();
+    expect(screen.getByRole('img', { name: /Diagram of what the city built in US West \(Oregon\)/ })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^No building yet/ })).toBeNull();
     expect(screen.getByText(/No costs here: AWS bills each service for the whole account/)).toBeTruthy();
     cleanup();
@@ -149,8 +149,28 @@ describe('the map on screen', () => {
     render(<AccountMap />);
     fireEvent.click(screen.getByRole('button', { name: 'Diagram' }));
     fireEvent.click(screen.getByRole('button', { name: 'Built by the city' }));
-    expect(screen.getByText(/Nothing built by the city yet/)).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toMatch(/Nothing built by the city yet/);
     expect(screen.queryByRole('img', { name: /Diagram of/ })).toBeNull();
+  });
+
+  // Found reviewing our code against #105 (23 Nov 2026): the picked panel said the whole account's count while the box
+  // said what the city built.
+  it('Built by the city: a picked service counts what the city built, the same as its box', () => {
+    const mixed: Inventory = { ...inventory, items: [...inventory.items, item({ name: 'console-made', managedByGame: false, az: 'us-west-2b' })], counts: { ...inventory.counts, ec2: 2 } };
+    useCity.setState({ inventory: mixed });
+    render(<AccountMap />);
+    fireEvent.click(screen.getByRole('button', { name: 'Diagram' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Built by the city' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Amazon EC2/ }));
+    const picked = screen.getByRole('region', { name: 'Amazon EC2' });
+    expect(picked.querySelector('h4')?.textContent).toMatch(/×1$/);
+    expect(picked.textContent).not.toMatch(/console-made/);
+  });
+
+  it('says Regions by name, with the code beside them', () => {
+    render(<AccountMap />);
+    expect(screen.getByRole('dialog').querySelector('.finding-who')?.textContent).toMatch(/US West \(Oregon\) \(us-west-2\)/);
+    expect(screen.getByText(/Also in your account: 2 in Europe \(London\)/)).toBeTruthy();
   });
 
   it('Diagram: dots move along the links, and sit still under reduced motion', () => {
