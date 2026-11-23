@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-23T05:00:00Z",
+  "generatedAt": "2026-11-23T06:00:00Z",
   "title": "Design System: AWS City",
   "extensions": {
     "colorMeta": {
@@ -8,8 +8,8 @@
       "aws-compute": { "role": "secondary", "displayName": "District colours (AWS Architecture Icon categories)", "canonical": "#ed7100", "tonalRamp": ["#ed7100", "#7aa116", "#c925d1", "#8c4fff", "#dd344c", "#01a88d", "#e7157b", "#ed7100"] },
       "gold": { "role": "secondary", "displayName": "City Gold", "canonical": "#ffc233", "tonalRamp": ["#3d2a05", "#6b4a0c", "#b7791f", "#dfa024", "#ffc233", "#ffd56b", "#fff1b8", "#fffaf0"] },
       "paper": { "role": "tertiary", "displayName": "Flashcard Parchment", "canonical": "#d9cfba", "tonalRamp": ["#1b1200", "#4a3a1c", "#7a6740", "#a8987a", "#c4b89f", "#d2c7b0", "#d9cfba", "#f0eadc"] },
-      "panel": { "role": "neutral", "displayName": "Warm Graphite (project ramp)", "canonical": "#1e2126", "tonalRamp": ["#0f1114", "#15171b", "#191c20", "#1e2126", "#24282e", "#2c3138", "#3a3f48", "#8b8f98"] },
-      "ink": { "role": "neutral", "displayName": "Parchment Ink", "canonical": "#e6e2d8", "tonalRamp": ["#3a3f48", "#5c6068", "#8b8f98", "#a9a59b", "#c9c4b8", "#e6e2d8", "#f3efe5", "#fff8ee"] },
+      "panel": { "role": "neutral", "displayName": "Warm Graphite (project ramp)", "canonical": "#1e2126", "tonalRamp": ["#0f1114", "#15171b", "#191c20", "#1e2126", "#24282e", "#2c3138", "#3a3f48", "#969aa3"] },
+      "ink": { "role": "neutral", "displayName": "Parchment Ink", "canonical": "#e6e2d8", "tonalRamp": ["#3a3f48", "#5c6068", "#969aa3", "#a9a59b", "#c9c4b8", "#e6e2d8", "#f3efe5", "#fff8ee"] },
       "good": { "role": "neutral", "displayName": "Linked Teal", "canonical": "#5db39e", "tonalRamp": ["#0f2a24", "#1a463c", "#276355", "#3a8473", "#5db39e", "#86c8b7", "#bfe8dc", "#e6f6f1"] },
       "bad": { "role": "neutral", "displayName": "Coral Alarm", "canonical": "#e5676b", "tonalRamp": ["#3a1213", "#5e1c1e", "#8f2a2e", "#bc4247", "#e5676b", "#ec8f92", "#f6c9ca", "#fbe8e8"] },
       "info": { "role": "neutral", "displayName": "Sky Note", "canonical": "#8fb8e8", "tonalRamp": ["#13243a", "#1f3a5c", "#2f5684", "#4f7db3", "#8fb8e8", "#b3cff0", "#d6e4f5", "#eef4fb"] }
@@ -20,8 +20,8 @@
       "title": { "displayName": "Title", "purpose": "Card titles, a building's name, the flashcard question (--fs-lg)." },
       "body": { "displayName": "Body", "purpose": "Running text in cards, the menu and the shift (--fs-md)." },
       "label": { "displayName": "Section label", "purpose": "The one 'what this block is' style: 12 px 800, muted, sentence case." },
-      "caption": { "displayName": "Caption", "purpose": "Tab labels, counts, the connection word; non-essential only." },
-      "wordmark": { "displayName": "Wordmark", "purpose": "The HUD's AWS City logotype." },
+      "caption": { "displayName": "Caption", "purpose": "Tab labels, tab badges, counts, the connection word; non-essential only." },
+      "wordmark": { "displayName": "Wordmark", "purpose": "The HUD's AWS City logotype at --fs-pixel (11 px); the panel's city HUD drops it." },
       "mono": { "displayName": "Mono", "purpose": "Inline code and the practice terminal." }
     },
     "shadows": [
@@ -38,7 +38,7 @@
       { "name": "dur-3", "value": "320ms", "purpose": "Toast pop, HUD number bump." },
       { "name": "ease-step", "value": "steps(3, end)", "purpose": "Sprite-like stepped entrances (toasts)." },
       { "name": "ease-out", "value": "cubic-bezier(0.2, 0.8, 0.2, 1)", "purpose": "Default easing for state changes and entrances." },
-      { "name": "enter", "value": "opacity 0 → 1, translateY(4px) → 0 over dur-2", "purpose": "Every child of the tab body, menus and scrims." },
+      { "name": "enter", "value": "opacity 0.6 → 1, translateY(4px) → 0 over dur-2", "purpose": "Every child of the tab body, menus and scrims. It starts at 0.6, never 0, so content shows at the side panel's low frame rate." },
       { "name": "reduced-motion", "value": "@media (prefers-reduced-motion: reduce): animation and transition durations 0.01ms, one iteration", "purpose": "Global CSS rule; the canvas parks ambient motion, cargo jets and crate shakes separately." }
     ],
     "breakpoints": [
@@ -62,7 +62,7 @@
       "refersTo": "button",
       "description": "Every secondary action: quiet graphite with a hairline.",
       "html": "<button class=\"ds-btn2\">Preview</button>",
-      "css": ".ds-btn2 { display: inline-flex; align-items: center; min-height: 32px; padding: 4px 12px; border-radius: 4px; font-family: 'Nunito', sans-serif; font-weight: 700; font-size: 13px; color: var(--ink, #e6e2d8); background: var(--panel-2, #24282e); border: 1px solid var(--line-strong, #3a3f48); cursor: pointer; transition: background-color 160ms, border-color 160ms; } .ds-btn2:hover { background: var(--panel-hi, #2c3138); border-color: var(--muted, #8b8f98); color: var(--ink-hi, #fff8ee); } .ds-btn2:focus-visible { outline: 2px solid var(--accent, #f0a63a); outline-offset: 2px; }"
+      "css": ".ds-btn2 { display: inline-flex; align-items: center; min-height: 32px; padding: 4px 12px; border-radius: 4px; font-family: 'Nunito', sans-serif; font-weight: 700; font-size: 13px; color: var(--ink, #e6e2d8); background: var(--panel-2, #24282e); border: 1px solid var(--line-strong, #3a3f48); cursor: pointer; transition: background-color 160ms, border-color 160ms; } .ds-btn2:hover { background: var(--panel-hi, #2c3138); border-color: var(--muted, #969aa3); color: var(--ink-hi, #fff8ee); } .ds-btn2:focus-visible { outline: 2px solid var(--accent, #f0a63a); outline-offset: 2px; }"
     },
     {
       "name": "Warn Button",
@@ -78,7 +78,7 @@
       "refersTo": "chip",
       "description": "Pill outlines for goals, suggestions and filters.",
       "html": "<button class=\"ds-chip\">Pass a puzzle</button>",
-      "css": ".ds-chip { padding: 4px 8px; border-radius: 999px; border: 1px solid var(--line-strong, #3a3f48); background: none; color: var(--ink-soft, #c9c4b8); font-family: 'Nunito', sans-serif; font-size: 12px; font-weight: 700; cursor: pointer; transition: background-color 160ms, border-color 160ms; } .ds-chip:hover { background: var(--panel, #1e2126); border-color: var(--muted, #8b8f98); color: var(--ink-hi, #fff8ee); } .ds-chip:focus-visible { outline: 2px solid var(--accent, #f0a63a); outline-offset: 2px; }"
+      "css": ".ds-chip { padding: 4px 8px; border-radius: 999px; border: 1px solid var(--line-strong, #3a3f48); background: none; color: var(--ink-soft, #c9c4b8); font-family: 'Nunito', sans-serif; font-size: 12px; font-weight: 700; cursor: pointer; transition: background-color 160ms, border-color 160ms; } .ds-chip:hover { background: var(--panel, #1e2126); border-color: var(--muted, #969aa3); color: var(--ink-hi, #fff8ee); } .ds-chip:focus-visible { outline: 2px solid var(--accent, #f0a63a); outline-offset: 2px; }"
     },
     {
       "name": "Card",
@@ -94,7 +94,7 @@
       "refersTo": "input",
       "description": "The prompt bar and form fields.",
       "html": "<input class=\"ds-input\" placeholder=\"Ask the city to do something…\" />",
-      "css": ".ds-input { min-height: 34px; padding: 6px 8px; border-radius: 4px; background: var(--panel, #1e2126); color: var(--ink, #e6e2d8); border: 1px solid var(--line-strong, #3a3f48); font-family: 'Nunito', sans-serif; font-size: 13px; transition: border-color 160ms, box-shadow 160ms; } .ds-input::placeholder { color: var(--muted, #8b8f98); } .ds-input:focus { outline: none; border-color: var(--accent, #f0a63a); box-shadow: 0 0 0 3px rgba(240, 166, 58, 0.13); }"
+      "css": ".ds-input { min-height: 34px; padding: 6px 8px; border-radius: 4px; background: var(--panel, #1e2126); color: var(--ink, #e6e2d8); border: 1px solid var(--line-strong, #3a3f48); font-family: 'Nunito', sans-serif; font-size: 13px; transition: border-color 160ms, box-shadow 160ms; } .ds-input::placeholder { color: var(--muted, #969aa3); } .ds-input:focus { outline: none; border-color: var(--accent, #f0a63a); box-shadow: 0 0 0 3px rgba(240, 166, 58, 0.13); }"
     },
     {
       "name": "Tab Bar",
@@ -102,7 +102,7 @@
       "refersTo": "tab",
       "description": "City · Learn · Jobs · Deploy: line icons over small labels, amber underline on the active tab.",
       "html": "<nav class=\"ds-tabs\"><button class=\"on\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M3 11l9-7 9 7v9H3z\"/></svg><span>City</span></button><button><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><rect x=\"5\" y=\"4\" width=\"14\" height=\"16\" rx=\"2\"/></svg><span>Learn</span></button></nav>",
-      "css": ".ds-tabs { display: flex; padding: 0 6px; border-bottom: 1px solid var(--line, #2c3038); background: var(--bg, #15171b); } .ds-tabs button { position: relative; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 2px 6px; background: none; border: 0; color: var(--muted, #8b8f98); font-family: 'Nunito', sans-serif; font-size: 11px; font-weight: 700; cursor: pointer; transition: color 160ms; } .ds-tabs button:hover { color: var(--ink, #e6e2d8); } .ds-tabs button.on { color: var(--ink-hi, #fff8ee); } .ds-tabs button.on svg { color: var(--accent, #f0a63a); } .ds-tabs button.on::after { content: ''; position: absolute; left: 22%; right: 22%; bottom: -1px; height: 2px; border-radius: 2px 2px 0 0; background: var(--accent, #f0a63a); } .ds-tabs button:focus-visible { outline: 2px solid var(--accent, #f0a63a); outline-offset: -3px; }"
+      "css": ".ds-tabs { display: flex; padding: 0 6px; border-bottom: 1px solid var(--line, #2c3038); background: var(--bg, #15171b); } .ds-tabs button { position: relative; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 2px 6px; background: none; border: 0; color: var(--muted, #969aa3); font-family: 'Nunito', sans-serif; font-size: 11px; font-weight: 700; cursor: pointer; transition: color 160ms; } .ds-tabs button:hover { color: var(--ink, #e6e2d8); } .ds-tabs button.on { color: var(--ink-hi, #fff8ee); } .ds-tabs button.on svg { color: var(--accent, #f0a63a); } .ds-tabs button.on::after { content: ''; position: absolute; left: 22%; right: 22%; bottom: -1px; height: 2px; border-radius: 2px 2px 0 0; background: var(--accent, #f0a63a); } .ds-tabs button:focus-visible { outline: 2px solid var(--accent, #f0a63a); outline-offset: -3px; }"
     },
     {
       "name": "Toast",
@@ -135,8 +135,8 @@
       { "name": "The One Lamp Rule", "body": "One amber-filled button per screen (the smoke test counts them on the City tab). Everything else is a quiet graphite button, a ghost or a chip.", "section": "colors" },
       { "name": "The District Square Rule", "body": "A district's colour appears as a small mark (an 8 px square, a 4 px progress segment, an eyebrow word), never as a background.", "section": "colors" },
       { "name": "The Token-Only Rule", "body": "Colours come from :root in src/app/styles/00-base.css (and src/game/theme.ts mirrors them for Phaser under the same names). Accessibility modes work by overriding these tokens, so a raw hex in a component escapes them.", "section": "colors" },
-      { "name": "The 12 px Floor Rule", "body": "12 px is the floor for body text; 11 px only for non-essential labels. (Shipped exceptions: 10 px tab badges and the wordmark.)", "section": "typography" },
-      { "name": "The Pixel Grid Rule", "body": "Press Start 2P only at 10, 11 or 15 px (19 px at 150 % text). Never scale it by a fraction.", "section": "typography" },
+      { "name": "The 12 px Floor Rule", "body": "12 px is the floor for body text; 11 px only for non-essential labels. No shipped exceptions: tab badges are 11 px and the wordmark is --fs-pixel.", "section": "typography" },
+      { "name": "The Pixel Grid Rule", "body": "Press Start 2P only at its two tokens, `--fs-pixel` 11 px and `--fs-pixel-lg` 15 px (15 and 19 px at the bigger text sizes). Never scale it by a fraction.", "section": "typography" },
       { "name": "The Heavy-Weight Rule", "body": "Emphasis is weight (700/800), not colour or italics; most labels and buttons are 700–800.", "section": "typography" },
       { "name": "The Flat Desk Rule", "body": "Cards in the side column are flat (tone and hairline). Only what floats over the city (menus, toasts, sheets, the coin note) gets the float shadow.", "section": "elevation" }
     ],
@@ -147,12 +147,13 @@
       "Do keep district colours to small marks (an 8 px square, a 4 px segment).",
       "Do draw coins with the pixel Coin icon and stars as ⭐; never show \"XP\".",
       "Do give every animation a reduced-motion state: CSS durations collapse to 0.01 ms under prefers-reduced-motion, and the canvas parks its ambient motion.",
+      "Do start entrances from opacity 0.6 (the shared enter), never 0: the side panel can draw at a few frames a second, and content must show before the entrance ends.",
+      "Do keep one overlay at a time on the panel's map: one toast (the ticker steps aside), one speech bubble.",
       "Do render in-world text with crisp() and counter-scale it by 1/zoom; keep camera zoom on integers."
     ],
     "donts": [
       "Don't set font sizes in raw px outside the token scale: they ignore ⋯ → Text size.",
       "Don't use Press Start 2P for running text or at sizes off its 8 px grid.",
-      "Don't put muted text on panel-hi (4.0:1, under AA).",
       "Don't fill large areas with a district colour or with amber.",
       "Don't add a second filled button beside the primary; use a graphite or ghost button.",
       "Don't hand-edit or regenerate the city's sprites in a UI change; they come from npm run art."

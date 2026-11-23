@@ -14,7 +14,7 @@ colors:
   ink: "#e6e2d8"
   ink-hi: "#fff8ee"
   ink-soft: "#c9c4b8"
-  muted: "#8b8f98"
+  muted: "#969aa3"
   accent: "#f0a63a"
   accent-hover: "#f5b75a"
   accent-ink: "#2a1a04"
@@ -85,7 +85,7 @@ typography:
     lineHeight: 1.3
   wordmark:
     fontFamily: "'Press Start 2P', 'Nunito', sans-serif"
-    fontSize: "10px"
+    fontSize: "11px"
     fontWeight: 400
     letterSpacing: "0.5px"
   mono:
@@ -225,6 +225,8 @@ Architecture Icon category colours reserved for districts.
 - **Paper** (`paper`, `paper-back`, `paper-ink`, `paper-meta`): flashcards and the agent's "say" bubble on the shift; the
   card's small print uses burnt-sienna meta text (overridden darker inside `.flash-face` so both faces pass 4.5:1).
 - **Speech white** (`bubble`, `bubble-ink`): in-world speech bubbles drawn by Phaser.
+- **Night strip** (`--night-sky-*`, `--window-*`, `--rarity-*`): the City Lights strip and the Daily Supply Drop's rarity
+  rims. They are named tokens with the same values as the canvas's windows, so the strip and the city glow alike.
 
 ### Neutral
 - **Night Graphite** (`bg`): the app background and the side column.
@@ -233,7 +235,8 @@ Architecture Icon category colours reserved for districts.
   menus; hover and pressed states step one tone up.
 - **Hairline** (`line`, `line-strong`): every border and divider.
 - **Parchment Ink** (`ink`, `ink-hi`, `ink-soft`): body text, headings, secondary text.
-- **Fog** (`muted`): metadata and section labels. Measured 5.5:1 on `bg`, 5.0:1 on `panel`, 4.6:1 on `panel-2` and only 4.0:1 on `panel-hi` (the token comment says 5.3:1 on `panel`).
+- **Fog** (`muted`): metadata and section labels. Measured 6.4:1 on `bg`, 5.7:1 on `panel`, 5.3:1 on `panel-2` and
+  4.6:1 on `panel-hi`: AA on every graphite surface. High contrast swaps in its own lighter value.
 - **Semantic**: `good` (teal-green, done and linked), `warn` (straw, rush hour and "updating"), `bad` (coral, destructive
   and errors, always paired with `bad-ink` text on `bad-soft`), `info` (sky, links and notes), `code` (mint, inline code).
 
@@ -265,14 +268,18 @@ draws them into the canvas too.
 - **Title** (800, 15 px, `--fs-lg`): card titles, a building's name, the flashcard question.
 - **Body** (400–700, 13 px, `--fs-md`, line-height about 1.45): running text in cards, the menu, the shift.
 - **Label** (800, 12 px, `--fs-sm`, muted, sentence case): the single section-label style ("Today's shift", "Blueprints").
-- **Caption** (700, 11 px, `--fs-xs`): tab labels, chips' counts and the connection word; 11 px is reserved for
-  non-essential labels.
+- **Caption** (700, 11 px, `--fs-xs`): tab labels, tab badges, chips' counts and the connection word; 11 px is reserved
+  for non-essential labels.
+
+Every font size in the stylesheets is a `--fs-*` token (or an `em` of one), so ⋯ → Text size reaches it. Emoji and icon glyphs scale the same
+way, as `calc(var(--fs-md) * N / 13)` (N px at 100 %). The one raw value is the panel HUD rank chip's icon-only
+`font-size: 0`. SVG text in the diagrams is in viewBox units and scales with the drawing.
 
 ### Named Rules
-**The 12 px Floor Rule.** 12 px is the floor for body text; 11 px only for non-essential labels. (Shipped exceptions:
-10 px tab badges and the wordmark.)
+**The 12 px Floor Rule.** 12 px is the floor for body text; 11 px only for non-essential labels. No shipped exceptions:
+tab badges are 11 px and the wordmark is `--fs-pixel`.
 
-**The Pixel Grid Rule.** Press Start 2P only at 10, 11 or 15 px (19 px at 150 % text). Never scale it by a fraction.
+**The Pixel Grid Rule.** Press Start 2P only at its two tokens, `--fs-pixel` 11 px and `--fs-pixel-lg` 15 px (15 and 19 px at the bigger text sizes). Never scale it by a fraction.
 
 **The Heavy-Weight Rule.** Emphasis is weight (700/800), not colour or italics; most labels and buttons are 700–800.
 
@@ -282,13 +289,18 @@ The app is one CSS grid with two surfaces:
 
 - **Side panel** (`.app-panel`, about 400 px wide): rows `hud / stage / side`. The stage (the city) gets
   `minmax(150px, 34%)` of the height (54 % when the player asks for a taller map); the side column below takes the rest.
-  A mini-game takes the whole height under the HUD.
+  While the player scrolls the side column, the compact map slides to its 150 px floor; it grows back at the top, on a
+  tab change or on a view change. A mini-game takes the whole height under the HUD.
 - **Full tab** (`.app-full`, 1400 × 880 reference): `hud` across the top, then the stage (`1fr`) beside a fixed
   400 px side column with a 1 px left hairline. The side column's content is the same as the panel's.
 
 The side column stacks: tabs (City · Learn · Jobs · Deploy, opened by the unlock ladder), a scrolling `.tab-body`
-(12 px sides, 16 px bottom, a stable scrollbar gutter), then the prompt bar with its AI note. Spacing is a 2/4/6/8/12/16
-px scale (`--s-1` … `--s-6`); gaps between cards are 8 px, card padding 12 px. Breakpoints are narrow-surface
+(12 px sides, 16 px bottom, a stable scrollbar gutter), then the footer: one row, the prompt bar. Its AI note shows
+above the box while the box has focus or words in it; the rest of the time it is visually hidden but stays the box's
+`aria-describedby`. In the panel, the Console Copilot switch joins the footer only on the City tab, beside an AWS
+console page, or while it is on. Spacing is a 2/4/6/8/12/16
+px scale (`--s-1` … `--s-6`), and corners the `--r-*` scale, in every sheet (the workshop, clients and station styles
+included); gaps between cards are 8 px, card padding 12 px. Breakpoints are narrow-surface
 adjustments only: `max-width: 480px` hides the connection word, `max-width: 420px` hides the City Lights count and the
 rush-hour word.
 
@@ -335,6 +347,9 @@ The stage has a black 1 px border plus a `line-strong` outer ring, like a monito
 - **Style:** a pill outline (`line-strong`), 12 px 700 text in `ink-soft`, no fill; scrolling chip rows fade their edges
   with a mask.
 - **State:** hover fills with `panel`; a selected or counted chip uses `accent-soft` with amber text.
+- **Goal chips** (Today's shift): a round mark leads each one, an open ring that fills with `good` (a conic fill) as the
+  goal moves and turns solid when it's done; never a ◻️/✅ swatch that reads as a checkbox. A counted chip drops its
+  number while the count shows beside it ("Review cards 0/5").
 
 ### Cards / Containers
 - **Corner Style:** 6 px.
@@ -349,9 +364,14 @@ background, `line-strong` border, float shadow, 12 px padding, a close ✕. Find
 full-screen cards (My City, the Workshop dialog) sit on the same scrim. Escape closes.
 
 ### Toasts
-Over the stage, centred, at most two in the panel and three in the tab, newest last, below the news ticker. `panel`
-fill, a 4 px amber inset bar on the left, 700 text, a drain bar on hover, entering with a 3-step "pop". Errors swap the
-bar to coral.
+Over the stage, centred, below the news ticker, one at a time from the store's queue. `panel` fill, a 4 px amber inset
+bar on the left, 700 text, a drain bar on hover, entering with a 3-step "pop". Errors swap the bar to coral. In the
+panel a toast is a step smaller (12 px text, tighter padding) and the news ticker steps aside while it shows. The
+one-time coins note hangs under the ticker, never over it, and steps aside for a toast too.
+
+### Disclosures
+Every `<summary>` row is at least 24 px tall, its words centred. The folds share one look: `ink-soft`, bold, no
+underline ("For AWS learners", "Tell me more", Deploy's "What the role can do", "Show the CloudFormation").
 
 ### Inputs / Fields
 - **Style:** `panel` fill, 1 px `line-strong`, 4 px corners, 34 px tall; selects draw their own two-triangle chevron.
@@ -359,22 +379,57 @@ bar to coral.
 - **Error / Disabled:** coral `field-error` text under the field; disabled at 50 % opacity with a not-allowed cursor.
 
 ### Navigation
-- **HUD:** the pixel wordmark, then ⭐ stars · 🪙 coins (a pixel coin icon, never the emoji) · 💡 City Lights, the rank
-  chip, a connection dot with one word ("Demo"), and the ⋯ menu. In Simple mode the HUD is only ⭐ · coins · To do ·
-  Decorate · ⋯.
+- **HUD:** the pixel wordmark, then ⭐ stars · 🪙 coins (a pixel coin icon, never the emoji) · 💡 City Lights ("N
+  windows lit" in the tab, a 24 px target), the rank chip, a connection dot with one word ("Demo"), and the ⋯ menu. In
+  Simple mode the HUD is only ⭐ · coins · To do · Decorate · ⋯. The panel's city HUD drops the wordmark (the browser's
+  panel header already names AWS City) to keep "🌳 Decorate" in words; at a bigger text size Decorate goes back to its icon.
 - **Tabs:** line icons over 11 px labels, muted until active; the active tab turns `ink-hi` with an amber icon and
-  underline. A 7 px amber dot or a small count badge marks news.
-- **Segmented switch** (Learn: Cards · Puzzles · Drawing board): a `panel` track, the pressed segment raised to `panel-hi`.
-- **⋯ menu:** a 240 px floating list with labelled groups (small-caps muted labels), toggles drawn as 28 × 16 switches.
+  underline. A 7 px amber dot or a small 11 px count badge marks news.
+- **Segmented switch** (Learn: Cards · Puzzles · Drawing board; Decorate's Place · Move · Remove): a `panel` track, the
+  pressed segment raised to `panel-hi`.
+- **⋯ menu:** a 240 px floating list in labelled groups (small-caps muted labels): Account first when hosted, then
+  Sound & view, Accessibility, How you play, Your city, and Privacy and Credits last. Toggles are drawn as 28 × 16
+  switches; Decorate is a plain item ("🌳 Decorate" / "🌳 Done decorating").
+- **Back:** a top-left ghost row with the back icon ("‹ Today's shift", "← All businesses"), never a centred button at
+  the bottom.
 
 ### Flashcard (signature)
 A cream paper card (`paper`, min 160 px tall) that flips in 3D; the question uses glossary terms that only mark the
 word, the answer side repeats the question small in sienna. It is the one place the desk turns to paper.
 
+### Approval card (signature)
+A waiting approval leads its own Deploy section, "Waiting for your OK", after the account card and above Blueprints and
+My builds. Under the title, a bordered line says where it writes first ("Changes AWS account 0474-6343-8585 ·
+us-west-2", the id and Region never split; the demo names the practice account, on fix cards too). Then one plain line
+per resource ("+ Add S3 bucket", its logical ID second in muted mono), one "For AWS learners" fold for the types
+and the price, and the amber "Approve & deploy" in plain words.
+
+### Places list
+Each district folds to one row: its 8 px square, its name, "N ready to upgrade" in `good-ink` when any, and found/total.
+Inside, the ready buildings come first.
+
+### Decorate drawer
+The tool is the shared segmented switch (Place · Move · Remove, 360 px at most) with "✔ Here" as a small button beside
+it: a mode, then an action. The categories are one chip row that scrolls sideways with faded edges. Counts and prices
+are Nunito with tabular figures, never mono.
+
+### Puzzle board
+The diagram's spot labels never draw below `--fs-xs`: the board keeps its natural size at the player's text size, so a
+wide puzzle scrolls sideways in the 400 px column. Check design sits on its own row under the message, and the legend is
+in words. In the tab, Bigger board turns the same board into a dialog over the city (brief and cards left, the diagram
+right), with nothing lost.
+
 ### The city stage (signature)
 The Phaser canvas: generated isometric pixel art on a 32 × 16 grid, integer zoom, a seven-colour district map, AWS
 Health storms, agents' white speech bubbles, label chips (11 px heavy text on a dark chip). Its colours come from
 `src/game/theme.ts`, which mirrors the CSS tokens. The art is generated (`npm run art`), never hand-edited.
+- **Bubbles:** one at a time in the panel (a new line fades the one before), and none held past 5 s there or 8 s in the
+  tab. A bubble's caption names who it's for in words ("Cody · to you").
+- **Signs:** signs that would overlap once slid into view give way, the picked building's first, then the one nearest
+  the middle of the view. While decorating, no building names show.
+- **End card:** a round that didn't count leads with the next try in ink ("Next try: take your time and make surer
+  calls"); the accuracy floor and its numbers come second in sienna (`paper-meta`), never red.
+- **Loading tip:** 12 px `ink-soft` on a solid graphite chip, never small muted text straight on the stage.
 
 ## Do's and Don'ts
 
@@ -387,12 +442,14 @@ Health storms, agents' white speech bubbles, label chips (11 px heavy text on a 
 - **Do** draw coins with the pixel `Coin` icon and stars as ⭐; never show "XP".
 - **Do** give every animation a reduced-motion state: CSS durations collapse to 0.01 ms under
   `prefers-reduced-motion`, and the canvas parks its ambient motion.
+- **Do** start entrances from opacity 0.6 (the shared `enter`), never 0: the side panel can draw at a few frames a
+  second, and content must show before the entrance ends.
+- **Do** keep one overlay at a time on the panel's map: one toast (the ticker steps aside), one speech bubble.
 - **Do** render in-world text with `crisp()` and counter-scale it by `1/zoom`; keep camera zoom on integers.
 
 ### Don't:
 - **Don't** set font sizes in raw px outside the token scale: they ignore ⋯ → Text size.
 - **Don't** use Press Start 2P for running text or at sizes off its 8 px grid.
-- **Don't** put `muted` text on `panel-hi` (4.0:1, under AA).
 - **Don't** fill large areas with a district colour or with amber.
 - **Don't** add a second filled button beside the primary; use a graphite or ghost button.
 - **Don't** hand-edit or regenerate the city's sprites in a UI change; they come from `npm run art`.
