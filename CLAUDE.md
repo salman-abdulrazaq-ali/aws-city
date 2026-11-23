@@ -1170,7 +1170,14 @@ When a change touches a decision, update its entry and run its Proof.
   south-east of the square) in their official AWS Architecture Icon category colours (Management & Governance is
   `#E7157B`, read from the icon package's category SVG). The Global Gate's four campus lots go to the global services in
   `shared/region-facts.json` `global` order (Route 53, CloudFront, IAM, Global Accelerator: add a new one last; the order
-  lives in `GLOBAL` in `scripts/fetch-region-facts.mjs`). Proof: `npx vitest run tests/art.test.ts tests/taxonomy.test.ts tests/plan.test.ts`.
+  lives in `GLOBAL` in `scripts/fetch-region-facts.mjs`). A district has 6 to 11 services and its HQ room
+  (`InteriorScene`, laid out by the pure `src/game/hqRoom.ts`) has work for each: six at the desks, up to five more
+  standing on the grate by the wall of racks at their city activity, every other row (`staffSpots`). Each starts at its
+  own spot and idles on its own patch (the 3×3 round its chair, or its stand and the step beside it: `staffPlaces`), so
+  no two start on one tile or meet idling and nobody stands head over head (spawned on three tiles, 9–11 stood in one
+  knot, 23 Nov 2026); nobody idles in front of the door or on Kai's first tile (`KEEP_CLEAR`), so a tap on the door
+  reaches it. Past the spots an agent stands on a free tile Kai can reach, so nobody is dropped. Proof:
+  `npx vitest run tests/art.test.ts tests/taxonomy.test.ts tests/plan.test.ts tests/hq-room.test.ts`.
 - **Content is data.** Districts, services, metaphors and layout live in `src/world/`. Game and UI code
   never hard-code service ids (the exceptions are `bedrock`, the default router target, and the
   mini-games, each built for one landmark: `s3` fishing, `lambda` food stall, `route53` dance, `shield` wall, `ec2` rush hour, `dynamodb` sorting office, `securityagent` red team range, `sqs` queue juggler, `iam` permission gate, `cloudfront` edge cache). Proof: `npx vitest run tests/taxonomy.test.ts` checks every service has a
