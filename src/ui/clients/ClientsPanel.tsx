@@ -21,6 +21,7 @@ import { placeFor } from '@/world/places';
 import { serviceById } from '@/world/taxonomy';
 import { AwsIcon } from '../AwsIcon';
 import { feel } from '../feedback';
+import { Icon } from '../icons';
 import { Plain } from '../Term';
 import { useDialog, useShieldGame } from '../useDialog';
 
@@ -75,7 +76,14 @@ export function ClientsPanel() {
             ✕
           </button>
         </header>
-        {b ? <BusinessView b={b} /> : <BusinessList />}
+        {b ? (
+          <>
+            <BackToBusinesses />
+            <BusinessView b={b} />
+          </>
+        ) : (
+          <BusinessList />
+        )}
       </section>
     </div>
   );
@@ -90,6 +98,7 @@ export function ClientsBoard({ at }: { at: string }) {
   if (b)
     return (
       <section className="clients-tab" aria-labelledby="clients-tab-title">
+        <BackToBusinesses />
         <header className="clients-tab-head">
           <span className="clients-emoji" aria-hidden="true">
             {clientEmoji(b.id)}
@@ -288,8 +297,17 @@ function BusinessView({ b }: { b: Business }) {
           ))}
         </ul>
       </details>
-      <button className="btn ghost tiny" onClick={() => (feel.tap(), useCity.getState().openClients(''))}>
-        ← All businesses
+    </div>
+  );
+}
+
+/** Back to every business: the same top-left back row as the City tab's building card (`.back-link`, 04-tabs.css). */
+function BackToBusinesses() {
+  return (
+    // Its own row, so a flex column never stretches the button across the card: it stays top-left.
+    <div>
+      <button className="btn ghost tiny back-link" onClick={() => (feel.tap(), useCity.getState().openClients(''))}>
+        <Icon name="back" size={10} /> All businesses
       </button>
     </div>
   );

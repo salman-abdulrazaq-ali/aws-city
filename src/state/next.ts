@@ -346,3 +346,10 @@ export function shiftSummary(
     tomorrow: cardsTomorrow ? `Come back tomorrow: ${plural(cardsTomorrow, 'card')} will be ready.` : 'Come back tomorrow for a new shift.',
   };
 }
+
+/**
+ * A counted goal's words without its number while the count shows beside it ("Review cards 0/5"), so the chip never
+ * argues with the shift's button about how many ("Review 2 cards" counts the deck it opens). Done, it reads in full.
+ */
+export const chipLabel = (g: { label: string; goal: number }, done: boolean) =>
+  g.goal > 1 && !done ? g.label.split(' ').filter((w) => w !== String(g.goal)).join(' ') : g.label;

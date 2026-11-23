@@ -1,5 +1,5 @@
 import { agentName, useCity } from '@/state/store';
-import { actionText, whereOf, nextAction, readyToUpgrade, shiftSummary, type NextAction } from '@/state/next';
+import { actionText, chipLabel, whereOf, nextAction, readyToUpgrade, shiftSummary, type NextAction } from '@/state/next';
 import { weeklyChallenge } from '@/state/events';
 import { questById, QUESTS } from '@/world/content';
 import { taskById } from '@/world/clients';
@@ -11,7 +11,7 @@ import { ActivityFeed, AgentOffer, TaskCard } from './ActivityFeed';
 import { AwsIcon } from './AwsIcon';
 import { feel } from './feedback';
 import { districtStyle } from './logic';
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { bus } from '@/state/bus';
 import { Portrait } from './Portrait';
 import { CityCare } from './FindingCard';
@@ -590,7 +590,7 @@ function OvertimeChip({ goal, openTab, game }: { goal: OvertimeGoal; openTab: Op
             openTab(goal.id === 'jobs' ? 'jobs' : 'cards');
           }}
         >
-          <span aria-hidden="true">{ok ? '✅' : '⏱️'}</span>
+          {ok ? <GoalMark have={goal.have} goal={goal.goal} /> : <span aria-hidden="true">⏱️</span>}
           <span>{goal.label}</span>
           <span className="today-bonus">bonus crate</span>
           {!ok && (
@@ -603,6 +603,15 @@ function OvertimeChip({ goal, openTab, game }: { goal: OvertimeGoal; openTab: Op
       </li>
     </ul>
   );
+}
+
+/**
+ * A goal's state as a small round mark: an open ring that fills like the day's ring as the goal moves, solid once
+ * it's done. Round, so it never reads as an unticked checkbox (the chip is a button that goes there, not a box to tick).
+ */
+function GoalMark({ have, goal }: { have: number; goal: number }) {
+  const p = goal > 0 ? Math.min(1, have / goal) : 0;
+  return <span className={`goal-mark ${p >= 1 ? 'full' : ''}`} style={{ '--p': p } as CSSProperties} aria-hidden="true" />;
 }
 
 /** Today's goals as small chips under the ring (never a second big button): tap one to go and do it. */
@@ -630,8 +639,8 @@ function TodayChips({ goals, openTab, game, openCare }: { goals: TodayGoal[]; op
                 openTab(GOAL_TAB[g.id]);
               }}
             >
-              <span aria-hidden="true">{ok ? '✅' : '◻️'}</span>
-              <span>{g.label}</span>
+              <GoalMark have={g.have} goal={g.goal} />
+              <span>{chipLabel(g, ok)}</span>
               {g.bonus && <span className="today-bonus">bonus</span>}
               {g.goal > 1 && !ok && <span className="muted">{g.have}/{g.goal}</span>}
               <span className="sr-only">{ok ? ', done' : where ? `, opens ${where}` : ''}</span>

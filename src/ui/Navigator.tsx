@@ -1,7 +1,8 @@
 import { bus } from '@/state/bus';
 import { tierOf, useCity } from '@/state/store';
 import { placeFor, TIER_NAMES } from '@/world/places';
-import { DISTRICTS, servicesIn } from '@/world/taxonomy';
+import { DISTRICTS, SERVICES, servicesIn } from '@/world/taxonomy';
+import { readyToUpgrade } from '@/state/next';
 import { isPlaced } from '@/game/assets';
 import { SITES } from '@/world/layout';
 import { cityPlanFor } from '@/world/plan';
@@ -34,6 +35,8 @@ export function Navigator({ onOpen }: { onOpen?: () => void }) {
   const l = useLadder();
   // The classic 3×3 city (`?map=legacy`, or a Region whose map doesn't zone) has no lot for some services.
   const plan = cityPlanFor(cityRegion);
+  /** Buildings one action from their next level (the same rule as the shift's "Ready to upgrade"). */
+  const ready = new Set(readyToUpgrade(progress, cityRegion, SERVICES.length).map((r) => r.serviceId));
   return (
     <nav className="nav" aria-label="Places in the city">
       {/* One map of the world (WorldScene): the places list only offers the way there. City Clients live in the Jobs tab. */}
@@ -94,9 +97,12 @@ export function Navigator({ onOpen }: { onOpen?: () => void }) {
         const svcs = servicesIn(d.id);
         const found = svcs.filter((s) => tierOf(progress, s.id, cityRegion) >= 0).length;
         const open = found > 0;
+        // Ready to upgrade first: those buildings lead their district's list, and its folded row counts them.
+        const readyHere = svcs.filter((s) => ready.has(s.id)).length;
         return (
-          <section key={d.id} className={`nav-district edge ${open ? '' : 'closed'}`} style={districtStyle(d.color)}>
-            <div className="nav-head">
+          // Folded by default with its counts (58 rows of "Lv 2" said little); open one to see its buildings.
+          <details key={d.id} className={`nav-district edge ${open ? '' : 'closed'}`} style={districtStyle(d.color)}>
+            <summary className="nav-head">
               <h4>
                 {open ? null : (
                   <span className="lock">
@@ -105,12 +111,16 @@ export function Navigator({ onOpen }: { onOpen?: () => void }) {
                 )}
                 {d.name}
               </h4>
-              <span className="segs-count">
-                {found}/{svcs.length}
+              <span className="nav-counts">
+                {readyHere > 0 && <span className="nav-ready">{readyHere} ready to upgrade</span>}
+                <span className="segs-count" aria-label={`${found} of ${svcs.length} buildings put up`}>
+                  {found}/{svcs.length}
+                </span>
               </span>
-            </div>
+            </summary>
             {svcs
               .filter((s) => tierOf(progress, s.id, cityRegion) >= 0)
+              .sort((a, b) => Number(ready.has(b.id)) - Number(ready.has(a.id)))
               .map((s) => {
                 const t = tierOf(progress, s.id, cityRegion);
                 const here = !!plan.landmarkLayout(s.id);
@@ -125,7 +135,7 @@ export function Navigator({ onOpen }: { onOpen?: () => void }) {
                     </span>
                     {here ? (
                       <span className="lv" title={TIER_NAMES[t]}>
-                        Lv {t}
+                        {ready.has(s.id) && <span className="nav-ready">ready · </span>}Lv {t}
                       </span>
                     ) : (
                       <span className="muted">not here in the classic city</span>
@@ -154,7 +164,7 @@ export function Navigator({ onOpen }: { onOpen?: () => void }) {
                 Visit {d.hq} →
               </button>
             )}
-          </section>
+          </details>
         );
       })}
     </nav>

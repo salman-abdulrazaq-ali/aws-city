@@ -71,7 +71,7 @@ describe('an approval can’t happen by accident', () => {
         confirmText: 'city-orders',
       }),
     );
-    const approve = screen.getByRole('button', { name: '✅ Approve & take down' }) as HTMLButtonElement;
+    const approve = screen.getByRole('button', { name: 'Approve & take down' }) as HTMLButtonElement;
     const focused = document.activeElement as HTMLElement;
     expect(focused).not.toBe(approve);
     expect(focused.tagName).not.toBe('BUTTON');

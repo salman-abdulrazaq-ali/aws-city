@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Progress } from '@/backend/contract';
 import {
+  chipLabel,
   actionText,
   afterQuests,
   bumpShift,
@@ -311,5 +312,13 @@ describe('starting a quest', () => {
     s().startQuest(q.id);
     expect(s().progress.quests?.[q.id]).toMatchObject({ status: 'active', step: 0 });
     s().resetSession();
+  });
+});
+
+describe('the shift’s goal chips (finding 7)', () => {
+  it('a counted goal drops its number while the count shows beside it, so it never argues with "Review 2 cards"', () => {
+    expect(chipLabel({ label: 'Review 5 cards', goal: 5 }, false)).toBe('Review cards');
+    expect(chipLabel({ label: 'Review 5 cards', goal: 5 }, true)).toBe('Review 5 cards');
+    expect(chipLabel({ label: 'Pass a puzzle', goal: 1 }, false)).toBe('Pass a puzzle');
   });
 });

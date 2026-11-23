@@ -283,7 +283,7 @@ describe('My builds and approvals (v2.19)', () => {
     });
     render(<DeployPanel />);
     expect(screen.getByText('Safety check: it holds data').tagName).toBe('LI');
-    const approve = screen.getByRole('button', { name: '✅ Approve & take down' }) as HTMLButtonElement;
+    const approve = screen.getByRole('button', { name: 'Approve & take down' }) as HTMLButtonElement;
     expect(approve.disabled).toBe(true);
     fireEvent.change(screen.getByLabelText(/To approve, type/), { target: { value: 'city-order' } });
     expect(approve.disabled).toBe(true);
@@ -310,7 +310,7 @@ describe('My builds and approvals (v2.19)', () => {
     });
     render(<DeployPanel />);
     expect(screen.queryByLabelText(/To approve, type/)).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '✅ Approve & deploy' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Approve & deploy' }));
     expect(rt.decideDeploy).toHaveBeenCalledWith('a-2', true, undefined);
   });
 

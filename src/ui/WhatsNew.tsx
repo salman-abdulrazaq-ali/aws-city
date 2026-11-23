@@ -33,8 +33,12 @@ export function WhatsNew({ serviceId }: { serviceId: string }) {
       <ul className="place-news-list">
         {list.map((n) => (
           <li key={n.id}>
-            <button className="btn tiny ghost" onClick={() => (feel.tap(), openDocs(n.url))}>
-              {n.title} <span className="muted">· {ago(n.date)}</span> <span aria-hidden="true">↗</span>
+            {/* Like the reading shelf below it: the title wraps, the date sits under it on one line. */}
+            <button className="btn tiny ghost reading-link" onClick={() => (feel.tap(), openDocs(n.url))}>
+              <span className="reading-title">
+                {n.title} <span aria-hidden="true">↗</span>
+              </span>
+              <span className="muted place-news-when">{ago(n.date)}</span>
             </button>
           </li>
         ))}
