@@ -531,9 +531,18 @@ When a change touches a decision, update its entry and run its Proof.
   **32×16**, the pack's exact scale. Sprite names must be unique, and the generator fails on duplicates. Frames are
   trimmed and MaxRects-packed: at most 3 pages of 2048 px and 10.5M packed px; two runs give a byte-identical atlas.
   Prop helpers live in `art/tiles/shapes.py`, the service-building kit in `art/tiles/services/kit.py` (a prism face is
-  always solid; a bare `face()` shader returning None leaves the wall under it, for decals). Proof: `npx vitest run tests/art.test.ts`.
+  always solid; a bare `face()` shader returning None leaves the wall under it, for decals). The mini-games' stage props
+  are `game:<game>:<prop>` from `art/tiles/games_art.py` (side views at 1×: Shield Wall's wall pieces and flood frames,
+  Red Team's lane booths and scanner, Queue Juggler's belt, bench, tray and dead-letter bin, Permission Gate's posts,
+  boom arm, notice board and booth, Edge Cache's counter, phones and envelopes); a game draws them at its play scale
+  (`prop()`, `src/game/scenes/games/cast.ts`) and keeps a drawn fallback when `hasSprite` is false (the notice board and
+  the counter are 9-slices, drawn off WebGL too); tiled and 9-slice pieces are opaque edge to edge so the atlas never
+  trims them. Proof: `npx vitest run tests/art.test.ts tests/stage-shield-redteam.test.ts tests/stage-queue-iamgate.test.ts tests/stage-edge.test.ts`.
 - **Text is crisp in a pixelArt world:** use `crisp()` from `src/game/SpeechBubble.ts` (LINEAR filter
-  plus DPR resolution) and counter-scale by `1/zoom`. Camera zoom stays on integers.
+  plus DPR resolution) and counter-scale by `1/zoom`. Camera zoom stays on integers, and sprites on whole-number scales:
+  a mini-game's play group is 1× in the side panel and 2× in the tab (`playScale`, `src/game/scenes/games/stageFx.ts`;
+  `fitScale`, `cast.ts`), never 1.5×. Canvas text is never under 11 px (`MIN_TEXT_PX`, `textPx` in `src/game/theme.ts`)
+  and follows ⋯ → Text size. Proof: `npx vitest run tests/game-stage.test.ts tests/game-theme.test.ts`.
 - **Sound:** SFX only, no music; on by default and soft. One mixing path (synth voices play through Phaser's audio
   context), nothing scheduled before the first gesture (dropped, never queued), nothing while the page is hidden, a
   priority mixer so one action makes one sound (a big clip holds lower sounds for its own length), and mute synced across
@@ -543,10 +552,20 @@ When a change touches a decision, update its entry and run its Proof.
   player's own task, AWS status chimes follow the news rung, and the demo's chatter is talk only (no `agent.state`).
   Mini-game rounds start from a synced clock (`syncClock`), are laid out at the stage's current size (`fitParent`,
   `src/game/scenes/games/column.ts`: the side panel's stage grows for a game before Phaser's 500 ms size check), keep
-  their end card on resize, and build combos (`combo.ts`).
-  Proof: `npx vitest run tests/audio.test.ts tests/game-clock.test.ts tests/contract.test.ts`.
+  their end card on resize, and build combos (`combo.ts`). Each game is a scene with people in it, not a form: the
+  service's agent at work and crowd citizens as requesters (`person`, `cast`, `cast.ts`; their loops hold still under
+  reduced motion), the landmark at its level in this city where the game has a place (`landmarkFrame`), and props. Its chrome wears the
+  desk's tokens (MiniGame's `PAL` = `GAME_PAL`, scoring's `PILL` = `GAME_PILL`, `src/game/theme.ts`: graphite, the one
+  amber primary, pale gold for Expert, the flashcard's paper for the end card, `bad-ink` for red text); a scene's art
+  keeps its own colours (skies, the lake, district colours). Its text is `TXT` (the design size × 0.85 × ⋯ → Text size,
+  never under 11 px), and the end card lays its buttons out by measured width.
+  Proof: `npx vitest run tests/audio.test.ts tests/game-clock.test.ts tests/contract.test.ts tests/game-theme.test.ts tests/game-stage.test.ts tests/stage-shield-redteam.test.ts`.
 - **Each AWS Region is its own city, built from real facts.** A first run opens on the world map (`WorldScene`); picking a
-  Region dives into its city (remembered in prefs). Each of the Region's real AZs is an island across the river that rings
+  Region dives into its city (remembered in prefs), and so does the first run's "Start in <city>" (`requestDive`,
+  `src/game/worldUi.ts`: the card steps aside at once, `inert`, and the Region opens when the dive has faded to the sea;
+  with no map running or under reduced motion it opens at once). The map's own words fade as a dive starts, and the
+  minimap's box waits for the city's first answer. The map's text follows ⋯ → Text size, never under 11 px
+  (`worldText`), on the theme's tokens (`LABEL_BG`); its art and the data links' colours are its own. Each of the Region's real AZs is an island across the river that rings
   downtown (`zonesFor` → `azsFor`, slots in `AZ_SLOTS`; `shared/region-facts.json`: six in us-east-1, four in us-west-2; the
   linked account's own AZ names when known), with one bridge each onto a core road, so cross-AZ packets cross both bridges
   through downtown; a fenced lot for each service AWS doesn't offer there (with when, or whether, it's coming), and list prices per Region
@@ -555,7 +574,7 @@ When a change touches a decision, update its entry and run its Proof.
   pages are the only source, `pageOnly`; `NOTES` carries a caveat a service's page states, re-read each run: App Runner is
   closed to new customers) and `npm run prices` (Price List Bulk API + the pricing pages'
   data; never the 440 MB EC2 file). The server mirrors every Region only with a Resource Explorer aggregator index in the home
-  Region; findings are checked in the home Region. Proof: `npx vitest run tests/regions.test.ts tests/terrain.test.ts tests/roadgraph.test.ts tests/region-facts.test.ts tests/prices.test.ts`,
+  Region; findings are checked in the home Region. Proof: `npx vitest run tests/regions.test.ts tests/terrain.test.ts tests/roadgraph.test.ts tests/region-facts.test.ts tests/prices.test.ts tests/world-dive.test.tsx`,
   `cd server && npx vitest run test/care.test.ts`.
 - **Live traffic is opt-in, and real.** `flow.enable` (contract v2.8, `Progress.flow`) turns on a read of a few request
   counts from the player's CloudWatch (`server/src/state/flow.ts`: four fixed Metrics Insights queries, one per
@@ -626,10 +645,14 @@ When a change touches a decision, update its entry and run its Proof.
   city's rush hour (8–9 and 17–18 local) more set off and Auto Scaling plays at EC2 and Lambda (`SCALERS`: helpers in
   the workers' places, so the crowd cap holds; they scale in when it ends). Storms
   (`src/game/Weather.ts`) and red/amber outage fences come only from the public AWS Health Dashboard (contract v2.6 `aws.health`). They're
-  pooled and run without tweens; they pause while the page is hidden and park under reduced motion. Each surface has caps
+  pooled and run without tweens; they pause while the page is hidden and park under reduced motion. Walkers stand still
+  under it too (`Stillness`, `src/game/stillness.ts`, re-read each second like Ambient): citizens, workers and visiting
+  Mayors stop where they stand, an idle one gets `STILL_TIME` and never wanders off, and workers run no errands; the
+  landmark agents and the Well-Architected patrols take the same still clock (CityScene's `stillness`), while a task's
+  walk, a walk to work and a finding's visit still go. Everyone stays tappable and no walker is added or removed. Each surface has caps
   (applied by `Ambient.setSurface`, tab/panel; defined in `src/world/traffic.ts`, `Boats.ts`, `Sky.ts`, `Packets.ts`): citizens 26/14 (`crowdSize`: districts open plus one per Practitioner building), vehicles 14/8, boats 3/2, clouds 3/2, packets 24/16. A* gives up after
   6,000 expansions (a binary-heap open set), routes are cached per grid version, and `CityMap.sync` skips the ground pass unless a district or tier changed.
-  Proof: `npx vitest run tests/traffic.test.ts tests/traffic-sim.test.ts tests/carriers.test.ts tests/roadgraph.test.ts tests/flow-trickle.test.ts tests/pathfinding.test.ts`;
+  Proof: `npx vitest run tests/traffic.test.ts tests/traffic-sim.test.ts tests/carriers.test.ts tests/roadgraph.test.ts tests/flow-trickle.test.ts tests/pathfinding.test.ts tests/walkers-still.test.ts tests/agents-still.test.ts`;
   `npm run smoke` asserts the caps from `awsCity.ambient.stats()` and logs FPS (it only warns, and headless caps it at 30).
   Learning traffic: `npx vitest run tests/living-city.test.ts`; `npm run smoke` (81: couriers and helpers at rush hour).
 - **A city that looks and feels alive** (round 3). *Combos:* `shared/combos.json` (20 pairs and trios, each with one plain
@@ -730,14 +753,17 @@ When a change touches a decision, update its entry and run its Proof.
   quiz games deal only the two harder tiers (`dealRound`), stars × 1.5; it ends when the player leaves the game and never
   mixes with Games without a clock. Proof: `npx vitest run tests/a11y-prefs.test.ts`.
 - **One goal, one celebration.** The City tab has one primary button (the shift's next action, or in Simple the first task still
-  to do; nothing competes on a first run's world map). A big moment gets one channel: a tier-up celebrates on the building (no toast), a finished quest opens the
-  celebration card (`src/ui/Celebrate.tsx`, no toast). While that card or a mini-game is up, info toasts (badges, AWS
+  to do; nothing competes on a first run's world map). A big moment gets one channel: a tier-up celebrates on the building (no toast), in
+  order (`tierUpTimeline`, `src/game/cityView.ts`): the camera lands while the new building waits on its ground floor,
+  it rises floor by floor (or its crown drops), then one payoff (one burst, the banner, the fanfare, the cheer), then the
+  push-in 250 ms later, only if the building is in view; under reduced motion a cut and the payoff at once, still. A
+  finished quest opens the celebration card (`src/ui/Celebrate.tsx`, no toast). While that card or a mini-game is up, info toasts (badges, AWS
   status, a drill) wait and come one by one after it closes (`toastsHeld` in `src/state/store.ts`; errors still show), the
   ticker hides during the card, and the card's backdrop stops the presses Phaser hears on the window (`useShieldGame`).
   AWS status leads with plain words (`plainIncidentLead`: "Practice storm: nothing is wrong with your city"). A golden
   token's bubble is short and gold ("✨ Golden token! 1 of 6 · +5 points", no exam code) and waits for a tier-up's cheer;
   bubbles stay below the ticker (`setBubbleTopInset`). Players see stars (⭐) for knowledge and City Coins (🪙) to spend, never "XP".
-  Proof: `npx vitest run tests/moments.test.ts tests/incidents.test.ts tests/tokens.test.ts tests/ui.test.tsx`.
+  Proof: `npx vitest run tests/moments.test.ts tests/incidents.test.ts tests/tokens.test.ts tests/ui.test.tsx tests/city-view.test.ts`.
 - **Each Region is its own city** (contract v2.7, `src/state/cities.ts`). Landmarks live in `Progress.cities[region]`;
   global services (`shared/region-facts.json` `global`) stay in `Progress.landmarks` and stand in every city. Knowledge
   (cards, quests, puzzles, citizens, streak) follows the player, and a building put up in a city for the first time
@@ -760,11 +786,19 @@ When a change touches a decision, update its entry and run its Proof.
   zoom ≥ 2, technical labels (AZ IDs, network notes, distance signs) only with ⋯ → Show the map details (`prefs.mapDetails`).
   Every issue cone shows, but only the most urgent one's "!" tag (and it alone bounces); the rest show from zoom 2 or on the
   building the player is looking at (`IssueMarkers.setTagsShown`). The ticker leads with this city's Region; a weeks-old
-  outage elsewhere waits behind fresh news (`tickerItems`). Signs that would overlap once slid into view give way
-  (`placeSigns`: the picked building, then the one nearest the middle of the view; a sign's icon counts), and while
-  decorating no building names show. Bubbles: the side panel keeps one at a time and none past 5 s (8 s in the tab)
+  outage elsewhere waits behind fresh news (`tickerItems`). From zoom 2 a view holds at most `signCap` building signs
+  (10 at zoom 2, 6 from zoom 3 on the tab's map, a share of that on a smaller one such as the panel, never under 3;
+  picked ones don't count), ranked picked, then standing in view, ready to upgrade (`readyToUpgrade`), nearest Kai
+  (`signRank`). A sign says "· Lv N" only while picked or hovered (`Landmark.setDetailed`); its service icon is
+  counter-scaled with it and counts in its room with the "×N" badge (`labelBounds`). One overlap pass (`keepTags`, run by
+  `placeSigns` on a view change and every 200 ms) keeps tags in `TAG_ORDER`: Kai's, the "E · …" hint, signs, working
+  agents', then citizens' (a hidden walker's tag is muted, `Agent.muteTag`; hover shows it). During an upgrade's push-in
+  labels go by the resting zoom (`labelZoom`), so nothing pops on and off. The first-courier tip waits while a toast or
+  the coins note is up (`overlayUp`). At night each built landmark gets an additive copy over itself (`nightLift`,
+  `src/game/cityView.ts`: 0.55 × the night at zoom 1, half at zoom 2, none from zoom 3), so a grown city doesn't flatten
+  into one dark field. While decorating no building names show. Bubbles: the side panel keeps one at a time and none past 5 s (8 s in the tab)
   (`setBubbleRules`, `bubbleHold`, `src/game/SpeechBubble.ts`); a message's caption reads "Connie · to you".
-  Proof: `npx vitest run tests/incidents.test.ts tests/ui.test.tsx tests/canvas-boards.test.tsx`,
+  Proof: `npx vitest run tests/incidents.test.ts tests/ui.test.tsx tests/canvas-boards.test.tsx tests/city-view.test.ts`,
   `npm run smoke` (screenshots in `.output/smoke`).
 - **The skyline grows with what you learn, block by block.** On a real map every free build tile of a block (not road,
   sidewalk, front row, work spot, footprint, water, park, superblock or decor) is infill (`src/game/infill.ts`, pure): cut
@@ -806,7 +840,10 @@ When a change touches a decision, update its entry and run its Proof.
   celebration), buildings in front of Kai or the picked building fade (`src/game/occlusion.ts`), and the camera frames a
   tall building by its middle without losing its ground (`buildingFocusY`, `src/game/camera.ts`). Between levels a building
   shows scaffolding (1/3 of the way) then a crane (2/3) (`constructionStage`, `TierProps.syncWorks`); a tier-up flies the
-  camera there, and one earned while the city slept (game, HQ, world map) is celebrated on return. Drawings pay most
+  camera there, and one earned while the city slept (game, HQ, world map) is celebrated on return. Camera flights
+  (`flyTo`, `walkToStation`) are timed by their distance (`flightPlan`, `src/game/cityView.ts`, through CityScene's
+  `glide`): 300 ms plus the screen distance at 2.5 px a ms, held to 350–1000 ms, slowing into the arrival
+  (`Cubic.easeOut`); past 1.5 views a short sea-blue fade (140 ms out, 220 ms in); a cut under reduced motion. Drawings pay most
   (`src/learning/puzzleRewards.ts`: first pass 12/service + 10, the 10 only when the score with the mistakes on the way
   still reaches 70; better pass 4; a failed try 2 per right piece once a day). A drawing passes on the board as it stands
   (`src/learning/scoring.ts` `design`: nothing missing, 70+): decoys tried, wrong spots and shown cards (`penalty`) cost
@@ -825,7 +862,7 @@ When a change touches a decision, update its entry and run its Proof.
   building and 5 in all, then 0); workshop steps pay once per mode, so they're not on it. Again pays 0⭐, and a seen card never pays new-card stars again. District skylines average the buildings put up
   (at least 2). Proof: `npx vitest run tests/puzzle-rewards.test.ts tests/park.test.ts tests/game-clock.test.ts
   tests/learning.test.ts tests/minigames.test.ts tests/workshops.test.ts tests/daily-pay.test.ts tests/decor.test.ts tests/art.test.ts
-  tests/occlusion.test.ts tests/camera.test.ts tests/ui.test.tsx tests/browse-growth.test.ts tests/wallet.test.ts tests/canvas-boards.test.tsx`; `npm run smoke` checks a fully known S3 Lake reads Level 7 and audits the citizen question.
+  tests/occlusion.test.ts tests/camera.test.ts tests/ui.test.tsx tests/browse-growth.test.ts tests/wallet.test.ts tests/canvas-boards.test.tsx tests/city-view.test.ts`; `npm run smoke` checks a fully known S3 Lake reads Level 7 and audits the citizen question.
 - **Past Master, crowns come from knowledge, not stars** (`src/state/mastery.ts`): Lv 5–7 (`tiers.legend` in
   `shared/world.json`: Mentor, Architect, Legend) need cards remembered for a week (`MASTERED_DAYS`; the first time pays
   `REMEMBERED_STARS` 6⭐, once per card, kept as `CardState.remembered`, contract v2.12, even after an Again), a passed drawing
@@ -1057,7 +1094,10 @@ When a change touches a decision, update its entry and run its Proof.
   `starter` (stadium "Sort the fans' requests"): open from day one in every city, with nothing put up (`missingFor`,
   `STARTER_TASKS`; doing it puts its buildings up). A job pays its services once ever (`completeTask`, `Progress.clients`
   v2.13: higher level, union of done, earliest date); a level's last job pays its bonus, opens one card (`clientDone`,
-  `toastsHeld`) and grows the site (`clientLevelUp`: the next `client:<id>:<level>` sprite, a bump and confetti). Sites
+  `toastsHeld`) and grows the site (`clientLevelUp`: the camera flies there unless the player is steering it, then the
+  next `client:<id>:<level>` sprite stands up with a small settle and 16 dark-outlined confetti pieces of 7–9 px fan out
+  and fall on whole px in quarter turns, `confettiPieces`/`confettiAt` in `src/game/Clients.ts`; none under reduced
+  motion). Sites
   are placed without `rng()`: the airport hub on the airport, the rest inside a real map's core (`hoodLots`, the art's
   size: bank and shop 3×3, the rest 4×4; wave 1 chooses first (`waveOf`), then big lots): neighbourhood blocks first, then the quiet back of a
   district block (never a landmark's lot or the tile round it, its front row or work spot, a pocket-park lot, the square,
@@ -1067,7 +1107,7 @@ When a change touches a decision, update its entry and run its Proof.
   empty site (level 0) shows a "coming soon" `lotSign`. Yellow "!" markers (map and minimap) show the
   focused business's open stations. `Progress.decor` (v2.13, per city, newest copy wins) is defined for build mode.
   Proof: `npx vitest run tests/clients.test.ts tests/clients-ui.test.tsx tests/stations.test.ts tests/stations-ui.test.tsx
-  tests/airport.test.ts tests/ladder.test.ts tests/contract.test.ts tests/plan-snapshot.test.ts`, `cd server && npx vitest
+  tests/airport.test.ts tests/ladder.test.ts tests/contract.test.ts tests/plan-snapshot.test.ts tests/city-view.test.ts tests/answer-motion.test.ts`, `cd server && npx vitest
   run test/progress.test.ts`; `npm run smoke` (section 70–77: one job of every kind in Montreal, a level done, axe; 85 a
   wave 2 business: the port's jobs and its empty site).
 - **You're the Mayor; your city has a rank** (`src/state/rank.ts`: building levels and golden tokens → Village, Town, City,
@@ -1092,7 +1132,8 @@ When a change touches a decision, update its entry and run its Proof.
   free, the real chances for what's left shown before opening (`dropOdds`), never a cosmetic owned from any source
   (`ownedCosmetics`), a spare copy once all are owned (`MAX_SPARES`), plus a bonus crate for the shift's overtime goal
   (`overtimeGoal`, `drops.overtime`), a 1 s shake then a pop in its rarity's colour
-  (none under reduced motion, `CRATE_SHAKE_MS`), never coins or stars, rolled from the day so every surface opens the same crate; its button is
+  (none under reduced motion, `CRATE_SHAKE_MS`) in one box: the shaking card keeps the closed card's words with
+  "Opening…" on its button, and the reveal holds that height, so nothing below it moves; never coins or stars, rolled from the day so every surface opens the same crate; its button is
   never Home's primary) and fills one **season road** once a day (12 monthly themes, 8 steps to 100 points, the last the
   season's landmark; every road is open to everyone, picked in `prefs.road` (`prefs.season` is only the art's season);
   points past a road's end flow into the next unfinished one; a freeze step with the freezes full gives a crate item). **Service Codex**: a card per
@@ -1100,12 +1141,14 @@ When a change touches a decision, update its entry and run its Proof.
   are free in Decorate (`category: 'rewards'`); combos found (S3's `syncCombos` → `discoverCombo`) pay `COIN_PAY.combo`
   once ever (quietly too, when found while the city slept). **City Hall** levels with this city's rank and opens Decorate items and past seasons, never learning. The
   **return note** is opt-in (My City), one positive line a day, no notifications. **Juice**: right answers chime a step
-  higher in a run (`feel.good`, `pitchOf`), a beam runs from the card into its building (`bus` `answer`), coins fly to the
+  higher in a run (`feel.good`, `pitchOf`), a beam of light runs from the card into its building and lands as a
+  tile-shaped pulse (`bus` `answer`; `beam`/`beamAt` in `src/game/juice.ts`: a 3 px gold core, a 1 px pale-gold glint and
+  one 7 px halo step, normal blend, whole px, 600 ms), coins fly to the
   HUD counter (`src/ui/CoinFly.tsx`, `bus` `coins`), an upgrade pushes the camera in one integer step and back, a wrong
   answer wobbles and shows the answer; none under reduced motion, sounds through `audio.ts` (captions hold).
   Proof: `npx vitest run tests/lights.test.ts tests/season.test.ts tests/drops.test.ts tests/codex.test.ts
   tests/juice.test.ts tests/loops-store.test.ts tests/loops-ui.test.tsx tests/buildmode.test.ts tests/contract.test.ts
-  tests/wallet.test.ts tests/welcome.test.ts tests/next.test.ts`,
+  tests/wallet.test.ts tests/welcome.test.ts tests/next.test.ts tests/answer-motion.test.ts`,
   `cd server && npx vitest run test/progress.test.ts`; `npm run smoke` (43–46: night City Lights, season road, Codex, crate).
 - **The live city and leaderboards are opt-in and name nobody** (contract v2.11). A game's board gets this ISO week's
   best timed round only (v2.12 `Progress.games` `bestTimed`/`bestWeek`, the UTC ISO week the server's boards use:
@@ -1149,15 +1192,16 @@ When a change touches a decision, update its entry and run its Proof.
   made by `art/characters/crowd_small.py` in `npm run art`, never shrunk at runtime: that would drop pixels at zoom 1). Kai
   and the landmark agents stay full size so they can be found. Proof: `npx vitest run tests/art.test.ts`.
 - **Accessibility is a setting, not a fork.** ⋯ → Accessibility sets text size (125/150 %), high contrast and an easy-read
-  font on `<html>` (`data-text`, `data-contrast`, `data-font`); `styles/22-access.css` only overrides tokens, and the city's
-  labels scale with the text size. Games without a clock (`prefs.relaxed`, `src/game/pace.ts`) end rounds on Done and stretch
+  font on `<html>` (`data-text`, `data-contrast`, `data-font`); `styles/22-access.css` only overrides tokens, and the canvas's
+  text scales with the text size, never under 11 px: the city's labels, the world map (`worldText`), an HQ room and every
+  mini-game (`TXT`). Games without a clock (`prefs.relaxed`, `src/game/pace.ts`) end rounds on Done and stretch
   reaction windows and spawns (Rush Hour's day, which is the game, runs at half speed instead); Sound captions
   (`prefs.captions`) show a word pill for each meaningful sound (`CAPTIONS` in `src/game/audio.ts`, not steps or blips).
-  Every mini-game plays from the keyboard (`onKeys`, or in Fishing and Edge Cache the maps in `src/game/scenes/games/gameKeys.ts`: Space casts and hooks, 1–3 pick a bucket; 1–4 pick a cache slot, I invalidates, C caches; `tests/game-keyboard.test.ts`), its end card too (`endCardKey`: Enter plays again, X the Expert round when open, Escape back to the city, after 800 ms; fishing: Space/Enter, X, Escape). Mini-games speak through App's one polite live region (`announce`, `src/state/announce.ts`: one update per line, ≥ 150 ms apart, `replace` keeps the newest): the goal and keys first (`startLine`, a game's `keysHelp` when its title doesn't name them), each prompt (fishing's fish and buckets, the sorting office's parcel, the Dance Hall's question, the gate's request, the food stall's orders, the shield wall's arrivals, the queue's messages, Edge Cache's misses and changes, the Red Team Range's requests), every verdict and the player's own score changes in one line a frame (`MiniGame.speak`), and the end card in words (`endLine`, `src/game/scenes/games/say.ts`); the canvas is named for the game while it runs. Sound captions stay `aria-hidden` (the live region already says it). Keyboard: arrows walk, E talks, `]` / `[` step through buildings (announced by their sign's name, never an id, as "Place N of M on the map": `stepLine`), `+` / `−` zoom. ⋯ is a menu: opening it focuses its first item, arrows/Home/End move (never reaching the game), Escape returns to ⋯; its sections are labelled groups (Sound & view, Accessibility, How you play, Your city; Account first when hosted) and the street-maps credit is an item; Decorate is a plain item that returns focus to ⋯. A glossary definition opens in the top layer (popover API, `popPlace` keeps it in view); a flashcard's hidden face is `inert` and `aria-hidden`, and its small print is ≥ 4.5:1 on both papers (7:1 high contrast). Keys go
+  Every mini-game plays from the keyboard (`onKeys`, or in Fishing and Edge Cache the maps in `src/game/scenes/games/gameKeys.ts`: Space casts and hooks, 1–3 pick a bucket; 1–4 pick a cache slot, I invalidates, C caches; `tests/game-keyboard.test.ts`), its end card too (`endCardKey`: Enter plays again, X the Expert round when open, Escape back to the city, after 800 ms; fishing: Space/Enter, X, Escape). A key press shows where it went: its button sinks (`pressLook`), the answer's target is framed (`answerPop`, `src/game/scenes/games/stageFx.ts`: green with sparks, red, or amber for a plain action; still under reduced motion), and a right answer's sparks burst where the pointer pressed or, after a key, where the answer went (`sparkSpot`: `answerPop`'s spot or `MiniGame.answerAt`, else the press's first verdict or floater, else the view's centre); Rush Hour's buttons name their keys (`RUSH_BUTTONS`). Mini-games speak through App's one polite live region (`announce`, `src/state/announce.ts`: one update per line, ≥ 150 ms apart, `replace` keeps the newest): the goal and keys first (`startLine`, a game's `keysHelp` when its title doesn't name them), each prompt (fishing's fish and buckets, the sorting office's parcel, the Dance Hall's question, the gate's request, the food stall's orders, the shield wall's arrivals, the queue's messages, Edge Cache's misses and changes, the Red Team Range's requests), every verdict and the player's own score changes in one line a frame (`MiniGame.speak`), and the end card in words (`endLine`, `src/game/scenes/games/say.ts`); the canvas is named for the game while it runs. Sound captions stay `aria-hidden` (the live region already says it). Keyboard: arrows walk, E talks, `]` / `[` step through buildings (announced by their sign's name, never an id, as "Place N of M on the map": `stepLine`), `+` / `−` zoom. ⋯ is a menu: opening it focuses its first item, arrows/Home/End move (never reaching the game), Escape returns to ⋯; its sections are labelled groups (Sound & view, Accessibility, How you play, Your city; Account first when hosted) and the street-maps credit is an item; Decorate is a plain item that returns focus to ⋯. A glossary definition opens in the top layer (popover API, `popPlace` keeps it in view); a flashcard's hidden face is `inert` and `aria-hidden`, and its small print is ≥ 4.5:1 on both papers (7:1 high contrast). Keys go
   to the canvas when a game or the city starts, unless the player is in the UI (`keysBelongToUi`, `mayFocusGame`; a workshop's next step takes the focus the passed one dropped,
   `src/game/keys.ts`).
   Arriving in a city announces its summary (`citySummary`: the AWS services put up here of all of them, issues, AWS status, live traffic). Focus never falls to `<body>`: a side-panel control that goes away leaves it on the new panel's heading (`useKeepFocus`, `src/ui/useDialog.ts`), and a ⋯ item gives focus to ⋯ before it opens a dialog, so closing My City or the tour returns there. The smoke runs
-  axe-core (WCAG 2.2 AA) on the world map, a building's card, the tab and the panel; serious or critical violations fail it. Proof: `npx vitest run tests/a11y-prefs.test.ts tests/game-keys.test.ts tests/game-say.test.ts tests/announce.test.ts tests/a11y-menu.test.tsx tests/panel-room.test.tsx tests/term-popover.test.tsx tests/ui.test.tsx tests/a11y-focus.test.tsx tests/a11y-games.test.ts tests/terminal-ui.test.tsx`, `npm run smoke`.
+  axe-core (WCAG 2.2 AA) on the world map, a building's card, the tab and the panel; serious or critical violations fail it. Proof: `npx vitest run tests/a11y-prefs.test.ts tests/game-keys.test.ts tests/game-say.test.ts tests/announce.test.ts tests/a11y-menu.test.tsx tests/panel-room.test.tsx tests/term-popover.test.tsx tests/ui.test.tsx tests/a11y-focus.test.tsx tests/a11y-games.test.ts tests/terminal-ui.test.tsx tests/game-theme.test.ts tests/game-stage.test.ts tests/answer-motion.test.ts tests/world-dive.test.tsx`, `npm run smoke`.
 - **Kai wears the team's gold jacket.** Always, everywhere (`KAI_SHEET` = the `player-gold` sheet, `src/world/culture.ts`).
   Golden Jacket Hall tracks the certification trophies (`hasGoldenJacket`: every one lit, a moment the first time). The real
   Golden Jacket recognises holders of every current AWS Certification; `shared/certifications.json` is that list.
@@ -1166,7 +1210,10 @@ When a change touches a decision, update its entry and run its Proof.
   south-east of the square) in their official AWS Architecture Icon category colours (Management & Governance is
   `#E7157B`, read from the icon package's category SVG). The Global Gate's four campus lots go to the global services in
   `shared/region-facts.json` `global` order (Route 53, CloudFront, IAM, Global Accelerator: add a new one last; the order
-  lives in `GLOBAL` in `scripts/fetch-region-facts.mjs`). Proof: `npx vitest run tests/art.test.ts tests/taxonomy.test.ts tests/plan.test.ts`.
+  lives in `GLOBAL` in `scripts/fetch-region-facts.mjs`). A district has 6 to 11 services and its HQ room
+  (`InteriorScene`, laid out by the pure `src/game/hqRoom.ts`) has work for each: six at the desks, up to five more
+  standing at the wall of racks at their city activity (`staffSpots`); past that an agent walks the room, so nobody is
+  dropped. Proof: `npx vitest run tests/art.test.ts tests/taxonomy.test.ts tests/plan.test.ts tests/hq-room.test.ts`.
 - **Content is data.** Districts, services, metaphors and layout live in `src/world/`. Game and UI code
   never hard-code service ids (the exceptions are `bedrock`, the default router target, and the
   mini-games, each built for one landmark: `s3` fishing, `lambda` food stall, `route53` dance, `shield` wall, `ec2` rush hour, `dynamodb` sorting office, `securityagent` red team range, `sqs` queue juggler, `iam` permission gate, `cloudfront` edge cache). Proof: `npx vitest run tests/taxonomy.test.ts` checks every service has a
@@ -1184,13 +1231,15 @@ When a change touches a decision, update its entry and run its Proof.
   and other sites never make the moment and pay nothing.
   Proof: `npx vitest run tests/browse-growth.test.ts`.
 - **Surfaces.** The side panel (Chrome/Edge), the Firefox sidebar (same entrypoint) and the full tab at
-  `/city.html` run the same app and merge progress through `storage.local`. The toolbar opens the panel, the
+  `/city.html` run the same app and merge progress through `storage.local`. Under 720 px wide the tab stacks like the
+  panel (`src/app/styles/01-layout.css`: the map `minmax(220px, 45%)` over the side column, a mini-game the whole
+  height), so a narrow window never squeezes the map to nothing. The toolbar opens the panel, the
   sidebar, or (Safari, which has neither) the tab: `src/app/surface.ts`. With a real account the Lookout and Console
   Copilot need the panel/sidebar (they see the console tab beside it). In the demo both use the practice console inside
   the extension (`practice.html`, `src/console/practice.ts`; nothing there touches AWS) from every surface; if the
   browser wants the player's OK for the Lookout's photo it asks ("📷 Allow"), and a no reads the page's address
   instead (`lookByAddress`). Proof: `npx vitest run tests/surface.test.ts tests/practice-console.test.ts
-  tests/console-clarity.test.tsx`, `npm run smoke:copilot` (8 flows on the practice console, then the demo Lookout).
+  tests/console-clarity.test.tsx tests/panel-room.test.tsx`, `npm run smoke:copilot` (8 flows on the practice console, then the demo Lookout).
 - **The Console Copilot hands risky steps back, by rules.** It acts with the signed-in console user's own rights (outside
   the player role, the ActionService and `deploy.approve`), so pure rules in `src/console/risk.ts` decide, never the model
   (the server imports the same file). `isRisky` reads every label a control carries and its section: deletes, billing,
