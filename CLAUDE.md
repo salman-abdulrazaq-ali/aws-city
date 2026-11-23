@@ -861,7 +861,8 @@ When a change touches a decision, update its entry and run its Proof.
   coaching line ("Practice terminal: this step also sets …"), never a made-up CLI error; nothing touches AWS) or AWS CloudShell, where `workshop.verify` checks it with a
   read-only look at the poller's snapshot (`server/src/workshops/checks.ts`: a fixed registry, no SDK calls of its own, no
   new IAM). For real, each name a command needs is typed once in a box that fills both the command and the check;
-  `<region>` is the linked account's Region, and optional parts are kept once filled (`commandFor`,
+  `<region>` is the linked account's Region (until the account says it, the Region gets a box too, so Copy never waits
+  for a gap with nowhere to type it), and optional parts are kept once filled (`commandFor`,
   `src/world/workshops.ts`), so S3 keeps `LocationConstraint` outside us-east-1 and Copy waits until nothing is left as
   `<x>` (seen 22 Nov 2026: Oregon got `--bucket <bucket>` with no constraint, and CloudShell refused it). Pasted errors
   match the step's known ones first, then go to the building's agent as quoted, redacted data, and its answer shows under
@@ -968,7 +969,7 @@ When a change touches a decision, update its entry and run its Proof.
   `server/src/tenants.ts`: the player as `who(sub)`, the Region, the action and its outcome, the target as the gate's
   `targetHash`; never a resource name or the account id). The card can't be missed: a task card with one waiting says "⏳ Waiting for your Approve" with
   Approve in Deploy → (`openDeployAt`, leaving an HQ first), elsewhere a toast opens it, and Deploy brings the card up with
-  focus on Approve (`deployFocus`). "My builds" is one card per resource for the agents' changes (`arrangeBuilds`,
+  focus on its title (`deployFocus`, `.stack-title`), never Approve, so no approval happens by accident (#105). "My builds" is one card per resource for the agents' changes (`arrangeBuilds`,
   `src/state/builds.ts`: a launch joins its server's later cards by `deploy.status.outputs.ResourceId`; status words fit
   the action; Tear down only while it exists, sent as a plain request, and not when My builds' inventory list already
   offers Take it down for the same resource: one removal button each). The card says where the task is: "Watch Sally
@@ -1015,8 +1016,10 @@ When a change touches a decision, update its entry and run its Proof.
   are real buttons. Sign out is in the ⋯ menu too (signed in and able to sign out), not only Deploy → Your data.
   The Diagram draws Everything or **Built by the city** (`accountDiagram(…, { builtOnly })`, asked for on 22 Nov 2026:
   your own project): only services with something the city built, counted by those, with the usual links between them,
-  and no cost lines (AWS bills a service for the whole account, not each thing the city built); nothing built yet says
-  so. Proof:
+  and no cost lines (AWS bills a service for the whole account, not each thing the city built); a picked service counts
+  what the city built, like its box; nothing built yet says so (`role="status"`). A picked box's details scroll into
+  view (focus stays on the box). Regions read by name with the code beside them ("US West (Oregon) (us-west-2)",
+  `regionName`, as Deploy shows them; seen 22 Nov 2026: Oregon vs us-west-2 confused). Proof:
   `npx vitest run tests/account-map.test.tsx tests/account-diagram.test.ts tests/menu-signout.test.tsx`, `npm run smoke` (`18b-my-aws-map`,
   `18c-my-aws-diagram`, `18c2-built-by-the-city`, `18e-my-aws-diagram-panel`, axe, still dots under reduced motion). A third view, **How AWS City
   runs** (`shared/city-architecture.json`, `src/world/cityArchitecture.ts`), draws the city's own hosted parts the same
