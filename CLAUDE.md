@@ -579,8 +579,8 @@ When a change touches a decision, update its entry and run its Proof.
   `readGeo` is done, never the one from before it (seen 22 Nov 2026: a terminated server came back until the next
   listing). An agent's write re-polls at once and after 4 s (not once its world is retired), so the map follows it
   within seconds. The feed says each kind's and state's lesson once per session (`feedEvents(e, said)`,
-  `server/src/contract/aws-feed.ts`), then just the change. HQ chat on the CPU model names servers the player made
-  themselves (`otherServers` in `snapshotSummary`), and every chat answer knows it can't change AWS and that the city
+  `server/src/contract/aws-feed.ts`), then just the change. HQ chat on the CPU model names servers, buckets and tables the player made
+  themselves (`notBuiltByTheCity` in `snapshotSummary`; seen 23 Nov 2026: Sally couldn't see a console bucket), and every chat answer knows it can't change AWS and that the city
   only changes what it built (`CHAT_CAN_DO`, `server/src/contract/orchestrator.ts`; seen 22 Nov 2026: asked to delete a
   console-made server, Eddie said he couldn't see it). An audit line hashes a new bucket's real name (never the `<account>` placeholder), so it matches the gate's line. A plain request's
   task ends at `task.done`: the agent's few words after it run on their own (`explainAfter`), so the task's slot (two a
