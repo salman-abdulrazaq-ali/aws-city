@@ -101,6 +101,9 @@ When a change touches a decision, update its entry and run its Proof.
   minute from the busy stack's events while cdk deploys (`infra/lib/deploy-progress.ts`; cdk runs with `--progress
   events`), and the 5xx deploy-rollback alarm uses 1-minute periods (3 × 1 min, 5 a minute): ECS keeps a finished deploy
   open for a window it computes from that alarm, and 3 × 5 min held it ~16 minutes after the new servers were live.
+  The monthly budget counts the whole account unless `costTagsActive` is set (`infra/lib/budget-stack.ts`, after
+  activating the `app`/`env` cost allocation tags: docs/runbook.md step 5); its filter as first written was refused by
+  the Budgets API on every deploy (23 Nov 2026: `{ app: ABSENT }` needs a value), so `npm run setup` ended red.
   Proof: `cd infra && npm test && npx cdk synth -q`.
 - **Agents are grounded, never unrestricted:** docs come from the read-only AWS Knowledge MCP server
   (allow-listed tools, `<aws_docs>` treated as data, official AWS hosts only). There's no AWS CLI tool

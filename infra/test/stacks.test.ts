@@ -175,13 +175,22 @@ describe('infrastructure guarantees', () => {
     });
   });
 
-  it("each budget counts its environment's tagged resources and untagged spend (Claude on Bedrock), not the other environment's", () => {
-    t.budget.hasResourceProperties('AWS::Budgets::Budget', {
+  // Every deploy on 23 Nov 2026 failed here: the Budgets API refused { app: ABSENT } with no values. Until the cost
+  // allocation tags are active the budget counts the whole account, as deployed.
+  it('by default the budget counts the whole account (no filter)', () => {
+    const budget = t.budget.findResources('AWS::Budgets::Budget');
+    for (const r of Object.values(budget)) expect((r as { Properties: { Budget: Record<string, unknown> } }).Properties.Budget.FilterExpression).toBeUndefined();
+  });
+
+  it("with the cost allocation tags active, each budget counts its environment's tagged resources and untagged spend (Claude on Bedrock)", () => {
+    const tagged = Template.fromStack(new BudgetStack(new App(), 'Tagged', { ...env, costTagsActive: true }, { env: { account: '111122223333', region: 'us-west-2' } }));
+    tagged.hasResourceProperties('AWS::Budgets::Budget', {
       Budget: Match.objectLike({
         FilterExpression: {
           Or: [
             { And: [{ Tags: { Key: 'app', Values: ['aws-city'], MatchOptions: ['EQUALS'] } }, { Tags: { Key: 'env', Values: [env.name], MatchOptions: ['EQUALS'] } }] },
-            { Tags: { Key: 'app', MatchOptions: ['ABSENT'] } },
+            // The API needs at least one value, even for ABSENT.
+            { Tags: { Key: 'app', Values: [''], MatchOptions: ['ABSENT'] } },
           ],
         },
       }),

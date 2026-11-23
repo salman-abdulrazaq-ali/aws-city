@@ -61,6 +61,12 @@ export interface EnvConfig {
    * `secretName` as {"apiKey": "..."} (you create it); absent = Jev off. `model` pins the Jev model (server default otherwise).
    */
   jev?: { secretName: string; model?: string };
+  /**
+   * Optional: `app` and `env` are active as cost allocation tags in Billing (docs/runbook.md), so the budget can count
+   * only this environment's tagged resources plus untagged spend (Claude on Bedrock). Off (the default) the budget
+   * counts the whole account. Set it by hand in aws-city.config.json; `npm run setup` keeps it.
+   */
+  costTagsActive?: boolean;
 }
 
 export const loadEnv = (app: App): EnvConfig => {

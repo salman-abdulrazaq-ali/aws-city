@@ -44,11 +44,19 @@ export class BudgetStack extends Stack {
     // and anything tagged as another app; Bedrock spend counts in both environments of a shared account. Until `app`
     // and `env` are activated as cost allocation tags no cost carries them, and the budget counts the whole account,
     // as before (docs/runbook.md).
+    //
+    // Only when the tags are active (`costTagsActive`): until then no cost carries them anyway, and the filter as first
+    // written ({ app: ABSENT } with no values) was refused by the Budgets API ("tags.values … length greater than or
+    // equal to 1", every deploy on 23 Nov 2026), so the whole account is counted, as deployed. The API needs a value
+    // even for ABSENT: before turning it on, check what the filter selects with Cost Explorer (`aws ce
+    // get-cost-and-usage --filter` with the same expression).
     const tags = costTags(env);
     const tag = (key: keyof typeof tags): budgets.CfnBudget.ExpressionProperty => ({ tags: { key, values: [tags[key]], matchOptions: ['EQUALS'] } });
-    const filterExpression: budgets.CfnBudget.ExpressionProperty = { or: [{ and: [tag('app'), tag('env')] }, { tags: { key: 'app', matchOptions: ['ABSENT'] } }] };
+    const filterExpression: budgets.CfnBudget.ExpressionProperty | undefined = env.costTagsActive
+      ? { or: [{ and: [tag('app'), tag('env')] }, { tags: { key: 'app', values: [''], matchOptions: ['ABSENT'] } }] }
+      : undefined;
     new budgets.CfnBudget(this, 'Monthly', {
-      budget: { budgetName, budgetType: 'COST', timeUnit: 'MONTHLY', budgetLimit: { amount: env.monthlyBudgetUsd, unit: 'USD' }, filterExpression },
+      budget: { budgetName, budgetType: 'COST', timeUnit: 'MONTHLY', budgetLimit: { amount: env.monthlyBudgetUsd, unit: 'USD' }, ...(filterExpression ? { filterExpression } : {}) },
       notificationsWithSubscribers: alerts.map(({ notificationType, threshold }) => ({
         notification: { notificationType, comparisonOperator: 'GREATER_THAN', threshold, thresholdType: 'PERCENTAGE' },
         subscribers: [subscriber],
