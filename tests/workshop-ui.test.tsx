@@ -138,6 +138,17 @@ describe('for real', () => {
 
   // Seen 22 Nov 2026 in Oregon: "for real" copied `aws s3api create-bucket --bucket <bucket>`, without the location
   // constraint S3 needs outside us-east-1 and with the placeholder as typed, and CloudShell refused it.
+  // Seen 23 Nov 2026: CloudShell ran in another account, so the check never found the bucket.
+  it('for real, it says which account CloudShell must run in, how to see it, and where the check looked', () => {
+    useCity.setState({ backendKind: 'server', account: { linked: true, accountId: '047463438585', region: 'us-west-2' }, consoleAccount: '422929814205' });
+    act(() => useCity.getState().openWorkshop('s3-first-bucket'));
+    render(<Workshop />);
+    fireEvent.click(screen.getByRole('button', { name: /For real in CloudShell/ }));
+    expect(screen.getByText(/CloudShell must run in account/).textContent).toMatch(/0474-6343-8585/);
+    expect([...document.querySelectorAll('.workshop-account .workshop-cmd')].map((c) => c.textContent)).toEqual(['aws sts get-caller-identity --query Account --output text']);
+    expect(screen.getByRole('alert').textContent).toMatch(/signed in to account 4229-2981-4205/);
+  });
+
   it('S3 in Oregon with no names typed: a name box, Copy waits for it, and the command keeps LocationConstraint', () => {
     useCity.setState({ backendKind: 'server', account: { linked: true, region: 'us-west-2' } });
     act(() => useCity.getState().openWorkshop('s3-first-bucket'));

@@ -601,6 +601,22 @@ describe('runtime sessions', () => {
     ]);
   });
 
+  it('the console’s account is taken only from our content script on a console page, and Switch role opens for the linked one', async () => {
+    const { rt, useCity } = await boot();
+    const console_ = { tab: { id: 7 } as never, url: 'https://us-west-2.console.aws.amazon.com/s3/home' };
+    await fakeBrowser.runtime.onMessage.trigger({ type: 'console.account', account: '422929814205' }, console_, () => {});
+    expect(useCity.getState().consoleAccount).toBe('422929814205');
+    // Not a console page: ignored. Not an account id: unknown.
+    await fakeBrowser.runtime.onMessage.trigger({ type: 'console.account', account: '111111111111' }, { tab: { id: 8 } as never, url: 'https://evil.example.com/' }, () => {});
+    expect(useCity.getState().consoleAccount).toBe('422929814205');
+    await fakeBrowser.runtime.onMessage.trigger({ type: 'console.account', account: null }, console_, () => {});
+    expect(useCity.getState().consoleAccount).toBeUndefined();
+    const opened = vi.spyOn(fakeBrowser.tabs, 'create').mockResolvedValue({} as never);
+    useCity.setState({ account: { linked: true, accountId: '047463438585', region: 'us-west-2' } });
+    rt.openSwitchRole();
+    expect((opened.mock.calls[0]![0] as { url: string }).url).toMatch(/^https:\/\/signin\.aws\.amazon\.com\/switchrole\?account=047463438585&roleName=OrganizationAccountAccessRole/);
+  });
+
   it('a screenshot is forgotten when the page changes and when the session ends', async () => {
     const { rt } = await boot();
     fake.status('connected');

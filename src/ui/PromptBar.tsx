@@ -8,6 +8,7 @@ import {
 } from "@/app/runtime";
 import { useCity } from "@/state/store";
 import { AiNote } from "./AiNote";
+import { ConsoleAccountWarning } from "./ConsoleAccountWarning";
 import { feel } from "./feedback";
 import { Icon } from "./icons";
 import { offlineReason } from "./logic";
@@ -68,6 +69,7 @@ export function PromptBar({ layout, consoleHere = true }: { layout: Layout; cons
         </p>
       )}
       {offline && <p className="composer-note">{offline}</p>}
+      <ConsoleAccountWarning />
       {/* Above the box, so showing it never moves the box under the pointer. */}
       <AiNote id={noteId} />
       <form

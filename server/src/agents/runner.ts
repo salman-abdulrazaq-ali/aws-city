@@ -72,12 +72,16 @@ const clip = (v: string | undefined, n: number) => (v !== undefined && v.length 
  * whole is JSON-escaped like the full snapshot, so it can't close its data wrapper.
  */
 export const SUMMARY_MAX_BUILT = 20;
-/** Servers the player made themselves (the console, CloudShell), named so an agent can say it sees them. */
+/** Servers, buckets and tables the player made themselves (the console, CloudShell), named so an agent can say it sees them. */
 export const SUMMARY_MAX_OTHER_SERVERS = 10;
+/** On their way out, so not worth naming: a terminated server (DescribeInstances keeps it an hour), a table being deleted. */
+const LEAVING = new Set(['terminated', 'shutting-down', 'DELETING']);
+const NAMED_KINDS = new Set(['instance', 'bucket', 'table']);
 export const snapshotSummary = (s: WorldSnapshot) => {
   const built = s.resources.filter((r) => r.managedByGame);
-  // Seen 22 Nov 2026: a server launched in the console was only counted, so Eddie said he couldn't see it.
-  const otherServers = s.resources.filter((r) => !r.managedByGame && r.kind === 'instance' && r.state !== 'terminated');
+  // Seen 22 Nov 2026: a server launched in the console was only counted, so Eddie said he couldn't see it; on 23 Nov the
+  // same for a bucket made in the console and one made in CloudShell (Sally).
+  const madeElsewhere = s.resources.filter((r) => !r.managedByGame && NAMED_KINDS.has(r.kind) && !LEAVING.has(r.state));
   const others: Record<string, number> = {};
   for (const r of s.resources) if (!r.managedByGame) others[r.kind] = (others[r.kind] ?? 0) + 1;
   return escapeTags(
@@ -85,7 +89,9 @@ export const snapshotSummary = (s: WorldSnapshot) => {
       region: s.region,
       builtByTheCity: built.slice(0, SUMMARY_MAX_BUILT).map((r) => ({ id: clip(r.id, 64), kind: r.kind, name: clip(r.name, 40), state: r.state })),
       ...(built.length > SUMMARY_MAX_BUILT ? { moreBuilt: built.length - SUMMARY_MAX_BUILT } : {}),
-      ...(otherServers.length ? { otherServers: otherServers.slice(0, SUMMARY_MAX_OTHER_SERVERS).map((r) => ({ id: clip(r.id, 64), name: clip(r.name, 40), state: r.state })) } : {}),
+      ...(madeElsewhere.length
+        ? { notBuiltByTheCity: madeElsewhere.slice(0, SUMMARY_MAX_OTHER_SERVERS).map((r) => ({ id: clip(r.id, 64), kind: r.kind, name: clip(r.name, 40), state: r.state })) }
+        : {}),
       otherResources: others,
     }),
   );

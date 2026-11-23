@@ -19,6 +19,7 @@ const rt = vi.hoisted(() => ({
   deleteAccount: vi.fn(async () => {}),
   openPrivacyPolicy: vi.fn(),
   openConsole: vi.fn(),
+  openSwitchRole: vi.fn(),
 }));
 const privacy = vi.hoisted(() => ({ url: undefined as string | undefined }));
 vi.mock('@/app/runtime', async (importOriginal) => ({
@@ -47,6 +48,25 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('the Deploy tab’s account cards', () => {
+  // Seen 23 Nov 2026: the console and CloudShell were in the city's own account; nothing made there showed in My AWS.
+  it('says when the console is signed in to another account than the linked one, with Switch role', () => {
+    useCity.setState({ account: { linked: true, accountId: '047463438585', region: 'us-west-2' }, consoleAccount: '422929814205' });
+    const { unmount } = render(<DeployPanel />);
+    expect(screen.getByRole('alert').textContent).toMatch(/console is signed in to account 4229-2981-4205, but the city is linked to 0474-6343-8585 \(US West \(Oregon\)\)/);
+    fireEvent.click(screen.getByRole('button', { name: 'Switch role into 0474-6343-8585' }));
+    expect(rt.openSwitchRole).toHaveBeenCalledOnce();
+    unmount();
+    // The same account, or one the city can't tell: nothing to say.
+    useCity.setState({ consoleAccount: '047463438585' });
+    const again = render(<DeployPanel />);
+    expect(screen.queryByText(/console is signed in to account/)).toBeNull();
+    again.unmount();
+    useCity.setState({ consoleAccount: undefined });
+    render(<DeployPanel />);
+    expect(screen.queryByText(/console is signed in to account/)).toBeNull();
+    expect(screen.getByText(/Switch role into this account/)).toBeTruthy();
+  });
+
   // Asked on 23 Nov 2026: "how do I get to my console?" It opens in the linked Region; the sign-in is the player's.
   it('a linked account offers Open the AWS console, and says whose sign-in to use (never in the demo)', () => {
     useCity.setState({ account: { linked: true, accountId: '047463438585', region: 'us-west-2' } });

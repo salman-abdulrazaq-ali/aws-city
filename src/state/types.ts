@@ -11,7 +11,7 @@ export interface PageFocus {
 }
 
 /** Messages between background ⇄ extension pages (chrome.runtime messaging). */
-export type RuntimeMessage = { type: 'page.focus'; focus: PageFocus } | { type: 'focus.get' };
+export type RuntimeMessage = { type: 'page.focus'; focus: PageFocus } | { type: 'focus.get' } | { type: 'console.account'; account: string | null };
 
 export const FOCUS_STORAGE_KEY = 'focus';
 export const PROGRESS_STORAGE_KEY = 'progress';

@@ -10,6 +10,7 @@ import {
   linkAccount,
   mfaStatus,
   openConsole,
+  openSwitchRole,
   openPrivacyPolicy,
   openUrl,
   planDeploy,
@@ -24,6 +25,8 @@ import {
   verifyAccount,
 } from '@/app/runtime';
 import {
+  accountLabel,
+  DEFAULT_CONSOLE_ROLE,
   connectsPlayer,
   defaultLinkRegion,
   FIX_GRANTS,
@@ -39,6 +42,7 @@ import {
 } from '@/state/account';
 import { arrangeBuilds, statusWord } from '@/state/builds';
 import { useCity, type DeployView } from '@/state/store';
+import { ConsoleAccountWarning } from './ConsoleAccountWarning';
 import { ReauthPrompt } from './ReauthPrompt';
 import { GUARDED_BLUEPRINTS, isPracticeDeploy } from '@/backend/ServerBackend';
 import { TEMPLATES } from '@/world/content';
@@ -80,7 +84,27 @@ export function CostNote({ note, className = 'muted', fold = true }: { note: str
 const costShown = (note: string, kind: Parameters<typeof costLine>[1]) => (note.startsWith('Practice:') ? note : costLine(note, kind));
 
 /** An account id as the AWS console shows it: 0474-6343-8585. */
-export const accountLabel = (id: string) => id.replace(/^(\d{4})(\d{4})(\d{4})$/, '$1-$2-$3');
+export { accountLabel } from '@/state/account';
+
+/**
+ * Switch role into the linked account, the console then opening in its Region (seen 23 Nov 2026: the console and
+ * CloudShell were still in another account, so nothing made there showed). The role name is remembered (prefs).
+ */
+function SwitchRoleLine() {
+  const role = useCity((s) => s.prefs.consoleRole) ?? DEFAULT_CONSOLE_ROLE;
+  return (
+    <details className="why switch-role">
+      <summary>In an AWS Organization? Switch role into this account</summary>
+      <label className="row">
+        <span className="label">Role name</span>
+        <input value={role} onChange={(e) => useCity.getState().setPref('consoleRole', e.target.value.trim() || undefined)} spellCheck={false} autoCapitalize="off" />
+      </label>
+      <button type="button" className="btn tiny" onClick={() => openSwitchRole()}>
+        Switch role ↗
+      </button>
+    </details>
+  );
+}
 
 /**
  * v2.18: exactly where an approval writes, so a player linked to two accounts can tell which one before approving.
@@ -811,6 +835,8 @@ export function DeployPanel() {
                 Organization, switch role into it first.
               </p>
             )}
+            {kind !== 'mock' && account.accountId && <SwitchRoleLine />}
+            <ConsoleAccountWarning />
             {account.fixes !== undefined && (
               <p className="muted">
                 Small fixes: <b>{account.fixes ? 'on' : 'off'}</b>
