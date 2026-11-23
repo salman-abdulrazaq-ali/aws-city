@@ -3,7 +3,10 @@ import { FRAME_H, FRAME_W, PIVOT } from '../../assets';
 import { FEEDBACK, MiniGame, pace, PAL, TXT } from './MiniGame';
 import { crisp } from '../../SpeechBubble';
 import { invokeChef, STALL, type ChefState } from './foodStall';
-import { POINTS, SWING, swingReady } from './scoring';
+import { COLOR, CSS } from '../../theme';
+import { reducedMotion } from '../../motion';
+import { PILL, POINTS, SWING, swingReady } from './scoring';
+import { answerPop } from './stageFx';
 
 interface Order {
   t: Phaser.GameObjects.Text;
@@ -70,7 +73,7 @@ export class KitchenGame extends MiniGame {
     const bh = floorY - by - 8;
     g.fillStyle(0x8b5a2b, 1).fillRect(bx, by, bw, bh);
     g.fillStyle(0x1f3b2d, 1).fillRect(bx + 5, by + 5, bw - 10, bh - 10);
-    crisp(this.add.text(bx + bw / 2, by + 16, 'ORDERS · events', TXT(14, '#e2e8f0'))).setOrigin(0.5);
+    crisp(this.add.text(bx + bw / 2, by + 16, 'ORDERS · events', TXT(14, CSS.ink))).setOrigin(0.5);
     this.board = { x: bx + 12, y: by + 32, rows: Math.max(3, Math.min(8, Math.floor((bh - 40) / 26))) };
     // counter + stoves for the chefs, under a hanging λ sign and lamps
     const left = bx + bw + 24;
@@ -79,7 +82,8 @@ export class KitchenGame extends MiniGame {
     // Chefs grow with the stage so the full tab isn't a wall of empty bricks, but never wider than their spot at the
     // counter (a chef is about 30 px wide at 1×), so four never overlap on the narrow panel.
     const spot = (right - left - 16) / MAX_CONCURRENCY;
-    const chefScale = Phaser.Math.Clamp(Math.min(Math.floor((h / 260) * 2) / 2, Math.floor((spot / 30) * 2) / 2), 1, 3);
+    // Whole numbers only: at 1.5× the pixel art drops pixels.
+    const chefScale = Phaser.Math.Clamp(Math.floor(Math.min(h / 260, spot / 30)), 1, 3);
     const signX = left + (right - left) / 2;
     const signY = aw + 60;
     for (let i = 0; i < MAX_CONCURRENCY; i++) {
@@ -92,24 +96,24 @@ export class KitchenGame extends MiniGame {
     g.fillStyle(0x000000, 1).fillRect(signX - 1, aw + 32, 2, signY - aw - 50);
     g.fillStyle(0x000000, 1).fillRect(signX - 46, signY - 20, 92, 40);
     g.fillStyle(0xed7100, 1).fillRect(signX - 44, signY - 18, 88, 36);
-    crisp(this.add.text(signX, signY, 'λ  STALL', TXT(20, '#ffffff'))).setOrigin(0.5);
+    crisp(this.add.text(signX, signY, 'λ  STALL', TXT(20, PAL.ink))).setOrigin(0.5);
     g.fillStyle(0x000000, 1).fillRect(left - 8, counterY - 2, right - left, 30);
     g.fillStyle(0x9a6b3e, 1).fillRect(left - 8, counterY, right - left, 26);
     g.fillStyle(0xb57f4a, 1).fillRect(left - 8, counterY, right - left, 5);
     for (let i = 0; i < MAX_CONCURRENCY; i++) {
       const x = left + ((i + 0.5) * (right - left - 16)) / MAX_CONCURRENCY;
-      g.fillStyle(0x334155, 1).fillRect(x - 20, counterY - 8, 40, 8);
-      g.fillStyle(0x0f172a, 1).fillRect(x - 14, counterY - 12, 28, 4);
+      g.fillStyle(COLOR.panelHi, 1).fillRect(x - 20, counterY - 8, 40, 8);
+      g.fillStyle(COLOR.bgDeep, 1).fillRect(x - 14, counterY - 12, 28, 4);
       const sprite = this.add.sprite(x, counterY - 6, 'char:lambda', 0).setOrigin(PIVOT.x / FRAME_W, PIVOT.y / FRAME_H).setScale(chefScale).setAlpha(0.45);
       sprite.play('lambda:idle:SE');
       // On the narrow panel the labels ("provisioned") are wider than a chef's spot: every other one sits a row lower.
-      const label = crisp(this.add.text(x, counterY + 34 + (spot < 80 ? (i % 2) * 18 : 0), 'cold', { ...TXT(14, '#93c5fd'), backgroundColor: '#140d1fcc', padding: { x: 5, y: 1 } })).setOrigin(0.5, 0);
+      const label = crisp(this.add.text(x, counterY + 34 + (spot < 80 ? (i % 2) * 18 : 0), 'cold', { ...TXT(14, CSS.info), backgroundColor: PILL, padding: { x: 5, y: 1 } })).setOrigin(0.5, 0);
       this.chefs.push({ sprite, label, busyUntil: 0, warmUntil: 0, provisioned: false });
     }
     // The controls sit on the floor just under the chefs' labels, not at the far bottom of a tall view.
     this.controlsY = Math.min(h - 20, counterY + (spot < 80 ? 100 : 84));
-    this.coinText = crisp(this.add.text(col.r - 12, this.controlsY, '', { ...TXT(16, '#fde047'), backgroundColor: '#140d1fcc', padding: { x: 6, y: 2 } })).setOrigin(1, 0.5);
-    this.pxButton(col.x + Math.min(150, col.w / 2 - 10), this.controlsY, '+ Provisioned (P) · $5', () => this.provision(), 0x6fe3a3, PAL.paperInk);
+    this.coinText = crisp(this.add.text(col.r - 12, this.controlsY, '', { ...TXT(16, CSS.gold), backgroundColor: PILL, padding: { x: 6, y: 2 } })).setOrigin(1, 0.5);
+    this.pxButton(col.x + Math.min(150, col.w / 2 - 10), this.controlsY, '+ Provisioned (P) · $5', () => this.provision(), COLOR.good, PAL.paperInk);
     // Keyboard: Space serves the oldest order (once per cooldown; with none waiting it costs), P buys an always-warm chef.
     this.onKeys((k) => {
       if (k === ' ') this.swing();
@@ -124,7 +128,7 @@ export class KitchenGame extends MiniGame {
   private spawn() {
     if (this.orders.length >= this.board.rows) return;
     const source = SOURCES[Math.floor(Math.random() * SOURCES.length)];
-    const t = crisp(this.add.text(this.board.x, 0, source, { ...TXT(15, PAL.paperInk), backgroundColor: '#fffbeb', padding: { x: 6, y: 3 } })).setInteractive({ useHandCursor: true });
+    const t = crisp(this.add.text(this.board.x, 0, source, { ...TXT(15, PAL.paperInk), backgroundColor: CSS.paper, padding: { x: 6, y: 3 } })).setInteractive({ useHandCursor: true });
     const o: Order = { t, born: this.time.now, source };
     t.on('pointerdown', () => this.invoke(o));
     this.orders.push(o);
@@ -160,14 +164,18 @@ export class KitchenGame extends MiniGame {
       this.wrong();
       this.addScore(POINTS.lambda.throttled);
       this.floater(o.t.x + 80, o.t.y, `throttled! (max concurrency) ${POINTS.lambda.throttled}`, FEEDBACK.wrong);
+      answerPop(this, o.t.x + o.t.width / 2, o.t.y + o.t.height / 2, o.t.width, o.t.height, false, 40);
       this.speak('Throttled: every chef is busy.');
       return;
     }
     const { chef, cold, ms: dur } = run;
     chef.sprite.setAlpha(1).play('lambda:cook:SE');
-    chef.label.setText(cold ? 'cold start…' : 'cooking').setColor(cold ? '#93c5fd' : '#fde047');
+    chef.label.setText(cold ? 'cold start…' : 'cooking').setColor(cold ? CSS.info : CSS.gold);
     this.orders = this.orders.filter((x) => x !== o);
-    o.t.destroy();
+    // The ticket goes to the chef who takes it: a Space press shows where it went (no pointer there).
+    o.t.disableInteractive();
+    if (reducedMotion()) o.t.destroy();
+    else this.tweens.add({ targets: o.t, x: chef.sprite.x - o.t.width / 2, y: chef.sprite.y - chef.sprite.displayHeight * 0.6, scale: 0.6, alpha: 0.4, duration: 220, ease: 'Quad.easeIn', onComplete: () => o.t.destroy() });
     this.layout();
     this.speak(cold ? `${o.source}: a cold chef, so a cold start first.` : `${o.source}: a warm chef is cooking.`);
     this.time.delayedCall(dur, () => {
@@ -177,16 +185,24 @@ export class KitchenGame extends MiniGame {
         this.wrong();
         this.addScore(POINTS.lambda.expired, 'soft');
         this.floater(chef.sprite.x, chef.sprite.y - chef.sprite.displayHeight * 0.85, 'order expired', FEEDBACK.wrong);
+        this.popChef(chef, false);
         this.speak(`${o.source} expired before it was served. Score ${this.score}.`);
       } else {
         this.hit();
         this.addScore(cold ? POINTS.lambda.cold : POINTS.lambda.warm, 'soft');
         this.coins++;
         this.floater(chef.sprite.x, chef.sprite.y - chef.sprite.displayHeight * 0.85, cold ? `+${POINTS.lambda.cold} (cold)` : `+${POINTS.lambda.warm}`, FEEDBACK.right);
+        this.popChef(chef, true);
         this.speak(`Served ${o.source}, plus ${cold ? POINTS.lambda.cold : POINTS.lambda.warm}. Score ${this.score}.`);
       }
       chef.sprite.play('lambda:idle:SE');
     });
+  }
+
+  /** A served (or expired) order shows on the chef who cooked it. */
+  private popChef(chef: Chef, ok: boolean) {
+    const { x, y, displayWidth: dw, displayHeight: dh } = chef.sprite;
+    answerPop(this, x, y - dh * 0.45, dw * 0.6, dh * 0.8, ok, 40);
   }
 
   private billIdle() {
@@ -196,7 +212,7 @@ export class KitchenGame extends MiniGame {
       const y = c.sprite.y - c.sprite.displayHeight * 0.85;
       if (this.coins > 0) {
         this.coins--;
-        this.floater(c.sprite.x, y, '−$1 idle', '#fde047');
+        this.floater(c.sprite.x, y, '−$1 idle', CSS.gold);
       } else {
         c.provisioned = false;
         this.floater(c.sprite.x, y, 'released: no coins', FEEDBACK.note);
@@ -214,7 +230,7 @@ export class KitchenGame extends MiniGame {
     }
     this.coins -= 5;
     c.provisioned = true;
-    this.floater(c.sprite.x, c.sprite.y - c.sprite.displayHeight * 0.85, 'always warm!', '#fde047');
+    this.floater(c.sprite.x, c.sprite.y - c.sprite.displayHeight * 0.85, 'always warm!', CSS.gold);
     this.speak(`One chef is provisioned: always warm. Budget $${this.coins}.`);
   }
 
@@ -226,7 +242,7 @@ export class KitchenGame extends MiniGame {
       if (c.busyUntil > now) continue;
       const warm = c.provisioned || c.warmUntil > now;
       c.sprite.setAlpha(warm ? 1 : 0.45);
-      c.label.setText(c.provisioned ? 'provisioned' : warm ? 'warm' : 'cold').setColor(warm ? '#86efac' : '#93c5fd');
+      c.label.setText(c.provisioned ? 'provisioned' : warm ? 'warm' : 'cold').setColor(warm ? CSS.good : CSS.info);
     }
     for (const o of [...this.orders]) {
       if (now - o.born > pace(TIMEOUT_MS)) {
@@ -236,7 +252,7 @@ export class KitchenGame extends MiniGame {
         this.addScore(POINTS.lambda.expired, 'soft');
         this.layout();
         this.speak(`${o.source} waited too long and expired. Score ${this.score}.`);
-      } else if (now - o.born > pace(TIMEOUT_MS) * 0.6) o.t.setColor('#b91c1c').setBackgroundColor('#fee2e2');
+      } else if (now - o.born > pace(TIMEOUT_MS) * 0.6) o.t.setBackgroundColor(CSS.badInk);
     }
     this.coinText?.setText(`Budget $${this.coins}`);
   }
