@@ -648,6 +648,9 @@ const envConfig = {
   minTasks: prev.minTasks ?? (envName === 'prod' ? 2 : 1), maxTasks: prev.maxTasks ?? (envName === 'prod' ? 10 : 3),
   // SES addresses this wizard asked AWS to verify, so a later run can offer to remove one nothing uses.
   ...(sesIdentitiesCreated.length ? { sesIdentitiesCreated } : {}),
+  // Settings this wizard doesn't ask about, added by hand (docs/jev.md: the Jev secret's name), are kept: rebuilt from
+  // the answers alone, a run dropped them and Jev went quietly off.
+  ...(prev.jev ? { jev: prev.jev } : {}),
 };
 writeFileSync(CONFIG, `${JSON.stringify({ ...saved, lastEnv: envName, account, githubRepo, [envName]: envConfig }, null, 2)}\n`);
 p.log.success('Saved your answers to aws-city.config.json (gitignored; no secrets in it).');
