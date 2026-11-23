@@ -14,6 +14,29 @@ export const playScale = (w: number, h: number, baseW: number, baseH: number, ma
 /** How long an answer's frame shows, ms. */
 export const POP_MS = 420;
 
+/** Where each scene last framed an answer (answerPop, MiniGame.answerAt), until MiniGame's sparks read it. */
+const answerSpots = new WeakMap<Phaser.Scene, { x: number; y: number }>();
+
+/** Records where an answer went, so the sparks of a key press burst there (MiniGame.sparks). */
+export const noteAnswerSpot = (scene: Phaser.Scene, x: number, y: number) => void answerSpots.set(scene, { x: Math.round(x), y: Math.round(y) });
+
+/** Where the scene last framed an answer, read once (a key press clears it first, so it's never an old answer's). */
+export function takeAnswerSpot(scene: Phaser.Scene) {
+  const at = answerSpots.get(scene);
+  answerSpots.delete(scene);
+  return at;
+}
+
+/**
+ * Where a right answer's sparks burst (motion.md item 9). A click or tap: where the pointer pressed. A key press has no
+ * pointer (`activePointer` is wherever the mouse last stopped), so: the answer's `target` (the spot the game framed, else
+ * where its verdict went up), else the view's centre.
+ */
+export function sparkSpot(by: 'key' | 'pointer', pointer: { x: number; y: number }, target: { x: number; y: number } | undefined, w: number, h: number) {
+  if (by === 'pointer') return { x: pointer.x || w / 2, y: pointer.y || h / 2 };
+  return target ?? { x: Math.round(w / 2), y: Math.round(h / 2) };
+}
+
 /**
  * Right/wrong feedback on the answer's target (a shelf, a bucket, a button, a server slot), not where the pointer last
  * was: a key press has no pointer, so in keyboard play the base class's sparks land on a stale spot (motion.md item 9).
@@ -22,6 +45,7 @@ export const POP_MS = 420;
  * reduced motion the frame shows, still, for the same time, and nothing flies.
  */
 export function answerPop(scene: Phaser.Scene, x: number, y: number, w: number, h: number, ok: boolean | null, depth = 94) {
+  noteAnswerSpot(scene, x, y);
   const fw = Math.round(w + 8);
   const fh = Math.round(h + 8);
   const color = ok === null ? COLOR.accent : ok ? COLOR.good : COLOR.bad;

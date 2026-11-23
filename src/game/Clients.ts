@@ -65,6 +65,65 @@ export function siteArt(site: ClientSite, level: number): { sprite: string; x: n
   return { sprite: fb, x: site.rect.x + off, y: site.rect.y + off, w: 3, h: 3 };
 }
 
+/** A level-up's bump: the site stands up from this share of its height and settles with Back's overshoot at this strength. */
+const GROW_FROM = 0.7;
+const GROW_OVERSHOOT = 1;
+
+/** A level-up's confetti: few pieces, big enough to read at zoom 1, each outlined dark so it shows on any ground. */
+export const CONFETTI_PIECES = 16;
+export const CONFETTI_MS = 1000;
+export const CONFETTI_OUTLINE = 2;
+/** The share of CONFETTI_MS a piece rises; then it falls, fading over the last 40 %. */
+const RISE = 0.35;
+
+export interface ConfettiPiece {
+  /** How far it drifts sideways and how high it rises, then how far below the start it falls, world px. */
+  dx: number;
+  apex: number;
+  fall: number;
+  /** Its size, world px (7 to 9; never square, so a quarter turn shows). */
+  w: number;
+  h: number;
+  color: number;
+  /** Quarter turns: +1 clockwise, −1 the other way. */
+  spin: 1 | -1;
+  delay: number;
+}
+
+/**
+ * The pieces, the same every time (from their index: no random draws): fanned left to right, rising 40–76 px, in the
+ * theme's gold, blue, green, red and pale gold.
+ */
+export function confettiPieces(n = CONFETTI_PIECES): ConfettiPiece[] {
+  const colors = [COLOR.gold, COLOR.info, COLOR.good, COLOR.bad, COLOR.goldHi];
+  return Array.from({ length: n }, (_, i) => ({
+    dx: Math.round(((i + 0.5) / n - 0.5) * 2 * 88),
+    apex: 40 + ((i * 7) % 5) * 9,
+    fall: 20 + ((i * 3) % 4) * 8,
+    w: 7 + (i % 3),
+    h: 7 + ((i + 2) % 3),
+    color: colors[i % colors.length],
+    spin: i % 2 ? 1 : -1,
+    delay: (i % 4) * 25,
+  }));
+}
+
+/**
+ * Where a piece is at `t` (0 to 1 of CONFETTI_MS), from the burst point: whole px, turned in whole quarter turns (a
+ * rectangle stays on the pixel grid), up to its apex decelerating, then down accelerating, fading as it lands.
+ */
+export function confettiAt(p: ConfettiPiece, t: number) {
+  const k = Math.max(0, Math.min(1, t));
+  const up = k <= RISE ? 1 - (1 - k / RISE) ** 2 : 1;
+  const down = k <= RISE ? 0 : ((k - RISE) / (1 - RISE)) ** 2;
+  return {
+    x: Math.round(p.dx * (1 - (1 - k) ** 2)),
+    y: Math.round(-p.apex * up + (p.apex + p.fall) * down),
+    angle: p.spin * 90 * Math.floor(k * 4),
+    alpha: k < 0.6 ? 1 : (1 - k) / 0.4,
+  };
+}
+
 export class ClientsLayer {
   private placed = new Map<string, Placed>();
   private markers: Marker[] = [];
@@ -195,14 +254,25 @@ export class ClientsLayer {
     if (!p?.img || reducedMotion()) return;
     const img = p.img;
     const sy = img.scaleY;
-    this.scene.tweens.add({ targets: img, scaleY: { from: sy * 0.6, to: sy }, duration: 520, ease: 'Back.easeOut' });
+    // It stands up and settles with a slight give (Back with a small overshoot: about 1 px on a 100 px building).
+    this.scene.tweens.add({ targets: img, scaleY: { from: sy * GROW_FROM, to: sy }, duration: 480, ease: 'Back.easeOut', easeParams: [GROW_OVERSHOOT] });
     const c = toScreen(CITY_ISO, p.site.rect.x + p.site.rect.w / 2, p.site.rect.y + p.site.rect.h / 2);
-    const colors = [COLOR.gold, COLOR.accent, COLOR.good, COLOR.info, COLOR.bad, COLOR.goldHi];
-    for (let i = 0; i < 36; i++) {
-      const r = this.scene.add.rectangle(c.x, c.y - 40, 5 + (i % 3), 5 + (i % 3), colors[i % colors.length]).setDepth(58_000);
-      const ang = (i / 36) * Math.PI * 2;
-      const reach = 50 + (i % 5) * 9;
-      this.scene.tweens.add({ targets: r, x: c.x + Math.cos(ang) * reach, y: c.y - 40 + Math.sin(ang) * reach * 0.6 - 20, angle: i % 2 ? 180 : -180, alpha: 0, duration: 1100, ease: 'Cubic.easeOut', onComplete: () => r.destroy() });
+    const x0 = Math.round(c.x);
+    const y0 = Math.round(c.y - 40);
+    for (const piece of confettiPieces()) {
+      const r = this.scene.add.rectangle(x0, y0, piece.w, piece.h, piece.color).setStrokeStyle(CONFETTI_OUTLINE, COLOR.bgDeep).setDepth(58_000);
+      const o = { t: 0 };
+      this.scene.tweens.add({
+        targets: o,
+        t: 1,
+        delay: piece.delay,
+        duration: CONFETTI_MS,
+        onUpdate: () => {
+          const at = confettiAt(piece, o.t);
+          r.setPosition(x0 + at.x, y0 + at.y).setAngle(at.angle).setAlpha(at.alpha);
+        },
+        onComplete: () => r.destroy(),
+      });
     }
   }
 

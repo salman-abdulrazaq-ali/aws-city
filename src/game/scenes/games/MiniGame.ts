@@ -21,6 +21,7 @@ import { endCardKey } from './gameKeys';
 import { endLine, growthSaid, plainName, scoreLine, spoken, startLine } from './say';
 import { fitParent, playColumn } from './column';
 import { COLOR, CSS, GAME_PAL, textPx } from '../../theme';
+import { noteAnswerSpot, sparkSpot, takeAnswerSpot } from './stageFx';
 
 export { FEEDBACK } from './scoring';
 
@@ -178,6 +179,9 @@ export abstract class MiniGame extends Phaser.Scene {
     this.endCard = undefined;
     this.endShade = undefined;
     this.verdictText = undefined;
+    this.pressedBy = 'pointer';
+    this.saidAt = undefined;
+    this.sparksQueued = false;
     // The last round's clock is gone with its scene: a round in relaxed play (no clock) must not tick a dead one.
     this.timeText = this.timeBar = this.timerEvt = undefined;
     this.timeLeft = this.duration;
@@ -195,6 +199,14 @@ export abstract class MiniGame extends Phaser.Scene {
     canvas?.setAttribute('aria-label', `${plainName(this.title)}: mini-game`);
     onSceneEnd(this, () => cityLabel && canvas?.setAttribute('aria-label', cityLabel));
     this.speak(startLine({ title: this.title, keys: this.keysHelp, seconds: this.duration, untimed: !!this.duration && this.untimed }));
+    // How the player answers, before the game's own keys (setup) hear the press: a key's sparks go to its answer, and
+    // a new press forgets the last one's spots.
+    this.input.keyboard?.on('keydown', () => {
+      this.pressedBy = 'key';
+      this.saidAt = undefined;
+      takeAnswerSpot(this);
+    });
+    this.input.on('pointerdown', () => (this.pressedBy = 'pointer'));
     this.input.keyboard?.on('keydown', (e: KeyboardEvent) => {
       if (!this.over || e.repeat || this.time.now < this.endKeysAt || keysBelongToUi(document.activeElement, this.game.canvas)) return;
       const k = endCardKey(e.key, expertOpen(this.serviceId));
@@ -406,22 +418,48 @@ export abstract class MiniGame extends Phaser.Scene {
   /** "×2!" by the score chip when the combo steps up. */
   private comboFloat() {
     const x = (this.scoreText?.x ?? this.scale.width - 40) - (this.scoreText?.width ?? 40) / 2;
+    // By the score, not where the answer went: it isn't a spot for the press's sparks.
+    const said = this.saidAt;
     this.floater(x, BAR_H + 34, `×${comboMultiplier(this.streak)} combo!`, CSS.gold);
+    this.saidAt = said;
   }
 
-  /** A little burst of sparks where the player pressed (no textures: a few pixel squares, no tweens under reduced motion). */
+  /** The last press: a key (its sparks go to the answer) or the pointer (they burst where it pressed). */
+  private pressedBy: 'key' | 'pointer' = 'pointer';
+  /** Where this press's first floater or verdict went up: near the answer, for a game that frames none. */
+  private saidAt?: { x: number; y: number };
+  private sparksQueued = false;
+
+  /**
+   * Where the answer went, for a game that shows it without stageFx.answerPop (which records its own): a key press's
+   * sparks burst there.
+   */
+  protected answerAt(x: number, y: number) {
+    noteAnswerSpot(this, x, y);
+  }
+
+  /**
+   * A little burst of sparks where the answer went (no textures: a few pixel squares, none under reduced motion). It waits
+   * for the press's handler to end, since a game frames its answer after scoring it; then a click's burst is at the
+   * pointer and a key's at the answer (stageFx.sparkSpot).
+   */
   private sparks() {
-    if (reducedMotion()) return;
-    const p = this.input.activePointer;
-    const x = p.x || this.scale.width / 2;
-    const y = p.y || this.scale.height / 2;
-    const colors = [COLOR.gold, COLOR.good, COLOR.accent, COLOR.inkHi];
-    for (let i = 0; i < 7; i++) {
-      const a = (i / 7) * Math.PI * 2 + Math.random() * 0.5;
-      const d = 18 + Math.random() * 14;
-      const sq = this.add.rectangle(x, y, 3, 3, colors[i % colors.length]).setDepth(95);
-      this.tweens.add({ targets: sq, x: x + Math.cos(a) * d, y: y + Math.sin(a) * d, alpha: 0, duration: 420, ease: 'Quad.easeOut', onComplete: () => sq.destroy() });
-    }
+    if (reducedMotion() || this.sparksQueued) return;
+    this.sparksQueued = true;
+    queueMicrotask(() => {
+      this.sparksQueued = false;
+      if (!this.sys.isActive()) return;
+      const by = this.pressedBy;
+      const target = by === 'key' ? (takeAnswerSpot(this) ?? this.saidAt) : undefined;
+      const { x, y } = sparkSpot(by, this.input.activePointer, target, this.scale.width, this.scale.height);
+      const colors = [COLOR.gold, COLOR.good, COLOR.accent, COLOR.inkHi];
+      for (let i = 0; i < 7; i++) {
+        const a = (i / 7) * Math.PI * 2 + Math.random() * 0.5;
+        const d = 18 + Math.random() * 14;
+        const sq = this.add.rectangle(x, y, 3, 3, colors[i % colors.length]).setDepth(95);
+        this.tweens.add({ targets: sq, x: x + Math.cos(a) * d, y: y + Math.sin(a) * d, alpha: 0, duration: 420, ease: 'Quad.easeOut', onComplete: () => sq.destroy() });
+      }
+    });
   }
 
   protected floater(x: number, y: number, text: string, color: string) {
@@ -429,6 +467,7 @@ export abstract class MiniGame extends Phaser.Scene {
     const t = crisp(this.add.text(x, y, text, { ...TXT(16, color), stroke: CSS.bg, strokeThickness: 4, align: 'center', wordWrap: { width: Math.min(w - 24, 360) } })).setOrigin(0.5).setDepth(90);
     // Never cut at an edge: keep the whole floater inside the view.
     t.setX(Math.max(t.width / 2 + 6, Math.min(w - t.width / 2 - 6, x)));
+    this.saidAt ??= { x: Math.round(t.x), y: Math.round(y) };
     if (reducedMotion()) return void this.time.delayedCall(900, () => t.destroy());
     this.tweens.add({ targets: t, y: y - 30, alpha: 0, duration: 900, ease: 'Stepped', easeParams: [6], onComplete: () => t.destroy() });
   }
@@ -449,6 +488,7 @@ export abstract class MiniGame extends Phaser.Scene {
       .setDepth(95);
     // Never cut at an edge.
     t.setX(Phaser.Math.Clamp(x, t.width / 2 + 6, w - t.width / 2 - 6));
+    this.saidAt ??= { x: Math.round(t.x), y: Math.round(y) };
     this.verdictText = t;
     // Screen readers hear the verdict too, with the score after it.
     this.scoreSaidWith = true;

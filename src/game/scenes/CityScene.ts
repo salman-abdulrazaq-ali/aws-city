@@ -46,6 +46,7 @@ import { keysBelongToUi } from '../keys';
 import { reducedMotion } from '../motion';
 import { crisp, TEXT_FONT } from '../SpeechBubble';
 import { mayAutoPan } from '../calm';
+import { Stillness, STILL_TIME } from '../stillness';
 import { buildingFocusY, frameTarget } from '../camera';
 import { Landscape } from '../Landscape';
 import { Culler, setCityPerf } from '../cull';
@@ -171,6 +172,13 @@ export class CityScene extends Phaser.Scene {
   private workersAt = -Infinity;
   /** The six Well-Architected citizens, and the issue markers over landmarks with open findings. */
   private patrols?: Patrols;
+  /**
+   * Reduced motion for the landmark agents and the patrols, as Citizens/Workers/Visitors have (src/game/stillness.ts):
+   * idle ones stand where they are, still tappable, and still walk where they're sent (a task, a finding, a new
+   * building's first walk). Nothing to park when it turns on: a stroll under way is a few tiles and ends by itself, and
+   * stopping a walk to work would lose the "agent animation = real AWS activity" signal.
+   */
+  private stillness = new Stillness();
   private markers?: IssueMarkers;
   /** "?" signs for account resources the city has no landmark for, by district (or 'square'). */
   private unknownSigns = new Map<string, Phaser.GameObjects.Text>();
@@ -525,9 +533,11 @@ export class CityScene extends Phaser.Scene {
     // player's text size (⋯ → Text size).
     const ui = (useCity.getState().prefs.textSize ?? 100) / 100 / cam.zoom;
     const levels = useCity.getState().agentLevels;
+    // Under reduced motion idle agents get the still clock (they never start a stroll); a walk they're given goes on.
+    const wander = this.stillness.check(time, () => {}) ? STILL_TIME : time;
     for (const [id, a] of this.agents) {
       a.speedBoost = 1 + 0.15 * ((levels[id] ?? 1) - 1);
-      a.update(time, dt);
+      a.update(wander, dt);
       a.setUiScale(ui);
     }
     this.handleKeys();
@@ -549,7 +559,7 @@ export class CityScene extends Phaser.Scene {
       const target = this.citizenTarget();
       if ((this.citizens?.list.length ?? 0) > target) this.citizens?.trim(target);
     }
-    this.patrols?.update(time, dt);
+    this.patrols?.update(wander, dt);
     if (ui !== this.lastUi) {
       this.lastUi = ui;
       for (const l of this.landmarks.values()) l.setUiScale(ui);
