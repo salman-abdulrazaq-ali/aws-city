@@ -875,9 +875,13 @@ When a change touches a decision, update its entry and run its Proof.
   `<region>` is the linked account's Region (until the account says it, the Region gets a box too, so Copy never waits
   for a gap with nowhere to type it), and optional parts are kept once filled (`commandFor`,
   `src/world/workshops.ts`), so S3 keeps `LocationConstraint` outside us-east-1 and Copy waits until nothing is left as
-  `<x>` (seen 22 Nov 2026: Oregon got `--bucket <bucket>` with no constraint, and CloudShell refused it). Pasted errors
+  `<x>` (seen 22 Nov 2026: Oregon got `--bucket <bucket>` with no constraint, and CloudShell refused it). A step's `setup`
+  (a file CloudShell doesn't have: `echo … > sample.txt`) runs first in the same line for real only (seen 23 Nov 2026:
+  "Upload a file" failed in CloudShell). The bucket box has 🎲 Suggest a free name (`freeBucketName`: bucket names are
+  global, "testdemo" was taken) and says what S3 would refuse before Copy (`bucketNameProblem`). Pasted errors
   match the step's known ones first, then go to the building's agent as quoted, redacted data, and its answer shows under
-  the step, not only in the HQ chat.
+  the step, not only in the HQ chat, with the agent's portrait while it reads and each command in it (between backticks)
+  on its own line with a Copy button (`AnswerWithCode`).
   Steps pay stars once per mode, ever (`src/learning/workshopRewards.ts`, real > practice; no daily ledger, so a
   workshop done in one sitting pays in full). The terminal helps like a shell: Tab finishes a word, ↑ recalls lines,
   💡 Hint types the next word for −1⭐ on that step (a paying step still pays one), and Fill my names swaps `<table>` for

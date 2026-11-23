@@ -167,6 +167,36 @@ describe('for real', () => {
     expect(document.querySelector('.workshop-cmd')?.textContent).toBe('aws s3api create-bucket --bucket aws-city-047463438585-ws-1 --region us-west-2 --create-bucket-configuration LocationConstraint=us-west-2');
     expect(copy.disabled).toBe(false);
   });
+
+  // Seen 23 Nov 2026 in CloudShell: "Upload a file" failed (no sample.txt there), and "testdemo" was already taken.
+  it('for real, Upload a file makes the file first, in the same line', () => {
+    useCity.setState({ backendKind: 'server', account: { linked: true, region: 'us-west-2' } });
+    useCity.getState().rememberWorkshop('s3-first-bucket', { names: { bucket: 'city-workshop-1a2b3c4d' } });
+    act(() => useCity.getState().openWorkshop('s3-first-bucket'));
+    render(<Workshop />);
+    fireEvent.click(screen.getByRole('button', { name: /For real in CloudShell/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Upload a file/ }));
+    expect(document.querySelector('.workshop-cmd')?.textContent).toBe(
+      'echo "Hello from AWS City" > sample.txt && aws s3api put-object --bucket city-workshop-1a2b3c4d --key sample.txt --body sample.txt',
+    );
+    expect(screen.getByText(/It makes the small file first/)).toBeTruthy();
+  });
+
+  it('for real, the bucket box suggests a free name and says what S3 would refuse before it’s copied', () => {
+    useCity.setState({ backendKind: 'server', account: { linked: true, region: 'us-west-2' } });
+    act(() => useCity.getState().openWorkshop('s3-first-bucket'));
+    render(<Workshop />);
+    fireEvent.click(screen.getByRole('button', { name: /For real in CloudShell/ }));
+    const box = screen.getByRole('textbox', { name: /Your bucket name/ }) as HTMLInputElement;
+    const copy = screen.getByRole('button', { name: 'Copy' }) as HTMLButtonElement;
+    fireEvent.change(box, { target: { value: 'Test_Demo' } });
+    expect(screen.getByRole('alert').textContent).toMatch(/lowercase letters, numbers, dots and hyphens only/);
+    expect(copy.disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: /Suggest a free name/ }));
+    expect(box.value).toMatch(/^city-workshop-[0-9a-f]{8}$/);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(copy.disabled).toBe(false);
+  });
 });
 
 // Seen 22 Nov 2026: "Help me fix it" said the answer would come up in the Feed, and the player couldn't find it.
@@ -179,9 +209,25 @@ describe('I got an error', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Help me fix it' }));
     expect(asked).toHaveBeenCalled();
     const districtId = asked.mock.calls[0]![0];
-    expect(document.querySelector('.workshop-answer')?.textContent).toMatch(/is looking at it/);
+    expect(document.querySelector('.workshop-answer')?.textContent).toMatch(/is reading your error/);
     act(() => useCity.getState().applyServerEvent({ type: 'chat.answer', requestId: 'err-1', districtId, agentId: 'dynamodb', delta: 'The command name is misspelled: use create-table.', done: true }));
     expect(document.querySelector('.workshop-answer')?.textContent).toMatch(/misspelled: use create-table/);
+  });
+
+  it('a command in the agent’s answer gets its own Copy button', () => {
+    useCity.setState({ chats: {} }); // the test above answered request err-1 already
+    open();
+    render(<Workshop />);
+    fireEvent.click(screen.getByText('I got an error'));
+    fireEvent.change(screen.getByRole('textbox', { name: 'The error you got' }), { target: { value: 'aws: error: something odd' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Help me fix it' }));
+    expect(document.querySelector('.workshop-thinking')?.textContent).toMatch(/is reading your error/);
+    const districtId = asked.mock.calls.at(-1)![0];
+    act(() => useCity.getState().applyServerEvent({ type: 'chat.answer', requestId: 'err-1', districtId, agentId: 'dynamodb', delta: 'Run `aws dynamodb list-tables --region us-west-2` to see your tables.', done: true }));
+    expect(screen.getByText(/Copy a command below/)).toBeTruthy();
+    const chip = document.querySelector('.workshop-answer .code-row .workshop-cmd');
+    expect(chip?.textContent).toBe('aws dynamodb list-tables --region us-west-2');
+    expect(document.querySelector('.workshop-answer .code-row button')?.textContent).toBe('Copy');
   });
 });
 
