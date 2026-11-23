@@ -25,6 +25,8 @@ import { starsEarned } from '@/state/buildmode';
 import { coins } from '@/state/wallet';
 import { lightsLine } from '@/state/lights';
 import { glowingNow } from './Loops';
+import { holdTickerLine } from './NewsTicker';
+import { useShieldGame } from './useDialog';
 import { useBump } from './feedback';
 import { connectionLabel, DEMO_KEY, GAME_NAMES, isDemo, readPref, setDemo, syncLine, TIP_COINS_KEY, writePref } from './logic';
 import { Coin, Icon } from './icons';
@@ -39,12 +41,17 @@ import { DeleteAccountDialog, openAccountCard } from './Account';
 /** How long the coins note stays on the map before it counts as read (Got it and Decorate put it away sooner). */
 export const COINS_TIP_MS = 45_000;
 
+/** A map shorter than this (the side panel's, the narrow tab's) has room for one line over its top edge, not two. */
+export const SHORT_MAP_PX = 480;
+
 /**
  * The first time the player has City Coins, a one-time note under the counter says where they go (Decorate). "Got it"
  * (or opening Decorate, or COINS_TIP_MS on screen) puts it away for good on this device. It hangs just under the coin
  * counter but always inside the map and under the AWS news ticker (the full tab's side column and tab bar sit under the
- * HUD too; the panel's map is short): placed from those boxes, and only its button takes taps, so it never covers the
- * tabs, the ticker or a click. One thing over the map at a time: it steps aside while a toast shows, and comes back after.
+ * HUD too): placed from those boxes, and only its button takes taps, so it never covers the tabs, the ticker or a click.
+ * On a short map (under SHORT_MAP_PX: the side panel's, the narrow tab's) it's one short line in the ticker's place at
+ * the map's top-left, under the counter, and the ticker steps aside meanwhile (`holdTickerLine`): never two rows over
+ * the map. One thing over the map at a time: it steps aside while a toast shows, and comes back after.
  */
 function CoinsTip({ wallet }: { wallet: number }) {
   const [seen, setSeen] = useState(() => readPref(TIP_COINS_KEY) === '1');
@@ -58,6 +65,8 @@ function CoinsTip({ wallet }: { wallet: number }) {
   }, [building, seen]);
   const ref = useRef<HTMLSpanElement>(null);
   const [at, setAt] = useState<CSSProperties>({});
+  /** On a short map: one line in the ticker's place. */
+  const [line, setLine] = useState(false);
   const show = !seen && wallet > 0 && inCity;
   // Read once it's been on screen a while: a note that never leaves the short panel map is clutter.
   useEffect(() => {
@@ -66,6 +75,14 @@ function CoinsTip({ wallet }: { wallet: number }) {
     return () => clearTimeout(t);
   }, [show]);
   const visible = show && !toastUp;
+  // "Got it" stands over the map: its press must not reach Phaser's window listeners and pick the building under it.
+  useShieldGame(visible, ref);
+  // Before paint, so the ticker and the note never show as two rows for a frame.
+  useLayoutEffect(() => {
+    if (!visible || !line) return;
+    holdTickerLine(true);
+    return () => holdTickerLine(false);
+  }, [visible, line]);
   useLayoutEffect(() => {
     if (!visible) return;
     const place = () => {
@@ -73,8 +90,12 @@ function CoinsTip({ wallet }: { wallet: number }) {
       const stage = document.querySelector('.stage');
       const map = stage?.getBoundingClientRect();
       // No map on this page (a test, a game's own screen): the stylesheet's place under the counter.
-      if (!chip || !map) return setAt({});
+      if (!chip || !map) return (setLine(false), setAt({}));
       if (map.width < 120) return setAt({ visibility: 'hidden' });
+      const short = map.height < SHORT_MAP_PX;
+      setLine(short);
+      // Where the ticker's line stands (styles/21-status-and-cards.css: --s-3 in from the map's edges).
+      if (short) return setAt({ position: 'fixed', top: map.top + 6, left: map.left + 6, right: 'auto', maxWidth: map.width - 12 });
       const pad = 8;
       // The news ticker owns the map's top edge (as it does for toasts): the note hangs under it.
       const ticker = stage?.querySelector(':scope > .ticker')?.getBoundingClientRect();
@@ -97,9 +118,11 @@ function CoinsTip({ wallet }: { wallet: number }) {
   }, [visible]);
   if (!visible) return null;
   return (
-    <span ref={ref} className="hud-tip" role="note" style={at}>
+    <span ref={ref} className={`hud-tip${line ? ' hud-tip-line' : ''}`} role="note" style={at}>
+      {/* The line keeps the point (spend them in Decorate) and drops the rest (styles/02-hud.css .tip-more). */}
       <span>
-        <b>City Coins</b>: spend them on decorations in 🌳 Decorate. Stars ⭐ are never spent.
+        <b>City Coins</b>: spend them <span className="tip-more">on decorations </span>in 🌳 Decorate.
+        <span className="tip-more"> Stars ⭐ are never spent.</span>
       </span>
       <button className="btn tiny" onClick={done}>
         Got it

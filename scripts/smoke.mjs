@@ -54,6 +54,8 @@ await wait(2500);
 // A first run opens on the world map: pick a Region and dive into its city.
 const startView = await city(() => window.awsCity.useCity.getState().view.name);
 if (startView !== 'world') errors.push(`first run should open on the world map, got ${startView}`);
+// Connie's card waits for the world map to be drawn (never over the boot bar): it marks the map as up.
+if (!(await page.locator('.world-intro').waitFor({ timeout: 60_000 }).then(() => true, () => false))) errors.push('first run: Connie’s card never showed (the world map was never drawn)');
 await wait(1500); // the world map fades in from the sea
 await shot('00-world');
 await audit('world map');

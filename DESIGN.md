@@ -402,7 +402,9 @@ full-screen cards (My City, the Workshop dialog) sit on the same scrim. Escape c
 Over the stage, centred, below the news ticker, one at a time from the store's queue. `panel` fill, a 4 px amber inset
 bar on the left, 700 text, a drain bar on hover, entering with a 3-step "pop". Errors swap the bar to coral. In the
 panel a toast is a step smaller (12 px text, tighter padding) and the news ticker steps aside while it shows. The
-one-time coins note hangs under the ticker, never over it, and steps aside for a toast too.
+one-time coins note hangs under the ticker on the tab's map; on a short one (the panel's, the narrow tab's) it is one
+line in the ticker's place at the top-left, under the coins, and the ticker steps aside meanwhile. It steps aside for a
+toast too. In a narrow window the ticker is one compact line (24 px).
 
 ### Disclosures
 Every `<summary>` row is at least 24 px tall, its words centred. The folds share one look: `ink-soft`, bold, no
@@ -488,7 +490,8 @@ Health storms, agents' white speech bubbles, label chips (11 px heavy text on a 
 The Region picker wears the city's tokens: the title in `ink-hi` (14 px), the Region line in `ink` on a graphite chip,
 "Facts ›" in amber, city names in `gold-hi` on the label chip; nothing under 11 px. Each skyline lights by its own
 Region's night. Picking a dot, or the first run's "Start in <city>", dives: the map's words fade in 180 ms, the land
-zooms and fades to the sea blue, and the city fades in from the same sea. The first run's card steps aside at once,
+zooms and fades to the sea blue, and the city fades in from the same sea. The first run's card waits for the map to be
+drawn (the boot bar stands alone before it), and on a press it steps aside at once,
 keeping its place, and the minimap's box shows only once the city answers.
 
 ### HQ rooms
@@ -529,7 +532,8 @@ this city where the game has a place, and generated props (`game:<game>:<prop>`,
   distance.
 - **Do** start entrances from opacity 0.6 (the shared `enter`), never 0: the side panel can draw at a few frames a
   second, and content must show before the entrance ends.
-- **Do** keep one overlay at a time on the panel's map: one toast (the ticker steps aside), one speech bubble.
+- **Do** keep one overlay at a time on the panel's map: one line on its top edge (a toast, else the coins note, else
+  the ticker), one speech bubble.
 - **Do** render in-world text with `crisp()` and counter-scale it by `1/zoom`; keep camera zoom and sprite scales on
   whole numbers, and size canvas text through `textPx` (a mini-game's through `TXT`).
 

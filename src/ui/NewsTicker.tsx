@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { openDocs, type Layout } from '@/app/runtime';
 import type { AwsIncident, AwsNewsItem } from '@/backend/contract';
 import { useCity } from '@/state/store';
 import { ago, incidentLine, plainIncidentLead, severityRank } from '@/world/incidents';
 import { feel } from './feedback';
+import { useShieldGame } from './useDialog';
 
 type Item = { kind: 'incident'; incident: AwsIncident } | { kind: 'news'; item: AwsNewsItem };
 
@@ -36,11 +37,27 @@ export function tickerItems(incidents: AwsIncident[], news: AwsNewsItem[], now =
 
 const prefersReducedMotion = () => typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+/** Whether the coins note holds the ticker's line on a short map (CoinsTip, src/ui/Hud.tsx). */
+let lineHeld = false;
+const holdWatchers = new Set<() => void>();
+const onHold = (watch: () => void) => (holdWatchers.add(watch), () => void holdWatchers.delete(watch));
+const isHeld = () => lineHeld;
+
+/**
+ * On a short map (the side panel's, the narrow tab's) the one-time coins note takes the ticker's line instead of
+ * hanging a second row under it: the ticker steps aside while it's held and comes back, on the same line, after.
+ */
+export function holdTickerLine(on: boolean) {
+  if (lineHeld === on) return;
+  lineHeld = on;
+  holdWatchers.forEach((w) => w());
+}
+
 /**
  * One slim line over the city: AWS's own status (Health Dashboard) and launches (What's New). Tapping an incident
  * opens its card; tapping a launch opens the announcement on aws.amazon.com. It pauses while hovered or focused.
  * In the side panel's short map one thing sits over the top edge at a time: it steps aside while a toast shows (the
- * toast takes its place) and comes back, on the same line, when the toast goes.
+ * toast takes its place) or the coins note holds its line (`holdTickerLine`), and comes back, on the same line, after.
  */
 export function NewsTicker({ layout }: { layout?: Layout } = {}) {
   const health = useCity((s) => s.health);
@@ -50,6 +67,9 @@ export function NewsTicker({ layout }: { layout?: Layout } = {}) {
   const [paused, setPaused] = useState(false);
   const region = useCity((s) => s.cityRegion);
   const toastUp = useCity((s) => layout === 'panel' && s.toasts.some((t) => !t.leaving));
+  const held = useSyncExternalStore(onHold, isHeld, isHeld);
+  // Its buttons stand over the map: their presses must not reach Phaser's window listeners and pick a building under them.
+  const box = useRef<HTMLDivElement>(null);
   const items = tickerItems(health?.incidents ?? [], news?.items ?? [], Date.now(), region);
   const n = items.length;
 
@@ -60,7 +80,8 @@ export function NewsTicker({ layout }: { layout?: Layout } = {}) {
     return () => clearInterval(t);
   }, [n, paused]);
 
-  if (!n || toastUp) return null;
+  useShieldGame(!!n && !toastUp && !held, box);
+  if (!n || toastUp || held) return null;
   const item = items[at % n];
   const tone = item.kind === 'news' ? 'news' : item.incident.status === 'resolved' ? 'resolved' : item.incident.severity;
   const icon = item.kind === 'news' ? '🚀' : item.incident.status === 'resolved' ? '✅' : item.incident.severity === 'disruption' ? '⛈️' : item.incident.severity === 'degradation' ? '🌧️' : 'ℹ️';
@@ -69,7 +90,7 @@ export function NewsTicker({ layout }: { layout?: Layout } = {}) {
   const when = item.kind === 'news' ? ago(item.item.date) : ago(item.incident.updated);
 
   return (
-    <div className={`ticker ${tone}`} onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)} onFocus={() => setPaused(true)} onBlur={() => setPaused(false)}>
+    <div ref={box} className={`ticker ${tone}`} onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)} onFocus={() => setPaused(true)} onBlur={() => setPaused(false)}>
       {/* The button's name is its visible text plus a few hidden words (WCAG 2.5.3: say what you see to press it). */}
       <button
         className="ticker-line"

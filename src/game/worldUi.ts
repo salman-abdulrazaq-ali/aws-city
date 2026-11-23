@@ -1,5 +1,6 @@
 // The world map's seams with the rest of the app, kept free of Phaser so the UI and tests can import them: its text
-// sizes (they follow ⋯ → Text size like the city's labels) and the first run's dive (src/ui/WorldIntro.tsx).
+// sizes (they follow ⋯ → Text size like the city's labels), the first run's dive and whether the map is up yet
+// (src/ui/WorldIntro.tsx).
 import { textPx } from './theme';
 
 /** The world map's text, px, at the player's text size (1, 1.25 or 1.5): never under 11 (theme.ts textPx). */
@@ -15,6 +16,8 @@ export const worldText = (scale = 1) => ({
 });
 
 let diver: ((code: string) => boolean) | undefined;
+const watchers = new Set<() => void>();
+const tell = () => watchers.forEach((w) => w());
 
 /**
  * WorldScene.create: dives go to this scene until the returned function runs (its teardown). `dive` answers whether
@@ -22,9 +25,24 @@ let diver: ((code: string) => boolean) | undefined;
  */
 export function setDiver(dive: (code: string) => boolean): () => void {
   diver = dive;
+  tell();
   return () => {
-    if (diver === dive) diver = undefined;
+    if (diver !== dive) return;
+    diver = undefined;
+    tell();
   };
+}
+
+/**
+ * Whether the world map is drawn and running: WorldScene registers its dive right after its first draw, so on a first
+ * run this turns true once the boot bar ("Building AWS City…") has given way to the dots. With `onWorldMap` it's a
+ * `useSyncExternalStore` source (Connie's first card waits for it, src/ui/WorldIntro.tsx).
+ */
+export const worldMapUp = () => !!diver;
+
+export function onWorldMap(watch: () => void): () => void {
+  watchers.add(watch);
+  return () => void watchers.delete(watch);
 }
 
 /**

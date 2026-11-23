@@ -30,6 +30,14 @@
   border-color: var(--accent-line);
   border-left-color: var(--tick, var(--info));
 }
+/* A narrow window (the side panel, the narrow tab) has a short map: the ticker is one compact line there, still a
+   24 px target. The coins note takes this same line while it shows (src/ui/Hud.tsx CoinsTip). */
+@media (max-width: 719px) {
+  .ticker-line {
+    min-height: 24px;
+    padding-block: var(--s-1);
+  }
+}
 .ticker.disruption {
   --tick: var(--bad);
 }

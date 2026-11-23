@@ -168,7 +168,7 @@
       "Do give every animation a reduced-motion state: CSS durations collapse to 0.01 ms under prefers-reduced-motion, and the canvas parks its ambient motion (cars at the kerb, walkers and agents where they stand) and cuts its camera moves.",
       "Do play a big moment in order, one thing at a time (land, rise, payoff, push-in), and time a camera flight by its distance.",
       "Do start entrances from opacity 0.6 (the shared enter), never 0: the side panel can draw at a few frames a second, and content must show before the entrance ends.",
-      "Do keep one overlay at a time on the panel's map: one toast (the ticker steps aside), one speech bubble.",
+      "Do keep one overlay at a time on the panel's map: one line on its top edge (a toast, else the coins note, else the ticker), one speech bubble.",
       "Do render in-world text with crisp() and counter-scale it by 1/zoom; keep camera zoom and sprite scales on whole numbers, and size canvas text through textPx (a mini-game's through TXT)."
     ],
     "donts": [

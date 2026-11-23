@@ -738,7 +738,8 @@ When a change touches a decision, update its entry and run its Proof.
   folded under More to do. Quest steps'
   buttons say what they do (`stepButton`: "Walk there", "Open cards (Learn)", "Solve it (Learn)", "Approve it in Deploy"),
   never a bare "Go"; each step done toasts a ✓ and bumps its building (`questStep` on the bus). The first screen says
-  what AWS is in one line (`WorldIntro`); its "I already build on AWS" turns Everything on (Simple off) and opens every area, and after either button focus moves to the City tab's panel unless the city's canvas took the keys (then the arrows walk Kai); First Brick needs a building put up somewhere (`anyBuilt` in
+  what AWS is in one line (`WorldIntro`), once the world map is drawn (`worldMapUp`, `src/game/worldUi.ts`: WorldScene
+  registers its dive after its first draw; the boot bar stands alone before it, so a press always dives); its "I already build on AWS" turns Everything on (Simple off) and opens every area, and after either button focus moves to the City tab's panel unless the city's canvas took the keys (then the arrows walk Kai); First Brick needs a building put up somewhere (`anyBuilt` in
   `src/state/badges.ts`); the news ticker doesn't rotate on its own under reduced motion (its button still steps). Proof:
   `npx vitest run tests/next.test.ts tests/ui.test.tsx tests/onboarding-fixes.test.tsx tests/world-intro.test.tsx`, `npm run smoke` (one primary button on the shift).
 - **Learning has a daily rhythm and a goal.** The shift shows Today (a few cards, a puzzle, a fix: only areas that are open;
@@ -800,7 +801,10 @@ When a change touches a decision, update its entry and run its Proof.
   zoom ≥ 2, technical labels (AZ IDs, network notes, distance signs) only with ⋯ → Show the map details (`prefs.mapDetails`).
   Every issue cone shows, but only the most urgent one's "!" tag (and it alone bounces); the rest show from zoom 2 or on the
   building the player is looking at (`IssueMarkers.setTagsShown`). The ticker leads with this city's Region; a weeks-old
-  outage elsewhere waits behind fresh news (`tickerItems`). From zoom 2 a view holds at most `signCap` building signs
+  outage elsewhere waits behind fresh news (`tickerItems`). A short map (under `SHORT_MAP_PX` 480 px tall: the side
+  panel's, the narrow tab's) has one line over its top edge: a toast, else the coins note, as one short line in the
+  ticker's place (`holdTickerLine`), else the ticker, one compact line (24 px) in a narrow window; presses on the note
+  and the ticker never reach the map (`useShieldGame`). From zoom 2 a view holds at most `signCap` building signs
   (10 at zoom 2, 6 from zoom 3 on the tab's map, a share of that on a smaller one such as the panel, never under 3;
   picked ones don't count), ranked picked, then standing in view, ready to upgrade (`readyToUpgrade`), nearest Kai
   (`signRank`). A sign says "· Lv N" only while picked or hovered (`Landmark.setDetailed`); its service icon is
@@ -812,7 +816,7 @@ When a change touches a decision, update its entry and run its Proof.
   `src/game/cityView.ts`: 0.55 × the night at zoom 1, half at zoom 2, none from zoom 3), so a grown city doesn't flatten
   into one dark field. While decorating no building names show. Bubbles: the side panel keeps one at a time and none past 5 s (8 s in the tab)
   (`setBubbleRules`, `bubbleHold`, `src/game/SpeechBubble.ts`); a message's caption reads "Connie · to you".
-  Proof: `npx vitest run tests/incidents.test.ts tests/ui.test.tsx tests/canvas-boards.test.tsx tests/city-view.test.ts`,
+  Proof: `npx vitest run tests/incidents.test.ts tests/ui.test.tsx tests/canvas-boards.test.tsx tests/city-view.test.ts tests/panel-room.test.tsx`,
   `npm run smoke` (screenshots in `.output/smoke`).
 - **The skyline grows with what you learn, block by block.** On a real map every free build tile of a block (not road,
   sidewalk, front row, work spot, footprint, water, park, superblock or decor) is infill (`src/game/infill.ts`, pure): cut
@@ -1005,7 +1009,8 @@ When a change touches a decision, update its entry and run its Proof.
   `spendCoins(n)`, selectors `coins(p)`, `coinsToday(p, day)`. The panel draws a coin as a pixel icon (`Coin`, `withCoins` in
   `src/ui/icons.tsx`; `Plain` swaps any 🪙 the state layer writes), never the emoji, which is a grey ball without a colour
   emoji font. The HUD shows only ⭐ · coins · 💡 (City Lights), the rank chip, a one-time "spend them in Decorate" note
-  under the coins (under the news ticker; it steps aside for a toast and counts as read after 45 s on screen) and 🚦 Rush hour while it runs (`src/game/rush.ts`); citizens'
+  under the coins (under the news ticker; on a short map one line in the ticker's place, the ticker stepping aside; it
+  steps aside for a toast and counts as read after 45 s on screen) and 🚦 Rush hour while it runs (`src/game/rush.ts`); citizens'
   meters count 🎓 lessons, not stars. Where pay halves or stops (game rounds, chat answers, agent tasks), the card says
   so kindly ("full stars again tomorrow"). Golden tokens are ✨, never 🪙. Proof: `npx vitest run tests/wallet.test.ts
   tests/wallet-store.test.ts tests/buildmode.test.ts tests/build-ui.test.tsx tests/contract.test.ts tests/panel-room.test.tsx`,

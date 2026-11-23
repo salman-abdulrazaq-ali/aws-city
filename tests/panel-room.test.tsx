@@ -12,9 +12,10 @@ vi.mock('@/ui/Portrait', () => ({ Portrait: () => <span data-testid="portrait" /
 const { useCity } = await import('@/state/store');
 const { PromptBar } = await import('@/ui/PromptBar');
 const { AI_NOTE } = await import('@/ui/AiNote');
-const { Hud, COINS_TIP_MS } = await import('@/ui/Hud');
+const { Hud, COINS_TIP_MS, SHORT_MAP_PX } = await import('@/ui/Hud');
 const { NewsTicker } = await import('@/ui/NewsTicker');
 const { WorldIntro } = await import('@/ui/WorldIntro');
+const { setDiver } = await import('@/game/worldUi');
 
 const news = { type: 'aws.news', items: [{ id: 'n1', title: 'Amazon S3 adds a thing', url: 'https://aws.amazon.com/about-aws/whats-new/x', date: new Date().toISOString(), serviceIds: ['s3'] }] };
 const toast = { id: 1, icon: '🧩', text: 'Combo found', kind: 'info', ms: 4000 };
@@ -70,6 +71,86 @@ describe('one thing over the short map at a time', () => {
     expect(localStorage.getItem('awscity.tip.coins')).toBe('1');
   });
 
+  // B9b (finding #10): the ticker plus a three-line note under it covered a third of the panel's ~250 px map.
+  it('on a short map the coins note is one line in the ticker’s place; the ticker steps aside and comes back after', () => {
+    const map = (height: number) => ({ x: 8, y: 48, top: 48, left: 8, width: 384, height, right: 392, bottom: 48 + height, toJSON: () => ({}) }) as DOMRect;
+    let height = 290;
+    const zero = map(0);
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      return this.classList.contains('stage') ? map(height) : zero;
+    });
+    const p = useCity.getState().progress;
+    useCity.setState({ news, progress: { ...p, wallet: { earned: 20, spent: 0 } } } as never);
+    const Page = () => (
+      <>
+        <Hud layout="panel" />
+        <div className="stage">
+          <NewsTicker layout="panel" />
+        </div>
+      </>
+    );
+    const { container, unmount } = render(<Page />);
+    const note = screen.getByRole('note');
+    expect(note.classList.contains('hud-tip-line')).toBe(true);
+    // At the map's top-left, where the ticker's line stands (--s-3 in), under the coin counter.
+    expect([note.style.position, note.style.top, note.style.left]).toEqual(['fixed', '54px', '14px']);
+    expect(note.textContent).toMatch(/spend them on decorations in 🌳 Decorate/); // the line hides the extra words in CSS
+    expect(container.querySelector('.ticker')).toBeNull();
+    // A toast takes the top edge from both, then the note has its line back.
+    act(() => useCity.setState({ toasts: [toast] } as never));
+    expect(screen.queryByRole('note')).toBeNull();
+    expect(container.querySelector('.ticker')).toBeNull();
+    act(() => useCity.setState({ toasts: [] } as never));
+    expect(screen.getByRole('note')).toBeTruthy();
+    expect(container.querySelector('.ticker')).toBeNull();
+    // Read: the ticker is back on its line.
+    fireEvent.click(screen.getByRole('button', { name: 'Got it' }));
+    expect(screen.queryByRole('note')).toBeNull();
+    expect(container.querySelector('.ticker')).toBeTruthy();
+    unmount();
+    // The tab's tall map has room for both: the note hangs under the ticker as before.
+    localStorage.clear();
+    height = SHORT_MAP_PX + 340;
+    const tall = render(<Page />);
+    expect(screen.getByRole('note').classList.contains('hud-tip-line')).toBe(false);
+    expect(tall.container.querySelector('.ticker')).toBeTruthy();
+    vi.restoreAllMocks();
+  });
+
+  // Seen in B9b's shots: pressing Got it over the map also picked the building under it (Phaser hears presses on the window).
+  it('presses on the note and the ticker stay off the map (Phaser’s window listeners never hear them)', () => {
+    const p = useCity.getState().progress;
+    useCity.setState({ news, progress: { ...p, wallet: { earned: 20, spent: 0 } } } as never);
+    const heard: string[] = [];
+    const hear = (e: Event) => heard.push(e.type);
+    for (const t of ['mousedown', 'mouseup', 'touchstart', 'touchend']) window.addEventListener(t, hear);
+    render(
+      <>
+        <Hud layout="panel" />
+        <div className="stage">
+          <NewsTicker layout="panel" />
+        </div>
+      </>,
+    );
+    // (jsdom lays nothing out, so the note keeps itself hidden on a 0 px map: found by its class.)
+    for (const el of [document.querySelector('.hud-tip .btn')!, screen.getByRole('button', { name: /AWS news/ })]) {
+      fireEvent.mouseDown(el);
+      fireEvent.mouseUp(el);
+      fireEvent.touchStart(el);
+      fireEvent.touchEnd(el);
+    }
+    for (const t of ['mousedown', 'mouseup', 'touchstart', 'touchend']) window.removeEventListener(t, hear);
+    expect(heard).toEqual([]);
+  });
+
+  it('the line keeps “Got it” a 24 px target and the ticker is one compact line in a narrow window', () => {
+    const hud = readFileSync('src/app/styles/02-hud.css', 'utf8');
+    expect(hud).toMatch(/\.hud-tip-line \.tip-more \{\s*display: none;/);
+    expect(hud).toMatch(/\.hud-tip-line \.btn\.tiny \{\s*min-height: 24px;/);
+    const status = readFileSync('src/app/styles/21-status-and-cards.css', 'utf8');
+    expect(status).toMatch(/@media \(max-width: 719px\) \{\s*\.ticker-line \{\s*min-height: 24px;/);
+  });
+
   it('in the panel the news ticker gives a toast its place; in the tab it stays', () => {
     useCity.setState({ news } as never);
     const { container, unmount } = render(<NewsTicker layout="panel" />);
@@ -114,6 +195,7 @@ describe('the HUD', () => {
 describe('the first screen', () => {
   it('docks Connie’s card under the side panel’s map (not over the dots); the tab keeps it on the map', () => {
     useCity.setState({ view: { name: 'world' }, prefs: {} } as never);
+    const offMap = setDiver(() => true); // the world map is drawn (the card waits for it)
     const { container, unmount } = render(<WorldIntro docked />);
     expect(container.querySelector('.world-intro.docked')).toBeTruthy();
     unmount();
@@ -122,6 +204,7 @@ describe('the first screen', () => {
     const app = readFileSync('src/app/App.tsx', 'utf8');
     expect(app).toMatch(/layout === 'full' && <WorldIntro \/>/);
     expect(app).toMatch(/layout === 'panel' && <WorldIntro docked \/>/);
+    offMap();
   });
 });
 

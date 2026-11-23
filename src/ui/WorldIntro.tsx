@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { requestDive } from '@/game/worldUi';
+import { useRef, useState, useSyncExternalStore } from 'react';
+import { onWorldMap, requestDive, worldMapUp } from '@/game/worldUi';
 import { useCity } from '@/state/store';
 import { CITY_REGION, REGIONS } from '@/world/culture';
 import { Portrait } from './Portrait';
@@ -14,18 +14,22 @@ const CITY_PANEL_ID = 'city-tabpanel';
  * `docked`: the side panel's map is short, so the card stands just under it (App.tsx) and never covers the dots.
  *
  * "Start in <city>" dives into the city like a picked dot (WorldScene.dive, through `requestDive`): the press answers in
- * the same frame, the card steps aside, and the zoom and the fade to the sea cover the city's build. With no world map
- * running (or under reduced motion, where the dive is a cut) the Region opens at once.
+ * the same frame, the card steps aside, and the zoom and the fade to the sea cover the city's build. Under reduced
+ * motion the dive is a cut; with no world map left by the press (it went meanwhile) the Region opens at once.
+ *
+ * Connie points at glowing dots, so the card waits for the world map (`worldMapUp`: WorldScene registers its dive
+ * right after its first draw). Before that the boot bar ("Building AWS City…") stands alone, and a press can always dive.
  */
 export function WorldIntro({ docked = false }: { docked?: boolean }) {
   const onWorld = useCity((s) => s.view.name === 'world');
   const picked = useCity((s) => !!s.prefs.region);
   const enterRegion = useCity((s) => s.enterRegion);
   const setPref = useCity((s) => s.setPref);
+  const mapUp = useSyncExternalStore(onWorldMap, worldMapUp, worldMapUp);
   /** The map is diving: the card keeps its place (nothing below it jumps) but can't be seen, read or focused. */
   const [going, setGoing] = useState(false);
   const card = useRef<HTMLDivElement>(null);
-  if (!onWorld || picked || !CITY_REGION) return null;
+  if (!onWorld || picked || !CITY_REGION || (!mapUp && !going)) return null;
   // The intro (and the button pressed) goes with the world map: focus moves to the city's panel, never <body>. After
   // the frame in which the city scene may take the keys (createGame's focusSoon): a canvas that took them keeps them,
   // so the arrow keys walk Kai as the tour says ("Keys go to the canvas when … the city starts"; seen in review 23 Nov
