@@ -268,7 +268,7 @@ When a change touches a decision, update its entry and run its Proof.
   not answered as a Noul is ask, never read as an answer. The model is pinned (`AWS_CITY_JEV_MODEL`, default
   `jev-1.14.0`); each decision is logged (id, model, each Noul, verdict, row, ms, tokens), never the state or the key.
   Injected text can sway Jev, so it can never loosen anything. `server/test/live/jev.live.test.ts` (skipped without
-  `TYPESAFE_API_KEY`) sends 29 made-up cases one at a time (27/29 as expected on 23 Nov 2026, both misses an ask on the safe side), capped at 2M input tokens, and writes `.omc/jev-probe.json`.
+  `TYPESAFE_API_KEY`) sends 29 made-up cases one at a time (27/29 as expected on 23 Nov 2026, both misses an ask on the safe side), capped at 2M input tokens, and prints the whole record as JSON (no file: CodeQL flags network data written to disk).
   Proof: `cd server && npx vitest run test/jev.test.ts test/service.test.ts test/guard.test.ts`.
 - **Linking an AWS account, approving a write, applying a fix and taking something down need MFA (step-up).** Hosted players must have TOTP
   on for `account.link`/`account.verify`, `deploy.approve`, `finding.fix` and `resource.remove` (Google sign-ins are exempt); prod Cognito runs Plus with threat protection.

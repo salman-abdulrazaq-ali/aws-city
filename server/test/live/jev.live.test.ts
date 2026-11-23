@@ -8,9 +8,9 @@
  * --silent=false prints each case (this setup hides a passing test's console output). Optional: AWS_CITY_JEV_MODEL,
  * AWS_CITY_JEV_NO, AWS_CITY_JEV_YES (read and checked as the server reads them).
  *
- * Every case is written to .omc/jev-probe.json (repo root, git-ignored): the exact payload sent (model, state,
- * questions; never the key), each Noul, the verdict, the row that decided it and the expected verdict, so any case can
- * be sent again by hand. The run fails only when more than MAX_MISSES cases miss their expected verdict: the point is
+ * The whole record is printed as JSON at the end, never written to a file (CodeQL flags network data written to disk):
+ * the exact payload sent (model, state, questions; never the key), each Noul, the verdict, the row that decided it and
+ * the expected verdict, so any case can be sent again by hand. The run fails only when more than MAX_MISSES cases miss their expected verdict: the point is
  * to read individual answers, not to assert exact probabilities (TypeSafe's own advice), and a handful of misses on
  * hard cases is something to read, not a broken build.
  *
@@ -20,9 +20,6 @@
  * tokens, well under a cent. Requests go one at a time and are never retried. The key is read from TYPESAFE_API_KEY
  * only, and is never printed or written.
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { type Action, DESTRUCTIVE } from '../../src/agents/actions.js';
 import { changeFor, createJev, decide, type JevAnswers, type JevQuestionId, JEV_TIMEOUT_MS, questionIds, type Verdict } from '../../src/agents/jev.js';
@@ -40,7 +37,6 @@ const FIRST_REQUEST_ESTIMATE = 5_000;
 const MAX_MISSES = 4;
 /** Longer than the server's 3 s, so a slow answer is still read (and flagged) rather than lost. */
 const PROBE_TIMEOUT_MS = 10_000;
-const OUT = fileURLToPath(new URL('../../../.omc/jev-probe.json', import.meta.url));
 
 /** AWS's documentation example account id: the city redacts it to <account> before anything is sent. */
 const EXAMPLE_ACCOUNT = '111122223333';
@@ -221,13 +217,12 @@ describe.skipIf(!KEY)('Jev, live: each made-up request, answer by answer', { tim
       results,
     };
     const json = JSON.stringify(record, null, 2);
-    if (json.includes(KEY!)) throw new Error('The probe record would hold the API key; nothing was written.');
-    mkdirSync(dirname(OUT), { recursive: true });
-    writeFileSync(OUT, `${json}\n`);
+    if (json.includes(KEY!)) throw new Error('The probe record would hold the API key; it was not printed.');
+    console.log(`\nProbe record (JSON):\n${json}`);
 
     console.log(`\n${results.length - misses.length}/${results.length} as expected; misses: ${misses.map((m) => m.id).join(', ') || 'none'}`);
-    console.log(`input tokens: ${inputTokens} · estimated cost: $${costUsd.toFixed(6)} (at $${USD_PER_MILLION_INPUT} per million) · written to ${OUT}`);
-    if (stopped) throw new Error(`${stopped} The record so far is in ${OUT}.`);
+    console.log(`input tokens: ${inputTokens} · estimated cost: $${costUsd.toFixed(6)} (at $${USD_PER_MILLION_INPUT} per million)`);
+    if (stopped) throw new Error(`${stopped} The record so far is printed above.`);
     expect(misses.length, `cases that missed: ${misses.map((m) => `${m.id} (${m.verdict} via ${m.row})`).join(', ')}`).toBeLessThanOrEqual(MAX_MISSES);
   });
 });

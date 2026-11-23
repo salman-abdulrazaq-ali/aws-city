@@ -118,7 +118,7 @@ the row that decided it, the latency and the token usage. A failure is logged as
 `server/test/live/jev.live.test.ts` sends about 25 made-up requests (creates that match, direct mismatches, removals
 asked for and named, removals of another resource, removals never asked for, vague removals, negations and a few hard
 ones), one at a time and never retried, and prints each payload, every Noul, the verdict, the row and the expected
-verdict. It writes the same to `.omc/jev-probe.json` (git-ignored) so any case can be sent again by hand. It's skipped
+verdict, then the whole record as JSON (printed, never written to a file) so any case can be sent again by hand. It's skipped
 unless `TYPESAFE_API_KEY` is set, and stops before its input tokens could pass 2,000,000 (about $0.08):
 
 ```
