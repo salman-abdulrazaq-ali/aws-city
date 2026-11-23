@@ -60,7 +60,8 @@ Amazon Nova or Claude, and a new account's Bedrock hold). This section is the op
 5. One-time account settings CDK doesn't manage:
    - **Amazon Inspector** ECR scanning for the CDK assets repository: `aws inspector2 enable --resource-types ECR`.
    - **Cost allocation tags**: activate `app` and `env` in Billing → Cost allocation tags (from the management
-     account in an AWS Organization). **The budget filter only works once they are active:** each environment's budget
+     account in an AWS Organization), then set `"costTagsActive": true` for the environment in `aws-city.config.json` and
+     run `npm run setup` (off by default, so the budget counts the whole account). **The budget filter only works once they are active:** each environment's budget
      counts its own resources (`app=aws-city` and `env=<env>`) plus all spend with no `app` tag, and until activation no
      cost carries the tags, so both budgets count the whole account. Tags take up to 24 hours to appear and another 24
      to apply, and aren't retroactive. Claude on Bedrock always counts in both budgets of a shared account: the server
