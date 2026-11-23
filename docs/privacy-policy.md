@@ -10,6 +10,30 @@
 > If you don't set `TYPESAFE_API_KEY` (the Jev safety check, `docs/jev.md`), you may delete its paragraph under "What we
 > process but don't keep". Delete this note from the published copy.
 
+## In short (for parents and guardians)
+
+- **The demo needs no account and sends nothing to us.** Only signing in to the hosted game collects anything.
+- **What we keep when you sign in:** an email address (to sign in) and the game's progress. Only if the player turns
+  them on: a link to their own AWS account, its monthly bill, and a place on the leaderboards under a two-word name
+  the game picks (nobody types a name). Screenshots sent to the Lookout are deleted after a day.
+- **What we never collect:** AWS passwords or access keys, what's typed into AWS console fields (the Copilot reads
+  only their labels), or anything for ads. The maps are built in, so no map service learns where you play. We don't
+  sell data or use it to train AI. Like most websites, our security logs record IP addresses for up to 90 days (see
+  "Network and security logs").
+- **The AI:** questions typed to the city's helpers go to an AI model on AWS that doesn't keep them or learn from them.
+  Keys and email addresses are taken out first, but **please don't type names, addresses, phone numbers or school
+  names**; each AI box says so.
+- **Jev (only if this service turns it on):** before a change to a linked AWS account is offered for approval, the
+  player's own words for it (up to 500 characters) and a one-line summary go to TypeSafe's Jev, which checks the change
+  matches what was asked. It can only make the game stricter.
+- **See or delete it:** ⋯ → Account → **Download my data** saves a copy; **Delete my account…** removes it at once
+  (backups within 35 days). You can also write to {{CONTACT_EMAIL}}.
+- **Children:** a child under 13 (or the age of digital consent where you live) shouldn't make an account. A parent
+  can sign up and play with them, or they can play the demo. Write to {{CONTACT_EMAIL}} and we'll delete a child's
+  account.
+
+The full details follow.
+
 ## Who runs this service
 
 The AWS City service you sign in to is run by **{{OPERATOR_NAME}}** ("we"), who decides why and how your data is used

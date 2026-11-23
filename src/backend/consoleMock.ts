@@ -19,6 +19,8 @@ interface Task {
   misses: number;
   /** The resource name this run creates (random suffix so repeated demos don't collide). */
   name: string;
+  /** The goal takes something away: no flow runs, and the Copilot hands the delete back (REMOVAL). */
+  removal?: boolean;
 }
 
 const MAX_STEPS = 25;
@@ -67,7 +69,9 @@ const EC2: Flow = {
     { key: 'ami', find: (s) => find(s, /^amazon linux/i, 'radio'), step: (i) => ({ action: 'point', target: target(i), say: 'Keeping Amazon Linux as the operating system.', why: 'An AMI (Amazon Machine Image) is the disk image the server boots from. Amazon Linux 2023 has no license fee, gets AWS security updates and is tuned for EC2.', risk: 'safe' }) },
     { key: 'type', find: (s) => find(s, /^instance type/i, 'combobox'), step: (i) => ({ action: 'select', target: target(i), value: 't3.micro', say: 'Choosing the t3.micro instance type.', why: 't3.micro is Free Tier eligible on both the old plan and the July 2025 plan, and it runs the default x86 AMI. The “t” means burstable CPU, good for light workloads.', risk: 'safe' }) },
     { key: 'key', find: (s) => find(s, /^key pair/i, 'combobox'), step: (i) => ({ action: 'point', target: target(i), say: 'We can proceed without a key pair.', why: 'Key pairs are for SSH logins. EC2 Instance Connect lets you log in from the console without long-lived keys to lose, which is safer for a demo.', risk: 'safe' }) },
-    { key: 'sg', find: (s) => find(s, /^create security group/i, 'radio'), step: (i) => ({ action: 'point', target: target(i), say: 'Keeping the default: a new security group.', why: 'A security group is the instance’s firewall. This new one allows SSH from anywhere. Fine for a brief test, but for real projects allow SSH only from your own IP address. If you connect from the console, allow the EC2 Instance Connect prefix list instead.', risk: 'safe' }) },
+    { key: 'sg', find: (s) => find(s, /^create security group/i, 'radio'), step: (i) => ({ action: 'point', target: target(i), say: 'Keeping the default: a new security group.', why: 'A security group is the instance’s firewall: it lets in only the traffic its rules allow.', risk: 'safe' }) },
+    // SSH from anywhere (0.0.0.0/0) is never kept as safe: the box is handed to the player with a warning.
+    { key: 'ssh', find: (s) => find(s, /^allow ssh traffic/i, 'checkbox'), step: (i) => ({ action: 'click', target: target(i), say: 'Careful: this rule lets anyone on the internet try to log in over SSH (0.0.0.0/0). Untick it unless you need it.', why: 'Open SSH is one of the most common ways servers get attacked. Allow SSH only from your own IP address, or use EC2 Instance Connect from the console (allow its prefix list) with no open SSH at all.', risk: 'confirm' }) },
     { key: 'launch', find: (s) => find(s, /^launch instance$/i), step: () => ({ action: 'click', target: { name: 'Launch instance' }, say: 'Launching the instance now.', why: 'You pay per second while it runs. Stop or terminate it when you’re done. A stopped instance still bills for its EBS disk and any Elastic IP.', risk: 'confirm' }) },
   ],
   done: (t) => ({ action: 'done', say: `Done! ${t.name} is launching on a t3.micro.`, why: 'Next: connect with EC2 Instance Connect, then stop it when you’re finished so it doesn’t keep costing money.', risk: 'safe' }),
@@ -222,6 +226,21 @@ function flowStep(flow: Flow, t: Task, s: PageSnapshot): Step | undefined {
   return undefined;
 }
 
+/**
+ * A goal that takes something away. The demo's Copilot never deletes, and never runs a create flow for one (asked to
+ * delete a bucket, it once created one): it says the delete is the player's to do.
+ */
+const REMOVAL = /\b(delete|deleting|remove|removing|terminate|terminating|destroy|tear\s+(?:it\s+)?down|take\s+(?:it\s+)?down|deregister|purge|wipe)\b/i;
+export const isRemovalGoal = (goal: string) => REMOVAL.test(goal);
+/** The Copilot's answer to a removal (the task ends `ok: false`: nothing was done). */
+export const NO_DELETING = 'I can’t delete things for you: deleting is always yours to do.';
+const removalStep = (): Step => ({
+  action: 'done',
+  say: NO_DELETING,
+  why: 'Pick it in the list, press Delete and confirm with its name. Deleting can’t be undone, so that press is always yours, never mine.',
+  risk: 'safe',
+});
+
 /** What the offline demo says when it can't script a task (the task ends `ok: false`: nothing was done for real). */
 export const PRACTICE_ONLY = 'The offline demo can’t click this one; try it in the practice terminal.';
 
@@ -256,13 +275,15 @@ export class ConsoleMock {
   constructor(private emit: (e: ServerEvent) => void) {}
 
   start(taskId: string, goal: string, snapshot: PageSnapshot, serviceId?: string) {
-    const flow = flowFor(serviceId, snapshot.url, goal);
-    const agentId = flow ?? serviceId ?? 'concierge';
-    const t: Task = { goal, agentId, flow, index: 0, did: new Set(), misses: 0, name: flow ? NAMES[flow]() : '' };
+    const named = flowFor(serviceId, snapshot.url, goal);
+    const removal = isRemovalGoal(goal);
+    const flow = removal ? undefined : named;
+    const agentId = named ?? serviceId ?? 'concierge';
+    const t: Task = { goal, agentId, flow, index: 0, did: new Set(), misses: 0, name: flow ? NAMES[flow]() : '', removal };
     this.tasks.set(taskId, t);
     const who = placeFor(agentId)?.agentName ?? 'the right agent';
     this.emit({ type: 'agent.message', from: 'concierge', to: 'user', text: `I’ll ask ${who} to do it in your console, step by step.` });
-    this.emit({ type: 'task.plan', taskId, agentId, targetServiceId: flow ?? serviceId ?? 's3', steps: ['Working in your AWS console'] });
+    this.emit({ type: 'task.plan', taskId, agentId, targetServiceId: named ?? serviceId ?? 's3', steps: ['Working in your AWS console'] });
     this.next(taskId, snapshot);
   }
 
@@ -287,7 +308,7 @@ export class ConsoleMock {
     const t = this.tasks.get(taskId);
     if (!t) return;
     if (t.index >= MAX_STEPS) return this.finish(taskId, false, 'Step budget reached — stopping.');
-    const step = (t.flow ? flowStep(FLOWS[t.flow], t, s) : undefined) ?? genericStep(t, s);
+    const step = t.removal ? removalStep() : ((t.flow ? flowStep(FLOWS[t.flow], t, s) : undefined) ?? genericStep(t, s));
     const index = t.index++;
     this.emit({ type: 'agent.state', agentId: t.agentId, state: 'working', service: 'console', detail: `${step.action} ${step.target?.name ?? ''}`.trim() });
     this.emit({ type: 'console.step', taskId, index, agentId: t.agentId, ...step });

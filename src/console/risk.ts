@@ -118,7 +118,9 @@ export const PLAYER_ONLY_PAGES: readonly ConsolePage[] = [
 
 /**
  * Real-console pages that show a secret on screen (an access key's secret, a secret's value, a SecureString, key
- * material, a shell): the Lookout never photographs them on its own (auto-snap), only when the player asks.
+ * material, a shell, a function's environment variables, a database's or a Windows server's password, an app client's
+ * secret): the Lookout never photographs them on its own (auto-snap), only when the player asks. `redact` cleans text,
+ * not photos, so a page that may show one is listed even when only one of its sections does.
  */
 export const SECRET_PAGES: readonly ConsolePage[] = [
   { id: 'iam-access-keys', name: 'IAM access keys', page: /^\/(iam|iamv2)(?=[/?#]).*(security_credentials|access-?keys?\b)/ },
@@ -126,6 +128,19 @@ export const SECRET_PAGES: readonly ConsolePage[] = [
   { id: 'parameter-store', name: 'Systems Manager Parameter Store', page: /^\/systems-manager\/parameters?(?=[/?#]|$)/ },
   { id: 'kms', name: 'AWS KMS', page: service('kms') },
   { id: 'cloudshell', name: 'AWS CloudShell', page: service('cloudshell') },
+  // A function's Configuration tab lists its environment variables in plain text, and their editor is a page of its own:
+  // /lambda/home?region=…#/functions/<name>?tab=configure (any section of it, since the env vars are one of them) and
+  // …#/functions/<name>/edit/environment-variables?tab=configure.
+  { id: 'lambda-env', name: 'Lambda environment variables', page: /^\/lambda(?=[/?#]).*#\/functions\/.*(environment-?variables|[?&;]tab=configure\b)/ },
+  // The databases list shows a generated master password once, in its "View connection details" banner
+  // (/rds/home?region=…#databases:); a database's page opens on its Connectivity & security tab, which names its master
+  // credentials' secret (#database:id=<id>;is-cluster=false, ;tab=connectivity once chosen): so every database page.
+  { id: 'rds-credentials', name: 'RDS connection details', page: /^\/rds(?=[/?#]).*#databases?:/ },
+  // The decrypted Windows administrator password: /ec2/home?region=…#GetWindowsPassword:instanceId=<id>.
+  { id: 'ec2-windows-password', name: 'EC2 Windows password', page: /^\/ec2(?=[/?#]).*#getwindowspassword\b/ },
+  // An app client's page shows its client secret: /cognito/v2/idp/user-pools/<pool>/applications/app-clients/<id> (and
+  // the old console's #/pool/<pool>/clients).
+  { id: 'cognito-client-secret', name: 'Cognito app client secrets', page: /^\/cognito(?=[/?#]).*(app-?clients?\b|\/clients\b)/ },
 ];
 
 function consolePage(list: readonly ConsolePage[], raw: string | undefined): ConsolePage | undefined {
