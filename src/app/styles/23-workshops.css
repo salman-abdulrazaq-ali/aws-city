@@ -761,16 +761,16 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: var(--s-3);
 }
 /* "Help me fix it": the agent's portrait while it reads the error, then commands with their own Copy. */
 .workshop-thinking {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--s-3);
 }
 .workshop-answer .code-row {
-  margin: 4px 0;
+  margin: var(--s-2) 0;
 }
 @media (prefers-reduced-motion: no-preference) {
   .thinking-dots span {
