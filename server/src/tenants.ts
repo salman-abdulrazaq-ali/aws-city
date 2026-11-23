@@ -645,7 +645,8 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
           refusedOnCard = !ok;
           return ok;
         };
-        // The same path as an agent's write: policy, Jev if on, this socket's approval (MFA on deploy.approve), the gate.
+        // The same path as an agent's write: policy, this socket's approval (MFA on deploy.approve), the gate. Jev isn't
+        // asked: it needs the player's own words, and a take-down has none (its preview asks for the typed name anyway).
         // An approval that lands after the account was disconnected or relinked changes nothing (the world's live check).
         const out = await w.actions.submit(action, input(id), { approve });
         // A "no", an expiry or a preview cancelled because the account went away already said so on its own deploy.status.

@@ -59,7 +59,9 @@ import { Plain } from './Term';
  */
 export function CostNote({ note, className = 'muted' }: { note: string; className?: string }) {
   const kind = useCity((s) => s.backendKind);
-  const line = costLine(note, kind);
+  // A note already written for practice (a removal: "Practice: nothing real is removed…") says what it does as it is,
+  // never "free, nothing is created" with a second "Practice:" folded under it.
+  const line = note.startsWith('Practice:') ? note : costLine(note, kind);
   return (
     <div className={className}>
       💰 {line}

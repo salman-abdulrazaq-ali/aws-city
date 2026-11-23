@@ -256,6 +256,17 @@ const closePopups = async () => {
     await wait(200);
   }
 };
+// A card over everything (a citizen's question that Kai walked into, a finding) closed by its ✕, not Escape: Escape
+// also leaves Decorate. Seen in CI 23 Nov 2026: at 1–2 fps a walk from earlier reached a citizen's "?" while Decorate
+// was open, and its card took the category chip's click.
+const dismissCards = async (p = page) => {
+  for (let i = 0; i < 3 && (await p.locator('.finding-scrim').count()); i++) {
+    const close = p.locator('.finding-scrim button[aria-label="Close"]').first();
+    if (!(await close.count())) break;
+    await close.click().catch(() => {});
+    await wait(200);
+  }
+};
 const clickTab = async (label) => {
   await closePopups();
   await page.locator(`.tabs button[title="${label}"]`).click();
@@ -609,7 +620,10 @@ await city(() => window.awsCity.useCity.getState().openBoard(undefined));
 await city(() => window.awsCity.useCity.getState().openLaunch(true));
 await wait(400);
 await page.locator('.launch-card .btn.primary.wide').click();
-await wait(60 * 160 + 1500);
+// The round is 60 ticks of 160 ms, about 11 s here. CI's virtual display draws the game at 1–2 fps and the round's clock
+// follows its frames (seen 23 Nov 2026: no debrief after a fixed 11 s on main and here), so wait for the debrief itself,
+// up to 2 minutes: a fast machine moves on as soon as it shows, and one that never shows still fails below.
+await page.locator('.launch-debrief .grade').waitFor({ timeout: 120_000 }).catch(() => {});
 if (!(await page.locator('.launch-debrief .grade').count())) errors.push('Launch Day: no debrief after the round');
 await shot('38-launch-day');
 await audit('launch day');
@@ -985,7 +999,9 @@ await panel.screenshot({ path: `${out}/12-lookout.png` });
       ...extra,
     ];
     for (const [cat, name, kind] of picks) {
+      await dismissCards(p);
       await p.locator('.bd-cats button', { hasText: cat }).click();
+      await dismissCards(p);
       await p.locator('.bd-item').filter({ has: p.locator('.bd-name', { hasText: new RegExp(`^${name}$`) }) }).click();
       const [spot] = await p.evaluate((k) => window.awsCity.build?.spots?.(k, 1) ?? [], kind);
       if (!spot) {
@@ -1183,7 +1199,9 @@ await panel.screenshot({ path: `${out}/12-lookout.png` });
     await closePopups(); // seen in CI 21 Nov: a finding card landed on the bank's job list
     await page.getByRole('button', { name: `Go to the ${t.station} for “${t.title}”` }).click();
     const at = Date.now();
-    while (Date.now() - at < 25_000 && (await city(() => window.awsCity.useCity.getState().clientTaskOpen)) !== t.id) await wait(250);
+    // Up to 3 minutes: Kai's walk follows the game's clock, which runs ~30× slow at CI's 1–2 fps (seen 23 Nov 2026: three
+    // stations timed out at 25 s on main and here); a fast machine returns as soon as the job opens.
+    while (Date.now() - at < 180_000 && (await city(() => window.awsCity.useCity.getState().clientTaskOpen)) !== t.id) await wait(250);
     if ((await city(() => window.awsCity.useCity.getState().clientTaskOpen)) !== t.id) {
       errors.push(`clients: "${t.title}" did not open when Kai reached the ${t.station}`);
       await city((id) => window.awsCity.useCity.getState().openClientTask(id), t.id);

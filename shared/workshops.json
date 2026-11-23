@@ -51,6 +51,7 @@
           "title": "Put an item",
           "body": "Items are JSON with a type on every value: S for string, N for number (sent as a string).",
           "cli": "aws dynamodb put-item --table-name <table> --item '{\"pk\":{\"S\":\"order#1\"},\"total\":{\"N\":\"42\"}}'",
+          "itemKey": ["pk"],
           "output": "",
           "errors": [
             { "code": "One or more parameter values were invalid", "message": "An error occurred (ValidationException) when calling the PutItem operation: One or more parameter values were invalid: Missing the key pk in the item", "when": { "flag": "--item", "value": "^(?!.*\"pk\")" }, "explain": "Every item must carry the table's partition key.", "fix": "Include \"pk\":{\"S\":\"...\"} in the item." }
@@ -93,6 +94,7 @@
           "body": "Pick a name: 3 to 63 lowercase letters, numbers, dots and hyphens (no underscores), not starting amzn-s3-demo- or xn--, unique across all of AWS: add random letters, like city-photos-4f9c2a. Name your Region with --region; outside us-east-1, in the location constraint too.",
           "cli": "aws s3api create-bucket --bucket <bucket> --region <region> [--create-bucket-configuration LocationConstraint=<region>]",
           "output": "{\n    \"Location\": \"http://{{bucket}}.s3.amazonaws.com/\"\n}",
+          "outputs": [{ "when": { "flag": "--region", "value": "^us-east-1$" }, "output": "{\n    \"Location\": \"/{{bucket}}\"\n}" }],
           "errors": [
             { "code": "BucketAlreadyExists", "message": "An error occurred (BucketAlreadyExists) when calling the CreateBucket operation: The requested bucket name is not available. The bucket namespace is shared by all users of the system. Please select a different name and try again.", "when": { "flag": "--bucket", "value": "^(test|my-bucket)$" }, "explain": "Bucket names are shared by every AWS account in the world, and someone already has this one.", "fix": "Add something random to the name, like city-photos-4f9c2a." },
             { "code": "InvalidBucketName", "message": "An error occurred (InvalidBucketName) when calling the CreateBucket operation: The specified bucket is not valid.", "when": { "flag": "--bucket", "value": "^(?=[A-Za-z0-9._-]{1,255}$)(?:(?![a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$)|.*\\.\\.|xn--|sthree-|amzn-s3-demo-|.*(?:-s3alias|--ol-s3|\\.mrap|--x-s3|--table-s3)$|\\d+\\.\\d+\\.\\d+\\.\\d+$)" }, "explain": "A bucket name is 3 to 63 lowercase letters, numbers, dots and hyphens, starting and ending with a letter or number. No capitals or underscores, and the prefixes amzn-s3-demo-, xn-- and sthree- are reserved.", "fix": "Pick a name like city-photos-4f9c2a." },
@@ -116,7 +118,7 @@
           "title": "Upload a file",
           "body": "Make a small file first (echo \"Hello, S3\" > sample.txt). S3 is a flat object store: a key with slashes only looks like a folder. Note the VersionId in the answer.",
           "cli": "aws s3api put-object --bucket <bucket> --key sample.txt --body sample.txt",
-          "output": "{\n    \"ETag\": \"\\\"5d41402abc4b2a76b9719d911017c592\\\"\",\n    \"VersionId\": \"3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY\"\n}",
+          "output": "{\n    \"ETag\": \"\\\"34604da2079f37530dc71b117b9cd58b\\\"\",\n    \"ChecksumCRC64NVME\": \"vL37ViPe6JI=\",\n    \"ChecksumType\": \"FULL_OBJECT\",\n    \"ServerSideEncryption\": \"AES256\",\n    \"VersionId\": \"3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY\"\n}",
           "errors": [
             { "code": "d41d8cd98f00b204e9800998ecf8427e", "message": "Practice terminal: stopped. Without --body the real CLI still answers, but it stores an empty object: sample.txt with nothing in it (its ETag, d41d8cd98f00b204e9800998ecf8427e, is the MD5 of no data).", "when": { "missing": "--body" }, "explain": "--body is optional: it names the local file whose contents go up. Leave it out and S3 stores the key with 0 bytes.", "fix": "Add --body sample.txt." },
             { "code": "NoSuchBucket", "message": "An error occurred (NoSuchBucket) when calling the PutObject operation: The specified bucket does not exist", "explain": "The bucket name doesn't match one you own, or it was made in another Region.", "fix": "Copy the exact name from the first step." }
@@ -128,7 +130,7 @@
           "title": "Download it again",
           "body": "get-object saves the object to the file you name at the end.",
           "cli": "aws s3api get-object --bucket <bucket> --key sample.txt downloaded-sample.txt",
-          "output": "{\n    \"AcceptRanges\": \"bytes\",\n    \"ContentLength\": 10,\n    \"ETag\": \"\\\"5d41402abc4b2a76b9719d911017c592\\\"\",\n    \"VersionId\": \"3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY\",\n    \"ContentType\": \"binary/octet-stream\"\n}",
+          "output": "{\n    \"AcceptRanges\": \"bytes\",\n    \"ContentLength\": 10,\n    \"ETag\": \"\\\"34604da2079f37530dc71b117b9cd58b\\\"\",\n    \"VersionId\": \"3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY\",\n    \"ContentType\": \"binary/octet-stream\"\n}",
           "errors": [
             { "code": "NoSuchKey", "message": "An error occurred (NoSuchKey) when calling the GetObject operation: The specified key does not exist.", "when": { "flag": "--key", "value": "^(?!sample\\.txt$)" }, "explain": "There's no object under that key. Keys are exact, including capitals.", "fix": "Use the key you uploaded: sample.txt." }
           ],

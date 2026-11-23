@@ -185,8 +185,8 @@ export class SortGame extends MiniGame {
       this.verdict(vx, vy, '✗ Too busy! Wait…', FEEDBACK.wrong, 1);
       if (!this.stats.spread && this.spreadBtn && !this.tipShown) {
         this.tipShown = true;
-        this.hint.setText('One shelf has all the 🍎. Tap 🔀 to spread the keys (or press S)').setColor('#fde047');
-        this.speak('One shelf has all the 🍎. Press S to spread the keys.');
+        this.hint.setText(`One shelf has all the ${SORT.hotKey}. Tap 🔀 to share them over every shelf (or press S)`).setColor('#fde047');
+        this.speak(`One shelf has all the ${SORT.hotKey}. Press S to share them over every shelf.`);
       }
       return;
     }
@@ -211,9 +211,9 @@ export class SortGame extends MiniGame {
     this.spreadBtn = undefined;
     const hot = SORT.hotKey;
     this.shelves.forEach((s, i) => s.keys.setText(`${SHELVES[i].join(' ')}\n${hot}${i + 1}`));
-    this.hint.setText(`Now ${hot} gets a number: ${hot}1 goes on shelf 1, ${hot}2 on shelf 2…`).setColor('#fde047');
-    this.speak(`Keys spread out. Now ${hot} gets a number: ${hot}1 goes on shelf 1, ${hot}2 on shelf 2, and so on.`);
-    this.floater(this.scale.width / 2, this.geo.shelfTop - 40, 'Keys spread out!', '#fde047');
+    this.hint.setText(`Now each ${hot} gets a number: ${hot}1 goes on shelf 1, ${hot}2 on shelf 2…`).setColor('#fde047');
+    this.speak(`Shared out. Now each ${hot} gets a number: ${hot}1 goes on shelf 1, ${hot}2 on shelf 2, and so on.`);
+    this.floater(this.scale.width / 2, this.geo.shelfTop - 40, 'Shared over every shelf!', '#fde047');
     sfx('correct', { own: true });
   }
 
@@ -232,8 +232,9 @@ export class SortGame extends MiniGame {
       this.floater(w / 2, this.geo.beltY + 60, `So many ${SORT.hotKey}!`, '#fde047');
       if (!this.stats.spread) {
         this.hint.setText('');
-        this.spreadBtn = this.pxButton(w / 2, this.geo.hintY, `🔀 Spread the ${SORT.hotKey} keys`, () => this.spread(), 0x6fe3a3, PAL.paperInk);
-        this.speak(`So many ${SORT.hotKey}! Their shelf will get too busy. Press S to spread the ${SORT.hotKey} keys.`);
+        // In plain words (Jay, 22 Nov 2026: "Spread the 🍎 keys" said nothing): the 🍎 go on every shelf, not one.
+        this.spreadBtn = this.pxButton(w / 2, this.geo.hintY, `🔀 Share ${SORT.hotKey} over every shelf`, () => this.spread(), 0x6fe3a3, PAL.paperInk);
+        this.speak(`So many ${SORT.hotKey}! Their one shelf will get too busy. Press S to share the ${SORT.hotKey} over every shelf.`);
       }
       sfx('pop', { soft: true });
     }

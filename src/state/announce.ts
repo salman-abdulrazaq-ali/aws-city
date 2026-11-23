@@ -41,11 +41,12 @@ export function announce(text: string, opts: { replace?: boolean } = {}) {
 /**
  * What `]` / `[` say about the building they stepped to (CityScene.stepBuilding): its name as its sign shows it (a
  * service's place, a district HQ, the Day 1 Office, the Correction of Error board…), the service's one plain line, and
- * where it is in the order. Never a raw id: `label` is the sign's text, and without one the name is looked up.
+ * where it is in the order ("Place 3 of 10 on the map": the places `]` steps through, never the 58 AWS services the arrival
+ * line counts). Never a raw id: `label` is the sign's text, and without one the name is looked up.
  */
 export function stepLine(id: string, label: string | undefined, at: number, of: number): string {
   const place = placeFor(id);
   const hq = id.startsWith('hq:') ? districtById(id.slice(3) as DistrictId)?.hq : undefined;
   const name = place?.place ?? (label?.trim() || undefined) ?? hq ?? serviceById(id)?.name ?? SITES.find((s) => s.id === id)?.site?.label ?? 'A building';
-  return `${name}. ${place?.simple ?? ''} ${at} of ${of}.`.replace(/\s+/g, ' ').trim();
+  return `${name}. ${place?.simple ?? ''} Place ${at} of ${of} on the map.`.replace(/\s+/g, ' ').trim();
 }

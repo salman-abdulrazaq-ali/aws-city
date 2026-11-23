@@ -32,7 +32,8 @@ export function BuildToggle({ menu }: { menu?: () => void }) {
       </button>
     );
   return (
-    <button className={`btn tiny build-toggle ${on ? 'on' : ''}`} aria-pressed={on} title="Decorate your city with City Coins" onClick={() => setBuild(!on)}>
+    // The word shows wherever the HUD has room; the ~400 px panel hides it (styles/26-build.css), so its name is said here.
+    <button className={`btn tiny build-toggle ${on ? 'on' : ''}`} aria-pressed={on} aria-label="Decorate" title="Decorate your city with City Coins" onClick={() => setBuild(!on)}>
       🌳<span className="build-word"> Decorate</span>
     </button>
   );
