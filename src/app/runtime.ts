@@ -18,9 +18,10 @@ import { ladder, questsDone } from '@/state/ladder';
 import { shows } from '@/state/simple';
 import { consoleUrl, DEFAULT_CONSOLE_SERVICE, matchText, matchUrl } from '@/world/taxonomy';
 import { isGlobalService } from '@/world/regions';
+import { DEFAULT_CONSOLE_ROLE, switchRoleUrl } from '@/state/account';
 import { isPracticeService, isPracticeUrl, PRACTICE_PATH, practiceRoute, practiceUrl } from '@/console/practice';
 import type { CopilotMessage } from '@/console/agent';
-import { isSecretPage, redact, redactConsoleUrl } from '@/console/risk';
+import { isConsoleUrl, isSecretPage, redact, redactConsoleUrl } from '@/console/risk';
 import { isReadingUrl } from '@/world/reading';
 import { isEventUrl } from '@/world/liveEvents';
 import { isWorkshopUrl } from '@/world/workshops';
@@ -454,6 +455,11 @@ async function initFocus() {
   browser.runtime.onMessage.addListener((msg: RuntimeMessage, sender) => {
     // Only the background reports focus: a content script faking it could aim auto-snap at any tab.
     if (msg?.type === 'page.focus' && !fromWebPage(sender)) handleFocus(msg.focus);
+    // Which account the console is signed into, from our content script on a console page only (it can only show or
+    // hide a warning; console.content.ts). Kept on this computer, never sent to the server.
+    if (msg?.type === 'console.account' && sender?.url && isConsoleUrl(sender.url)) {
+      store().setConsoleAccount(typeof msg.account === 'string' && /^\d{12}$/.test(msg.account) ? msg.account : undefined);
+    }
   });
   const saved = (await browser.storage.session.get(FOCUS_STORAGE_KEY))[FOCUS_STORAGE_KEY] as PageFocus | undefined;
   if (saved) handleFocus(saved);
@@ -1139,6 +1145,13 @@ export function openFullCity() {
  * and checks there. A global service (IAM, Route 53…) keeps its own console. Signing in is the player's own: the city
  * never holds console credentials.
  */
+/** AWS's Switch role page for the linked account, back to the console in its Region (switchRoleUrl). */
+export function openSwitchRole() {
+  const { accountId, region } = store().account;
+  const url = accountId ? switchRoleUrl(accountId, region, store().prefs.consoleRole || DEFAULT_CONSOLE_ROLE) : undefined;
+  if (url) void browser.tabs.create({ url });
+}
+
 export function openConsole(serviceId = '') {
   const { linked, region } = store().account;
   void browser.tabs.create({ url: consoleUrl(serviceId, linked && !isGlobalService(serviceId) ? region : undefined) });

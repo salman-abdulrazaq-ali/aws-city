@@ -1179,7 +1179,14 @@ When a change touches a decision, update its entry and run its Proof.
   host; `matchUrl` reads both back (same test). With a linked account it opens in that account's Region
   (`<region>.console.aws.amazon.com/…?region=`, a Region code only; `openConsole` in `src/app/runtime.ts`, global services
   keep their own console; seen 23 Nov 2026: the console opened in London while the city builds in Oregon), and Deploy's
-  linked card has 🖥️ Open the AWS console (not in the demo) with whose sign-in to use: the city never signs the player in.
+  linked card has 🖥️ Open the AWS console (not in the demo) with whose sign-in to use: the city never signs the player in. The console's own account is read on its pages (`consoleAccount`, `src/console/consoleAccount.ts`: a multi-session host's
+  prefix, else the `aws-userInfo` cookie's ARN; it stays on the computer, `console.account` taken only from a console page)
+  and when it isn't the linked one the city says so where the player works (`ConsoleAccountWarning`: the prompt bar,
+  Deploy, a workshop for real) with Switch role (`switchRoleUrl`, `src/state/account.ts`: the role name in
+  `prefs.consoleRole`, default OrganizationAccountAccessRole); seen 23 Nov 2026: a console bucket and a CloudShell one went
+  to the city's own account. A workshop for real says which account CloudShell must run in and where a failed check
+  looked. Proof: `npx vitest run tests/console-account.test.ts tests/deploy-account.test.tsx tests/workshop-ui.test.tsx`,
+  `npx vitest run tests/runtime-session.test.ts -t "console’s account"`.
   Proof: `npx vitest run tests/taxonomy.test.ts tests/deploy-account.test.tsx`, `npx vitest run tests/runtime-session.test.ts -t "Open the console"`.
 - **State vs moments.** Persistent state goes in the zustand store (`src/state/store.ts`); one-off
   animations and camera moves go on the bus (`src/state/bus.ts`). Scenes subscribe to both and must
