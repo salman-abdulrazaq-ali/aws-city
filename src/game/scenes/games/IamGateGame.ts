@@ -22,6 +22,54 @@ const LEAVE_MS = 620;
  */
 const GATE = { post: 'game:iamgate:post', arm: 'game:iamgate:arm', reach: 152, postW: 8, booth: 'game:iamgate:booth' };
 const BOARD = { frame: 'game:iamgate:board', rim: 6, slice: 10 };
+/** The board's black shadow hangs this far under its frame, px; the lifted boom keeps CLEAR px (at 1×) more from it. */
+const SHADOW = 4;
+const CLEAR = 3;
+
+/** The boom's lift for an Allow: 81°, a little short of upright. */
+export const LIFT = -Math.PI * 0.45;
+
+/** The boom's bar about its pivot, px: `x0`..`x1` along it (its far end at x1), `y0`..`y1` across it. */
+export interface Bar {
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+}
+
+/** The bar turned by `angle` (0 down, LIFT up) about its pivot: its bounding box, px from the pivot (pure). */
+export function turnedBox(bar: Bar, angle: number) {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const x of [bar.x0, bar.x1])
+    for (const y of [bar.y0, bar.y1]) {
+      xs.push(x * cos - y * sin);
+      ys.push(x * sin + y * cos);
+    }
+  return { left: Math.min(...xs), right: Math.max(...xs), top: Math.min(...ys), bottom: Math.max(...ys) };
+}
+
+/** How far above its pivot the bar reaches anywhere in its lift (from down to LIFT), px, rounded up (pure). */
+export function liftReach(bar: Bar) {
+  let top = 0;
+  for (let i = 0; i <= 45; i++) top = Math.min(top, turnedBox(bar, (LIFT * i) / 45).top);
+  return Math.ceil(-top);
+}
+
+/**
+ * The yard's rows under the notice board (pure): from the bottom edge of the board's frame (`frame`), the back wall, the
+ * request ticket (`ticketH`), the requester (54 px at 1×) at the boom, whose pivot is 6 px under their feet, and the
+ * ground in front (`end`, 22 px under the pivot: the verdict's lane starts 18 px down). The wall is 9 px, or taller
+ * when the boom's whole lift (`reach` px above its pivot, liftReach) would come within CLEAR px of the board's shadow,
+ * so the arm never crosses the policy.
+ */
+export function gateRows(frame: number, ticketH: number, s: number, reach: number) {
+  const pivot = ticketH + 6 + 60 * s;
+  const yardTop = frame + Math.max(9, SHADOW + CLEAR * s + reach - pivot);
+  return { yardTop, boomY: yardTop + pivot, end: yardTop + pivot + 22 * s };
+}
 
 /**
  * Permission Gate (IAM): a security checkpoint in Security Keep red. The role's policy is pinned on a paper notice board
@@ -30,7 +78,8 @@ const BOARD = { frame: 'game:iamgate:board', rim: 6, slice: 10 };
  * Allow (A, or the left button) only what a statement allows: the boom lifts and they walk through. Deny (D,
  * or the right button) everything else, and anything an explicit Deny names: they turn back. Each answer says why; a new
  * role (and policy) every few requests. A wrong call costs more than a right one pays, so always pressing Deny doesn't
- * win (src/game/scenes/games/scoring.ts).
+ * win (src/game/scenes/games/scoring.ts). The board hangs high enough on the back wall that the lifted boom never
+ * crosses the policy (gateRows).
  */
 export class IamGateGame extends MiniGame {
   private wave = 0;
@@ -88,20 +137,36 @@ export class IamGateGame extends MiniGame {
     const heading = crisp(this.add.text(0, 0, 'Policy', TXT(14, PAL.paperMeta))).setOrigin(0, 0);
     const boardH0 = 10 + roleH + 6 + heading.height + 2 + policyH + 12;
     const boardH = framed ? sMax * Math.ceil(boardH0 / sMax) : boardH0;
-    // The frame round the paper: the 9-slice's rim at the widest play scale (the layout's room), else a 3 px border.
-    const rimMax = framed ? BOARD.rim * sMax : 3;
-    // The checkpoint at 1×: a requester (54 px) at the gate, the boom and the ground in front of it.
-    const yardNatural = 54 + 10 + 18;
-    const fixed = boardH + 2 * rimMax + 6 + ticketH + 6 + 8 + verdictH + 10 + 48;
-    this.s = Math.min(fitScale(cw, 380), fitScale(h - this.top - fixed, yardNatural));
+    // The frame round the paper at scale k: the 9-slice's rim, else a 3 px border.
+    const rimAt = (k: number) => (framed ? BOARD.rim * k : 3);
+    // The boom at scale k: the generator's arm (its pivot to its rest `reach`) when the column has room for it with IAM's
+    // agent outside the right post, else a drawn bar as long as the room; and how far its whole lift reaches up.
+    const arm = spriteAnchor(GATE.arm);
+    const boomAt = (k: number) => {
+      const room = cw / 2 - 24 - 30 * k;
+      const armed = !!arm && hasSprite(GATE.post) && (GATE.reach / 2) * k <= room;
+      const postW = (armed ? GATE.postW : 6) * k;
+      const half = armed ? (GATE.reach / 2) * k - postW / 2 : Math.min(200, room);
+      const bh = 4 + 4 * k;
+      const bar: Bar = arm && armed ? { x0: -arm.ax * k, x1: (arm.w - arm.ax) * k, y0: -arm.ay * k, y1: (arm.h - arm.ay) * k } : { x0: 0, x1: half * 2, y0: -bh / 2, y1: bh / 2 };
+      return { armed, postW, half, bh, reach: liftReach(bar) };
+    };
+    // The column at scale k: the board in its frame, the yard (gateRows: a back wall tall enough that the lifted boom
+    // never crosses the board, the ticket, the requester at the boom), the verdict's lane and the buttons. The play scale
+    // is the biggest whole number that fits (1 when none does).
+    const contentAt = (k: number) => 2 * rimAt(k) + 1 + boardH + gateRows(0, ticketH, k, boomAt(k).reach).end + 8 + verdictH + 10 + 48;
+    let k = fitScale(cw, 380);
+    while (k > 1 && contentAt(k) > h - this.top) k--;
+    this.s = k;
     const s = this.s;
-    const yardH = ticketH + 6 + 54 * s + 10 * s + 18 * s;
-    const rim = framed ? BOARD.rim * s : 3;
-    const col = this.column(rim + 1 + boardH + rim + 9 + yardH + 8 + verdictH + 10 + 48);
+    const boom = boomAt(s);
+    const rim = rimAt(s);
+    const col = this.column(contentAt(s));
     const boardTop = col.y + rim + 1;
-    const yardTop = boardTop + boardH + rim + 9;
-    this.gate = { x: col.cx, y: yardTop + ticketH + 6 + 54 * s };
-    const boomY = this.gate.y + 6 * s;
+    const rows = gateRows(boardTop + boardH + rim, ticketH, s, boom.reach);
+    const yardTop = rows.yardTop;
+    const boomY = rows.boomY;
+    this.gate = { x: col.cx, y: boomY - 6 * s };
     this.verdictY = boomY + 18 * s;
     this.cardAt = yardTop + ticketH / 2;
     // The ground: graphite flagstones with a Security Keep red runner up to the gate, and a back wall behind the board.
@@ -116,12 +181,8 @@ export class IamGateGame extends MiniGame {
     // The IAM landmark behind the gate, at the play scale or the highest level that fits under the board: beside the
     // generator's narrower gate on the left (the guard's booth stands on the right), else right of the lane.
     const lm = this.landmarkThatFits(this.gate.y - 10 * s - boardTop);
-    // Half the gate's width: room is left outside the right post for IAM's agent, inside the column. The generator's arm
-    // sets it (pivot to rest is `reach`), unless the column is too narrow for it, where the boom is drawn instead.
-    const room = col.w / 2 - 24 - 30 * s;
-    const armed = hasSprite(GATE.arm) && hasSprite(GATE.post) && (GATE.reach / 2) * s <= room;
-    const postW = (armed ? GATE.postW : 6) * s;
-    const half = armed ? (GATE.reach / 2) * s - postW / 2 : Math.min(200, room);
+    // Half the gate's width (boomAt): the generator's arm sets it, or the room inside the column for a drawn one.
+    const { armed, postW, half } = boom;
     if (lm) {
       const a = spriteAnchor(lm)!;
       const ls = Math.max(1, Math.min(s, Math.floor((this.gate.y - 10 * s - boardTop) / a.h)));
@@ -165,7 +226,7 @@ export class IamGateGame extends MiniGame {
       const post = this.add.graphics().setDepth(30);
       post.fillStyle(PAL.black, 1).fillRect(col.cx + half - 2, postTop - 2, postW + 4, boomY - postTop + 12 * s);
       post.fillStyle(COLOR.panelHi, 1).fillRect(col.cx + half, postTop, postW, boomY - postTop + 10 * s);
-      const bh = 4 + 4 * s;
+      const bh = boom.bh;
       const len = half * 2;
       bar = [this.add.rectangle(0, 0, len, bh, PAL.black).setOrigin(0, 0.5)];
       for (let x = 0, i = 0; x < len; x += 12 * s, i++) bar.push(this.add.rectangle(x + 1, 0, Math.min(12 * s, len - x) - 2, bh - 4, i % 2 ? COLOR.inkHi : red).setOrigin(0, 0.5));
@@ -254,13 +315,13 @@ export class IamGateGame extends MiniGame {
     if (!v) return;
     const s = this.s;
     if (reducedMotion()) {
-      this.boom?.setRotation(through ? -Math.PI * 0.45 : 0);
+      this.boom?.setRotation(through ? LIFT : 0);
       if (through) this.time.delayedCall(pace(600), () => this.boom?.setRotation(0));
       return void this.time.delayedCall(pace(300), () => v.destroy());
     }
     // A lift still running from the last request ends first, so the boom always starts down.
     if (this.boom) this.tweens.killTweensOf(this.boom.setRotation(0));
-    if (through && this.boom) this.tweens.add({ targets: this.boom, rotation: -Math.PI * 0.45, duration: 160, yoyo: true, hold: pace(380) });
+    if (through && this.boom) this.tweens.add({ targets: this.boom, rotation: LIFT, duration: 160, yoyo: true, hold: pace(380) });
     act(v, 'walk', through ? 'SE' : 'NW');
     this.tweens.add({
       targets: v,

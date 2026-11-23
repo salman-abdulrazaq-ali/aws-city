@@ -24,10 +24,54 @@ const TRAY = { name: 'game:queue:tray', w: 32, h: 16 };
 const BOX_W = 37;
 const BOX_H = 47;
 
-/** A message on the belt or in the tray: its box with the label as a chip, one Container (dragged as one). */
+/** A label chip's rectangle, px: its left and top edges and its size. */
+export interface ChipBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * Where the belt's label chips stand so that every one shown can be read (pure: tests bunch parcels with it). `chips`
+ * come front first (nearest the worker), each wanting its home over its box (`x` its middle, `bottom` its bottom edge).
+ * Slid inside x0..x1, a chip rises a level at a time until it clears every chip placed before it and every `fixed` box
+ * (Eddie's chip) by `gap` px, never above `ceiling`. The levels are one grid, `step` px apart up from `base` (the back
+ * row's home), so a front-row chip lifted a little never blocks two of the back row's levels. A chip whose box hasn't
+ * reached the belt yet (`x` < 0), or that finds no room, isn't shown. The front chip goes first, so the message Space and
+ * D act on keeps its label over its box.
+ */
+export function stackChips(
+  chips: { x: number; bottom: number; w: number; h: number }[],
+  fixed: ChipBox[],
+  { x0, x1, ceiling, step, base, gap = 2 }: { x0: number; x1: number; ceiling: number; step: number; base: number; gap?: number },
+) {
+  const taken = [...fixed];
+  const clear = (b: ChipBox) => taken.every((t) => b.x + b.w + gap <= t.x || t.x + t.w + gap <= b.x || b.y + b.h + gap <= t.y || t.y + t.h + gap <= b.y);
+  return chips.map((c) => {
+    const x = Math.max(x0, Math.min(x1 - c.w, c.x - c.w / 2));
+    const levels = [c.bottom];
+    for (let bottom = base; bottom - c.h >= ceiling; bottom -= step) if (bottom < c.bottom) levels.push(bottom);
+    for (const bottom of levels) {
+      if (c.x < 0 || bottom - c.h < ceiling) break;
+      const b = { x, y: bottom - c.h, w: c.w, h: c.h };
+      if (clear(b)) {
+        taken.push(b);
+        return { x: x + c.w / 2, bottom, shown: true };
+      }
+    }
+    return { x: x + c.w / 2, bottom: c.bottom, shown: false };
+  });
+}
+
+/**
+ * A message on the belt or in the tray: its box with the label as a chip, one Container (dragged as one). `home` is the
+ * chip's bottom over the box, from the Container's middle (placeChips may lift the chip clear of others).
+ */
 interface Parcel {
   c: Phaser.GameObjects.Container;
   chip: Phaser.GameObjects.Text;
+  home: number;
 }
 interface Live extends Parcel {
   poison: boolean;
@@ -41,7 +85,8 @@ interface Live extends Parcel {
  * the SQS agent keeps it: Eddie pulls from the queue whenever he's free. A parcel that reaches him while he's busy is
  * lost. Poison parcels (☠, red chip) fail every time: drag them to the dead-letter chute (or D for the front one)
  * instead. Poison put in the queue, or a good message thrown in the DLQ, costs more than a right call pays, so clicking
- * everything doesn't win (src/game/scenes/games/scoring.ts).
+ * everything doesn't win (src/game/scenes/games/scoring.ts). Labels over a bunch of parcels lift clear of each other on
+ * strings to their boxes (stackChips), so every label shown can be read; the parcels themselves never wait.
  */
 export class QueueGame extends MiniGame {
   private queued: Parcel[] = [];
@@ -58,6 +103,8 @@ export class QueueGame extends MiniGame {
   private beltBottom = 0;
   /** Half the gap between the belt's two rows: a burst's parcels sit side by side, their chips clear of each other. */
   private rowOff = 0;
+  /** How far a label chip rises at a time when it would overlap another (a chip's height and 2 px). */
+  private chipStep = 20;
   /** Where a parcel meets the worker. */
   private beltEnd = 0;
   /** The tray's heading top (the DLQ floaters sit above it). */
@@ -75,6 +122,8 @@ export class QueueGame extends MiniGame {
   private workerFree?: boolean;
   private keeper?: Phaser.GameObjects.Sprite;
   private keeperCarries?: boolean;
+  /** The strings lifted labels hang on to their boxes: under every parcel, so a string never crosses a label. */
+  private strings?: Phaser.GameObjects.Graphics;
 
   constructor() {
     super('game:queue', 'queue', 'sqs', '📬 Queue Juggler — click a message (or Space) to queue it; drag red poison to the DLQ (or D)');
@@ -87,6 +136,7 @@ export class QueueGame extends MiniGame {
     this.waves = 0;
     this.dlq = 0;
     this.workerFree = this.keeperCarries = undefined;
+    this.strings = this.add.graphics().setDepth(19);
     this.onKeys((k) => {
       const f = this.front();
       if (!f) return;
@@ -113,6 +163,7 @@ export class QueueGame extends MiniGame {
     const probe = label('worker · busy');
     const chipH = probe.height;
     probe.destroy();
+    this.chipStep = chipH + 2;
     // The tray's heading wraps inside the tray's width at 1× (bigger text in the side panel), so it never reaches the chute.
     const heading = label('SQS queue: the worker pulls when free', CSS.ink)
       .setWordWrapWidth(Math.max(120, cw - 140))
@@ -261,9 +312,50 @@ export class QueueGame extends MiniGame {
     const ph = chip.height + (BOX_H - 6) * s;
     const a = spriteAnchor(BOX);
     const box = prop(this, BOX, 0, ph / 2 - ((a?.h ?? BOX_H) - (a?.ay ?? 20)) * s, s);
-    chip.setY(-ph / 2 + chip.height);
+    const home = -ph / 2 + chip.height;
+    chip.setY(home);
     const c = this.add.container(x, bottom - ph / 2, [box, chip]).setSize(Math.max(chip.width, BOX_W * s), ph);
-    return { c, chip };
+    return { c, chip, home };
+  }
+
+  /**
+   * A press at (x, y), in the hit test's frame (the Container's size, its top-left at 0, 0), lands on the parcel: on its
+   * box, or on its label wherever placeChips put it.
+   */
+  private pressed({ c, chip, home }: Parcel, x: number, y: number) {
+    const dx = x - c.width / 2;
+    const dy = y - c.height / 2;
+    const onBox = Math.abs(dx) <= (BOX_W * this.s) / 2 && dy >= home && dy <= c.height / 2;
+    const onChip = chip.visible && Math.abs(dx - chip.x) <= chip.width / 2 && dy >= chip.y - chip.height && dy <= chip.y;
+    return onBox || onChip;
+  }
+
+  override update(t: number, dt: number) {
+    super.update(t, dt);
+    this.placeChips();
+  }
+
+  /**
+   * Every label on the belt where it can be read (stackChips): a chip over a bunch of parcels rises clear of the others
+   * and of Eddie's chip, and stays inside the stage; a lifted one hangs on a string to its box (poison's red like its
+   * chip). A dragged parcel keeps its chip as it was.
+   */
+  private placeChips() {
+    const belt = this.live.filter((e) => !e.tw.isPaused()).sort((a, b) => b.c.x - a.c.x);
+    const wc = this.workerChip;
+    const fixed = wc ? [{ x: wc.x - wc.width / 2, y: wc.y - wc.height, w: wc.width, h: wc.height }] : [];
+    const spots = stackChips(
+      belt.map(({ c, chip, home }) => ({ x: c.x, bottom: c.y + home, w: chip.width, h: chip.height })),
+      fixed,
+      // The back row's labels sit over boxes standing on beltY - rowOff (parcel()).
+      { x0: 4, x1: this.scale.width - 4, ceiling: this.top + 3 * this.s + 2, step: this.chipStep, base: this.beltY - this.rowOff - (BOX_H - 6) * this.s },
+    );
+    belt.forEach(({ c, chip }, i) => chip.setVisible(spots[i].shown).setPosition(spots[i].x - c.x, spots[i].bottom - c.y));
+    // Each string runs from a lifted chip down into the top of its box.
+    const g = this.strings?.clear();
+    const s = this.s;
+    for (const { c, chip, home, poison } of this.live)
+      if (g && chip.visible && chip.y < home) g.fillStyle(poison ? COLOR.bad : COLOR.muted, 1).fillRect(Math.round(c.x - s / 2), c.y + chip.y, s, home - chip.y + 2 * s);
   }
 
   private spawn(poison: boolean) {
@@ -275,7 +367,7 @@ export class QueueGame extends MiniGame {
     const { c } = p;
     c.setX(-c.width / 2 - 10)
       .setDepth(20 + row)
-      .setInteractive({ useHandCursor: true, draggable: true });
+      .setInteractive({ hitArea: new Phaser.Geom.Rectangle(0, 0, c.width, c.height), hitAreaCallback: (_r: unknown, x: number, y: number) => this.pressed(p, x, y), useHandCursor: true, draggable: true });
     const tw = this.tweens.add({
       targets: c,
       x: this.beltEnd - c.width / 2,
@@ -330,7 +422,7 @@ export class QueueGame extends MiniGame {
   }
 
   private enqueue(p: Parcel) {
-    this.queued.push({ c: p.c, chip: p.chip });
+    this.queued.push({ c: p.c, chip: p.chip, home: p.home });
     this.layoutQueue();
     if (this.queued.length > 12) {
       // A queue holds a lot, but a round's tray holds 12: the oldest waits too long here.
