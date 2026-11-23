@@ -142,3 +142,43 @@ describe('every spoken line is still in its method, and the rules are unchanged'
     expect(spawn).toMatch(/if \(!reducedMotion\(\)\) this\.cameras\.main\.shake\(/);
   });
 });
+
+describe('the art generator’s props (batch B6: art/tiles/games_art.py)', () => {
+  type Anchor = { ax: number; ay: number; w: number; h: number };
+  const atlas = (JSON.parse(fs.readFileSync(path.join(process.cwd(), 'public/assets/city/sprites.json'), 'utf8')) as { sprites: Record<string, Anchor> }).sprites;
+
+  it('the atlas has the wall’s pieces at one width, the flood’s three frames on one canvas, five numbered lane booths and the scanner', () => {
+    for (const n of ['game:shield:wall-top', 'game:shield:wall', 'game:shield:gate']) expect(atlas[n]?.w, n).toBe(32);
+    // A course of masonry stacks: anchored at its top-left corner, 16 px tall.
+    expect(atlas['game:shield:wall']).toMatchObject({ ax: 0, ay: 0, h: 16 });
+    // The gate stands on the road: anchored at the middle of its foot.
+    expect(atlas['game:shield:gate']).toMatchObject({ ax: 16, ay: 56 });
+    const floods = [0, 1, 2].map((f) => atlas[`game:shield:flood${f}`]);
+    expect(new Set(floods.map((a) => JSON.stringify(a))).size).toBe(1);
+    expect(floods[0]).toMatchObject({ w: 40, h: 28, ax: 20, ay: 28 });
+    for (let n = 1; n <= 5; n++) expect(atlas[`game:redteam:lane${n}`], `lane${n}`).toMatchObject({ w: 36, h: 48, ax: 18, ay: 48 });
+    expect(atlas['game:redteam:scanner']).toMatchObject({ w: 36, h: 70, ax: 18, ay: 70 });
+  });
+
+  it('Shield Wall builds its wall from the pieces (a course per 16 px down to the gate) and plays the swarm’s frames, still under reduced motion', () => {
+    const setup = code(method(read('ShieldGame.ts'), '  protected setup() {'));
+    expect(setup).toMatch(/if \(hasSprite\('game:shield:gate'\)\) \{/);
+    expect(setup).toMatch(/y \+= WALL\.course \* s\) prop\(this, 'game:shield:wall', wallX, y, s\)/);
+    expect(setup).toMatch(/prop\(this, 'game:shield:wall-top'/);
+    expect(setup).toMatch(/prop\(this, 'game:shield:gate', wallX \+ wallW \/ 2, base, s\)/);
+    // The drawn wall stays for an atlas without the pieces.
+    expect(setup).toMatch(/\} else \{[\s\S]*districtColor\('shield'\)/);
+    const packets = method(read('ShieldGame.ts'), '  private packets(s: number)');
+    expect(packets).toMatch(/hasSprite\(FLOOD\.frames\[0\]\)/);
+    expect(packets).toMatch(/if \(!reducedMotion\(\)\) swarm\.play\(FLOOD\.anim\)/);
+    expect(packets).toMatch(/\.setScale\(s\)/);
+  });
+
+  it('Red Team Range: a numbered booth ends each lane, behind the requests; the agent scans at its console when the atlas has one', () => {
+    const setup = code(method(read('RedTeamGame.ts'), '  protected setup() {'));
+    expect(setup).toMatch(/prop\(this, `game:redteam:lane\$\{i \+ 1\}`, [^;]*\.setDepth\(19\)/);
+    expect(setup).toMatch(/if \(hasSprite\('game:redteam:scanner'\)\) \{\s*prop\(this, 'game:redteam:scanner'/);
+    // Requests stand in front of the booths (their depth is 20 + lane).
+    expect(method(read('RedTeamGame.ts'), '  private spawn() {')).toMatch(/\.setDepth\(20 \+ lane\)/);
+  });
+});

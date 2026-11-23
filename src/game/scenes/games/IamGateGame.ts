@@ -3,7 +3,7 @@ import { FEEDBACK, MiniGame, pace, PAL, TXT } from './MiniGame';
 import { POINTS } from './scoring';
 import { reducedMotion } from '../../motion';
 import { crisp } from '../../SpeechBubble';
-import { hasSprite, spriteAnchor } from '../../assets';
+import { CITY_ATLAS, hasSprite, spriteAnchor } from '../../assets';
 import { COLOR, CSS } from '../../theme';
 import { IAM_GATE } from '@/world/minigames';
 import { act, cast, districtColor, fitScale, landmarkFrame, person, prop } from './cast';
@@ -15,11 +15,19 @@ const WALK = { dx: 28, dy: 26 };
 /** A requester's walk up to the boom and away again, ms. */
 const WALK_MS = 260;
 const LEAVE_MS = 620;
+/**
+ * The checkpoint's props (art/tiles/games_art.py) at 1×, px: a post (8 wide, 40 tall) at each end of the boom; the
+ * striped arm, its anchor the pivot on the left post, reaching `reach` to rest on the right one; the notice board's
+ * frame, a 9-slice `rim` wide (10 px slices) round the paper; the guard's booth by the right post.
+ */
+const GATE = { post: 'game:iamgate:post', arm: 'game:iamgate:arm', reach: 152, postW: 8, booth: 'game:iamgate:booth' };
+const BOARD = { frame: 'game:iamgate:board', rim: 6, slice: 10 };
 
 /**
  * Permission Gate (IAM): a security checkpoint in Security Keep red. The role's policy is pinned on a paper notice board
  * in front of the IAM landmark; requesters (citizens) walk up to the boom one by one, each holding the request as a
- * ticket. Allow (A, or the left button) only what a statement allows: the boom lifts and they walk through. Deny (D,
+ * ticket (the posts, the boom, the board's frame and the guard's booth are the art generator's, art/tiles/games_art.py).
+ * Allow (A, or the left button) only what a statement allows: the boom lifts and they walk through. Deny (D,
  * or the right button) everything else, and anything an explicit Deny names: they turn back. Each answer says why; a new
  * role (and policy) every few requests. A wrong call costs more than a right one pays, so always pressing Deny doesn't
  * win (src/game/scenes/games/scoring.ts).
@@ -61,7 +69,10 @@ export class IamGateGame extends MiniGame {
     // Top-down in a centred column (MiniGame.column): the notice board with the role and its policy (as tall as the
     // longest one, so the gate never moves between roles), the checkpoint (the IAM landmark behind, the boom, IAM's
     // agent checking), the request at the gate as a ticket, a lane for the verdict, then the two buttons.
-    const boardW = Math.min(cw - 32, 560);
+    // The board's frame is the generator's 9-slice when the renderer can draw one (WebGL), at the play scale.
+    const framed = hasSprite(BOARD.frame) && this.game.renderer.type === Phaser.WEBGL;
+    const sMax = fitScale(cw, 380);
+    const boardW = framed ? sMax * Math.floor(Math.min(cw - 32, 560) / sMax) : Math.min(cw - 32, 560);
     const roleStyle = { ...TXT(18, PAL.paperInk), align: 'center', wordWrap: { width: boardW - 24 } } as const;
     const policyStyle = { ...TXT(16, PAL.paperInk), lineSpacing: 3, wordWrap: { width: boardW - 24 } };
     const ticketStyle = { ...TXT(18, PAL.paperInk), backgroundColor: CSS.paper, padding: { x: 12, y: 8 }, align: 'center', wordWrap: { width: Math.min(w - 40, 480) } } as const;
@@ -75,16 +86,20 @@ export class IamGateGame extends MiniGame {
     const verdictH = tallest(verdictStyle, requests.map((r) => `✗ Too slow. ${r.why}`));
     probe.destroy();
     const heading = crisp(this.add.text(0, 0, 'Policy', TXT(14, PAL.paperMeta))).setOrigin(0, 0);
-    const boardH = 10 + roleH + 6 + heading.height + 2 + policyH + 12;
+    const boardH0 = 10 + roleH + 6 + heading.height + 2 + policyH + 12;
+    const boardH = framed ? sMax * Math.ceil(boardH0 / sMax) : boardH0;
+    // The frame round the paper: the 9-slice's rim at the widest play scale (the layout's room), else a 3 px border.
+    const rimMax = framed ? BOARD.rim * sMax : 3;
     // The checkpoint at 1×: a requester (54 px) at the gate, the boom and the ground in front of it.
     const yardNatural = 54 + 10 + 18;
-    const fixed = boardH + 12 + ticketH + 6 + 8 + verdictH + 10 + 48;
+    const fixed = boardH + 2 * rimMax + 6 + ticketH + 6 + 8 + verdictH + 10 + 48;
     this.s = Math.min(fitScale(cw, 380), fitScale(h - this.top - fixed, yardNatural));
     const s = this.s;
     const yardH = ticketH + 6 + 54 * s + 10 * s + 18 * s;
-    const col = this.column(boardH + 12 + yardH + 8 + verdictH + 10 + 48);
-    const boardTop = col.y + 4;
-    const yardTop = boardTop + boardH + 12;
+    const rim = framed ? BOARD.rim * s : 3;
+    const col = this.column(rim + 1 + boardH + rim + 9 + yardH + 8 + verdictH + 10 + 48);
+    const boardTop = col.y + rim + 1;
+    const yardTop = boardTop + boardH + rim + 9;
     this.gate = { x: col.cx, y: yardTop + ticketH + 6 + 54 * s };
     const boomY = this.gate.y + 6 * s;
     this.verdictY = boomY + 18 * s;
@@ -98,43 +113,67 @@ export class IamGateGame extends MiniGame {
       for (let x = (row % 2) * -12 * s; x < w; x += 24 * s) g.fillStyle(row % 2 ? COLOR.bgDeep : PAL.line, 1).fillRect(x + s, y + s, 22 * s, 10 * s);
     const runW = 44 * s;
     g.fillStyle(red, 0.22).fillRect(col.cx - runW / 2, yardTop + 10 * s, runW, h - yardTop);
-    // The IAM landmark behind the gate (right of the lane), at the play scale or the highest level that fits under the board.
+    // The IAM landmark behind the gate, at the play scale or the highest level that fits under the board: beside the
+    // generator's narrower gate on the left (the guard's booth stands on the right), else right of the lane.
     const lm = this.landmarkThatFits(this.gate.y - 10 * s - boardTop);
-    // Half the gate's width: room is left outside the right post for IAM's agent, inside the column.
-    const half = Math.min(200, col.w / 2 - 24 - 30 * s);
+    // Half the gate's width: room is left outside the right post for IAM's agent, inside the column. The generator's arm
+    // sets it (pivot to rest is `reach`), unless the column is too narrow for it, where the boom is drawn instead.
+    const room = col.w / 2 - 24 - 30 * s;
+    const armed = hasSprite(GATE.arm) && hasSprite(GATE.post) && (GATE.reach / 2) * s <= room;
+    const postW = (armed ? GATE.postW : 6) * s;
+    const half = armed ? (GATE.reach / 2) * s - postW / 2 : Math.min(200, room);
     if (lm) {
       const a = spriteAnchor(lm)!;
       const ls = Math.max(1, Math.min(s, Math.floor((this.gate.y - 10 * s - boardTop) / a.h)));
-      prop(this, lm, Math.min(col.r - 50 * ls, col.cx + half * 0.6), this.gate.y - 10 * s - (a.h - a.ay) * ls, ls).setDepth(2);
+      const lx = armed ? Math.max(col.x + 50 * ls, col.cx - half - postW - 52 * ls) : Math.min(col.r - 50 * ls, col.cx + half * 0.6);
+      prop(this, lm, lx, this.gate.y - 10 * s - (a.h - a.ay) * ls, ls).setDepth(2);
     }
     if (col.x > 40 * s && hasSprite('deco:banner-security')) {
       prop(this, 'deco:banner-security', col.x - 22 * s, yardTop - 10 * s, s).setDepth(2);
       prop(this, 'deco:banner-security', col.r + 4 * s, yardTop - 10 * s, s).setDepth(2);
     }
-    // The notice board: paper on a black pixel border and shadow, red pins, the role as its title, "Policy", the rules.
+    // The notice board: paper in a wooden frame with a red pin in each corner (or on a black pixel border, two red pins)
+    // and a black pixel shadow; the role as its title, "Policy", the rules.
     const bx = col.cx - boardW / 2;
-    g.fillStyle(PAL.black, 1).fillRect(bx + 4, boardTop + 4, boardW, boardH);
-    const board = this.add.graphics().setDepth(5);
-    board.fillStyle(PAL.black, 1).fillRect(bx - 3, boardTop - 3, boardW + 6, boardH + 6);
-    board.fillStyle(PAL.paper, 1).fillRect(bx, boardTop, boardW, boardH);
-    for (const px of [bx + 10, bx + boardW - 16]) board.fillStyle(red, 1).fillRect(px, boardTop + 4, 6, 6);
+    g.fillStyle(PAL.black, 1).fillRect(bx - rim + 4, boardTop - rim + 4, boardW + 2 * rim, boardH + 2 * rim);
+    if (framed)
+      this.add
+        .nineslice(bx - rim, boardTop - rim, CITY_ATLAS, BOARD.frame, boardW / s + 2 * BOARD.rim, boardH / s + 2 * BOARD.rim, BOARD.slice, BOARD.slice, BOARD.slice, BOARD.slice)
+        .setOrigin(0, 0)
+        .setScale(s)
+        .setDepth(5);
+    else {
+      const board = this.add.graphics().setDepth(5);
+      board.fillStyle(PAL.black, 1).fillRect(bx - 3, boardTop - 3, boardW + 6, boardH + 6);
+      board.fillStyle(PAL.paper, 1).fillRect(bx, boardTop, boardW, boardH);
+      for (const px of [bx + 10, bx + boardW - 16]) board.fillStyle(red, 1).fillRect(px, boardTop + 4, 6, 6);
+    }
     this.roleText = crisp(this.add.text(col.cx, boardTop + 10, '', roleStyle)).setOrigin(0.5, 0).setDepth(6);
     heading.setPosition(bx + 12, boardTop + 10 + roleH + 6).setDepth(6);
     this.policyText = crisp(this.add.text(bx + 12, heading.y + heading.height + 2, '', policyStyle)).setDepth(6);
-    // The gate: two posts, a red-and-white boom pivoting on the left one, and IAM's agent checking at the right post.
-    const postW = 6 * s;
+    // The gate: two posts, a red-and-white boom pivoting on the left one, and IAM's agent checking at the right post, in
+    // front of the guard's booth.
     const postTop = boomY - 30 * s;
-    g.fillStyle(PAL.black, 1).fillRect(col.cx - half - postW - 2, postTop - 2, postW + 4, boomY - postTop + 12 * s);
-    g.fillStyle(COLOR.panelHi, 1).fillRect(col.cx - half - postW, postTop, postW, boomY - postTop + 10 * s);
-    const post = this.add.graphics().setDepth(30);
-    post.fillStyle(PAL.black, 1).fillRect(col.cx + half - 2, postTop - 2, postW + 4, boomY - postTop + 12 * s);
-    post.fillStyle(COLOR.panelHi, 1).fillRect(col.cx + half, postTop, postW, boomY - postTop + 10 * s);
-    const bh = 4 + 4 * s;
-    const len = half * 2;
-    const bar: Phaser.GameObjects.Rectangle[] = [this.add.rectangle(0, 0, len, bh, PAL.black).setOrigin(0, 0.5)];
-    for (let x = 0, i = 0; x < len; x += 12 * s, i++) bar.push(this.add.rectangle(x + 1, 0, Math.min(12 * s, len - x) - 2, bh - 4, i % 2 ? COLOR.inkHi : red).setOrigin(0, 0.5));
+    let bar: Phaser.GameObjects.GameObject[];
+    if (armed) {
+      prop(this, GATE.post, col.cx - half - postW / 2, boomY + 10 * s, s).setDepth(1);
+      prop(this, GATE.post, col.cx + half + postW / 2, boomY + 10 * s, s).setDepth(30);
+      bar = [prop(this, GATE.arm, 0, 0, s)];
+    } else {
+      g.fillStyle(PAL.black, 1).fillRect(col.cx - half - postW - 2, postTop - 2, postW + 4, boomY - postTop + 12 * s);
+      g.fillStyle(COLOR.panelHi, 1).fillRect(col.cx - half - postW, postTop, postW, boomY - postTop + 10 * s);
+      const post = this.add.graphics().setDepth(30);
+      post.fillStyle(PAL.black, 1).fillRect(col.cx + half - 2, postTop - 2, postW + 4, boomY - postTop + 12 * s);
+      post.fillStyle(COLOR.panelHi, 1).fillRect(col.cx + half, postTop, postW, boomY - postTop + 10 * s);
+      const bh = 4 + 4 * s;
+      const len = half * 2;
+      bar = [this.add.rectangle(0, 0, len, bh, PAL.black).setOrigin(0, 0.5)];
+      for (let x = 0, i = 0; x < len; x += 12 * s, i++) bar.push(this.add.rectangle(x + 1, 0, Math.min(12 * s, len - x) - 2, bh - 4, i % 2 ? COLOR.inkHi : red).setOrigin(0, 0.5));
+    }
     this.boom = this.add.container(col.cx - half - postW / 2, boomY, bar).setDepth(31);
-    person(this, 'iam', col.cx + half + postW + 14 * s, boomY + 4 * s, s, 'check', 'SW').setDepth(29);
+    const guardX = col.cx + half + postW + 14 * s;
+    if (hasSprite(GATE.booth)) prop(this, GATE.booth, guardX + 6 * s, boomY + 2 * s, s).setDepth(28);
+    person(this, 'iam', guardX, boomY + 4 * s, s, 'check', 'SW').setDepth(29);
     // The verdict's lane, then the buttons, laid out by their measured width so bigger text never makes them overlap.
     const by = this.verdictY + verdictH + 10 + 22;
     const allowBtn = this.pxButton(0, by, '✅ Allow (A)', () => this.answer(true), COLOR.good);

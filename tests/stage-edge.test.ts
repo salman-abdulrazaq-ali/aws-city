@@ -167,3 +167,27 @@ describe('Edge Cache is a street scene', () => {
       expect(method(SRC, sig).match(/this\.speak\(/g)?.length, sig).toBe(n);
   });
 });
+
+describe('the art generator’s props (batch B6: art/tiles/games_art.py)', () => {
+  type Anchor = { ax: number; ay: number; w: number; h: number };
+  const atlas = (JSON.parse(read('public/assets/city/sprites.json')) as { sprites: Record<string, Anchor> }).sprites;
+
+  it('the atlas has the counter’s 9-slice, a phone and the two envelopes', () => {
+    expect(atlas['game:edge:counter']).toMatchObject({ w: 48, h: 48, ax: 0, ay: 0 });
+    expect(atlas['game:edge:phone']).toMatchObject({ w: 8, h: 12 });
+    expect(atlas['game:edge:file-miss']).toEqual(atlas['game:edge:file-hit']);
+    expect(atlas['game:edge:file-miss']).toMatchObject({ w: 8, h: 8, ax: 4, ay: 4 });
+  });
+
+  it('the counter frames the desk at the play scale (WebGL only), the viewers hold phones, and a file is an envelope', () => {
+    const setup = method(CODE, '  protected setup() {');
+    expect(setup).toMatch(/const framed = hasSprite\(COUNTER\.frame\) && this\.game\.renderer\.type === Phaser\.WEBGL/);
+    expect(setup).toMatch(/\.nineslice\([^;]*COUNTER\.frame[^;]*\.setScale\(S\)/);
+    expect(setup).toMatch(/prop\(this, PHONE, /);
+    const packet = method(CODE, '  private packet(miss: boolean) {');
+    expect(packet).toMatch(/const file = miss \? FILE\.miss : FILE\.hit/);
+    expect(packet).toMatch(/hasSprite\(file\)\s*\? prop\(this, file, v\.x, v\.y, this\.px\)/);
+    // Still nothing moves under reduced motion.
+    expect(packet).toMatch(/if \(reducedMotion\(\)\) return;/);
+  });
+});

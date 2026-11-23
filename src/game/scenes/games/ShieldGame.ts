@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { FEEDBACK, MiniGame, pace, PAL, TXT } from './MiniGame';
 import { POINTS, SWING, swingReady } from './scoring';
 import { cast, districtColor, fitScale, landmarkFrame, person, prop } from './cast';
+import { CITY_ATLAS, hasSprite } from '../../assets';
 import { reducedMotion } from '../../motion';
 import { crisp } from '../../SpeechBubble';
 import { COLOR, CSS, LABEL_BG } from '../../theme';
@@ -20,6 +21,12 @@ const LEGEND = '🔵 flood: Shield absorbs it · 🔴 L7 attack: click it · �
 const NATURAL = { w: 380, sky: 80, road: 150, roadMax: 240, verge: 10 };
 /** A crowd citizen's head, px above the feet at 1× (36×54 frame, feet at 50). */
 const HEAD = 50;
+/**
+ * The wall's pieces (art/tiles/games_art.py) at 1×, px: the battlements on top, a 16 px course of masonry stacked as
+ * high as the road needs, the gateway at its foot. A flood is a 40×28 swarm of packets in three jitter frames.
+ */
+const WALL = { w: 32, top: 14, course: 16, gate: 56 };
+const FLOOD = { frames: ['game:shield:flood0', 'game:shield:flood1', 'game:shield:flood2'], h: 28, anim: 'game:shield:flood' };
 
 /**
  * Shield Wall: Shield Standard absorbs volumetric floods (L3/L4) automatically, so you don't click those.
@@ -27,7 +34,8 @@ const HEAD = 50;
  * Each block names the rule that would catch it; the lesson at the end counts what you stopped. Space strikes whatever
  * is nearest the wall (a real user too), once per cooldown, and a swing at an empty road costs: mashing doesn't win.
  * The stage: your app is Shield's landmark behind a security-red wall, Shield's agent on guard by the gate, users and
- * L7 attackers are citizens walking up the road with their request on a tag, and a flood is a swarm of packets.
+ * L7 attackers are citizens walking up the road with their request on a tag, and a flood is a swarm of packets. The
+ * wall and the swarm are the art generator's (art/tiles/games_art.py), at the play group's whole-number scale.
  */
 export class ShieldGame extends MiniGame {
   private attacks: Attack[] = [];
@@ -71,7 +79,7 @@ export class ShieldGame extends MiniGame {
     legend.setY(y1 + NATURAL.verge * s + 12);
     // your app (x col.x to wallX), the wall, then the road; arrivals stop just past the shield, at the wall
     const wallX = col.x + 100 * s;
-    const wallW = 26 * s;
+    const wallW = WALL.w * s;
     const wallTop = y0 - 22 * s;
     const base = y1 + 6 * s;
     const gateW = 14 * s;
@@ -96,15 +104,23 @@ export class ShieldGame extends MiniGame {
     const lm = prop(this, landmarkFrame('shield') ?? 'hq:security', lmX, y1 + 2 * s, s).setOrigin(0.5, 1).setDepth(10);
     const tag = crisp(this.add.text(lmX, 0, 'your app', { ...TXT(14, CSS.inkHi), backgroundColor: LABEL_BG, padding: { x: 5, y: 1 } })).setOrigin(0.5, 1).setDepth(15);
     tag.setY(Math.max(this.top + tag.height + 2, y1 + 2 * s - lm.displayHeight - 4));
-    // the wall in the security district's red: battlements, mortar, the gate, a pixel edge
-    const wall = this.add.graphics().setDepth(12);
-    wall.fillStyle(districtColor('shield'), 1).fillRect(wallX, wallTop, wallW, base - wallTop);
-    for (let x = wallX; x < wallX + wallW; x += 9 * s) wall.fillRect(x, wallTop - 6 * s, 5 * s, 6 * s);
-    for (let y = wallTop + 6 * s, row = 0; y < base - s; y += 8 * s, row++)
-      for (let x = wallX + (row % 2) * 5 * s; x < wallX + wallW; x += 10 * s) wall.fillStyle(COLOR.bgDeep, 0.35).fillRect(x, y, Math.min(7 * s, wallX + wallW - x), s);
-    wall.fillStyle(COLOR.bgDeep, 1).fillRect(gateX, base - gateH, gateW, gateH);
-    wall.lineStyle(s, PAL.black, 1).strokeRect(gateX, base - gateH, gateW, gateH);
-    wall.fillStyle(PAL.black, 1).fillRect(wallX, wallTop - 6 * s, s, base - wallTop + 6 * s);
+    // the wall in the security district's red (art/tiles/games_art.py): battlements, courses of masonry stacked down to
+    // the gateway with its portcullis half up. Drawn in the same red when the atlas hasn't got the pieces.
+    if (hasSprite('game:shield:gate')) {
+      const top = wallTop - 8 * s;
+      for (let y = top + WALL.top * s; y < base - WALL.gate * s; y += WALL.course * s) prop(this, 'game:shield:wall', wallX, y, s).setDepth(12);
+      prop(this, 'game:shield:wall-top', wallX, top, s).setDepth(12);
+      prop(this, 'game:shield:gate', wallX + wallW / 2, base, s).setDepth(12);
+    } else {
+      const wall = this.add.graphics().setDepth(12);
+      wall.fillStyle(districtColor('shield'), 1).fillRect(wallX, wallTop, wallW, base - wallTop);
+      for (let x = wallX; x < wallX + wallW; x += 9 * s) wall.fillRect(x, wallTop - 6 * s, 5 * s, 6 * s);
+      for (let y = wallTop + 6 * s, row = 0; y < base - s; y += 8 * s, row++)
+        for (let x = wallX + (row % 2) * 5 * s; x < wallX + wallW; x += 10 * s) wall.fillStyle(COLOR.bgDeep, 0.35).fillRect(x, y, Math.min(7 * s, wallX + wallW - x), s);
+      wall.fillStyle(COLOR.bgDeep, 1).fillRect(gateX, base - gateH, gateW, gateH);
+      wall.lineStyle(s, PAL.black, 1).strokeRect(gateX, base - gateH, gateW, gateH);
+      wall.fillStyle(PAL.black, 1).fillRect(wallX, wallTop - 6 * s, s, base - wallTop + 6 * s);
+    }
     // the shield (Shield Standard): always on, absorbs floods
     this.add.ellipse(wallX + wallW + 6 * s, (wallTop + y1) / 2, 40 * s, y1 - wallTop + 24 * s, COLOR.info, 0.14).setStrokeStyle(2 * s, COLOR.info, 0.7).setDepth(13);
     // Shield's agent on guard by the gate, facing the road
@@ -171,7 +187,7 @@ export class ShieldGame extends MiniGame {
     const tint = kind === 'good' ? COLOR.good : kind === 'l7' ? COLOR.bad : COLOR.info;
     // People walk up the road (left, SW); a flood is no one: a swarm of packets travelling as one.
     const body: Phaser.GameObjects.GameObject[] = kind === 'flood' ? this.packets(s) : [person(this, this.crowd[this.dealt++ % this.crowd.length], 0, 0, s, 'walk', 'SW')];
-    const headY = (kind === 'flood' ? -26 : -HEAD) * s - 4;
+    const headY = (kind === 'flood' ? -FLOOD.h : -HEAD) * s - 4;
     const chip = crisp(this.add.text(0, headY - 3, label, { ...TXT(16, ink), backgroundColor: CSS.bg, padding: { x: 5, y: 2 } })).setOrigin(0.5, 1);
     const stripe = this.add.rectangle(0, headY - 3, chip.width, 3, tint).setOrigin(0.5, 0);
     const t = this.add.container(w + 10 + chip.width / 2, y, [...body, stripe, chip]).setDepth(this.depthAt(y));
@@ -241,8 +257,17 @@ export class ShieldGame extends MiniGame {
     });
   }
 
-  /** A flood's look: a haze and a swarm of packets in the shield's blue (the haze is what a press lands on). */
+  /**
+   * A flood's look: a swarm of packets in the shield's blue streaking in through a haze (art/tiles/games_art.py, three
+   * jitter frames; still under reduced motion). The whole swarm is what a press lands on. Drawn as dots without the atlas.
+   */
   private packets(s: number): Phaser.GameObjects.GameObject[] {
+    if (hasSprite(FLOOD.frames[0])) {
+      if (!this.anims.exists(FLOOD.anim)) this.anims.create({ key: FLOOD.anim, frames: FLOOD.frames.map((frame) => ({ key: CITY_ATLAS, frame })), frameRate: 8, repeat: -1 });
+      const swarm = this.add.sprite(0, 0, CITY_ATLAS, FLOOD.frames[0]).setOrigin(0.5, 1).setScale(s);
+      if (!reducedMotion()) swarm.play(FLOOD.anim);
+      return [swarm];
+    }
     const haze = this.add.ellipse(0, -12 * s, 40 * s, 24 * s, COLOR.info, 0.16);
     const dots = [
       [-12, -6],

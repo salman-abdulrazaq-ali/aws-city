@@ -112,3 +112,49 @@ describe('the rules, keys and spoken lines are unchanged', () => {
     expect(setup).toMatch(/this\.cardAt = yardTop \+/);
   });
 });
+
+describe('the art generator’s props (batch B6: art/tiles/games_art.py)', () => {
+  type Anchor = { ax: number; ay: number; w: number; h: number };
+  const atlas = (JSON.parse(read('public/assets/city/sprites.json')) as { sprites: Record<string, Anchor> }).sprites;
+
+  it('the atlas has the shed’s and the checkpoint’s props at their 1× sizes and anchors', () => {
+    expect(atlas['game:queue:belt']).toMatchObject({ w: 32, h: 24, ax: 0, ay: 0 });
+    expect(atlas['game:queue:tray']).toMatchObject({ w: 32, h: 16, ax: 0, ay: 0 });
+    expect(atlas['game:queue:bench']).toMatchObject({ w: 64, h: 28, ax: 32, ay: 28 });
+    expect(atlas['game:queue:dlq']).toMatchObject({ w: 40, h: 56, ax: 20, ay: 56 });
+    expect(atlas['game:iamgate:post']).toMatchObject({ w: 8, h: 40, ax: 4, ay: 40 });
+    // The arm's anchor is its pivot, on the left post.
+    expect(atlas['game:iamgate:arm']).toMatchObject({ w: 160, h: 8, ax: 4, ay: 4 });
+    expect(atlas['game:iamgate:board']).toMatchObject({ w: 48, h: 48, ax: 0, ay: 0 });
+    expect(atlas['game:iamgate:booth']).toMatchObject({ w: 36, h: 60, ax: 18, ay: 60 });
+  });
+
+  it('a tiled or 9-slice piece is never trimmed in the atlas (Phaser’s NineSlice can’t take a trimmed frame)', () => {
+    const pages = (JSON.parse(read('public/assets/city/atlas.json')) as { textures: { frames: { filename: string; trimmed: boolean }[] }[] }).textures;
+    const frames = pages.flatMap((t) => t.frames);
+    for (const n of ['game:iamgate:board', 'game:edge:counter', 'game:queue:belt', 'game:queue:tray', 'game:shield:wall']) expect(frames.find((f) => f.filename === n)?.trimmed, n).toBe(false);
+  });
+
+  it('Queue Juggler: the belt’s near side and the tray’s rack tile at the play scale; the bench and the bin stand on the floor', () => {
+    const c = code(queue);
+    const setup = method(c, '  protected setup() {');
+    expect(setup).toMatch(/const props = hasSprite\(BELT\.name\) && hasSprite\(BENCH\) && hasSprite\(TRAY\.name\)/);
+    expect(setup).toMatch(/if \(props\) this\.tile\(BELT\.name/);
+    expect(setup).toMatch(/if \(props\) this\.tile\(TRAY\.name/);
+    expect(setup).toMatch(/if \(props\) prop\(this, BENCH, ex, floor, s\)/);
+    expect(setup).toMatch(/const BIN = hasSprite\(DLQ_BIN\) \? DLQ_BIN : CHUTE/);
+    // The last piece of a run is cut where the run ends, in the frame's own pixels.
+    expect(method(c, '  private tile(')).toMatch(/setCrop\(0, 0, Math\.ceil\(\(x1 - x\) \/ this\.s\)/);
+  });
+
+  it('Permission Gate: the posts and the striped arm (the boom lifts as before), the board’s 9-slice only on WebGL, the booth behind IAM', () => {
+    const c = code(gate);
+    const setup = method(c, '  protected setup() {');
+    expect(setup).toMatch(/const framed = hasSprite\(BOARD\.frame\) && this\.game\.renderer\.type === Phaser\.WEBGL/);
+    expect(setup).toMatch(/\.nineslice\([^;]*BOARD\.frame[^;]*\.setScale\(s\)/);
+    expect(setup).toMatch(/bar = \[prop\(this, GATE\.arm, 0, 0, s\)\]/);
+    expect(setup).toMatch(/this\.boom = this\.add\.container\(col\.cx - half - postW \/ 2, boomY, bar\)/);
+    expect(setup).toMatch(/prop\(this, GATE\.booth, [^;]*\.setDepth\(28\)/);
+    expect(setup).toMatch(/person\(this, 'iam', guardX, [^)]*'check', 'SW'\)\.setDepth\(29\)/);
+  });
+});

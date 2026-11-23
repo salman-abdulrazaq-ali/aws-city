@@ -3,6 +3,7 @@ import { FEEDBACK, MiniGame, pace, PAL, TXT } from './MiniGame';
 import { POINTS } from './scoring';
 import { freeLane } from './lanes';
 import { act, cast, districtColor, fitScale, landmarkFrame, person, prop } from './cast';
+import { hasSprite } from '../../assets';
 import { reducedMotion } from '../../motion';
 import { crisp } from '../../SpeechBubble';
 import { COLOR, CSS, LABEL_BG } from '../../theme';
@@ -15,6 +16,8 @@ const NATURAL_W = 380;
 const APP_W = 100;
 /** A crowd citizen's head, px above the feet at 1× (36×54 frame, feet at 50). */
 const HEAD = 50;
+/** Each lane's booth at the far end, numbered (game:redteam:lane1..5, art/tiles/games_art.py), 36 px wide at 1×. */
+const BOOTH_W = 36;
 
 /**
  * Red Team Range (AWS Security Agent): a penetration test of *your own* app. Requests from your app's log walk up the
@@ -103,8 +106,14 @@ export class RedTeamGame extends MiniGame {
     crisp(this.add.text(col.x + appW / 2, y0 - 4, 'your app', { ...TXT(14, CSS.inkHi), backgroundColor: LABEL_BG, padding: { x: 5, y: 1 } }))
       .setOrigin(0.5, 1)
       .setDepth(15);
-    // Security Agent at the head of the range, scanning the lanes
-    person(this, 'securityagent', appX - 14 * s, y0 + lh * 5 - 4 * s, s, 'scan', 'SE').setDepth(26);
+    // Each lane ends in its numbered booth, where the requests step out (behind everyone on the range).
+    for (let i = 0; i < 5; i++) if (hasSprite(`game:redteam:lane${i + 1}`)) prop(this, `game:redteam:lane${i + 1}`, col.r - (BOOTH_W / 2) * s, y0 + (i + 1) * lh - 2, s).setDepth(19);
+    // Security Agent at the head of the range by its scanning console, on the first lane's floor (clear of your app's
+    // building, which grows up from the bottom); at the foot of the range when the atlas has no console.
+    if (hasSprite('game:redteam:scanner')) {
+      prop(this, 'game:redteam:scanner', appX - 22 * s, y0 + lh - 2 * s, s).setDepth(25);
+      person(this, 'securityagent', appX - 58 * s, y0 + lh - 2 * s, s, 'scan', 'SE').setDepth(26);
+    } else person(this, 'securityagent', appX - 14 * s, y0 + lh * 5 - 4 * s, s, 'scan', 'SE').setDepth(26);
     this.scheduleSpawn();
   }
 

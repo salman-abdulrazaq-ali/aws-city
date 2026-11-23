@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { FEEDBACK, MiniGame, PAL, pace, TXT } from './MiniGame';
 import { reducedMotion } from '../../motion';
 import { crisp } from '../../SpeechBubble';
-import { hasSprite, spriteAnchor } from '../../assets';
+import { CITY_ATLAS, hasSprite, spriteAnchor } from '../../assets';
 import { COLOR, CSS, LABEL_BG } from '../../theme';
 import { EDGE } from '@/world/minigames';
 import { change, EDGE_RULES, expire, hitRatio, invalidate, isChanged, isPopular, newEdge, request, store, type EdgeState } from './edgeCache';
@@ -49,6 +49,14 @@ const DESK_PAD = 10;
 const ROW_GAP = 12;
 /** The hit-ratio row, px. */
 const RATIO_H = 24;
+/**
+ * The post office's props (art/tiles/games_art.py): the counter round the cubbies, a 9-slice whose wooden lip, posts
+ * and plinth are this many px at 1× (drawn round the desk, at the play scale); a viewer's phone; a file on its way, an
+ * envelope (amber for a trip to the origin, green for a hit).
+ */
+const COUNTER = { frame: 'game:edge:counter', top: 8, side: 5, bottom: 7 };
+const PHONE = 'game:edge:phone';
+const FILE = { miss: 'game:edge:file-miss', hit: 'game:edge:file-hit' };
 
 /** The nearest even number of px (a counter's middle then sits on a whole pixel, and so does its ring). */
 const even = (n: number) => 2 * Math.round(n / 2);
@@ -72,7 +80,8 @@ interface Viewer {
  * show one number; invalidations score points but aren't requests. Each miss shows how often its file was asked for,
  * popular ones marked 🔥, and a tip names the strategy a few seconds in. The sprites, the street and the counters'
  * padding are drawn at a whole-number scale (cast.ts fitScale): 2× in the tab, 1× in the side panel; text follows
- * ⋯ → Text size and the layout measures it.
+ * ⋯ → Text size and the layout measures it. The counter, the phones and the envelopes are the art generator's
+ * (art/tiles/games_art.py).
  */
 export class EdgeGame extends MiniGame {
   private s: EdgeState = newEdge([]);
@@ -155,6 +164,9 @@ export class EdgeGame extends MiniGame {
     // The counters: four in a row when the post office has room for their labels, else 2×2 (the side panel).
     const cols = cw - 24 >= 4 * (label.w + 32) ? 4 : 2;
     const rows = EDGE_RULES.slots / cols;
+    // The counter's wooden frame round the desk (a 9-slice: WebGL), or the desk's own black edge.
+    const framed = hasSprite(COUNTER.frame) && this.game.renderer.type === Phaser.WEBGL;
+    const rim = (px: number, scale: number) => (framed ? px * scale : 0);
 
     // The play group's scale: the biggest whole number at which the row of sprites fits the column's width and the
     // whole layout (two feed rows at least) fits the room under the chrome.
@@ -169,7 +181,7 @@ export class EdgeGame extends MiniGame {
     const signStyle = (s: number): TextStyle => ({ ...TXT(13, CSS.inkHi), align: 'center', padding: { x: 8, y: 3 }, wordWrap: { width: signWrap(s) } });
     const signTallest = measure(SIGN, signStyle(widthScale)).h + SIGN_EDGE;
     const fixedH =
-      RATIO_H + 6 + 4 + Math.max(signTallest, chipH) + 10 + 2 * DESK_PAD + rows * (label.h + 7) + (rows - 1) * ROW_GAP + 12 + head + 4 + 2 * this.rowH + 10 + legend.height + 6;
+      RATIO_H + 6 + 4 + Math.max(signTallest, chipH) + 10 + rim(COUNTER.top + COUNTER.bottom, widthScale) + 2 * DESK_PAD + rows * (label.h + 7) + (rows - 1) * ROW_GAP + 12 + head + 4 + 2 * this.rowH + 10 + legend.height + 6;
     const scaledH = Math.max(edgeH, AGENT_H, originH, VIEWER_H) + STREET_DOWN + 6 * rows;
     const S = Math.min(widthScale, fitScale(room - fixedH, scaledH, MAX_SCALE));
     this.px = S;
@@ -179,7 +191,7 @@ export class EdgeGame extends MiniGame {
     const above = Math.max(Math.max(edgeH, AGENT_H) * S + 4 + sign.height + SIGN_EDGE, Math.max(originH, VIEWER_H) * S + 4 + chipH);
     const cellH = even(label.h + 6 + 6 * S);
     const deskH = 2 * DESK_PAD + rows * cellH + (rows - 1) * ROW_GAP;
-    const fixedNoFeed = RATIO_H + 6 + above + STREET_DOWN * S + 10 + deskH + 12 + head + 4 + 10 + legend.height + 6;
+    const fixedNoFeed = RATIO_H + 6 + above + STREET_DOWN * S + 10 + rim(COUNTER.top + COUNTER.bottom, S) + deskH + 12 + head + 4 + 10 + legend.height + 6;
     this.feedRows = Phaser.Math.Clamp(Math.floor((room - fixedNoFeed) / this.rowH), 2, 6);
     const col = this.column(fixedNoFeed + this.feedRows * this.rowH, MAX_W);
 
@@ -213,6 +225,8 @@ export class EdgeGame extends MiniGame {
       // The middle one stands a step nearer.
       const feet = groundY + (i % 2) * 3 * S;
       const who = person(this, sheet, x, feet, S, 'idle', 'SE').setDepth(2 + (i % 2));
+      // Each asks from their phone (the requests leave from it).
+      if (hasSprite(PHONE)) prop(this, PHONE, x + 8 * S, feet - 24 * S, S).setDepth(2.5 + (i % 2));
       return { x: x + 8 * S, y: feet - 24 * S, who, busy: 0 };
     });
     chip(vLeft + (18 + VIEWER_STEP) * S, groundY - VIEWER_H * S - 4, 'viewers');
@@ -241,23 +255,32 @@ export class EdgeGame extends MiniGame {
       .fillStyle(COLOR.bg, 1)
       .fillRect(b.x, b.y, b.width, b.height);
 
-    // The counters, in front of the edge location: a desk of four cubbies under the street, each numbered for its key.
-    const cTop = groundY + STREET_DOWN * S + 10;
-    const slotW = Math.min(Math.floor((col.w - 24) / cols), label.w + 32 + 16 * S);
+    // The counters, in front of the edge location: a desk of four cubbies under the street, each numbered for its key,
+    // in the post office's wooden counter (its lip over the cubbies, its plinth under them).
+    const side = rim(COUNTER.side, S);
+    const cTop = groundY + STREET_DOWN * S + 10 + rim(COUNTER.top, S);
+    const slotW = Math.min(Math.floor((col.w - 24 - 2 * side) / cols), label.w + 32 + 16 * S);
     this.cellW = even(slotW - 8);
     this.cellH = cellH;
     const deskW = cols * slotW - 8 + 2 * DESK_PAD;
-    const deskL = Math.round(Phaser.Math.Clamp(this.edgeX - deskW / 2, col.x + 6, col.r - 6 - deskW));
+    const deskL = Math.round(Phaser.Math.Clamp(this.edgeX - deskW / 2, col.x + 6 + side, col.r - 6 - side - deskW));
     const x0 = deskL + DESK_PAD - 4;
-    this.add
-      .graphics()
-      .setDepth(1)
-      .fillStyle(PAL.black, 1)
-      .fillRect(deskL - 2, cTop - 2, deskW + 4, deskH + 4)
-      .fillStyle(COLOR.bgDeep, 1)
-      .fillRect(deskL, cTop, deskW, deskH)
-      .fillStyle(COLOR.panelHi, 1)
-      .fillRect(deskL, cTop, deskW, 3);
+    if (framed)
+      this.add
+        .nineslice(deskL - side, cTop - rim(COUNTER.top, S), CITY_ATLAS, COUNTER.frame, Math.ceil(deskW / S) + 2 * COUNTER.side, Math.ceil(deskH / S) + COUNTER.top + COUNTER.bottom, COUNTER.side, COUNTER.side, COUNTER.top, COUNTER.bottom)
+        .setOrigin(0, 0)
+        .setScale(S)
+        .setDepth(1);
+    else
+      this.add
+        .graphics()
+        .setDepth(1)
+        .fillStyle(PAL.black, 1)
+        .fillRect(deskL - 2, cTop - 2, deskW + 4, deskH + 4)
+        .fillStyle(COLOR.bgDeep, 1)
+        .fillRect(deskL, cTop, deskW, deskH)
+        .fillStyle(COLOR.panelHi, 1)
+        .fillRect(deskL, cTop, deskW, 3);
     this.slotXY = Array.from({ length: EDGE_RULES.slots }, (_, i) => ({
       x: Math.round(x0 + (i % cols) * slotW + slotW / 2),
       y: cTop + DESK_PAD + Math.floor(i / cols) * (cellH + ROW_GAP) + cellH / 2,
@@ -267,7 +290,7 @@ export class EdgeGame extends MiniGame {
 
     this.feedX = col.x + 12;
     this.feedW = col.w - 24;
-    this.feedTop = cTop + deskH + 12 + head + 4;
+    this.feedTop = cTop + deskH + rim(COUNTER.bottom, S) + 12 + head + 4;
     this.feedHead = crisp(this.add.text(this.feedX, this.feedTop - 4, 'Misses (click a file to cache it):', { ...TXT(13, CSS.info), wordWrap: { width: this.feedW } })).setOrigin(0, 1);
     legend.setY(this.feedTop + this.feedRows * this.rowH + 10);
     this.onKeys((k) => {
@@ -374,14 +397,20 @@ export class EdgeGame extends MiniGame {
     return EDGE.files[0].name;
   }
 
-  /** A packet dot from a viewer to the edge (and on to the origin on a miss); the viewer talks while it's out. */
+  /**
+   * A file from a viewer's phone to the edge (and on to the origin on a miss): an envelope, amber for a miss, green for a
+   * hit (a dot without the atlas). The viewer talks while it's out.
+   */
   private packet(miss: boolean) {
     if (reducedMotion()) return;
     const v = this.viewers[Math.floor(Math.random() * this.viewers.length)];
-    const dot = this.add
-      .circle(v.x, v.y, 2 + this.px, miss ? COLOR.accent : COLOR.good)
-      .setStrokeStyle(1, PAL.black)
-      .setDepth(4);
+    const file = miss ? FILE.miss : FILE.hit;
+    const dot = hasSprite(file)
+      ? prop(this, file, v.x, v.y, this.px).setDepth(4)
+      : this.add
+          .circle(v.x, v.y, 2 + this.px, miss ? COLOR.accent : COLOR.good)
+          .setStrokeStyle(1, PAL.black)
+          .setDepth(4);
     const lane = this.laneY;
     v.busy++;
     act(v.who, 'talk', 'SE');
