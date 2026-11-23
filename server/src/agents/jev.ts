@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { log } from '../log.js';
 import type { Action } from './actions.js';
+import { DEFAULT_JEV_MODEL, DEFAULT_JEV_THRESHOLDS, type JevConfig, type JevThresholds, RISK_LEVELS } from './jev-config.js';
+
+export { DEFAULT_JEV_MODEL, DEFAULT_JEV_THRESHOLDS, type JevConfig, type JevThresholds, RISK_LEVELS };
 
 /**
  * TypeSafe's Jev (docs/jev.md): a second opinion on an agent's AWS write, asked after policy passes and before the
@@ -11,28 +14,10 @@ import type { Action } from './actions.js';
  * Jev reads its state as data but injected text can still sway it, which is why it may never loosen anything.
  */
 export const JEV_URL = 'https://api.typesafe.ai/v1/systemone';
-/** A model name TypeSafe's docs show returned. Pinned: aliases move on release. */
-export const DEFAULT_JEV_MODEL = 'jev-1.13.0';
 export const JEV_TIMEOUT_MS = 3_000;
 export const MAX_JEV_BYTES = 32 * 1024;
 /** The player's words sent at most (Jev's long-state mode is slower and less accurate). */
 export const MAX_INTENT_CHARS = 500;
-
-export interface JevThresholds {
-  /** Block when the intent answer (0–1) is below this. */
-  blockBelow: number;
-  /** Ask for a typed name when the intent answer is below this… */
-  askBelow: number;
-  /** …or the risk score (0–2, lowest level first) is at least this. */
-  askRiskAtLeast: number;
-}
-export const DEFAULT_JEV_THRESHOLDS: JevThresholds = { blockBelow: 0.2, askBelow: 0.6, askRiskAtLeast: 1.2 };
-
-export interface JevConfig {
-  apiKey: string;
-  model: string;
-  thresholds: JevThresholds;
-}
 
 export type Verdict = 'allow' | 'ask' | 'block';
 
@@ -58,13 +43,6 @@ export const BLOCKED_REASON =
 export const MISMATCH_REASON = 'This may not be what you asked for.';
 export const RISKY_REASON = 'This change stops, deletes or costs something, or reaches past what you asked for.';
 export const UNCHECKED_REASON = "The safety check couldn't look at this one, so check it carefully.";
-
-/** Lowest first: the index is the score. */
-export const RISK_LEVELS = [
-  'Harmless: it creates or starts a small game resource of the kind the player asked for.',
-  'It stops, deletes or removes something, or it costs money.',
-  'It destroys data, makes something public, or touches something the player did not mention.',
-];
 
 /** Pure: the answers to a verdict. The arithmetic stays here; Jev is never asked to compute. */
 export const verdictFor = (scores: { intent?: number; risk: number }, t: JevThresholds): Verdict => {

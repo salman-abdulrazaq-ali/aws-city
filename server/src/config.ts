@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { DEFAULT_JEV_MODEL, DEFAULT_JEV_THRESHOLDS, type JevConfig, RISK_LEVELS } from './agents/jev.js';
+import { DEFAULT_JEV_MODEL, DEFAULT_JEV_THRESHOLDS, type JevConfig, RISK_LEVELS } from './agents/jev-config.js';
 
 /**
  * Two ways to run:

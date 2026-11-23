@@ -246,7 +246,8 @@ When a change touches a decision, update its entry and run its Proof.
   presigned POST on our own S3 client, main.ts/link.ts handing `assumedRole` to gated clients). The player role and IAM are the
   outer wall. Proof: `cd server && npx vitest run test/guard.test.ts test/player-role.test.ts test/service.test.ts test/fixes.test.ts test/care.test.ts`,
   `cd server && npx vitest run test/tenants.test.ts -t "aws change"`.
-- **Jev, a second opinion that only tightens** (`server/src/agents/jev.ts`, `docs/jev.md`). Off unless `TYPESAFE_API_KEY` is
+- **Jev, a second opinion that only tightens** (`server/src/agents/jev.ts`, `docs/jev.md`; its settings in `jev-config.ts`, which
+  imports nothing, so `server/src/config.ts` stays light enough for the extension's tests to import). Off unless `TYPESAFE_API_KEY` is
   set (local or hosted). ActionService asks TypeSafe's Jev about a write after policy passes and before the player is asked
   (the `judge` dependency, in `write()`, so an agent's write and a plain request's direct one alike); never about a read,
   a denied write or one with no approval channel. The state is only the player's own words (`TurnHooks.intent` =
