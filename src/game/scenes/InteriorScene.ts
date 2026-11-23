@@ -2,32 +2,21 @@ import Phaser from 'phaser';
 import type { ServerEvent } from '@/backend/contract';
 import { bus } from '@/state/bus';
 import { isDiscovered, useCity } from '@/state/store';
-import type { Tile } from '@/world/layout';
 import { placeFor } from '@/world/places';
 import { districtById, servicesIn, type DistrictId } from '@/world/taxonomy';
-import { Agent, type AgentWorld } from '../Agent';
+import { Agent, setBubbleTopInset, type AgentWorld } from '../Agent';
 import { addSprite, CITY_ATLAS } from '../assets';
 import { blip, click, sfx } from '../audio';
-import { castFor } from '../cast';
+import { castFor, workAnimFor } from '../cast';
+import { DOOR, piecesFor, ROOM_H, ROOM_W, staffSpots, tilesOf, type Piece } from '../hqRoom';
 import { cornerScreen, entityDepth, ROOM_ISO, toScreen, toTile } from '../iso';
 import { KAI_SHEET } from '@/world/culture';
 import { crisp, TEXT_FONT } from '../SpeechBubble';
+import { CSS, withAlpha } from '../theme';
 import { onSceneEnd } from './lifecycle';
 
-const W = 10;
-const H = 9;
-const DOOR: Tile = { x: 0, y: 7 };
-/** Chairs (agent sits here facing SE) — the pack's desk with computer is one tile SE of each. */
-const SEATS: Tile[] = [
-  { x: 2, y: 2 },
-  { x: 5, y: 2 },
-  { x: 2, y: 5 },
-  { x: 5, y: 5 },
-  { x: 2, y: 8 },
-  { x: 5, y: 8 },
-];
-
-type Piece = [sprite: string, x: number, y: number];
+const W = ROOM_W;
+const H = ROOM_H;
 
 /** Back walls, in the pack's style: [sprite, index along the wall]. Two-tile pieces take two slots. */
 const RIGHT_WALL: Record<string, string[]> = {
@@ -38,21 +27,6 @@ const LEFT_WALL: Record<string, string[]> = {
   default: ['pack:window_left', '', 'pack:poster_lambda_left', 'pack:dashboard_left', '', 'pack:server_left', 'wallL', 'DOOR', 'wallL'],
   spheres: ['pack:window_left', '', 'pack:window_left', '', 'pack:window_left', '', 'glassWallL', 'DOOR', 'glassWallL'],
 };
-
-const FURNITURE: Record<string, Piece[]> = {
-  compute: [['pack:server_rack_SW', 9, 1], ['pack:server_rack_SW', 9, 2], ['pack:server_rack_SW', 9, 3], ['pack:server_rack_SW', 9, 4]],
-  storage: [['pack:data_box_SW', 9, 1], ['pack:data_box_SW', 9, 2], ['pack:server_rack_SW', 9, 4]],
-  database: [['pack:server_rack_SW', 9, 1], ['pack:server_rack_SW', 9, 2], ['pack:data_box_SW', 9, 4]],
-  networking: [['pack:server_rack_SW', 9, 1], ['pack:lambda_sign_SW', 9, 3]],
-  security: [['pack:server_rack_SW', 9, 1], ['pack:data_box_SW', 9, 3]],
-  aiml: [['pack:server_rack_SW', 9, 1], ['pack:server_rack_SW', 9, 2], ['pack:lambda_sign_SW', 9, 4]],
-  management: [['pack:data_box_SW', 9, 1], ['pack:server_rack_SW', 9, 2], ['pack:data_box_SW', 9, 3], ['pack:lambda_sign_SW', 9, 4]],
-};
-const COMMON: Piece[] = [['pack:coffee_machine_SW', 9, 7], ['plant', 9, 8], ['plant', 1, 0], ['sofa', 7, 8]];
-const SPHERES: Piece[] = [
-  ['tree0', 1, 1], ['tree1', 3, 1], ['pine', 8, 1], ['tree0', 9, 3], ['tree1', 9, 6], ['plant', 1, 4], ['plant', 7, 4], ['plant', 4, 7],
-  ['flowers', 3, 4], ['flowers', 6, 6], ['benchX', 7, 6], ['benchY', 2, 6], ['pack:coffee_machine_SW', 9, 8], ['awsSign', 5, 1],
-];
 
 export class InteriorScene extends Phaser.Scene {
   private districtId!: string;
@@ -114,7 +88,7 @@ export class InteriorScene extends Phaser.Scene {
     addSprite(this, spheres ? 'glassWallL' : 'wallL', cornerScreen(ROOM_ISO, 0, DOOR.y).x, cornerScreen(ROOM_ISO, 0, DOOR.y).y).setDepth(-6);
     const door = this.add.sprite(dp.x, dp.y, 'door', 0).setOrigin(8 / 40, 52 / 64).setDepth(-4);
 
-    for (const [key, x, y] of spheres ? SPHERES : [...(FURNITURE[this.districtId] ?? []), ...COMMON]) this.furniture(key, x, y);
+    for (const piece of piecesFor(this.districtId)) this.furniture(piece);
 
     // who works here
     const staff: string[] = spheres
@@ -122,31 +96,35 @@ export class InteriorScene extends Phaser.Scene {
       : servicesIn(this.districtId as DistrictId)
           .filter((s) => isDiscovered(useCity.getState().progress, s.id, useCity.getState().cityRegion))
           .map((s) => s.id);
-    staff.forEach((_, i) => {
-      const seat = SEATS[i];
-      this.furniture('pack:desk_computer_SE', seat.x + 1, seat.y);
-      const n = cornerScreen(ROOM_ISO, seat.x, seat.y);
-      addSprite(this, 'pack:office_chair_SE', n.x, n.y).setDepth(entityDepth(toScreen(ROOM_ISO, seat.x, seat.y).y) - 2);
-    });
+    // The first six sit at the desks, the rest stand at the racks (src/game/hqRoom.ts): a full district fits.
+    const spots = staffSpots(staff.length);
+    for (const spot of spots) {
+      if (!spot?.desk) continue;
+      this.furniture(['pack:desk_computer_SE', spot.desk.x, spot.desk.y]);
+      const n = cornerScreen(ROOM_ISO, spot.tile.x, spot.tile.y);
+      addSprite(this, 'pack:office_chair_SE', n.x, n.y).setDepth(entityDepth(toScreen(ROOM_ISO, spot.tile.x, spot.tile.y).y) - 2);
+    }
 
-    const titleText = spheres ? 'The Spheres · Console HQ — tell the Concierge what you want to build or learn' : `${d!.hq} · ${d!.name}`;
-    const t0 = toScreen(ROOM_ISO, 0, 0);
+    // A name only: the Concierge's welcome says what to do here, and a longer sign covered the side panel's small room.
+    const titleText = spheres ? 'The Spheres · Console HQ' : `${d!.hq} · ${d!.name}`;
+    // The room's sign, pinned to the top of the view (update): placed above the back wall it was off-screen at every zoom.
     this.title = crisp(
       this.add
-        .text(t0.x + 40, t0.y - 96, titleText, { fontFamily: TEXT_FONT, fontSize: '12px', fontStyle: '800', color: '#fff8ec', backgroundColor: '#15171bdd', padding: { x: 8, y: 4 } })
-        .setOrigin(0.5, 1)
+        .text(0, 0, titleText, { fontFamily: TEXT_FONT, fontSize: '12px', fontStyle: '800', align: 'center', color: CSS.inkHi, backgroundColor: withAlpha('bg', 0.87), padding: { x: 8, y: 4 } })
+        .setOrigin(0.5, 0)
         .setDepth(70_000),
     );
 
     staff.forEach((id, i) => {
       const c = castFor(id)!;
+      const spot = spots[i];
       const a = new Agent(this, this.world, {
         id,
         name: c.name,
         tile: { x: 3 + (i % 3), y: 4 },
         home: { x: 1, y: 3, w: 7, h: 5 },
-        workSpot: SEATS[i],
-        workAnim: 'sit',
+        workSpot: spot?.tile,
+        workAnim: spot?.seated === false ? workAnimFor(c.activity) : 'sit',
         workDir: 'SE',
         speed: 1.6,
       });
@@ -196,8 +174,18 @@ export class InteriorScene extends Phaser.Scene {
   }
 
   override update(time: number, dt: number) {
-    const ui = 1 / this.cameras.main.zoom;
-    this.title?.setScale(ui);
+    // As in the city: one on-screen size at every zoom, times the player's text size (⋯ → Text size).
+    const cam = this.cameras.main;
+    const text = (useCity.getState().prefs.textSize ?? 100) / 100;
+    const ui = text / cam.zoom;
+    if (this.title) {
+      // Top centre of the view, 8 px down, wrapped to the view's width (The Spheres' line is long for the side panel).
+      const wrap = Math.max(160, Math.floor((this.scale.width - 32) / text));
+      if (this.title.style.wordWrapWidth !== wrap) this.title.setWordWrapWidth(wrap);
+      this.title.setScale(ui).setPosition(cam.midPoint.x, cam.midPoint.y - cam.height / 2 / cam.zoom + 8 / cam.zoom);
+      // Speech bubbles stay below the sign (screen px from the top of the view).
+      setBubbleTopInset(this, Math.ceil(12 + this.title.displayHeight * cam.zoom));
+    }
     for (const a of this.agents.values()) {
       a.update(time, dt);
       a.setUiScale(ui);
@@ -219,11 +207,11 @@ export class InteriorScene extends Phaser.Scene {
     this.offs.push(() => this.scale.off('resize', fit));
   }
 
-  private furniture(key: string, x: number, y: number) {
+  private furniture(piece: Piece) {
+    const [key, x, y] = piece;
     const n = cornerScreen(ROOM_ISO, x, y);
     addSprite(this, key, n.x, n.y).setDepth(entityDepth(toScreen(ROOM_ISO, x, y).y));
-    if (key === 'sofa') this.blocked.add(y * W + x + 1);
-    if (key !== 'flowers') this.blocked.add(y * W + x);
+    for (const t of tilesOf(piece)) this.blocked.add(t.y * W + t.x);
   }
 
   private onServer(e: ServerEvent) {
