@@ -207,7 +207,12 @@ const PAGES: Record<PracticeService, Page> = {
       ) +
       box('Instance type', '<div id="type-field"></div>') +
       box('Key pair (login)', '<div id="kp-field"></div><button class="awsui_button_x4 secondary" type="button">Create new key pair</button>') +
-      box('Network settings', tiles('Firewall (security groups)', 'sg', [{ label: 'Create security group', checked: true }, { label: 'Select existing security group' }])) +
+      box(
+        'Network settings',
+        tiles('Firewall (security groups)', 'sg', [{ label: 'Create security group', checked: true }, { label: 'Select existing security group' }]) +
+          // The real wizard ticks this by default for a new group: the Copilot hands it back with a warning.
+          check('Allow SSH traffic from Anywhere (0.0.0.0/0)', true, 'Helps you connect to your instance'),
+      ) +
       box('Summary', '<p>Number of instances: 1</p><button class="awsui_button_x4 secondary" type="button" data-risky>Purchase a Savings Plan</button>'),
     wire: (root) => {
       customSelect(root.querySelector('#type-field')!, {

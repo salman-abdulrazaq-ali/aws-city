@@ -194,7 +194,8 @@ export function Flashcards() {
                 </span>
                 {card.simple && (
                   // Simple words first; the full answer is one tap away (its own control, so it never flips the card).
-                  <details className="tell-more">
+                  // Keyed by card: each card starts folded, never open (or shut) because the last one was.
+                  <details key={card.id} className="tell-more">
                     <summary>Tell me more</summary>
                     <span className="tell-more-text">
                       <Plain text={card.a} except={serviceId} />

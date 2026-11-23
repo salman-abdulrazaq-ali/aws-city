@@ -61,7 +61,8 @@ export class Requests {
     const p = this.player();
     const near = Math.abs(p.gx - this.asker.gx) + Math.abs(p.gy - this.asker.gy) <= 1;
     if (!near && this.card === 'closed') this.card = 'none';
-    else if (near && this.card === 'none') this.open(time);
+    // Not while Decorate is open (its card would cover the drawer): the citizen waits and asks once it closes.
+    else if (near && this.card === 'none' && !useCity.getState().build) this.open(time);
   }
 
   private spawn(time: number) {

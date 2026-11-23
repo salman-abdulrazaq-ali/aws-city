@@ -356,6 +356,20 @@ describe('Copilot hardening: redaction and secret pages', () => {
       'parameter-store': ['https://us-west-2.console.aws.amazon.com/systems-manager/parameters/db-password/description?region=us-west-2&tab=Table'],
       kms: ['https://us-west-2.console.aws.amazon.com/kms/home?region=us-west-2#/kms/keys'],
       cloudshell: ['https://us-west-2.console.aws.amazon.com/cloudshell/home?region=us-west-2'],
+      'lambda-env': [
+        'https://us-west-2.console.aws.amazon.com/lambda/home?region=us-west-2#/functions/my-fn?tab=configure',
+        'https://us-west-2.console.aws.amazon.com/lambda/home?region=us-west-2#/functions/my-fn/edit/environment-variables?tab=configure',
+      ],
+      'rds-credentials': [
+        'https://us-west-2.console.aws.amazon.com/rds/home?region=us-west-2#databases:',
+        'https://us-west-2.console.aws.amazon.com/rds/home?region=us-west-2#database:id=prod-db;is-cluster=false',
+        'https://us-west-2.console.aws.amazon.com/rds/home?region=us-west-2#database:id=prod-db;is-cluster=false;tab=connectivity',
+      ],
+      'ec2-windows-password': ['https://us-west-2.console.aws.amazon.com/ec2/home?region=us-west-2#GetWindowsPassword:instanceId=i-0123456789abcdef0'],
+      'cognito-client-secret': [
+        'https://us-west-2.console.aws.amazon.com/cognito/v2/idp/user-pools/us-west-2_AbCdEf123/applications/app-clients/1example23456789?region=us-west-2',
+        'https://us-west-2.console.aws.amazon.com/cognito/users/?region=us-west-2#/pool/us-west-2_AbCdEf123/clients',
+      ],
     };
     expect(SECRET_PAGES.map((p) => p.id).sort()).toEqual(Object.keys(SECRET).sort());
     for (const urls of Object.values(SECRET)) for (const u of urls) expect(isSecretPage(u), u).toBe(true);
@@ -363,6 +377,12 @@ describe('Copilot hardening: redaction and secret pages', () => {
       'https://us-east-1.console.aws.amazon.com/iam/home#/roles',
       'https://us-west-2.console.aws.amazon.com/s3/buckets?region=us-west-2',
       'https://us-west-2.console.aws.amazon.com/systems-manager/home?region=us-west-2',
+      // the same services' ordinary pages are still auto-snapped
+      'https://us-west-2.console.aws.amazon.com/lambda/home?region=us-west-2#/functions',
+      'https://us-west-2.console.aws.amazon.com/lambda/home?region=us-west-2#/functions/my-fn?tab=code',
+      'https://us-west-2.console.aws.amazon.com/rds/home?region=us-west-2#launch-dbinstance:',
+      'https://us-west-2.console.aws.amazon.com/ec2/home?region=us-west-2#Instances:',
+      'https://us-west-2.console.aws.amazon.com/cognito/v2/idp/user-pools?region=us-west-2',
       'https://docs.aws.amazon.com/secretsmanager/latest/userguide/intro.html',
       'chrome-extension://abcdefghijklmnop/practice.html#/iam',
       undefined,

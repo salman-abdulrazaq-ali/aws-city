@@ -26,8 +26,15 @@ export interface TerminalStep {
   cli: string;
   /** What a successful run prints; `{{name}}` takes the value the player gave for `<name>`. */
   output: string;
+  /** What a successful run prints instead when a flag's value matches (`--region` us-east-1); the first match wins. */
+  outputs?: { when: { flag: string; value: string }; output: string }[];
+  /** `--item` may be any well-formed DynamoDB item that carries these key attributes, not only the step's own. */
+  itemKey?: string[];
   errors?: TerminalError[];
 }
+
+/** A line in the game's own voice (a coaching note), not something the real CLI prints. */
+export const isCoaching = (text: string) => text.startsWith('Practice terminal:');
 
 export type RunResult =
   | { kind: 'ok'; output: string; values: Record<string, string> }
@@ -196,7 +203,12 @@ export function run(line: string, step: TerminalStep): RunResult {
   const mismatched = new Set<string>();
   if (got.words.length !== want.words.length || !want.words.every((w, i) => matches(w, got.words[i], values, mismatched))) {
     if (got.words[0] !== 'aws') return { kind: 'other', output: `${got.words[0] ?? tokens[0]}: this practice terminal only runs the AWS CLI. This step uses \`${name}\`.` };
-    return { kind: 'other', output: `Not this step's command. This step runs \`${name}\`.` };
+    return { kind: 'other', output: parserRefusal(want.words, got.words) ?? `Not this step's command. This step runs \`${name}\`.` };
+  }
+  // The same settings written another way the CLI reads alike (keys in another order, the JSON form) count as the step's.
+  for (const [flag, v] of want.flags) {
+    const g = got.flags.get(flag);
+    if (typeof v === 'string' && typeof g === 'string') got.flags.set(flag, sameShape(v, g));
   }
   // Everything given is read first, in the command's order: names fill the messages, and a `<name>` given two values
   // is a mismatch a taught mistake can name. A positional argument may be any file name.
@@ -206,6 +218,8 @@ export function run(line: string, step: TerminalStep): RunResult {
     if (typeof v === 'string' && typeof g === 'string' && matches(v, g, values, mismatched)) right.add(flag);
   }
   want.rest.forEach((w, i) => got.rest[i] !== undefined && matches(w, got.rest[i], values, mismatched));
+  const item = got.flags.get('--item');
+  if (step.itemKey && typeof item === 'string' && isItem(item, step.itemKey)) right.add('--item');
   // A taught mistake first: it names the exact thing that went wrong.
   const fires = (w: TerminalError['when']) => {
     if (!w || !(w.missing || (w.flag && w.value) || w.mismatch)) return false;
@@ -229,7 +243,103 @@ export function run(line: string, step: TerminalStep): RunResult {
       return { kind: 'other', output: `Practice terminal: this step also ${v === true ? `uses ${flag}` : `sets ${flag} ${v}`}. Add it and run it again.` };
   if (got.rest.length < want.rest.length) return { kind: 'other', output: `Practice terminal: this step ends with ${want.rest.slice(got.rest.length).join(' ')}. Add it and run it again.` };
   for (const [flag, v] of want.flags) if (v !== true && got.flags.has(flag) && !right.has(flag)) return { kind: 'other', output: `Close. This step sets ${flag} to ${v}.` };
-  return { kind: 'ok', output: fill(step.output, values), values };
+  const shown = step.outputs?.find(({ when }) => {
+    const v = got.flags.get(when.flag);
+    return typeof v === 'string' && new RegExp(when.value).test(v);
+  });
+  return { kind: 'ok', output: fill(shown?.output ?? step.output, values), values };
+}
+
+/** A flat shorthand value (`A=1,B=2`: no lists, no nesting) as its pairs, or undefined. */
+function shorthand(s: string): [string, string][] | undefined {
+  if (!s.includes('=') || /[{}[\]]/.test(s)) return undefined;
+  const pairs = s.split(',').map((p) => (p.indexOf('=') > 0 ? ([p.slice(0, p.indexOf('=')), p.slice(p.indexOf('=') + 1)] as [string, string]) : undefined));
+  return pairs.every(Boolean) ? (pairs as [string, string][]) : undefined;
+}
+
+/**
+ * A value the CLI reads the same as the step's shorthand, rewritten the step's way: the same keys in another order
+ * (`IgnorePublicAcls=true,BlockPublicAcls=true,…`) or the JSON form (`{"LocationConstraint":"eu-west-1"}`). Anything
+ * else comes back as typed.
+ */
+function sameShape(want: string, got: string): string {
+  const keys = shorthand(want)?.map(([k]) => k);
+  if (!keys) return got;
+  let given: Map<string, string> | undefined;
+  const pairs = shorthand(got);
+  if (pairs) given = new Map(pairs);
+  else {
+    try {
+      const o: unknown = JSON.parse(got);
+      if (o && typeof o === 'object' && !Array.isArray(o) && Object.values(o).every((v) => ['string', 'number', 'boolean'].includes(typeof v)))
+        given = new Map(Object.entries(o).map(([k, v]) => [k, String(v)]));
+    } catch {
+      return got;
+    }
+  }
+  if (!given || given.size !== keys.length || !keys.every((k) => given.has(k))) return got;
+  return keys.map((k) => `${k}=${given.get(k)}`).join(',');
+}
+
+const ATTRIBUTE_TYPES = new Set(['S', 'N', 'B', 'BOOL', 'NULL', 'M', 'L', 'SS', 'NS', 'BS']);
+/** A well-formed DynamoDB item (every attribute one typed value) whose key attributes are each a string, number or binary. */
+function isItem(text: string, key: string[]): boolean {
+  try {
+    const o: unknown = JSON.parse(text);
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return false;
+    const item = o as Record<string, unknown>;
+    const typeOf = (a: unknown) => (a && typeof a === 'object' && !Array.isArray(a) && Object.keys(a).length === 1 ? Object.keys(a)[0] : undefined);
+    const attrs = Object.values(item);
+    return attrs.length > 0 && attrs.every((a) => ATTRIBUTE_TYPES.has(typeOf(a) ?? '')) && key.every((k) => ['S', 'N', 'B'].includes(typeOf(item[k]) ?? ''));
+  } catch {
+    return false;
+  }
+}
+
+/** How alike two words are, like Python's difflib ratio (2 × common letters in order ÷ both lengths). */
+function likeness(a: string, b: string): number {
+  const row = new Array<number>(b.length + 1).fill(0);
+  for (const ca of a) {
+    let diag = 0;
+    for (let j = 1; j <= b.length; j++) {
+      const up = row[j];
+      row[j] = ca === b[j - 1] ? diag + 1 : Math.max(row[j], row[j - 1]);
+      diag = up;
+    }
+  }
+  return (2 * row[b.length]) / (a.length + b.length || 1);
+}
+
+const CLI_ERROR = 'aws: [ERROR]: An error occurred (ParamValidation): ';
+/** The CLI's usage block (aws-cli v2 `awscli/argparser.py`: USAGE and HELP_BLURB), printed after a parser error. */
+const CLI_USAGE =
+  'usage: aws [options] <command> <subcommand> [<subcommand> ...] [parameters]\nTo see help text, you can run:\n\n  aws help\n  aws <command> help\n  aws <command> <subcommand> help';
+/** The usage `aws s3` prints for a path that should be an S3 URI (aws-cli v2 `customizations/s3/subcommands.py`). */
+const S3_USAGE: Record<string, string> = {
+  cp: 'usage: aws s3 cp <LocalPath> <S3Uri> or <S3Uri> <LocalPath> or <S3Uri> <S3Uri>',
+  mb: '<S3Uri>',
+  rb: '<S3Uri>',
+};
+/** Commands that exist, so a near miss of the step's (`get-object` for `put-object`) isn't taken for a typo. */
+const S3_COMMANDS = ['cp', 'mv', 'rm', 'rb', 'mb', 'ls', 'sync', 'presign', 'website'];
+const known = (service: string, op: string) =>
+  service === 's3' ? S3_COMMANDS.includes(op) : Object.keys(CLI_REQUIRED).some((k) => k === `${service} ${op}` || k.startsWith(`${service} ${op} `));
+
+/**
+ * What the CLI's own parser prints for a command word typed wrong (aws-cli v2 `argparser.py` `_check_value`: "Found
+ * invalid choice", with the step's word as "Maybe you meant" when difflib would offer it, cutoff 0.8) or an `aws s3`
+ * path without `s3://` ("Error: Invalid argument type"). Undefined when the line is just another command.
+ */
+function parserRefusal(want: string[], got: string[]): string | undefined {
+  const [, service, op] = got;
+  if (got[0] !== 'aws' || service !== want[1] || op === undefined || want[2] === undefined) return undefined;
+  if (op !== want[2]) {
+    if (known(service, op) || likeness(op, want[2]) < 0.8) return undefined;
+    return `${CLI_ERROR}argument ${service === 's3' ? 'subcommand' : 'operation'}: Found invalid choice '${op}'\n\nMaybe you meant:\n\n  * ${want[2]}\n\n${CLI_USAGE}`;
+  }
+  const usage = S3_USAGE[op];
+  if (service !== 's3' || !usage || got.length !== want.length || got.slice(3).some((g) => g.startsWith('s3://'))) return undefined;
+  return want.slice(3).some((w) => w.startsWith('s3://')) ? `${CLI_ERROR}${usage}\nError: Invalid argument type` : undefined;
 }
 
 /** A command's file to save to (`aws s3api get-object … <outfile>`): a positional argument, named so in the CLI's errors. */

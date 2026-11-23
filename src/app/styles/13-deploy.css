@@ -164,6 +164,12 @@
   background: var(--bad-soft);
   animation: enter var(--dur-2) var(--ease-step);
 }
+/* Its explanation in ink, not --muted: muted grey on the red tint fell under 4.5:1 (axe color-contrast, 22 Nov 2026).
+   --ink-soft is 7:1 or more on it, and high contrast raises it further (styles/22-access.css). */
+.confirm > span,
+.confirm > .muted {
+  color: var(--ink-soft);
+}
 .field-hint {
   font-size: var(--fs-sm);
   color: var(--muted);

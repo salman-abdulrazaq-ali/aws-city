@@ -9,7 +9,7 @@ import type { AccountLocks } from '../store/types.js';
 import { log } from '../log.js';
 import { targetHash, withGrant } from '../guard/gate.js';
 import { actionGrant } from '../guard/grants.js';
-import { BLOCKED_REASON, type Judge, type Judgement, UNCHECKED_REASON } from './jev.js';
+import { BLOCKED_REASON, changeFor, type Judge, type Judgement, serverName, UNCHECKED_REASON } from './jev.js';
 
 export type SubmitOutcome =
   | { status: 'done'; result: ExecutionResult }
@@ -140,7 +140,7 @@ export const createActionService = (deps: {
     const destructive = DESTRUCTIVE.has(action.type);
     // The second opinion only tightens: it can refuse, or make the player type the name; the approval below still runs.
     const second = deps.judge
-      ? await deps.judge({ action, summary, destructive, intent }).catch((): Judgement => ({ verdict: 'ask', reason: UNCHECKED_REASON }))
+      ? await deps.judge({ action, summary: changeFor(summary, action, serverName(action, snapshot.resources)), destructive, intent, ...(action.type === 'terminate_instance' && !serverName(action, snapshot.resources) ? { unnamedTarget: true } : {}) }).catch((): Judgement => ({ verdict: 'ask', reason: UNCHECKED_REASON }))
       : undefined;
     if (second?.verdict === 'block') return { status: 'denied', reason: second.reason ?? BLOCKED_REASON };
     const check = second && second.verdict !== 'allow' ? { check: { reason: second.reason ?? UNCHECKED_REASON } } : {};

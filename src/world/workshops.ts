@@ -13,6 +13,8 @@ export interface WorkshopStep {
   /** Where in the console the same step is done (a console path like "dynamodbv2/home"). */
   consolePath?: string;
   output?: string;
+  outputs?: TerminalStep['outputs'];
+  itemKey?: string[];
   errors?: TerminalError[];
   verify: { check: string; value: string } | { manual: true };
   /** A tidy-up step (shown with the cleanup checklist). */
@@ -41,7 +43,7 @@ export const workshopById = (id: string) => WORKSHOPS.find((w) => w.id === id);
 export const workshopsFor = (serviceId: string) => WORKSHOPS.filter((w) => w.serviceId === serviceId);
 export const isChecked = (s: WorkshopStep): s is WorkshopStep & { verify: { check: string; value: string } } => 'check' in s.verify;
 /** The step as the practice terminal reads it (undefined for a console-only step). */
-export const terminalStep = (s: WorkshopStep): TerminalStep | undefined => (s.cli ? { cli: s.cli, output: s.output ?? '', errors: s.errors } : undefined);
+export const terminalStep = (s: WorkshopStep): TerminalStep | undefined => (s.cli ? { cli: s.cli, output: s.output ?? '', outputs: s.outputs, itemKey: s.itemKey, errors: s.errors } : undefined);
 
 /** Hosts a workshop's source link may open on: AWS Workshop Studio, AWS docs, and the source repos in AWS's own GitHub orgs. */
 const WORKSHOP_HOSTS = ['catalog.workshops.aws', 'workshops.aws', 'docs.aws.amazon.com'];

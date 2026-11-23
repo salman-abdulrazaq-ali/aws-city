@@ -216,6 +216,7 @@ export class EdgeGame extends MiniGame {
       this.wrong();
       this.addScore(EDGE_RULES.stale, 'soft');
       this.floater(this.boxes[i].x, this.boxes[i].y + 20, `✗ stale ${name}!`, FEEDBACK.wrong);
+      this.speak(`Stale: a viewer got the old ${name} from slot ${i + 1}. Press ${i + 1}, then I, to invalidate it. Score ${this.score}.`);
     } else if (r === 'hit') {
       this.hit();
       this.addScore(EDGE_RULES.hit, 'none');
@@ -251,6 +252,8 @@ export class EdgeGame extends MiniGame {
     ).setInteractive({ useHandCursor: true });
     t.setData('file', name);
     this.feed.push(t);
+    // Each miss is said as it lands in the feed (it's only drawn); C caches the oldest one there.
+    this.speak(`Miss: ${city} asked for ${name}, ${n} ${n === 1 ? 'time' : 'times'}${hot ? ', one of the most asked for' : ''}.${this.feed.length === 1 ? ' Press C to cache it.' : ''}`, true);
     t.once('pointerdown', () => this.store(name, t));
     this.time.delayedCall(pace(EDGE_RULES.feedMs), () => {
       this.feed = this.feed.filter((x) => x !== t);
@@ -272,6 +275,7 @@ export class EdgeGame extends MiniGame {
     if (i < 0) return;
     this.drawSlot(i);
     this.floater(this.boxes[i].x, this.boxes[i].y - 18, `cached ${name}`, FEEDBACK.note);
+    this.speak(`Cached ${name} in slot ${i + 1}.`);
   }
 
   private change() {
@@ -283,6 +287,7 @@ export class EdgeGame extends MiniGame {
     const i = this.s.slots.indexOf(c);
     this.drawSlot(i);
     this.floater(this.boxes[i].x, this.boxes[i].y - 22, `${c.name} changed at the origin!`, FEEDBACK.gold);
+    this.speak(`${c.name} changed at the origin: slot ${i + 1} is out of date. Press ${i + 1}, then I.`);
   }
 
   private invalidate(i: number) {

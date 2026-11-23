@@ -20,7 +20,7 @@ npm run check     # tsc --noEmit && vitest run (tests/**/*.test.{ts,tsx}; React 
 npx vitest run tests/ladder.test.ts              # one test file (the form every Proof below uses)
 npx vitest run tests/ladder.test.ts -t "<name>"  # one test by name
 npm run lint      # ESLint: rules of hooks + jsx-a11y (CI: --max-warnings 10)
-npm run smoke     # build + Playwright Chromium demo run; screenshots in .output/smoke; must print "no page errors" (exits 1 on errors only with SMOKE_STRICT=1: CI lists 6 Linux-only ones to fix first)
+npm run smoke     # build + Playwright Chromium demo run; screenshots in .output/smoke; must print "no page errors"
 npm run smoke:copilot  # the 8 Console Copilot flows on the practice console (practice.html) + the demo Lookout; must print "no page errors"
 npm run dev       # WXT dev with Chrome for Testing (`npx playwright install chromium` once; branded Chrome opens blank)
 npm run live      # local server with real AWS (workshop profile) + the extension wired to it
@@ -85,7 +85,7 @@ When a change touches a decision, update its entry and run its Proof.
   the extension as `WXT_AWS_TOKEN`, `scripts/launcher/live-run.mjs`) and hosted (`AWS_CITY_MODE=hosted`: Cognito JWT in the WebSocket subprotocol, one tenant
   per player, DynamoDB/S3, each player's own account via `AWSCityPlayerRole-<region>` + ExternalId).
   `server/src/config.ts` refuses unsafe mixes. A deleted player's sockets close within about a minute on every task
-  (`DELETED_CHECK_MS`). "Your data" (sign out, delete) shows only for hosted builds. Proof: `cd server && npx vitest run test/hosted.test.ts`,
+  (`DELETED_CHECK_MS`). "Your data" (sign out, delete) shows only for hosted builds; the demo's ⋯ says "Demo: your progress stays on this device; nothing is sent anywhere." (`DEMO_PRIVACY_LINE`, `src/ui/Hud.tsx`) and links the privacy policy when the build has `WXT_PRIVACY_URL`. Proof: `cd server && npx vitest run test/hosted.test.ts`, `npx vitest run tests/a11y-focus.test.tsx`,
   `cd server && npx vitest run test/http.test.ts -t "origins|deleted|token"`.
 - **The player role allows exactly what the server calls, and trusts only our account.** The trust is
   fixed at publish time, not a parameter. Proof: `cd server && npx vitest run test/player-role.test.ts`. The installed
@@ -218,7 +218,8 @@ When a change touches a decision, update its entry and run its Proof.
   into the game's agents (they get only allow-listed read-only docs tools). Proof: `cd server && npx vitest run test/knowledge.test.ts`.
 - **Every AWS write needs the player's approval** (contract v2 `deploy.preview` → `deploy.approve`).
   With no approval channel, writes are refused (only reads run). v2.19 `resource.remove` (no model) goes the same way:
-  `ActionService.submit` with the socket's approvals, so policy, Jev, the preview, MFA on approve and the gate all apply.
+  `ActionService.submit` with the socket's approvals, so policy, the preview, MFA on approve and the gate all apply (Jev
+  needs the player's own words, so a take-down isn't sent; its preview asks for the typed name anyway).
   A destructive write (terminate, delete, a take-down) always carries `confirmText`, the resource's name or id, whether
   or not Jev asks (`server/src/contract/approvals.ts`); the demo's take-downs too. A new preview focuses its card's title
   (`.stack-title`), never Approve, so a stray Enter or Space approves nothing.
@@ -246,18 +247,28 @@ When a change touches a decision, update its entry and run its Proof.
   presigned POST on our own S3 client, main.ts/link.ts handing `assumedRole` to gated clients). The player role and IAM are the
   outer wall. Proof: `cd server && npx vitest run test/guard.test.ts test/player-role.test.ts test/service.test.ts test/fixes.test.ts test/care.test.ts`,
   `cd server && npx vitest run test/tenants.test.ts -t "aws change"`.
-- **Jev, a second opinion that only tightens** (`server/src/agents/jev.ts`, `docs/jev.md`). Off unless `TYPESAFE_API_KEY` is
+- **Jev, a second opinion that only tightens** (`server/src/agents/jev.ts`, `docs/jev.md`; its settings in `jev-config.ts`, which
+  imports nothing, so `server/src/config.ts` stays light enough for the extension's tests to import). Off unless `TYPESAFE_API_KEY` is
   set (local or hosted). ActionService asks TypeSafe's Jev about a write after policy passes and before the player is asked
   (the `judge` dependency, in `write()`, so an agent's write and a plain request's direct one alike); never about a read,
-  a denied write or one with no approval channel. The state is only the player's own words (`TurnHooks.intent` =
-  task.submit's prompt, ≤ 500 chars, on both paths in `server/src/contract/orchestrator.ts`), the action type, `describeAction` and
-  `destructive`, with 12-digit ids and ARNs redacted; nothing from AWS. Questions: `intent` (`noul`, only with the player's
-  words) and `risk` (`score`, 3 levels, lowest first); the thresholds are code (`verdictFor`: block < 0.2 intent; ask < 0.6
-  or risk ≥ 1.2; `AWS_CITY_JEV_*`). Block refuses with a plain sentence; ask adds a "Safety check" detail line and the
+  a denied write or one with no approval channel, and never without the player's own words (`TurnHooks.intent` =
+  task.submit's prompt, on both paths in `server/src/contract/orchestrator.ts`): without them it's allow at once and
+  nothing is sent (a take-down, city care; a destructive write carries `confirmText` anyway). The state is only
+  `{request, change}`: those words (≤ 500 chars) and `describeAction`, with 12-digit ids and ARNs redacted; never the
+  action type, `destructive` or anything else from AWS: a terminate's `change` names the server by its Name tag, or says it has
+  none (`serverName`/`changeFor`), and an unnamed server counts as not named unless the player's words hold its id
+  (`unnamedTarget`: an exact lookup, so code). Judgments from Jev, decisions in code: the questions are Nouls, worded
+  with their criteria and the thresholds in `jev-config.ts` (`JEV_QUESTIONS`): `asked_for` (every write), and for a
+  destructive one `asks_to_remove` and `names_target`. A Noul ≤ `AWS_CITY_JEV_NO` (0.3) is no, ≥ `AWS_CITY_JEV_YES` (0.7)
+  yes, between unsettled; `decide` is the table, first row wins (blocks first): `asked_for` no → block; destructive and
+  `asks_to_remove` no → block; `asked_for` unsettled → ask; `asks_to_remove` unsettled → ask; `names_target` not yes →
+  ask; else allow. The old `AWS_CITY_JEV_BLOCK_BELOW`/`_ASK_BELOW`/`_ASK_RISK` are refused at startup. Block refuses with a plain sentence; ask adds a "Safety check" detail line and the
   preview's v2.3 `confirmText` (the resource's name; `approvals.answer` refuses a mismatch; a destructive write has one anyway); it never skips or answers
-  the approval. A timeout (3 s), non-2xx, a reply over 32 KB, a redirect or a reply off the documented shape is ask. The
-  model is pinned (`AWS_CITY_JEV_MODEL`, default `jev-1.13.0`); each decision is logged (id, model, scores, verdict, ms,
-  tokens), never the state or the key. Injected text can sway Jev, so it can never loosen anything.
+  the approval. A timeout (3 s), non-2xx, a reply over 32 KB, a redirect, a reply off the documented shape or a question
+  not answered as a Noul is ask, never read as an answer. The model is pinned (`AWS_CITY_JEV_MODEL`, default
+  `jev-1.14.0`); each decision is logged (id, model, each Noul, verdict, row, ms, tokens), never the state or the key.
+  Injected text can sway Jev, so it can never loosen anything. `server/test/live/jev.live.test.ts` (skipped without
+  `TYPESAFE_API_KEY`) sends 29 made-up cases one at a time (27/29 as expected on 23 Nov 2026, both misses an ask on the safe side), capped at 2M input tokens, and prints the whole record as JSON (no file: CodeQL flags network data written to disk).
   Proof: `cd server && npx vitest run test/jev.test.ts test/service.test.ts test/guard.test.ts`.
 - **Linking an AWS account, approving a write, applying a fix and taking something down need MFA (step-up).** Hosted players must have TOTP
   on for `account.link`/`account.verify`, `deploy.approve`, `finding.fix` and `resource.remove` (Google sign-ins are exempt); prod Cognito runs Plus with threat protection.
@@ -383,7 +394,7 @@ When a change touches a decision, update its entry and run its Proof.
   "Get a new setup link". The linked card names the Region, says whether small fixes are on (and how to turn them on),
   offers "Update your AWS City role (vN → vM)" when `roleVersion < latestRoleVersion` (steps, the template address, the
   ConnectsPlayer name to type, which comes with a fresh setup link, and the stacks page), "Use another Region or account"
-  and "Disconnect" (asked first; hosted and the demo, never the local server; afterwards it says how to delete the AWSCity
+  and "Disconnect" (asked first, its words in `--ink-soft`, ≥ 4.5:1 on the red tint; hosted and the demo, never the local server; afterwards it says how to delete the AWSCity
   stack in that Region). "Check again" (hosted, under "Turn small fixes on") is `account.recheck` (`recheckAccount`): the
   role is asked again whether it allows fixes, read-only. The role update ends with "I've updated the stack"
   (`confirmRoleUpdate`: a fresh link, then `account.verify {updated: true}`), and its card says the city goes by the version
@@ -682,8 +693,8 @@ When a change touches a decision, update its entry and run its Proof.
   or the row is under "+N more"), and with Everything on only when the shift's `ConnectLine` offers nothing
   (`useConnectOffer`, `src/ui/Home.tsx`); Learn hides the Drawing board (a design step shows it); City care waits for a
   finished quest; My City is buildings, stars and coins. Hidden, never deleted: badges, combos, coins, the season road and
-  the shift keep recording, and ⋯ → Show everything / Keep it simple switches back and forth with nothing lost. The tour's
-  second step points at the list. Proof: `npx vitest run tests/simple.test.ts tests/simple-ui.test.tsx tests/session.test.ts tests/account-ui.test.tsx tests/connect-card.test.tsx`, `npm run smoke`
+  the shift keep recording, and ⋯ → Show everything / Keep it simple switches back and forth with nothing lost, and ⋯ → I already build on AWS turns Everything on, as the world intro's button does. The tour's
+  second step points at the list. Proof: `npx vitest run tests/simple.test.ts tests/simple-ui.test.tsx tests/session.test.ts tests/account-ui.test.tsx tests/connect-card.test.tsx tests/a11y-focus.test.tsx`, `npm run smoke`
   (runs Simple first: `01s-simple-first-city`, `80-simple-home`, `80b-simple-task-ticked`, `80c-simple-day-done`,
   `80d-simple-panel`, `80e-simple-tour`; then turns Everything on for the feature checks).
 - **Home is Today's shift** (with Everything on; the City tab, `src/ui/Home.tsx`): one big button from `nextAction` (`src/state/next.ts`, pure
@@ -697,9 +708,9 @@ When a change touches a decision, update its entry and run its Proof.
   folded under More to do. Quest steps'
   buttons say what they do (`stepButton`: "Walk there", "Open cards (Learn)", "Solve it (Learn)", "Approve it in Deploy"),
   never a bare "Go"; each step done toasts a ✓ and bumps its building (`questStep` on the bus). The first screen says
-  what AWS is in one line (`WorldIntro`); First Brick needs a building put up somewhere (`anyBuilt` in
+  what AWS is in one line (`WorldIntro`); its "I already build on AWS" turns Everything on (Simple off) and opens every area, and after either button focus moves to the City tab's panel; First Brick needs a building put up somewhere (`anyBuilt` in
   `src/state/badges.ts`); the news ticker doesn't rotate on its own under reduced motion (its button still steps). Proof:
-  `npx vitest run tests/next.test.ts tests/ui.test.tsx tests/onboarding-fixes.test.tsx`, `npm run smoke` (one primary button on the shift).
+  `npx vitest run tests/next.test.ts tests/ui.test.tsx tests/onboarding-fixes.test.tsx tests/world-intro.test.tsx`, `npm run smoke` (one primary button on the shift).
 - **Learning has a daily rhythm and a goal.** The shift shows Today (a few cards, a puzzle, a fix: only areas that are open;
   `todayGoals` in `src/state/progress.ts`; the day's set is fixed at its first look, `settleToday`, and areas that open
   later are bonus goals that don't move "2/3 done"; "Fix something" is a day goal only while an open finding's fix gate
@@ -749,9 +760,9 @@ When a change touches a decision, update its entry and run its Proof.
   name can be tapped for its definition. Every acronym a player reads is a glossary term, a service name or on the allow-list.
   Simple words first: every flashcard has `simple` (≤ 110 chars), every puzzle `simpleWhy`, every service `simple` (≤ 90);
   the full text sits behind "Tell me more" / "For AWS learners" (so do a drawing's pillar meters and best-practice ids, and
-  a practice build's real cost: the demo says "Practice: free, nothing is created"). A flashcard's question only marks its
+  a practice build's real cost: the demo says "Practice: free, nothing is created"; a removal says what practice removes, its own "Practice:" note shown as it is). A flashcard's question only marks its
   terms (`still`: a tap anywhere flips it); the answer side repeats the question with tappable terms. "Learned" means known
-  (`isKnown`: Knew it/Easy, not "Didn't know"). Proof: `npx vitest run tests/content.test.ts tests/ui.test.tsx tests/ui-logic.test.ts`.
+  (`isKnown`: Knew it/Easy, not "Didn't know"). Proof: `npx vitest run tests/content.test.ts tests/ui.test.tsx tests/ui-logic.test.ts tests/deploy-copy.test.tsx`.
 - **The map stays calm.** Labels follow one budget (`src/game/labels.ts`, colours in `src/game/theme.ts`): names on hover or
   zoom ≥ 2, technical labels (AZ IDs, network notes, distance signs) only with ⋯ → Show the map details (`prefs.mapDetails`).
   Every issue cone shows, but only the most urgent one's "!" tag (and it alone bounces); the rest show from zoom 2 or on the
@@ -821,15 +832,15 @@ When a change touches a decision, update its entry and run its Proof.
   (`art/tiles/legend_art.py`; the Legend's beam is night-lights only) and the sign stands above them; the building card
   lists the next crown's steps. Proof: `npx vitest run tests/mastery.test.ts tests/learning.test.ts tests/art.test.ts`.
 - **Walking counts.** A quest's visit step counts when Kai *arrives* (`store.arrive`, from `goTo`'s callback or stepping
-  on the work spot), not on a tap; "Walk there", "Walk to <place>" and the tour walk him there (`src/state/walk.ts` `walkTo`), and a city that
+  on the work spot), not on a tap; "Walk there", "Walk to <place>" and the tour walk him there (`src/state/walk.ts` `walkTo`; the building's card opens as the visit counts, never at the press: `cardWaitsForKai`), and a city that
   can't (asleep behind a game or HQ) counts it at once, so a quest never sticks. Now and then one existing citizen has a
   question (`src/state/requests.ts`, `src/game/Requests.ts`: a gold "?", at most 5 a day, no new walkers): reaching them
-  opens `RequestCard`, an ordinary flashcard review plus a 2⭐ thank-you; the "?" stays until it's answered, and only
+  opens `RequestCard`, an ordinary flashcard review plus a 2⭐ thank-you (never over Decorate: the citizen waits while it's open, and a card already up is held until the drawer closes); the "?" stays until it's answered, and only
   answers count toward the five. Open park rides are ridden (no stars). Six
   golden tokens hide on each city's streets (`src/world/tokens.ts`, hashed placement, no `rng()`), glint within 4
   tiles and are kept in `Progress.finds` (contract v2.9, union merge, earliest date). Mini-games count toward Today and
   the streak, and S3 fishing pays once a round under the daily rule (`fishingStars`). Proof: `npx vitest run
-  tests/session.test.ts tests/requests.test.ts tests/tokens.test.ts tests/park.test.ts tests/game-clock.test.ts
+  tests/session.test.ts tests/requests.test.ts tests/requests-decorate.test.tsx tests/a11y-focus.test.tsx tests/tokens.test.ts tests/park.test.ts tests/game-clock.test.ts
   tests/ui-logic.test.ts tests/ui.test.tsx tests/contract.test.ts`, `cd server && npx vitest run test/progress.test.ts`.
 - **re:Play Park.** An AWS theme park on a 6×5 site the terrain reserves outside the gate in every Region (`terrain.park`,
   no `rng()`); `src/world/park.ts` lays out six rides (EventBridge wheel, Lambda coaster, CloudFront drop tower, Route 53
@@ -858,7 +869,7 @@ When a change touches a decision, update its entry and run its Proof.
   the real CLI text (a taught error's `when` conditions all hold at once: `missing`, `flag`+`value`, `mismatch`, a `<name>`
   given two values; its message takes `{{name}}`); only an argument the real CLI requires (`CLI_REQUIRED`: its synopsis'
   unbracketed options, and `outfile`) prints its ParamValidation error, all at once; any other flag the step uses gets a
-  coaching line ("Practice terminal: this step also sets …"), never a made-up CLI error; nothing touches AWS) or AWS CloudShell, where `workshop.verify` checks it with a
+  coaching line ("Practice terminal: this step also sets …"), never a made-up CLI error; a step's `outputs` pick the answer by a flag's value (create-bucket's `"/<bucket>"` in us-east-1, the bucket address elsewhere), shorthand keys in any order and the JSON form count as the step's (`sameShape`), `itemKey` takes any well-formed DynamoDB item with the key; a command word one typo off gets the CLI parser's "Found invalid choice … Maybe you meant" and an `aws s3` path without `s3://` "Error: Invalid argument type" (`parserRefusal`, from aws-cli v2's argparser.py and customizations/s3); coaching lines ("Practice terminal: …", `isCoaching`) show as help, not errors; a step that comes up after a pass takes the terminal's focus, so typing never reaches the city; nothing touches AWS) or AWS CloudShell, where `workshop.verify` checks it with a
   read-only look at the poller's snapshot (`server/src/workshops/checks.ts`: a fixed registry, no SDK calls of its own, no
   new IAM). For real, each name a command needs is typed once in a box that fills both the command and the check;
   `<region>` is the linked account's Region (until the account says it, the Region gets a box too, so Copy never waits
@@ -904,7 +915,7 @@ When a change touches a decision, update its entry and run its Proof.
   `npm run smoke` asserts at most one cargo jet.
 - **Decorate: the player decorates their own city** (build mode; contract v2.13 `Progress.decor`, rules in `src/state/buildmode.ts`,
   drawer `src/ui/BuildDrawer.tsx`, scene `src/game/BuildLayer.ts`, art `art/tiles/builder_art.py`: `deco:<kind>`, 51
-  sprites, `-r` = turned, district colours as variants). The HUD's 🌳 Decorate and ⋯ → Decorate open a palette (33 items
+  sprites, `-r` = turned, district colours as variants). The HUD's 🌳 Decorate (named Decorate where the panel hides the word) and ⋯ → Decorate open a palette; its tool and category chips are at least 28 px (WCAG 2.5.8) (33 items
   in 6 categories, each with a price in 🪙 City Coins and some unlocked by a badge or this city's rank); the ghost is green or red,
   R turns, Esc leaves, Ctrl/⌘+Z undoes (this session only), arrows move it and "✔ Here" builds (keyboard). Never on roads,
   water, sidewalks, buildings, work spots or the row in front of a building, nor on decor, infill or a business; only in
@@ -917,7 +928,7 @@ When a change touches a decision, update its entry and run its Proof.
   monuments stay earned-only); crate spares raise a reward's per-city cap. v2.16: a city merges prop by prop (`gone`
   tombstones, `mergeDecor`; a pre-v2.16 copy without `gone` still merges newer-wins) and undo touches only its step's
   prop (`UndoStep.prop`). While building, one invisible sheet takes every tap and nothing
-  auto-pans the camera. Proof: `npx vitest run tests/buildmode.test.ts tests/build-ui.test.tsx tests/art.test.ts`,
+  auto-pans the camera. Proof: `npx vitest run tests/buildmode.test.ts tests/build-ui.test.tsx tests/art.test.ts tests/a11y-focus.test.tsx tests/a11y-games.test.ts`,
   `cd server && npx vitest run test/progress.test.ts`; `npm run smoke` places three by clicking in the tab and the panel
   (`58-build-mode*.png`, axe on the drawer).
 - **Currencies: ⭐ is knowledge, 🪙 is what you spend** (contract v2.14 `Progress.wallet {earned, spent, log?, refunded?, shift?}`,
@@ -951,8 +962,8 @@ When a change touches a decision, update its entry and run its Proof.
   `TaskView.paid`/`capped`; a practice deploy pays what it reports, once per template), the next step
   (`nextAction`) and, in the demo when a task matches a practice template, 🏗️ See it in Deploy (`planDeploy`, link first
   if needed; Home passes `openTab` so it opens Deploy). Home's agent offer is the same `AgentOffer`, and each featured
-  request's words route to the agent offering it (`FEATURED_REQUESTS`, `matchText`). A building card separates 💬 Ask a question (the HQ chat) from 🛠️ Watch it done (an agent task, whose TaskCard then shows on that same card, scrolled into view). Its sign's marks are said in words there (`signLegend`: ×N resources, ! N things to check). Proof:
-  `npx vitest run tests/watch.test.ts tests/watch-ui.test.tsx tests/taxonomy.test.ts tests/daily-pay.test.ts`; `npm run smoke` (`03`–`06-task-*.png`).
+  request's words route to the agent offering it (`FEATURED_REQUESTS`, `matchText`: a keyword counts only at a word's start, "ebs" never inside "website"). A building card separates 💬 Ask a question (the HQ chat) from 🛠️ Watch it done (an agent task, whose TaskCard then shows on that same card, scrolled into view). Its sign's marks are said in words there (`signLegend`: ×N resources, ! N things to check). Proof:
+  `npx vitest run tests/watch.test.ts tests/watch-ui.test.tsx tests/taxonomy.test.ts tests/daily-pay.test.ts tests/cards-order.test.tsx`; `npm run smoke` (`03`–`06-task-*.png`).
   The agent is told the concierge's plan after the player's words, fenced as `<concierge_plan>` data it acts on only as
   far as the player asked; a step that destroys something reaches it only when the player's own words ask for one (`withPlan`,
   `planForAgent`, `server/src/contract/orchestrator.ts`: the concierge reads page context, which anyone can word), and
@@ -1142,11 +1153,11 @@ When a change touches a decision, update its entry and run its Proof.
   labels scale with the text size. Games without a clock (`prefs.relaxed`, `src/game/pace.ts`) end rounds on Done and stretch
   reaction windows and spawns (Rush Hour's day, which is the game, runs at half speed instead); Sound captions
   (`prefs.captions`) show a word pill for each meaningful sound (`CAPTIONS` in `src/game/audio.ts`, not steps or blips).
-  Every mini-game plays from the keyboard (`onKeys`, or in Fishing and Edge Cache the maps in `src/game/scenes/games/gameKeys.ts`: Space casts and hooks, 1–3 pick a bucket; 1–4 pick a cache slot, I invalidates, C caches; `tests/game-keyboard.test.ts`), its end card too (`endCardKey`: Enter plays again, X the Expert round when open, Escape back to the city, after 800 ms; fishing: Space/Enter, X, Escape). Mini-games speak through App's one polite live region (`announce`, `src/state/announce.ts`: one update per line, ≥ 150 ms apart, `replace` keeps the newest): the goal and keys first (`startLine`, a game's `keysHelp` when its title doesn't name them), each prompt (fishing's fish and buckets, the sorting office's parcel, the Dance Hall's question, the gate's request), every verdict and the player's own score changes in one line a frame (`MiniGame.speak`), and the end card in words (`endLine`, `src/game/scenes/games/say.ts`); the canvas is named for the game while it runs. Sound captions stay `aria-hidden` (the live region already says it). Keyboard: arrows walk, E talks, `]` / `[` step through buildings (announced by their sign's name, never an id: `stepLine`), `+` / `−` zoom. ⋯ is a menu: opening it focuses its first item, arrows/Home/End move (never reaching the game), Escape returns to ⋯; its sections are labelled groups and the street-maps credit is an item. A glossary definition opens in the top layer (popover API, `popPlace` keeps it in view); a flashcard's hidden face is `inert` and `aria-hidden`, and its small print is ≥ 4.5:1 on both papers (7:1 high contrast). Keys go
-  to the canvas when a game or the city starts, unless the player is in the UI (`keysBelongToUi`, `mayFocusGame`,
+  Every mini-game plays from the keyboard (`onKeys`, or in Fishing and Edge Cache the maps in `src/game/scenes/games/gameKeys.ts`: Space casts and hooks, 1–3 pick a bucket; 1–4 pick a cache slot, I invalidates, C caches; `tests/game-keyboard.test.ts`), its end card too (`endCardKey`: Enter plays again, X the Expert round when open, Escape back to the city, after 800 ms; fishing: Space/Enter, X, Escape). Mini-games speak through App's one polite live region (`announce`, `src/state/announce.ts`: one update per line, ≥ 150 ms apart, `replace` keeps the newest): the goal and keys first (`startLine`, a game's `keysHelp` when its title doesn't name them), each prompt (fishing's fish and buckets, the sorting office's parcel, the Dance Hall's question, the gate's request, the food stall's orders, the shield wall's arrivals, the queue's messages, Edge Cache's misses and changes, the Red Team Range's requests), every verdict and the player's own score changes in one line a frame (`MiniGame.speak`), and the end card in words (`endLine`, `src/game/scenes/games/say.ts`); the canvas is named for the game while it runs. Sound captions stay `aria-hidden` (the live region already says it). Keyboard: arrows walk, E talks, `]` / `[` step through buildings (announced by their sign's name, never an id, as "Place N of M on the map": `stepLine`), `+` / `−` zoom. ⋯ is a menu: opening it focuses its first item, arrows/Home/End move (never reaching the game), Escape returns to ⋯; its sections are labelled groups and the street-maps credit is an item. A glossary definition opens in the top layer (popover API, `popPlace` keeps it in view); a flashcard's hidden face is `inert` and `aria-hidden`, and its small print is ≥ 4.5:1 on both papers (7:1 high contrast). Keys go
+  to the canvas when a game or the city starts, unless the player is in the UI (`keysBelongToUi`, `mayFocusGame`; a workshop's next step takes the focus the passed one dropped,
   `src/game/keys.ts`).
-  Arriving in a city announces its summary (`citySummary`: buildings, issues, AWS status, live traffic). The smoke runs
-  axe-core (WCAG 2.2 AA) on the world map, a building's card, the tab and the panel; serious or critical violations fail it. Proof: `npx vitest run tests/a11y-prefs.test.ts tests/game-keys.test.ts tests/game-say.test.ts tests/announce.test.ts tests/a11y-menu.test.tsx tests/term-popover.test.tsx tests/ui.test.tsx`, `npm run smoke`.
+  Arriving in a city announces its summary (`citySummary`: the AWS services put up here of all of them, issues, AWS status, live traffic). Focus never falls to `<body>`: a side-panel control that goes away leaves it on the new panel's heading (`useKeepFocus`, `src/ui/useDialog.ts`), and a ⋯ item gives focus to ⋯ before it opens a dialog, so closing My City or the tour returns there. The smoke runs
+  axe-core (WCAG 2.2 AA) on the world map, a building's card, the tab and the panel; serious or critical violations fail it. Proof: `npx vitest run tests/a11y-prefs.test.ts tests/game-keys.test.ts tests/game-say.test.ts tests/announce.test.ts tests/a11y-menu.test.tsx tests/term-popover.test.tsx tests/ui.test.tsx tests/a11y-focus.test.tsx tests/a11y-games.test.ts tests/terminal-ui.test.tsx`, `npm run smoke`.
 - **Kai wears the team's gold jacket.** Always, everywhere (`KAI_SHEET` = the `player-gold` sheet, `src/world/culture.ts`).
   Golden Jacket Hall tracks the certification trophies (`hasGoldenJacket`: every one lit, a moment the first time). The real
   Golden Jacket recognises holders of every current AWS Certification; `shared/certifications.json` is that list.
@@ -1212,12 +1223,12 @@ When a change touches a decision, update its entry and run its Proof.
   time") sorts it: the snapshot sends it as role `columnheader`, never a commit. The Copilot still fills the form and points at the button;
   radios, boxes, options, tabs, dropdowns and links without a commit word stay its own (they go somewhere or fill in). It
   never types or picks a value that opens access or names an account (`isRiskyValue`: `0.0.0.0/0`, `::/0`, a bare `*`,
-  a 12-digit account number, an ARN). A refused step is the player's turn. The server marks `confirm` wherever either
+  a 12-digit account number, an ARN). A refused step is the player's turn. The demo's Copilot (`src/backend/consoleMock.ts`) never deletes: a goal that removes something (`isRemovalGoal`) runs no flow and ends `ok: false` with `NO_DELETING`; its EC2 flow hands "Allow SSH traffic from Anywhere (0.0.0.0/0)" back with a warning. The server marks `confirm` wherever either
   rule says so (`server/src/contract/console.ts`: `isCommit` by name and `lang`, since it can't see the variant;
   `isCommitControl` on a click or a select, by the model's name or the page's; `isRisky`/`isRiskyValue` values; the player-only pages), and its prompt says page text is data
   (`<console_page>`), never instructions. Text leaving the page is redacted, the typed goal included (`startConsoleCopilot`; the task card shows it redacted) (`redact`: keys in any case, or typed in groups of four in capitals, emails, tokens other than AWS/Amazon managed policy names, 12-digit account ids bare or split by
   `-`, `.` or a space), and the Lookout never auto-snaps a page that can show a secret (`autoSnaps`: an AWS page that's
-  neither `SECRET_PAGES`, the real console's access keys, secret values, Parameter Store, KMS and CloudShell, nor
+  neither `SECRET_PAGES`, the real console's access keys, secret values, Parameter Store, KMS, CloudShell, a Lambda function's Configuration tab (environment variables), RDS's database pages (a generated master password), EC2's Get Windows password and Cognito app clients (client secrets), nor
   `isSensitivePage`, which adds Cognito app clients and Identity Center credentials), only when the player asks. Proof: `npx vitest run tests/console.test.ts
   tests/console-cloudscape.test.ts tests/practice-console.test.ts tests/console-clarity.test.tsx tests/trust-copilot.test.ts tests/trust.test.tsx`, `cd server && npx
   vitest run test/console.test.ts`, `npm run smoke:copilot`.

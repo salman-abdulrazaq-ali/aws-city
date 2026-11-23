@@ -135,6 +135,8 @@ export class QueueGame extends MiniGame {
     });
     const entry: Live = { t, poison, tw };
     this.live.push(entry);
+    // Each message is said as it comes on the belt (the belt is only drawn), poison by name.
+    this.speak(`${poison ? 'Poison message' : 'Message'}: ${label}.`, true);
     // A tap queues it; a drag that ends on the DLQ bin sends it there (Phaser starts a drag on press).
     t.on('dragstart', () => tw.pause());
     t.on('dragend', (p: Phaser.Input.Pointer) => {
@@ -156,20 +158,24 @@ export class QueueGame extends MiniGame {
       this.dlqText?.setText(`DLQ ${this.dlq}`);
       this.addScore(POINTS.queue.dlq);
       this.floater(this.dlqZone.centerX, this.qy - 40, '✓ to the DLQ', FEEDBACK.right);
+      this.speak('Right: poison to the dead-letter queue.');
       t.destroy();
     } else if (toDlq) {
       this.wrong();
       this.addScore(POINTS.queue.wrong);
       this.floater(this.dlqZone.centerX, this.qy - 40, '✗ a good message thrown away', FEEDBACK.wrong);
+      this.speak('Wrong: a good message thrown away.');
       t.destroy();
     } else if (poison) {
       this.wrong();
       this.addScore(POINTS.queue.wrong);
       this.floater(this.qx + (this.dlqZone.x - this.qx) / 2, this.qy - 40, '✗ poison fails over and over: drag it to the DLQ', FEEDBACK.wrong);
+      this.speak('Wrong: poison fails over and over. Send poison to the dead-letter queue with D.');
       t.destroy();
     } else {
       this.hit();
       this.enqueue(t);
+      this.speak(`Queued. ${this.queued.length} in the queue.`);
     }
   }
 
@@ -201,9 +207,11 @@ export class QueueGame extends MiniGame {
       this.wrong();
       this.addScore(POINTS.queue.poisoned, 'soft');
       this.floater(t.x - 60, this.beltY - 30, 'poison: fails forever', FEEDBACK.wrong);
+      this.speak(`Poison reached the worker and fails forever. Score ${this.score}.`);
     } else if (this.time.now < this.busyUntil) {
       this.addScore(POINTS.queue.lost, 'soft');
       this.floater(t.x - 60, this.beltY - 30, 'worker busy: lost!', FEEDBACK.wrong);
+      this.speak(`Lost: the worker was busy and it wasn't queued. Score ${this.score}.`);
       if (!reducedMotion()) this.cameras.main.shake(90, 0.003);
     } else {
       this.busyUntil = this.time.now + pace(WORK_MS);

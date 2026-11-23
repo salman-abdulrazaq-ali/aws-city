@@ -113,7 +113,7 @@
 
     {
       "id": "s3", "name": "Amazon S3", "districtId": "storage", "consolePaths": ["s3"], "docsPaths": ["AmazonS3"],
-      "keywords": ["s3", "bucket", "object", "upload", "file", "photo", "image", "backup", "store", "storage", "data lake"],
+      "keywords": ["s3", "bucket", "object", "upload", "file", "photo", "image", "backup", "store", "storage", "data lake", "static website"],
       "place": "S3 Lake", "kind": "lake", "agentName": "Sally the Angler", "activity": "fish",
       "blurb": "Every fish is an object and every net is a bucket. Sally's lake is where AWS data lakes are built.",
       "simple": "S3 Lake: a giant lake where you can keep any file, safe, for as long as you like.",

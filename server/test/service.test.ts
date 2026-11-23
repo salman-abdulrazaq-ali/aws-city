@@ -210,7 +210,7 @@ describe('a second opinion on writes (judge = Jev) only tightens', () => {
     expect(await service.submit('terminate_instance', { instanceId: mine.id }, { intent: 'knock it down' })).toEqual({ status: 'denied', reason: NEEDS_APPROVAL_REASON });
     expect(judge).not.toHaveBeenCalled();
     await service.submit('terminate_instance', { instanceId: mine.id }, { approve, intent: 'knock it down' });
-    expect(judge).toHaveBeenCalledWith({ action: { type: 'terminate_instance', instanceId: mine.id }, summary: `Permanently terminate EC2 instance ${mine.id}`, destructive: true, intent: 'knock it down' });
+    expect(judge).toHaveBeenCalledWith({ action: { type: 'terminate_instance', instanceId: mine.id }, summary: `Permanently terminate EC2 instance ${mine.id}, which has no name`, destructive: true, intent: 'knock it down', unnamedTarget: true });
   });
 
   // Seen 22 Nov 2026: the audit line for a new bucket said aws-city-<account>-photos-1.

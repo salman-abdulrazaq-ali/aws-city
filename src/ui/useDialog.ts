@@ -47,6 +47,47 @@ export function useDialog(open: boolean, box: RefObject<HTMLElement | null>, onC
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
+/**
+ * Focus is never lost to <body> from `box` (the side panel): when the control that had it goes (a To-do row ticked, a
+ * tab or a building's card swapped in), focus lands on the new panel's heading (the building's name, "To do"), else the
+ * panel from `landing`. Only when focus was in `box`: after a press on the city (or anywhere else) the keys stay there.
+ */
+export function useKeepFocus(box: RefObject<HTMLElement | null>, landing: () => HTMLElement | null | undefined) {
+  const land = useRef(landing);
+  land.current = landing;
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    let last: Element | undefined;
+    const onIn = (e: FocusEvent) => {
+      last = el.contains(e.target as Node) ? (e.target as Element) : undefined;
+    };
+    const onDown = (e: Event) => {
+      if (!el.contains(e.target as Node)) last = undefined;
+    };
+    const watch = new MutationObserver(() => {
+      if (!last || last.isConnected) return;
+      const active = document.activeElement;
+      if (active && active !== document.body && active !== last) return;
+      last = undefined;
+      const to = land.current();
+      if (!to) return;
+      const heading = to.querySelector<HTMLElement>('h2, h3');
+      if (heading && !heading.hasAttribute('tabindex')) heading.tabIndex = -1;
+      heading?.focus();
+      if (!heading || document.activeElement !== heading) to.focus();
+    });
+    watch.observe(el, { childList: true, subtree: true });
+    document.addEventListener('focusin', onIn);
+    document.addEventListener('pointerdown', onDown, true);
+    return () => {
+      watch.disconnect();
+      document.removeEventListener('focusin', onIn);
+      document.removeEventListener('pointerdown', onDown, true);
+    };
+  }, [box]);
+}
+
 /** The presses Phaser also hears on the window (its "outside the canvas" listeners), so it would act under a card. */
 const GAME_PRESSES = ['mousedown', 'mouseup', 'touchstart', 'touchend', 'touchcancel'] as const;
 

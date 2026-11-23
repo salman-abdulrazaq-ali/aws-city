@@ -104,8 +104,13 @@ const seasonOverride = (): unknown => {
   }
   return (useCity.getState().prefs as { season?: string } | undefined)?.season;
 };
-/** The combo / courier lesson card and the next-level line: over the props and labels, under the HUD-like hint. */
+/** The next-level ghost's card: over the props and labels, under the HUD-like hint. */
 const INFO_DEPTH = 58_500;
+/**
+ * The combo / courier lesson bubble: UI like an agent's speech bubble (Agent.ts), so over the night overlay (70_000) and
+ * the window lights (70_001–2). Under them, the lights drew over its words at night (Okafor's playtest).
+ */
+const INFO_BUBBLE_DEPTH = 75_000;
 /** The next-level ghost: its size on its blueprint card, the card's padding and its gap over the building (world px). */
 const GHOST_SCALE = 0.66;
 const GHOST_PAD = 4;
@@ -271,7 +276,7 @@ export class CityScene extends Phaser.Scene {
     this.map.onCombo = (combo, img) => this.onComboProp(combo, img);
     this.landscape = new Landscape(this, this.culler, this.plan);
     this.landscape.setTint(SEASON_TINT[this.season]);
-    this.info = new SpeechBubble(this, 260).setDepth(INFO_DEPTH);
+    this.info = new SpeechBubble(this, 260).setDepth(INFO_BUBBLE_DEPTH);
     this.buildLayer = new BuildLayer(this, this.culler);
     buildProbe.spots = (kind, n) => this.buildSpots(kind, n);
     buildProbe.count = () => this.buildLayer?.count() ?? 0;
