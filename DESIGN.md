@@ -496,18 +496,21 @@ keeping its place, and the minimap's box shows only once the city answers.
 
 ### HQ rooms
 A district's HQ is one room: six desks and a wall of racks. The first six of its staff sit at the desks, the rest (up
-to five) stand at the racks at their city activity, so a full district of 11 fits. The room's sign is pinned to the
-top of the view (12 px `ink-hi` on graphite); names and bubbles follow Text size.
+to five) stand on the grate by the racks, every other row, at their city activity, so a full district of 11 fits. Each
+starts at its own spot and idles on its own patch of floor, never in front of the door, so the staff never stand in a
+knot. The room's sign is pinned to the top of the view (12 px `ink-hi` on graphite); names and bubbles follow Text size.
 
 ### Mini-game stage (signature)
 A game is a small scene with people in it, never a form of text tags on empty lanes: the service's agent at work, crowd
-citizens as the requesters and attackers (holding their ticket or log line on a chip), the landmark at its level in
+citizens as the requesters and attackers (holding their ticket or log line on a chip, or waiting their turn in a
+line), the landmark at its level in
 this city where the game has a place, and generated props (`game:<game>:<prop>`, side views drawn at 1×).
 - **Chrome:** a `bg` title bar with the title in amber, stat chips on `panel-hi`, the hint strip on `panel` in
   `ink-soft`, one amber primary (✓ Done), Expert as a pale-gold chip; verdicts on the near-opaque graphite pill.
 - **Layout:** a centred column; the play group laid out at 1× and drawn at the whole-number scale that fits (1× in the
   panel, 2× in the tab). A tiled or 9-slice prop (a conveyor, a notice board, a counter) is sized by its text, in whole
-  multiples of that scale.
+  multiples of that scale. What the player picks keeps its height at the play scale, and a note about it gets its own
+  line under its label (Edge Cache's counters), never a floater across a label.
 - **Feedback:** an answer shows where it went, for a pointer and a key alike: a 3 px frame round its target for 420 ms
   (green with eight pixel sparks when right, red when not, amber for a plain action), the button a key pressed sinks
   like a click, and a right answer's sparks burst at the answer, never at a pointer left elsewhere. Buttons name their
