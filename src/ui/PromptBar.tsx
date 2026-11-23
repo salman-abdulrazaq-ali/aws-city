@@ -8,6 +8,7 @@ import {
 } from "@/app/runtime";
 import { useCity } from "@/state/store";
 import { AiNote } from "./AiNote";
+import { ConsoleAccountWarning } from "./ConsoleAccountWarning";
 import { feel } from "./feedback";
 import { Icon } from "./icons";
 import { offlineReason } from "./logic";
@@ -64,6 +65,7 @@ export function PromptBar({ layout }: { layout: Layout }) {
         </p>
       )}
       {offline && <p className="composer-note">{offline}</p>}
+      <ConsoleAccountWarning />
       <AiNote id={noteId} />
       <form
         className={`composer ${inConsole ? "console-mode" : ""}`}

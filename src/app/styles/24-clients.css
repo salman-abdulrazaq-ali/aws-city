@@ -254,3 +254,10 @@
 .fix-row .muted {
   color: var(--ink-soft);
 }
+/* The console is signed in to another account than the linked one (ConsoleAccountWarning): said where the player works. */
+.console-account {
+  margin: 6px 0;
+}
+.console-account .btn {
+  margin-left: 4px;
+}

@@ -4,7 +4,7 @@ import type { Progress } from '@/backend/contract';
 import { redact } from '@/console/risk';
 import { explainError, type TerminalError } from '@/learning/terminal';
 import { stepReward, workshopStatus } from '@/learning/workshopRewards';
-import { regionName } from '@/state/account';
+import { accountLabel, regionName } from '@/state/account';
 import { bus } from '@/state/bus';
 import { growthLine, growthOf } from '@/state/growth';
 import { levelOf } from '@/state/mastery';
@@ -15,6 +15,7 @@ import { serviceById } from '@/world/taxonomy';
 import { bucketNameProblem, commandFor, freeBucketName, isChecked, placeholdersIn, terminalStep, workshopById, WORKSHOPS, type Workshop as WorkshopDef, type WorkshopStep } from '@/world/workshops';
 import { AiNote } from './AiNote';
 import { AwsIcon } from './AwsIcon';
+import { ConsoleAccountWarning } from './ConsoleAccountWarning';
 import { feel, useCopy } from './feedback';
 import { GrowLine } from './Flashcards';
 import { Portrait } from './Portrait';
@@ -109,6 +110,25 @@ function ModeIntro({ mode, demo, names }: { mode: Mode; demo: boolean; names: Re
   );
 }
 
+/**
+ * For real: CloudShell has to run in the account the city checks (seen 23 Nov 2026: it ran in another one, so every
+ * check said "not found"). One command says which account a shell is in, and the console's own account, when the city
+ * can tell, is checked too (ConsoleAccountWarning).
+ */
+function AccountCheck() {
+  const account = useCity((s) => s.account);
+  if (!account.linked || !account.accountId) return null;
+  return (
+    <div className="workshop-account">
+      <p className="muted small">
+        CloudShell must run in account <b>{accountLabel(account.accountId)}</b> (the one the city checks). To see which account a shell is in:
+      </p>
+      <CodeChip code="aws sts get-caller-identity --query Account --output text" />
+      <ConsoleAccountWarning />
+    </div>
+  );
+}
+
 function WorkshopBody({ w }: { w: WorkshopDef }) {
   const progress = useCity((s) => s.progress.workshops?.[w.id]);
   const demo = useCity((s) => s.backendKind === 'mock');
@@ -182,6 +202,7 @@ function WorkshopBody({ w }: { w: WorkshopDef }) {
         ))}
       </div>
       <ModeIntro mode={mode} demo={demo} names={names} />
+      {mode === 'real' && !demo && <AccountCheck />}
       <ol className="workshop-steps">
         {w.steps.map((s, i) => (
           <li key={s.id} className={i === at ? 'now' : ''}>
@@ -240,6 +261,7 @@ function StepView(props: {
   // Before the account says its Region (not linked yet, or its status still on the way), the Region gets a box too:
   // otherwise Copy waited for a <region> there was nowhere to type.
   const linkedRegion = useCity((s) => s.account.region);
+  const linkedAccount = useCity((s) => s.account.accountId);
   const typed = placeholdersIn(step.cli).filter((n) => n !== 'region' || !linkedRegion);
   const [form, setForm] = useState<Record<string, string>>(() => Object.fromEntries([...new Set([...typed, ...asks])].map((n) => [n, names[n] ?? ''])));
   const [copied, copyText] = useCopy();
@@ -416,6 +438,13 @@ function StepView(props: {
                 {check?.pending ? 'Checking…' : 'Check my account'}
               </button>
               {answered && <p className={check.ok ? 'ok-note' : 'muted'}>{check.ok ? `✓ ${check.detail}` : check.detail}</p>}
+              {answered && !check.ok && linkedAccount && (
+                <p className="muted small">
+                  The city looked in account {accountLabel(linkedAccount)}
+                  {linkedRegion ? `, ${regionName(linkedRegion)}` : ''}. Ran it there? <code>aws sts get-caller-identity --query Account --output text</code> in
+                  CloudShell should print {linkedAccount}; if not, switch role into that account first.
+                </p>
+              )}
             </form>
           ) : (
             <button className="btn primary" onClick={() => pass('real')}>

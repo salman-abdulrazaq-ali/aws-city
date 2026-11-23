@@ -30,6 +30,24 @@ export interface LinkRegion {
   optIn: boolean;
 }
 
+/** "0474-6343-8585": an account id as the console shows it. */
+export const accountLabel = (id: string) => id.replace(/^(\d{4})(\d{4})(\d{4})$/, '$1-$2-$3');
+
+/** The role an AWS Organization makes in each member account, which "Switch role" asks for unless the player changed it. */
+export const DEFAULT_CONSOLE_ROLE = 'OrganizationAccountAccessRole';
+
+/**
+ * AWS's Switch role page for the linked account, coming back to the console in its Region: the console has to be signed
+ * into the account the city reads, or what's made there never shows (seen 23 Nov 2026). Undefined for anything that
+ * isn't a 12-digit account or a valid role name.
+ */
+export function switchRoleUrl(accountId: string, region: string | undefined, role = DEFAULT_CONSOLE_ROLE): string | undefined {
+  if (!/^\d{12}$/.test(accountId) || !/^[\w+=,.@-]{1,64}$/.test(role)) return undefined;
+  const back = region && /^[a-z]{2}(-[a-z]+)+-\d$/.test(region) ? `https://${region}.console.aws.amazon.com/console/home?region=${region}` : 'https://console.aws.amazon.com/console/home';
+  const q = new URLSearchParams({ account: accountId, roleName: role, displayName: `AWSCity-${accountId.slice(-4)}`, redirect_uri: back });
+  return `https://signin.aws.amazon.com/switchrole?${q.toString()}`;
+}
+
 /** "US West (Oregon)"; the code itself for a Region the facts don't name. */
 export const regionName = (code: string) => regionInfo(code)?.name ?? code;
 

@@ -297,6 +297,8 @@ export interface Prefs {
   stage: 'compact' | 'tall';
   /** The Region whose city you last chose on the world map (none yet: the game opens on the world map). */
   region?: string;
+  /** The role "Switch role" asks for in the linked account (an AWS Organization's is OrganizationAccountAccessRole). */
+  consoleRole?: string;
   /** Show the map's technical labels (AZ IDs, network notes, distance signs). Off: the city stays calm. */
   mapDetails?: boolean;
   /** The minimap (M): absent = the surface's default (shown in the full tab, hidden in the side panel). */
@@ -407,6 +409,9 @@ export interface CityState {
   /** The hosted server (players sign in; their own AWS account links through the AWSCity role). */
   hosted: boolean;
   focus?: PageFocus;
+  /** The AWS account the open console is signed into (src/console/consoleAccount.ts; never sent to the server). */
+  consoleAccount?: string;
+  setConsoleAccount(account?: string): void;
   progress: Progress;
   agents: Record<string, AgentStatus>;
   tasks: Record<string, TaskView>;
@@ -1126,6 +1131,7 @@ export const useCity = create<CityState>()((set, get) => ({
   setBackend: (backendKind, backendStatus, deployMode, hosted) =>
     set({ backendKind, backendStatus, ...(deployMode ? { deployMode } : {}), ...(hosted !== undefined ? { hosted } : {}) }),
 
+  setConsoleAccount: (consoleAccount) => set({ consoleAccount }),
   setFocus: (focus) => {
     set({ focus });
     const id = focus.serviceId;
