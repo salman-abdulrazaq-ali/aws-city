@@ -8,7 +8,7 @@ import { Agent, setBubbleTopInset, type AgentWorld } from '../Agent';
 import { addSprite, CITY_ATLAS } from '../assets';
 import { blip, click, sfx } from '../audio';
 import { castFor, workAnimFor } from '../cast';
-import { DOOR, piecesFor, ROOM_H, ROOM_W, staffSpots, tilesOf, type Piece } from '../hqRoom';
+import { DOOR, ENTRY, keptClear, piecesFor, ROOM_H, ROOM_W, staffPlaces, tilesOf, type Piece } from '../hqRoom';
 import { cornerScreen, entityDepth, ROOM_ISO, toScreen, toTile } from '../iso';
 import { KAI_SHEET } from '@/world/culture';
 import { crisp, TEXT_FONT } from '../SpeechBubble';
@@ -42,6 +42,8 @@ export class InteriorScene extends Phaser.Scene {
     gridW: W,
     gridH: H,
     walkable: (x, y) => x >= 0 && y >= 0 && x < W && y < H && !this.blocked.has(y * W + x),
+    // The staff idle on their own patches (hqRoom staffPlaces), never in front of the door or on Kai's first tile.
+    wanderable: (x, y) => !keptClear(x, y),
   };
 
   constructor() {
@@ -96,9 +98,10 @@ export class InteriorScene extends Phaser.Scene {
       : servicesIn(this.districtId as DistrictId)
           .filter((s) => isDiscovered(useCity.getState().progress, s.id, useCity.getState().cityRegion))
           .map((s) => s.id);
-    // The first six sit at the desks, the rest stand at the racks (src/game/hqRoom.ts): a full district fits.
-    const spots = staffSpots(staff.length);
-    for (const spot of spots) {
+    // The first six sit at the desks, the rest stand at the racks (src/game/hqRoom.ts): a full district fits. Each starts
+    // at its own spot and idles on its own patch of floor, so the staff never stand in one knot.
+    const places = staffPlaces(this.districtId, staff.length);
+    for (const { spot } of places) {
       if (!spot?.desk) continue;
       this.furniture(['pack:desk_computer_SE', spot.desk.x, spot.desk.y]);
       const n = cornerScreen(ROOM_ISO, spot.tile.x, spot.tile.y);
@@ -117,12 +120,12 @@ export class InteriorScene extends Phaser.Scene {
 
     staff.forEach((id, i) => {
       const c = castFor(id)!;
-      const spot = spots[i];
+      const { start, area, spot } = places[i];
       const a = new Agent(this, this.world, {
         id,
         name: c.name,
-        tile: { x: 3 + (i % 3), y: 4 },
-        home: { x: 1, y: 3, w: 7, h: 5 },
+        tile: start,
+        home: area,
         workSpot: spot?.tile,
         workAnim: spot?.seated === false ? workAnimFor(c.activity) : 'sit',
         workDir: 'SE',
@@ -145,7 +148,7 @@ export class InteriorScene extends Phaser.Scene {
     this.player.sprite.disableInteractive();
     door.setFrame(3);
     sfx('door', 0.4);
-    this.time.delayedCall(250, () => this.player.goTo({ x: 2, y: 7 }, () => door.setFrame(0)));
+    this.time.delayedCall(250, () => this.player.goTo(ENTRY, () => door.setFrame(0)));
 
     const lead = this.agents.values().next().value as Agent | undefined;
     this.time.delayedCall(800, () =>

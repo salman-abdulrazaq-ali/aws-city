@@ -543,7 +543,12 @@ When a change touches a decision, update its entry and run its Proof.
   trims them. Nothing covers what a player reads to decide: the Permission Gate's notice board hangs above the boom's
   whole lift (`gateRows`, `liftReach`), and Queue Juggler's belt labels lift clear of each other and of Eddie's chip on
   strings to their boxes (`stackChips`), inside the stage, the parcels keeping their timing; what reaches Eddie while
-  his bench note is up counts into that one note ("worker busy: lost! ×3", `benchNote`), never a second floater. Proof: `npx vitest run tests/art.test.ts tests/stage-shield-redteam.test.ts tests/stage-queue-iamgate.test.ts tests/stage-edge.test.ts`.
+  his bench note is up counts into that one note ("worker busy: lost! ×3", `benchNote`), never a second floater. Edge
+  Cache's counters, what the player picks, each hold the slot's label over its own note line (`counters()` in
+  `EdgeGame.ts`: the tallest label and note measured at the counter's text width, padded a scale step), so "hit",
+  "✓ invalidated" and the rest show on their slot's line, never over a label. Red Team's lanes are as tall as a person
+  with their log line, and a short line of requesters waits behind each lane's booth: the first in line is the lane's
+  next request. Proof: `npx vitest run tests/art.test.ts tests/stage-shield-redteam.test.ts tests/stage-queue-iamgate.test.ts tests/stage-edge.test.ts`.
 - **Text is crisp in a pixelArt world:** use `crisp()` from `src/game/SpeechBubble.ts` (LINEAR filter
   plus DPR resolution) and counter-scale by `1/zoom`. Camera zoom stays on integers, and sprites on whole-number scales:
   a mini-game's play group is 1× in the side panel and 2× in the tab (`playScale`, `src/game/scenes/games/stageFx.ts`;
@@ -1238,8 +1243,12 @@ When a change touches a decision, update its entry and run its Proof.
   `shared/region-facts.json` `global` order (Route 53, CloudFront, IAM, Global Accelerator: add a new one last; the order
   lives in `GLOBAL` in `scripts/fetch-region-facts.mjs`). A district has 6 to 11 services and its HQ room
   (`InteriorScene`, laid out by the pure `src/game/hqRoom.ts`) has work for each: six at the desks, up to five more
-  standing at the wall of racks at their city activity (`staffSpots`); past that an agent walks the room, so nobody is
-  dropped. Proof: `npx vitest run tests/art.test.ts tests/taxonomy.test.ts tests/plan.test.ts tests/hq-room.test.ts`.
+  standing on the grate by the wall of racks at their city activity, every other row (`staffSpots`). Each starts at its
+  own spot and idles on its own patch (the 3×3 round its chair, or its stand and the step beside it: `staffPlaces`), so
+  no two start on one tile or meet idling and nobody stands head over head (spawned on three tiles, 9–11 stood in one
+  knot, 23 Nov 2026); nobody idles in front of the door or on Kai's first tile (`KEEP_CLEAR`), so a tap on the door
+  reaches it. Past the spots an agent stands on a free tile Kai can reach, so nobody is dropped. Proof:
+  `npx vitest run tests/art.test.ts tests/taxonomy.test.ts tests/plan.test.ts tests/hq-room.test.ts`.
 - **Content is data.** Districts, services, metaphors and layout live in `src/world/`. Game and UI code
   never hard-code service ids (the exceptions are `bedrock`, the default router target, and the
   mini-games, each built for one landmark: `s3` fishing, `lambda` food stall, `route53` dance, `shield` wall, `ec2` rush hour, `dynamodb` sorting office, `securityagent` red team range, `sqs` queue juggler, `iam` permission gate, `cloudfront` edge cache). Proof: `npx vitest run tests/taxonomy.test.ts` checks every service has a

@@ -182,3 +182,44 @@ describe('the art generator’s props (batch B6: art/tiles/games_art.py)', () =>
     expect(method(read('RedTeamGame.ts'), '  private spawn() {')).toMatch(/\.setDepth\(20 \+ lane\)/);
   });
 });
+
+describe('Red Team Range’s lanes hold people, not empty floor (batch B9a)', () => {
+  const src = read('RedTeamGame.ts');
+  /** The file's numeric top-level constants (`const NAME = <expression>;`), worked out in order. */
+  const c: Record<string, number> = {};
+  for (const [, name, expr] of src.matchAll(/^const ([A-Z][A-Z0-9_]*) = ([^;\r\n]+);\r?$/gm)) {
+    const value: unknown = Function(...Object.keys(c), `return (${expr});`)(...Object.values(c));
+    if (typeof value === 'number') c[name] = value;
+  }
+
+  it('each lane is as tall as what stands in it: a tall tab never stretches it', () => {
+    const setup = code(method(src, '  protected setup() {'));
+    expect(setup).toMatch(/this\.laneH = laneMin;/);
+    expect(setup).not.toMatch(/Math\.floor\(free \/ 5\)/);
+  });
+
+  it('a short line of requesters waits behind each lane’s booth, facing the range, clear of the booth and inside the range', () => {
+    const setup = code(method(src, '  protected setup() {'));
+    expect(setup).toMatch(/prop\(this, `game:redteam:lane\$\{i \+ 1\}`, col\.r - \(QUEUE_W \+ BOOTH_W \/ 2\) \* s, /);
+    // Behind every request (20 + lane), in front of the booths (19).
+    expect(setup).toMatch(/Array\.from\(\{ length: QUEUE \}, \(_, k\) => person\(this, this\.nextInLine\(\), col\.r - \(QUEUE_W - 12 - k \* QUEUE_STEP\) \* s, feet, s, 'idle', 'SW'\)\.setDepth\(19\.5\)\)/);
+    expect(c.QUEUE).toBeGreaterThanOrEqual(1);
+    // At 1× a crowd citizen's body is about 18 px wide: the first in line stands ≥ 10 px right of the booth's side, the
+    // last ≥ 9 px inside the range's end, and a request steps on ≥ 9 px left of the booth.
+    const front = c.QUEUE_W - 12;
+    const back = front - (c.QUEUE - 1) * c.QUEUE_STEP;
+    expect(c.QUEUE_W - front).toBeGreaterThanOrEqual(10);
+    expect(back).toBeGreaterThanOrEqual(9);
+    expect(c.DOOR_GAP).toBeGreaterThanOrEqual(9);
+  });
+
+  it('a request is the first in its lane’s line: it steps through the booth and the line moves up (sheets swap in place)', () => {
+    const spawn = method(src, '  private spawn() {');
+    expect(spawn).toMatch(/const sheet = queue\[0\] \? sheetOf\(queue\[0\]\) : this\.nextInLine\(\);/);
+    expect(spawn).toMatch(/queue\.forEach\(\(q, k\) => act\(q\.setTexture\(/);
+    expect(spawn).toMatch(/person\(this, sheet, 0, 0, s, 'walk', 'SW'\)/);
+    expect(spawn).toMatch(/c\.setX\(Math\.max\(end, Math\.min\(door, x1 - 6 - t\.width \+ 10 \* s\)\)\)/);
+    // Nothing in the line knows the request's flaw: it's dealt before the request is read.
+    expect(spawn.slice(0, spawn.indexOf('const tw ='))).not.toMatch(/flaw/);
+  });
+});

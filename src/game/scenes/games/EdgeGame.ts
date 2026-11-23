@@ -12,6 +12,11 @@ import { act, cast, districtColor, fitScale, landmarkFrame, person, prop } from 
 
 type TextStyle = Phaser.Types.GameObjects.Text.TextStyle;
 
+/** A counter's label: the slot's number and its file, wrapped inside the counter. */
+const labelStyle = (width: number, color?: string): TextStyle => ({ ...TXT(13, color), align: 'center', wordWrap: { width } });
+/** A slot's note on its note line: FEEDBACK ink with a dark edge, so it reads on any counter's tint. */
+const noteStyle = (width: number, color?: string): TextStyle => ({ ...TXT(12, color), align: 'center', stroke: CSS.bg, strokeThickness: 3, wordWrap: { width } });
+
 /** The play group (sprites, the street, the counters' padding) at a whole-number scale: 1 in the side panel, 2 in the tab. */
 const MAX_SCALE = 2;
 /** The play column's widest, px: the tab's stage gets a wide street, not a 760 px strip with empty sides. */
@@ -47,6 +52,26 @@ const RING_GAP = 2;
 /** The counters' desk: its margin round the counters, and the gap between two rows of counters, px. */
 const DESK_PAD = 10;
 const ROW_GAP = 12;
+/**
+ * A counter's two rows: its label (the slot's number and file) at the top, its note line under it. Its padding over and
+ * under them, and the gap between them, at 1× (they grow with the play scale: the counters are what the player picks).
+ */
+const CELL_PAD = 8;
+const CELL_GAP = 2;
+/** How long a slot's note stays up, ms (as a floater did). */
+const NOTE_MS = 900;
+/**
+ * What a slot's note line says, by what happened there. The label right above it names the file, so a note doesn't
+ * (they printed "✓ invalidated" over the labels, 23 Nov 2026).
+ */
+const NOTES = {
+  hit: 'hit',
+  stale: '✗ sent a stale copy',
+  cached: 'cached',
+  changed: 'changed at the origin!',
+  invalidated: '✓ invalidated',
+  fresh: '✗ it was still fresh',
+} as const;
 /** The hit-ratio row, px. */
 const RATIO_H = 24;
 /**
@@ -60,6 +85,48 @@ const FILE = { miss: 'game:edge:file-miss', hit: 'game:edge:file-hit' };
 
 /** The nearest even number of px (a counter's middle then sits on a whole pixel, and so does its ring). */
 const even = (n: number) => 2 * Math.round(n / 2);
+
+/** A counter's height: its two rows with their padding and gap at the play scale, rounded up to even. */
+const counterH = (labelH: number, noteH: number, s: number) => 2 * Math.ceil((labelH + noteH + (2 * CELL_PAD + CELL_GAP) * s) / 2);
+
+/** A rectangle, px. */
+export interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** A slot's counter: its middle and size, the row its label stands in and the row its notes take. */
+export interface Counter extends Box {
+  label: Box;
+  note: Box;
+}
+
+/**
+ * The cache's counters, laid out from the desk's inner `left` and `top`: `cols` a row, each `slotW` wide, at the play
+ * scale `s`. A counter holds the tallest label over the tallest note (`labelH`, `noteH`: measured at the counter's text
+ * width, so they follow ⋯ → Text size) with CELL_PAD a scale step round them and CELL_GAP between, so a note never
+ * covers a label: its own or another counter's. Sizes are even (a middle on a whole pixel), never smaller than the rows.
+ */
+export function counters(o: { left: number; top: number; slotW: number; cols: number; slots: number; labelH: number; noteH: number; s: number }): Counter[] {
+  const w = even(o.slotW - 8);
+  const h = counterH(o.labelH, o.noteH, o.s);
+  const text = w - 8;
+  return Array.from({ length: o.slots }, (_, i) => {
+    const x = Math.round(o.left + (i % o.cols) * o.slotW + o.slotW / 2);
+    const y = o.top + Math.floor(i / o.cols) * (h + ROW_GAP) + h / 2;
+    const top = y - h / 2;
+    return {
+      x,
+      y,
+      w,
+      h,
+      label: { x: x - text / 2, y: top + CELL_PAD * o.s, w: text, h: o.labelH },
+      note: { x: x - text / 2, y: top + h - CELL_PAD * o.s - o.noteH, w: text, h: o.noteH },
+    };
+  });
+}
 
 interface Viewer {
   /** Where their request leaves from (their hands). */
@@ -86,13 +153,13 @@ interface Viewer {
 export class EdgeGame extends MiniGame {
   private s: EdgeState = newEdge([]);
   private feed: Phaser.GameObjects.Text[] = [];
-  /** Each counter's label (its middle is the counter's), and the counter itself. */
+  /** Each counter's label (in its label row), and the counter itself. */
   private boxes: Phaser.GameObjects.Text[] = [];
   private cells: Phaser.GameObjects.Rectangle[] = [];
-  private slotXY: { x: number; y: number }[] = [];
-  /** A counter's size, px (even, so its middle and its ring sit on whole pixels). */
-  private cellW = 0;
-  private cellH = 0;
+  /** Each slot's note on its counter's note line, while one is up. */
+  private notes: (Phaser.GameObjects.Text | undefined)[] = [];
+  /** The counters' layout (counters()): each one's middle, size, label row and note line. */
+  private slotBoxes: Counter[] = [];
   /** The gold ring round the slot the number keys picked. */
   private ring?: Phaser.GameObjects.Graphics;
   private feedTop = 0;
@@ -126,6 +193,7 @@ export class EdgeGame extends MiniGame {
     this.feed = [];
     this.boxes = [];
     this.cells = [];
+    this.notes = [];
     this.sel = 0;
     const { width: w, height: h } = this.scale;
     // The sky and the street, across the whole stage (drawn once the layout is known, behind everything).
@@ -167,6 +235,22 @@ export class EdgeGame extends MiniGame {
     // The counter's wooden frame round the desk (a 9-slice: WebGL), or the desk's own black edge.
     const framed = hasSprite(COUNTER.frame) && this.game.renderer.type === Phaser.WEBGL;
     const rim = (px: number, scale: number) => (framed ? px * scale : 0);
+    // A slot's width at scale s, and its counter's text width: the tallest label and note there are measured once a
+    // width (every slot number with every file, and every note), so neither row ever grows past its place.
+    const slotAt = (s: number) => Math.min(Math.floor((cw - 24 - 2 * rim(COUNTER.side, s)) / cols), label.w + 32 + 16 * s);
+    const textAt = (s: number) => even(slotAt(s) - 8) - 8;
+    const measured = new Map<number, { labelH: number; noteH: number }>();
+    const rowsAt = (textW: number) => {
+      const known = measured.get(textW);
+      if (known) return known;
+      const labels = Array.from({ length: EDGE_RULES.slots }, (_, i) => [`${i + 1} · (empty)`, ...EDGE.files.map((f) => `${i + 1} · ${f.name} ⚠️`)]).flat();
+      const r = {
+        labelH: Math.max(...labels.map((t) => measure(t, labelStyle(textW)).h)),
+        noteH: Math.max(...Object.values(NOTES).map((t) => measure(t, noteStyle(textW)).h)),
+      };
+      measured.set(textW, r);
+      return r;
+    };
 
     // The play group's scale: the biggest whole number at which the row of sprites fits the column's width and the
     // whole layout (two feed rows at least) fits the room under the chrome.
@@ -180,16 +264,20 @@ export class EdgeGame extends MiniGame {
     const signWrap = (s: number) => Math.max(60, cw - 24 - (VIEWERS_W + PLACE_W) * s - 28);
     const signStyle = (s: number): TextStyle => ({ ...TXT(13, CSS.inkHi), align: 'center', padding: { x: 8, y: 3 }, wordWrap: { width: signWrap(s) } });
     const signTallest = measure(SIGN, signStyle(widthScale)).h + SIGN_EDGE;
+    // The estimate takes the narrowest counter any scale here gives (its text wraps the most).
+    const tallest = rowsAt(Math.min(...Array.from({ length: widthScale }, (_, k) => textAt(k + 1))));
     const fixedH =
-      RATIO_H + 6 + 4 + Math.max(signTallest, chipH) + 10 + rim(COUNTER.top + COUNTER.bottom, widthScale) + 2 * DESK_PAD + rows * (label.h + 7) + (rows - 1) * ROW_GAP + 12 + head + 4 + 2 * this.rowH + 10 + legend.height + 6;
-    const scaledH = Math.max(edgeH, AGENT_H, originH, VIEWER_H) + STREET_DOWN + 6 * rows;
+      RATIO_H + 6 + 4 + Math.max(signTallest, chipH) + 10 + rim(COUNTER.top + COUNTER.bottom, widthScale) + 2 * DESK_PAD + rows * (tallest.labelH + tallest.noteH + 1) + (rows - 1) * ROW_GAP + 12 + head + 4 + 2 * this.rowH + 10 + legend.height + 6;
+    const scaledH = Math.max(edgeH, AGENT_H, originH, VIEWER_H) + STREET_DOWN + (2 * CELL_PAD + CELL_GAP) * rows;
     const S = Math.min(widthScale, fitScale(room - fixedH, scaledH, MAX_SCALE));
     this.px = S;
 
     // The exact layout at that scale; the misses feed gets the rows that are left (2 to 6).
     const sign = crisp(this.add.text(0, 0, SIGN, signStyle(S))).setOrigin(0.5, 1).setDepth(5);
     const above = Math.max(Math.max(edgeH, AGENT_H) * S + 4 + sign.height + SIGN_EDGE, Math.max(originH, VIEWER_H) * S + 4 + chipH);
-    const cellH = even(label.h + 6 + 6 * S);
+    const slotW = slotAt(S);
+    const { labelH, noteH } = rowsAt(textAt(S));
+    const cellH = counterH(labelH, noteH, S);
     const deskH = 2 * DESK_PAD + rows * cellH + (rows - 1) * ROW_GAP;
     const fixedNoFeed = RATIO_H + 6 + above + STREET_DOWN * S + 10 + rim(COUNTER.top + COUNTER.bottom, S) + deskH + 12 + head + 4 + 10 + legend.height + 6;
     this.feedRows = Phaser.Math.Clamp(Math.floor((room - fixedNoFeed) / this.rowH), 2, 6);
@@ -259,9 +347,6 @@ export class EdgeGame extends MiniGame {
     // in the post office's wooden counter (its lip over the cubbies, its plinth under them).
     const side = rim(COUNTER.side, S);
     const cTop = groundY + STREET_DOWN * S + 10 + rim(COUNTER.top, S);
-    const slotW = Math.min(Math.floor((col.w - 24 - 2 * side) / cols), label.w + 32 + 16 * S);
-    this.cellW = even(slotW - 8);
-    this.cellH = cellH;
     const deskW = cols * slotW - 8 + 2 * DESK_PAD;
     const deskL = Math.round(Phaser.Math.Clamp(this.edgeX - deskW / 2, col.x + 6 + side, col.r - 6 - side - deskW));
     const x0 = deskL + DESK_PAD - 4;
@@ -281,10 +366,7 @@ export class EdgeGame extends MiniGame {
         .fillRect(deskL, cTop, deskW, deskH)
         .fillStyle(COLOR.panelHi, 1)
         .fillRect(deskL, cTop, deskW, 3);
-    this.slotXY = Array.from({ length: EDGE_RULES.slots }, (_, i) => ({
-      x: Math.round(x0 + (i % cols) * slotW + slotW / 2),
-      y: cTop + DESK_PAD + Math.floor(i / cols) * (cellH + ROW_GAP) + cellH / 2,
-    }));
+    this.slotBoxes = counters({ left: x0, top: cTop + DESK_PAD, slotW, cols, slots: EDGE_RULES.slots, labelH, noteH, s: S });
     this.ring = this.add.graphics().setDepth(3);
     for (let i = 0; i < EDGE_RULES.slots; i++) this.drawSlot(i);
 
@@ -340,27 +422,25 @@ export class EdgeGame extends MiniGame {
 
   /**
    * One counter per slot: an empty cubby, the cached file on the counter, or a warn-tinted counter whose file changed at
-   * the origin (⚠️; tap to invalidate). The slot the number keys picked gets the gold ring.
+   * the origin (⚠️; tap to invalidate). Its label stands in the counter's top row; the row under it is the slot's note
+   * line (slotNote). The slot the number keys picked gets the gold ring.
    */
   private drawSlot(i: number) {
     const c = this.s.slots[i];
-    const p = this.slotXY[i];
+    const p = this.slotBoxes[i];
     this.cells[i]?.destroy();
     this.boxes[i]?.destroy();
     const changed = c && isChanged(this.s, c);
     const cell = this.add
-      .rectangle(p.x, p.y, this.cellW, this.cellH, changed ? COLOR.warn : c ? COLOR.panelHi : COLOR.panel, changed ? 0.32 : 1)
+      .rectangle(p.x, p.y, p.w, p.h, changed ? COLOR.warn : c ? COLOR.panelHi : COLOR.panel, changed ? 0.32 : 1)
       .setStrokeStyle(2, changed ? COLOR.warn : PAL.black)
       .setDepth(2);
-    const box = crisp(
-      this.add.text(p.x, p.y, c ? `${i + 1} · ${c.name}${changed ? ' ⚠️' : ''}` : `${i + 1} · (empty)`, {
-        ...TXT(13, changed ? CSS.goldHi : c ? CSS.inkHi : CSS.muted),
-        align: 'center',
-        wordWrap: { width: this.cellW - 8 },
-      }),
-    )
-      .setOrigin(0.5)
+    const text = c ? `${i + 1} · ${c.name}${changed ? ' ⚠️' : ''}` : `${i + 1} · (empty)`;
+    const box = crisp(this.add.text(p.x, p.label.y, text, labelStyle(p.label.w, changed ? CSS.goldHi : c ? CSS.inkHi : CSS.muted)))
+      .setOrigin(0.5, 0)
       .setDepth(3);
+    // Middle of its row (the row is the tallest label's height, so a shorter one never reaches the note line).
+    box.setY(p.label.y + Math.floor((p.label.h - box.height) / 2));
     if (c) cell.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.invalidate(i));
     this.cells[i] = cell;
     this.boxes[i] = box;
@@ -372,22 +452,39 @@ export class EdgeGame extends MiniGame {
    * (1 px of which lies outside the fill), never an outline on its letters.
    */
   private drawRing() {
-    const p = this.slotXY[this.sel];
+    const p = this.slotBoxes[this.sel];
     if (!p) return;
     const out = 1 + RING_GAP + RING_W / 2;
     this.ring
       ?.clear()
       .lineStyle(RING_W, COLOR.gold, 1)
-      .strokeRect(p.x - this.cellW / 2 - out, p.y - this.cellH / 2 - out, this.cellW + 2 * out, this.cellH + 2 * out);
+      .strokeRect(p.x - p.w / 2 - out, p.y - p.h / 2 - out, p.w + 2 * out, p.h + 2 * out);
   }
 
-  /** Where a slot's floater goes: just under its counter, or just over it. */
-  private belowSlot(i: number) {
-    return this.boxes[i].y + this.cellH / 2 + 6;
-  }
-
-  private aboveSlot(i: number) {
-    return this.boxes[i].y - this.cellH / 2 - 6;
+  /**
+   * What just happened at a slot, on its note line under its label (never over a label: they floated up across them,
+   * 23 Nov 2026). One note a slot: a new one replaces the last. It holds, then fades in steps; under reduced motion it
+   * shows for the same time, still. A note for the player's own press (`answer`) is where a key's sparks burst.
+   */
+  private slotNote(i: number, text: string, color: string, answer = false) {
+    const p = this.slotBoxes[i];
+    const old = this.notes[i];
+    if (old) {
+      this.tweens.killTweensOf(old);
+      old.destroy();
+    }
+    const t = crisp(this.add.text(p.x, p.note.y, text, noteStyle(p.note.w, color)))
+      .setOrigin(0.5, 0)
+      .setDepth(4);
+    t.setY(p.note.y + Math.floor((p.note.h - t.height) / 2));
+    this.notes[i] = t;
+    if (answer) this.answerAt(p.x, p.note.y + p.note.h / 2);
+    const done = () => {
+      if (this.notes[i] === t) this.notes[i] = undefined;
+      t.destroy();
+    };
+    if (reducedMotion()) this.time.delayedCall(NOTE_MS, done);
+    else this.tweens.add({ targets: t, alpha: 0, delay: NOTE_MS / 2, duration: NOTE_MS / 2, ease: 'Stepped', easeParams: [3], onComplete: done });
   }
 
   private pickFile() {
@@ -445,12 +542,12 @@ export class EdgeGame extends MiniGame {
     if (r === 'stale') {
       this.wrong();
       this.addScore(EDGE_RULES.stale, 'soft');
-      this.floater(this.boxes[i].x, this.belowSlot(i), `✗ stale ${name}!`, FEEDBACK.wrong);
+      this.slotNote(i, NOTES.stale, FEEDBACK.wrong);
       this.speak(`Stale: a viewer got the old ${name} from slot ${i + 1}. Press ${i + 1}, then I, to invalidate it. Score ${this.score}.`);
     } else if (r === 'hit') {
       this.hit();
       this.addScore(EDGE_RULES.hit, 'none');
-      this.floater(this.boxes[i].x, this.belowSlot(i), 'hit', FEEDBACK.right);
+      this.slotNote(i, NOTES.hit, FEEDBACK.right);
     } else {
       this.wrong();
       this.addScore(EDGE_RULES.miss, 'none');
@@ -506,7 +603,7 @@ export class EdgeGame extends MiniGame {
     const i = store(this.s, name, this.time.now, pace(EDGE_RULES.ttlMs));
     if (i < 0) return;
     this.drawSlot(i);
-    this.floater(this.boxes[i].x, this.aboveSlot(i), `cached ${name}`, FEEDBACK.note);
+    this.slotNote(i, NOTES.cached, FEEDBACK.note, true);
     this.speak(`Cached ${name} in slot ${i + 1}.`);
   }
 
@@ -518,22 +615,21 @@ export class EdgeGame extends MiniGame {
     change(this.s, c.name);
     const i = this.s.slots.indexOf(c);
     this.drawSlot(i);
-    this.floater(this.boxes[i].x, this.aboveSlot(i) - 4, `${c.name} changed at the origin!`, FEEDBACK.gold);
+    this.slotNote(i, NOTES.changed, FEEDBACK.gold);
     this.speak(`${c.name} changed at the origin: slot ${i + 1} is out of date. Press ${i + 1}, then I.`);
   }
 
   private invalidate(i: number) {
     if (this.over) return;
-    const b = this.boxes[i];
     const r = invalidate(this.s, i);
     if (!r) return;
     // Invalidations score, but they aren't requests: the round's accuracy stays the hit ratio.
     if (r === 'right') {
       this.addScore(EDGE_RULES.invalidate);
-      this.floater(b.x, this.belowSlot(i), '✓ invalidated', FEEDBACK.right);
+      this.slotNote(i, NOTES.invalidated, FEEDBACK.right, true);
     } else {
       this.addScore(EDGE_RULES.wrongInvalidate);
-      this.floater(b.x, this.belowSlot(i), '✗ it was still fresh', FEEDBACK.wrong);
+      this.slotNote(i, NOTES.fresh, FEEDBACK.wrong, true);
     }
     this.drawSlot(i);
     this.showRatio();

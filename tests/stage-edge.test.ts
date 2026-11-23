@@ -3,7 +3,8 @@
 // whole-number scale (cast.ts fitScale: 2× in the tab, 1× in the side panel); the slot the number keys picked is ringed
 // by a gold rectangle round its counter, never an outline on its letters; and the scene names no colour of its own.
 // The scene is checked from the source, as in tests/a11y-games.test.ts (a Phaser scene is not practical to run in a
-// test); cast.ts's pure helpers run here with Phaser, the atlas and the store stubbed out.
+// test); cast.ts's pure helpers and the counters' layout (batch B9a) run here with Phaser, the atlas and the store
+// stubbed out.
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -24,11 +25,16 @@ vi.mock('@/game/assets', () => ({
   PIVOT: { x: 24, y: 67 },
   hasAnim: () => true,
   hasSprite: (name: string) => stub.sprites.has(name),
+  CITY_ATLAS: 'city',
+  spriteAnchor: () => undefined,
 }));
+vi.mock('@/game/scenes/games/MiniGame', () => ({ MiniGame: class {}, FEEDBACK: {}, PAL: {}, pace: (n: number) => n, TXT: () => ({}) }));
+vi.mock('@/game/SpeechBubble', () => ({ crisp: <T>(t: T) => t }));
 vi.mock('@/state/store', () => ({ useCity: { getState: () => ({ progress: {}, cityRegion: 'us-east-1' }) } }));
 vi.mock('@/state/selectors', () => ({ tierOf: () => stub.tier }));
 
 const { districtColor, fitScale, landmarkFrame } = await import('@/game/scenes/games/cast');
+const { counters } = await import('@/game/scenes/games/EdgeGame');
 
 const read = (f: string) => fs.readFileSync(path.join(process.cwd(), f), 'utf8');
 /** Code without its comments: comments may name old colours. */
@@ -189,5 +195,77 @@ describe('the art generator’s props (batch B6: art/tiles/games_art.py)', () =>
     expect(packet).toMatch(/hasSprite\(file\)\s*\? prop\(this, file, v\.x, v\.y, this\.px\)/);
     // Still nothing moves under reduced motion.
     expect(packet).toMatch(/if \(reducedMotion\(\)\) return;/);
+  });
+});
+
+describe('the counters are what the player picks: a readable height, and a note never covers a label (batch B9a)', () => {
+  type Box = { x: number; y: number; w: number; h: number };
+  const overlaps = (a: Box, b: Box) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+  const inside = (a: Box, b: Box) => a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h;
+  const c = constants(SRC);
+
+  it('at 1× and 2×, four in a row (the tab) or 2×2 (the panel), at every text size: no note overlaps any counter’s label', () => {
+    // Rows from one line of 11 px text (Text size 100 %) to two lines at 150 %, a note with its dark edge a little taller.
+    for (const s of [1, 2])
+      for (const cols of [2, 4])
+        for (const labelH of [15, 16, 19, 23, 30, 46])
+          for (const noteH of [17, 18, 21, 25, 34, 50])
+            for (const slotW of [120, 156, 171, 189, 240]) {
+              const all = counters({ left: 17, top: 301, slotW, cols, slots: 4, labelH, noteH, s });
+              const at = `${s}× ${cols} cols, rows ${labelH}/${noteH}, ${slotW} px`;
+              expect(all, at).toHaveLength(4);
+              for (const k of all) {
+                const cell = { x: k.x - k.w / 2, y: k.y - k.h / 2, w: k.w, h: k.h };
+                // Whole pixels: the counter's middle and its edges (so its ring does too).
+                expect(Number.isInteger(k.x) && Number.isInteger(k.y) && k.w % 2 === 0 && k.h % 2 === 0, at).toBe(true);
+                // Both rows sit inside their counter, padded a scale step, the note line under the label.
+                expect(inside(k.label, cell), at).toBe(true);
+                expect(inside(k.note, cell), at).toBe(true);
+                expect(k.label.y - cell.y, at).toBeGreaterThanOrEqual(c.CELL_PAD * s);
+                expect(cell.y + cell.h - (k.note.y + k.note.h), at).toBeGreaterThanOrEqual(c.CELL_PAD * s);
+                expect(k.note.y - (k.label.y + k.label.h), at).toBeGreaterThanOrEqual(c.CELL_GAP * s);
+                for (const o of all) expect(overlaps(k.note, o.label), `${at}: a note over a label`).toBe(false);
+              }
+              // The counters never touch each other either (ROW_GAP between rows, 8 px between neighbours).
+              for (let i = 0; i < 4; i++)
+                for (let j = i + 1; j < 4; j++) {
+                  const [a, b] = [all[i], all[j]];
+                  expect(overlaps({ x: a.x - a.w / 2, y: a.y - a.h / 2, w: a.w, h: a.h }, { x: b.x - b.w / 2, y: b.y - b.h / 2, w: b.w, h: b.h }), at).toBe(false);
+                }
+            }
+  });
+
+  it('a counter is tall enough to read and press: 44 px at 1× and 62 px at 2× with one line each (it was a 28–34 px strip)', () => {
+    const one = (s: number) => counters({ left: 0, top: 0, slotW: 171, cols: 2, slots: 4, labelH: 15, noteH: 18, s })[0].h;
+    expect(one(1)).toBeGreaterThanOrEqual(44);
+    expect(one(2)).toBeGreaterThanOrEqual(62);
+    expect(one(2)).toBeGreaterThan(one(1));
+  });
+
+  it('the scene draws each label in its row and every note on its slot’s note line: nothing floats up over the counters', () => {
+    const slot = method(CODE, '  private drawSlot(i: number) {');
+    expect(slot).toMatch(/const p = this\.slotBoxes\[i\];/);
+    expect(slot).toMatch(/labelStyle\(p\.label\.w, /);
+    expect(slot).toMatch(/box\.setY\(p\.label\.y \+ Math\.floor\(\(p\.label\.h - box\.height\) \/ 2\)\)/);
+    const note = method(CODE, '  private slotNote(i: number, text: string, color: string, answer = false) {');
+    expect(note).toMatch(/noteStyle\(p\.note\.w, color\)/);
+    expect(note).toMatch(/t\.setY\(p\.note\.y \+ Math\.floor\(\(p\.note\.h - t\.height\) \/ 2\)\)/);
+    // It never moves (a floater rose 30 px across the labels): it holds, then fades; under reduced motion it just goes.
+    expect(note).not.toMatch(/y:/);
+    expect(note).toMatch(/if \(reducedMotion\(\)\) this\.time\.delayedCall\(NOTE_MS, done\)/);
+    // A note for the player's own press is where a key's sparks burst.
+    expect(note).toMatch(/if \(answer\) this\.answerAt\(/);
+    expect(CODE).not.toMatch(/this\.floater\(/);
+    for (const [sig, re] of [
+      ['  private request() {', /this\.slotNote\(i, NOTES\.stale, FEEDBACK\.wrong\)[\s\S]*this\.slotNote\(i, NOTES\.hit, FEEDBACK\.right\)/],
+      ['  private store(name: string', /this\.slotNote\(i, NOTES\.cached, FEEDBACK\.note, true\)/],
+      ['  private change() {', /this\.slotNote\(i, NOTES\.changed, FEEDBACK\.gold\)/],
+      ['  private invalidate(i: number) {', /NOTES\.invalidated, FEEDBACK\.right, true[\s\S]*NOTES\.fresh, FEEDBACK\.wrong, true/],
+    ] as const)
+      expect(method(CODE, sig), sig).toMatch(re);
+    // The layout measures every label and every note at the counter's text width before it picks the scale.
+    const setup = method(CODE, '  protected setup() {');
+    expect(setup).toMatch(/this\.slotBoxes = counters\(/);
+    expect(setup).toMatch(/Object\.values\(NOTES\)\.map\(\(t\) => measure\(t, noteStyle\(textW\)\)\.h\)/);
   });
 });
