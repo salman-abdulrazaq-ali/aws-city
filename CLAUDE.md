@@ -449,6 +449,11 @@ When a change touches a decision, update its entry and run its Proof.
   security group allows nothing. While Bedrock is held the server asks only the Fargate model (`aiCpu.primary`: one
   call and one quota count per answer, not a failed Bedrock try first). Proof: `cd infra && npm test` ("Security Hub
   basics", "Bedrock held"), and the runbook's `aws securityhub get-findings` command.
+- **No AI tool is credited as a contributor or builder.** No commit carries a `Co-Authored-By:` line naming Claude, and
+  no pull request says "Generated with Claude Code": `.claude/settings.json` turns Claude Code's attribution off
+  (`attribution` empty, `includeCoAuthoredBy: false`) for anyone working here, and CI's `attribution` job fails a pull
+  request that has one (`scripts/no-ai-credit.sh`). Proof: `bash scripts/no-ai-credit.sh origin/main HEAD`,
+  `git log origin/main -i --grep='Co-Authored-By: Claude' | wc -l` prints 0.
 - **The repo and the AWS account are locked down.** GitHub: `main` changes only through a pull request with CI green
   (ruleset "main": the `extension`, `server`, `infra`, `fresh-clone` ×3 and `analyze` checks, no force-push or deletion,
   only the admin may bypass); Actions run only GitHub-owned, verified-creator and `softprops/action-gh-release` actions,
