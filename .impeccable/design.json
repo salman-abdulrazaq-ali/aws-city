@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-23T06:00:00Z",
+  "generatedAt": "2026-11-23T16:57:52Z",
   "title": "Design System: AWS City",
   "extensions": {
     "colorMeta": {
@@ -15,7 +15,7 @@
       "info": { "role": "neutral", "displayName": "Sky Note", "canonical": "#8fb8e8", "tonalRamp": ["#13243a", "#1f3a5c", "#2f5684", "#4f7db3", "#8fb8e8", "#b3cff0", "#d6e4f5", "#eef4fb"] }
     },
     "typographyMeta": {
-      "display": { "displayName": "Pixel display", "purpose": "Mini-game titles and pixel badges; Press Start 2P on its 8 px grid only (10, 11, 15 px)." },
+      "display": { "displayName": "Pixel display", "purpose": "The wordmark and a few pixel badges; Press Start 2P on its 8 px grid only (10, 11, 15 px). The mini-games' titles are Nunito 800 in amber." },
       "headline": { "displayName": "Headline", "purpose": "Big numbers and celebration lines (--fs-xl)." },
       "title": { "displayName": "Title", "purpose": "Card titles, a building's name, the flashcard question (--fs-lg)." },
       "body": { "displayName": "Body", "purpose": "Running text in cards, the menu and the shift (--fs-md)." },
@@ -119,25 +119,44 @@
       "description": "The one paper surface: a cream card that flips to its answer.",
       "html": "<button class=\"ds-flash\"><small>S3 LAKE · NOVICE</small><b>What is Amazon S3?</b><em>tap or press F to reveal</em></button>",
       "css": ".ds-flash { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 160px; padding: 16px 12px; background: var(--paper, #d9cfba); color: var(--paper-ink, #1b1200); border: 0; border-radius: 6px; font-family: 'Nunito', sans-serif; font-size: 15px; cursor: pointer; transition: transform 80ms; } .ds-flash small { font-size: 11px; font-weight: 800; color: #7c2d12; letter-spacing: 0.04em; } .ds-flash em { font-style: normal; font-size: 11px; color: #4a4540; } .ds-flash:active { transform: translateY(2px); } .ds-flash:focus-visible { outline: 2px solid var(--accent, #f0a63a); outline-offset: 2px; }"
+    },
+    {
+      "name": "Mini-game Stage",
+      "kind": "custom",
+      "refersTo": "mini-game-stage",
+      "description": "A game on the canvas wears the desk: graphite title bar with the title in amber, stat chips, the hint strip, a verdict on the near-opaque pill, one chunky amber ✓ Done that sinks when pressed.",
+      "html": "<div class=\"ds-game\"><div class=\"ds-game-bar\"><b>📬 Queue Juggler</b><span class=\"ds-game-expert\">⚡ Expert</span><button class=\"ds-game-btn\">✓ Done</button><span class=\"ds-game-stat\">★ 12</span></div><div class=\"ds-game-hint\">Click a message (or Space) to queue it; drag red poison to the DLQ (or D)</div><div class=\"ds-game-play\"><span class=\"ds-game-hit\">order #12</span><span class=\"ds-game-verdict\">✓ Right: poison to the dead-letter queue.</span></div></div>",
+      "css": ".ds-game { width: 100%; max-width: 400px; background: var(--bg, #15171b); color: var(--ink-hi, #fff8ee); font-family: 'Nunito', sans-serif; font-weight: 800; } .ds-game-bar { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; background: rgba(21, 23, 27, 0.94); border-bottom: 2px solid #000; } .ds-game-bar b { flex: 1; color: var(--accent, #f0a63a); font-size: 14px; } .ds-game-expert { padding: 2px 6px; background: var(--gold-hi, #fff1b8); color: var(--paper-ink, #1b1200); font-size: 12px; } .ds-game-stat { padding: 3px 8px; background: var(--panel-hi, #2c3138); font-size: 14px; } .ds-game-btn { padding: 2px 8px; background: var(--accent, #f0a63a); color: var(--accent-ink, #2a1a04); border: 2px solid #000; box-shadow: 0 3px 0 #000; font: 800 13px 'Nunito', sans-serif; cursor: pointer; } .ds-game-btn:hover { opacity: 0.88; } .ds-game-btn:active { transform: translateY(3px); box-shadow: none; } .ds-game-btn:focus-visible { outline: 2px solid var(--gold-hi, #fff1b8); outline-offset: 2px; } .ds-game-hint { padding: 4px 12px; background: rgba(30, 33, 38, 0.88); color: var(--ink-soft, #c9c4b8); font-size: 12px; font-weight: 700; } .ds-game-play { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 24px 12px; image-rendering: pixelated; } .ds-game-hit { padding: 2px 5px; background: rgba(21, 23, 27, 0.85); font-size: 11px; outline: 3px solid var(--good, #5db39e); } .ds-game-verdict { padding: 5px 10px; background: rgba(21, 23, 27, 0.95); color: var(--good, #5db39e); font-size: 14px; text-align: center; }"
+    },
+    {
+      "name": "Label Chip",
+      "kind": "chip",
+      "refersTo": "label-chip",
+      "description": "Every sign and tag on the map: 11 px heavy ink on graphite at 85 %, square, counter-scaled by the zoom. '· Lv N' shows only while the building is picked or hovered; world-map city names are gold-hi.",
+      "html": "<div class=\"ds-map\"><span class=\"ds-label\">S3 Lake · 🃏 3</span><span class=\"ds-label ds-label-city\">Seattle</span><span class=\"ds-label\">Kai</span></div>",
+      "css": ".ds-map { display: flex; flex-wrap: wrap; gap: 12px; padding: 16px; background: #3f6b3a; image-rendering: pixelated; } .ds-label { padding: 2px 5px; background: rgba(21, 23, 27, 0.85); color: var(--ink-hi, #fff8ee); font-family: 'Nunito', sans-serif; font-size: 11px; font-weight: 800; white-space: nowrap; } .ds-label:first-child:hover::after { content: ' · Lv 3'; } .ds-label-city { color: var(--gold-hi, #fff1b8); }"
     }
   ],
   "narrative": {
     "northStar": "The Lamplit Desk Beside the City",
-    "overview": "AWS City is two things side by side: a bright, generated pixel-art city (one per AWS Region, drawn on a 32×16 isometric grid) and a quiet warm-graphite desk where the player reads, decides and approves. The desk exists to let the city carry the colour. Its surfaces are near-black graphite with a warm cast, its text is parchment-white rather than pure white, and a single amber lamp (the accent) marks the one thing to do next. Paper (cream flashcards, white speech bubbles, the gold of a found token) appears only where the city \"speaks\" into the desk.\n\nDensity is high but small: 13 px body text, 8 px and 12 px gaps, 6 px corners, everything sized to work first in a 400 px browser side panel and then reused unchanged as the right-hand column of the full tab. Motion is short and stepped like sprite frames. Every visual setting a player can change (text size, contrast, font, motion) is a token override, never a second stylesheet.",
+    "overview": "AWS City is two things side by side: a bright, generated pixel-art city (one per AWS Region, drawn on a 32×16 isometric grid) and a quiet warm-graphite desk where the player reads, decides and approves. The desk exists to let the city carry the colour. Its surfaces are near-black graphite with a warm cast, its text is parchment-white rather than pure white, and a single amber lamp (the accent) marks the one thing to do next. Paper (cream flashcards, white speech bubbles, the gold of a found token) appears only where the city \"speaks\" into the desk.\n\nDensity is high but small: 13 px body text, 8 px and 12 px gaps, 6 px corners, everything sized to work first in a 400 px browser side panel and then reused unchanged as the right-hand column of the full tab. Motion is short and stepped like sprite frames, and a big moment in the city plays in order, one thing at a time. Every visual setting a player can change (text size, contrast, font, motion) is a token override, never a second stylesheet.",
     "keyCharacteristics": [
       "Warm graphite surfaces layered by tone (bg → panel → panel-2 → panel-hi), with hairline borders instead of shadows.",
       "One amber primary per screen; district colours only as small identity marks.",
       "Nunito for everything readable; Press Start 2P only for the wordmark and a few game labels, on its 8 px grid.",
       "The pixel city is the only hard-edged, saturated thing on screen; the UI recedes around it.",
-      "The side panel (400 px) is the design's first surface; the tab adds a wide stage, not a different UI."
+      "The side panel (400 px) is the design's first surface; the tab adds a wide stage, not a different UI.",
+      "The canvas wears the same tokens: the mini-games' chrome is the desk's graphite and amber, and its text follows Text size."
     ],
     "rules": [
       { "name": "The One Lamp Rule", "body": "One amber-filled button per screen (the smoke test counts them on the City tab). Everything else is a quiet graphite button, a ghost or a chip.", "section": "colors" },
       { "name": "The District Square Rule", "body": "A district's colour appears as a small mark (an 8 px square, a 4 px progress segment, an eyebrow word), never as a background.", "section": "colors" },
       { "name": "The Token-Only Rule", "body": "Colours come from :root in src/app/styles/00-base.css (and src/game/theme.ts mirrors them for Phaser under the same names). Accessibility modes work by overriding these tokens, so a raw hex in a component escapes them.", "section": "colors" },
       { "name": "The 12 px Floor Rule", "body": "12 px is the floor for body text; 11 px only for non-essential labels. No shipped exceptions: tab badges are 11 px and the wordmark is --fs-pixel.", "section": "typography" },
-      { "name": "The Pixel Grid Rule", "body": "Press Start 2P only at its two tokens, `--fs-pixel` 11 px and `--fs-pixel-lg` 15 px (15 and 19 px at the bigger text sizes). Never scale it by a fraction.", "section": "typography" },
+      { "name": "The 11 px Canvas Floor Rule", "body": "Nothing a player reads on the canvas is under 11 px, at any text size or zoom. A line too long for its place shrinks to the floor, then wraps (the Red Team Range's log lines); it never shrinks further.", "section": "typography" },
+      { "name": "The Pixel Grid Rule", "body": "Press Start 2P only at its two tokens, --fs-pixel 11 px and --fs-pixel-lg 15 px (15 and 19 px at the bigger text sizes). Never scale it by a fraction.", "section": "typography" },
       { "name": "The Heavy-Weight Rule", "body": "Emphasis is weight (700/800), not colour or italics; most labels and buttons are 700–800.", "section": "typography" },
+      { "name": "The Whole Pixel Rule", "body": "Pixel art moves and scales on whole pixels: integer zoom at rest, whole-number sprite scales, positions rounded, confetti turning in quarter turns. A fractional zoom is allowed only mid-tween.", "section": "layout" },
       { "name": "The Flat Desk Rule", "body": "Cards in the side column are flat (tone and hairline). Only what floats over the city (menus, toasts, sheets, the coin note) gets the float shadow.", "section": "elevation" }
     ],
     "dos": [
@@ -146,17 +165,20 @@
       "Do design for the 400 px side panel first, then check the 1400 × 880 tab.",
       "Do keep district colours to small marks (an 8 px square, a 4 px segment).",
       "Do draw coins with the pixel Coin icon and stars as ⭐; never show \"XP\".",
-      "Do give every animation a reduced-motion state: CSS durations collapse to 0.01 ms under prefers-reduced-motion, and the canvas parks its ambient motion.",
+      "Do give every animation a reduced-motion state: CSS durations collapse to 0.01 ms under prefers-reduced-motion, and the canvas parks its ambient motion (cars at the kerb, walkers and agents where they stand) and cuts its camera moves.",
+      "Do play a big moment in order, one thing at a time (land, rise, payoff, push-in), and time a camera flight by its distance.",
       "Do start entrances from opacity 0.6 (the shared enter), never 0: the side panel can draw at a few frames a second, and content must show before the entrance ends.",
       "Do keep one overlay at a time on the panel's map: one toast (the ticker steps aside), one speech bubble.",
-      "Do render in-world text with crisp() and counter-scale it by 1/zoom; keep camera zoom on integers."
+      "Do render in-world text with crisp() and counter-scale it by 1/zoom; keep camera zoom and sprite scales on whole numbers, and size canvas text through textPx (a mini-game's through TXT)."
     ],
     "donts": [
       "Don't set font sizes in raw px outside the token scale: they ignore ⋯ → Text size.",
       "Don't use Press Start 2P for running text or at sizes off its 8 px grid.",
       "Don't fill large areas with a district colour or with amber.",
       "Don't add a second filled button beside the primary; use a graphite or ghost button.",
-      "Don't hand-edit or regenerate the city's sprites in a UI change; they come from npm run art."
+      "Don't hand-edit or regenerate the city's sprites in a UI change; they come from npm run art.",
+      "Don't start a moment's effects in the same frame, or let a celebration's zoom pop the labels on and off.",
+      "Don't give a mini-game's chrome a hex of its own: chrome is GAME_PAL; only its scene art (skies, the lake, the factory's brick, a district's colour) keeps colours of its own."
     ]
   }
 }
