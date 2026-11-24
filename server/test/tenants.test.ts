@@ -207,9 +207,33 @@ describe('the account lifecycle (v2.19)', () => {
     expect(running()).toBe(0);
     // Seen 24 Nov 2026: Disconnect keeps the setup (ExternalId, Region) as a pending record nothing reads with, so
     // Reconnect needs no change in AWS; the role ARN, account and linkedAt are gone.
-    expect(await stores.accounts.get('u1')).toEqual({ status: 'pending', externalId: linkedRecord.externalId, region: linkedRecord.region });
+    expect(await stores.accounts.get('u1')).toEqual({ status: 'pending', externalId: linkedRecord.externalId, region: linkedRecord.region, accountId: ACCOUNT });
     expect(statuses(tab)).toEqual([expect.objectContaining({ requestId: 'r-unlink', linked: false, message: expect.stringMatching(/Reconnect any time with one press; to remove its role for good, delete the AWSCity stack/) })]);
     expect(await tenant.snapshot()).toBeUndefined();
+    tenants.closeAll();
+  });
+
+  // Asked for on 24 Nov 2026: "Let the city change things you made" is a plain On/Off in the city (no CloudFormation).
+  it('account.cleanup turns the switch on and off on the link, and the next write follows it at once', async () => {
+    const { tenants, stores } = hub();
+    await stores.accounts.put('u1', { ...linkedRecord, linkedAt: '2026-11-24T00:00:00.000Z' });
+    const tenant = await tenants.acquire({ sub: 'u1' });
+    const tab: ServerEvent[] = [];
+    tenant.subscribe((e) => tab.push(e));
+    await tenant.setCleanup('r-on', true, () => {});
+    expect(await stores.accounts.get('u1')).toMatchObject({ status: 'linked', cleanup: true });
+    expect(statuses(tab).at(-1)).toMatchObject({ requestId: 'r-on', linked: true, cleanup: true });
+    await tenant.setCleanup('r-off', false, () => {});
+    expect(await stores.accounts.get('u1')).toMatchObject({ cleanup: false });
+    expect(statuses(tab).at(-1)).toMatchObject({ requestId: 'r-off', cleanup: false });
+    // Disconnect keeps it with the setup, for a reconnect of the same account.
+    await tenant.setCleanup('r-on2', true, () => {});
+    await tenant.unlink('r-unlink', () => {});
+    expect(await stores.accounts.get('u1')).toMatchObject({ status: 'pending', accountId: ACCOUNT, cleanup: true });
+    // Nothing linked: refused.
+    const errors: ServerEvent[] = [];
+    await tenant.setCleanup('r-x', true, (e) => errors.push(e));
+    expect(errors).toEqual([expect.objectContaining({ type: 'error', requestId: 'r-x', code: 'unlinked' })]);
     tenants.closeAll();
   });
 

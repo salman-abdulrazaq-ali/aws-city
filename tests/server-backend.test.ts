@@ -541,6 +541,7 @@ describe('ServerBackend sends every socket command in the contract (v2.19)', () 
     'account.verify': { cmd: { action: 'account.verify', requestId: 'r6', roleArn: '111122223333' }, way: 'socket' },
     'account.unlink': { cmd: { action: 'account.unlink', requestId: 'r7' }, way: 'socket' },
     'account.recheck': { cmd: { action: 'account.recheck', requestId: 'r7b' }, way: 'socket' },
+    'account.cleanup': { cmd: { action: 'account.cleanup', requestId: 'r7c', on: true }, way: 'socket' },
     'resource.remove': { cmd: { action: 'resource.remove', requestId: 'r8', kind: 'table', id: 'city-quest-library' }, way: 'socket' },
     'quest.start': { cmd: { action: 'quest.start', questId: 'q', taskId: 't2' }, way: 'local' },
     // A guarded build becomes the agent's prompt (task.submit); a template with none is a local practice build (below).

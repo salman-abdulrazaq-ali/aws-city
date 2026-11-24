@@ -32,9 +32,9 @@ export interface AccountRecord {
   /** Whether the last setup link asked for AllowCleanup=true ("Let the city change things you made", player role v6). */
   linkCleanup?: boolean;
   /**
-   * Whether the agents may change servers and buckets the player made: the link's AllowCleanup, recorded at verify when the
-   * stack was installed or updated from that link (like roleVersion: the account can't be read for it). AWS has the last
-   * word: a role without it refuses (AccessDenied). Absent: off.
+   * "Let the city change things you made": the player's own On/Off in the city (account.cleanup; turning it on needs MFA).
+   * Every setup link creates the role with the permission (AllowCleanup=true), so this switch is what decides; a role
+   * made without it refuses (AccessDenied). Absent: off. Kept by a verify of the same account.
    */
   cleanup?: boolean;
   /**
@@ -51,7 +51,7 @@ export type LinkIdentity = Pick<AccountRecord, 'externalId' | 'linkedAt'>;
 export const sameLink = (r: AccountRecord | undefined, id: LinkIdentity) => r !== undefined && r.externalId === id.externalId && r.linkedAt === id.linkedAt;
 
 /** The fields written in place on a link (`AccountStore.update`): what Check again and a broken mark learn. */
-export type AccountFields = Partial<Pick<AccountRecord, 'fixes' | 'brokenAt'>>;
+export type AccountFields = Partial<Pick<AccountRecord, 'fixes' | 'brokenAt' | 'cleanup'>>;
 
 export interface AccountStore {
   /** Strongly consistent (DynamoDB ConsistentRead): live() and the once-a-minute re-read must see another task's write. */

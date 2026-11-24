@@ -371,27 +371,24 @@ When a change touches a decision, update its entry and run its Proof.
   Serverless quest templates (`hello-api`, `queue-worker`) are practice builds on the server (`ServerBackend.planPractice`),
   never an EC2 house. Proof: `cd server && npx vitest run test/tenants.test.ts test/hosted.test.ts test/poller.test.ts test/guard.test.ts test/player-role.test.ts test/care.test.ts test/service.test.ts`,
   `npx vitest run tests/server-backend.test.ts tests/contract.test.ts tests/runtime-session.test.ts`, `cfn-lint` on the template (CI).
-- **"Let the city change things you made" is an On/Off switch, off by default, held in the player's own AWS account**
-  (asked for on 23 Nov 2026; player role v6). Off is today's rule: the agents see everything but change only what the
-  city built. On (the stack's `AllowCleanup`, policy `aws-city-cleanup` behind `CleanupOn`) they may also stop, start or
-  terminate servers and delete empty buckets the player made, in the linked Region, buckets only with
-  `aws:ResourceAccount` = the account (`CLEANUP_IAM` in `server/src/guard/rules.ts`); never tables, object access or IAM.
-  The city can't turn it on: the setup link asks for `param_AllowCleanup=true` only when ticked, and the record's
-  `cleanup` is the link's `linkCleanup`, recorded at verify when the stack was installed or updated from that link (like
-  `roleVersion`; `server/src/accounts/link.ts`), so the card's Turn on/off is a stack update plus "I've updated the
-  stack" (`CleanupSwitch`, `src/ui/Account.tsx`; `confirmRoleUpdate({ allowCleanup })`), as three numbered steps
-  (open Terminal or CloudShell in the linked account, with the player's AWS CLI profile `prefs.awsProfile`, shared with
-  the workshop's terminal box; paste one command; then "I've updated the stack"): `cleanupCommand`, `src/state/account.ts`,
-  `update-stack` keeping every value the installed role has, then `wait stack-update-complete`, both with `--profile`
-  when given (seen 24 Nov 2026: NoCredentials in a terminal without an export); the console steps fold under it, and a request refused because it's off
-  offers "Turn it on (Deploy) →" on its task card (seen 23 Nov 2026: the console steps confused, no way from the refusal). Policy (`checkAction`'s
-  `cleanup`, `server/src/agents/policy.ts`) lets the player's servers and buckets through only then (a bucket only in the
-  home Region), naming the switch when it's off; ActionService reads the world's `cleanup` at each write; the gate widens
-  DeleteBucket's name only under a grant minted with `cleanup` (`actionGrant`, `WireContext.cleanup`), still the one
-  approved bucket with `ExpectedBucketOwner`. Every removal keeps its typed name or id (`confirmText`), MFA, Jev and
-  Approve, on or off. Proof: `cd server && npx vitest run test/player-role.test.ts test/guard.test.ts test/service.test.ts test/hosted.test.ts -t "AllowCleanup|cleanup|player made|switch|v6"`,
-  `npx vitest run tests/deploy-account.test.tsx -t "change things you made|AllowCleanup|older than v6"`, and on a real
-  account `cd infra && AWS_PROFILE=aws-city node scripts/check-player-role.mjs --account <id> --assume <role> [--cleanup]`.
+- **"Let the city change things you made" is a plain On/Off in the city, off by default** (asked for on 23–24 Nov 2026:
+  "just on and off, no CloudFormation"; player role v6). Every setup link makes the role with `AllowCleanup=true`
+  (`server/src/accounts/link.ts`), so the role can stop, start or terminate servers and delete empty buckets the player
+  made, in the linked Region (buckets only with `aws:ResourceAccount` = the account; `aws-city-cleanup` behind
+  `CleanupOn`, `CLEANUP_IAM` in `server/src/guard/rules.ts`; never tables, object access or IAM). Whether the agents may
+  use it is the player's switch: `account.cleanup {on}` (turning it on needs MFA step-up, off doesn't: `server/src/http.ts`)
+  writes `record.cleanup` in place (`AccountStore.update`), the world takes it at once, a verify keeps it for the same
+  account (else off), and Disconnect keeps it with the setup. Trade-off, chosen for simplicity: the role always carries
+  the permission, and the city's switch, policy and gate guard each use. Policy (`checkAction`'s `cleanup`,
+  `server/src/agents/policy.ts`) lets the player's servers and buckets through only when it's on (a bucket only in the
+  home Region), naming the switch when it's off; the gate widens DeleteBucket's name only under a grant minted with
+  `cleanup` (`actionGrant`, `WireContext.cleanup`), still the one approved bucket with `ExpectedBucketOwner`. Every removal
+  keeps its typed name or id (`confirmText`), MFA, Jev and Approve. The card (`CleanupSwitch`, `src/ui/Account.tsx`) is
+  one On/Off button (`setCleanup`, `src/app/runtime.ts`); a refusal because it's off offers "Turn it on (Deploy) →" on its
+  task card. Proof: `cd server && npx vitest run test/player-role.test.ts test/guard.test.ts test/service.test.ts
+  test/hosted.test.ts test/tenants.test.ts -t "AllowCleanup|cleanup|player made|switch|v6"`, `npx vitest run
+  tests/deploy-account.test.tsx -t "change things you made"`, and on a real account `cd infra && AWS_PROFILE=aws-city node
+  scripts/check-player-role.mjs --account <id> --assume <role> --cleanup`.
 - **Connecting is one press, and Reconnect after a Disconnect is one press** (asked for on 24 Nov 2026: "one click, no
   stack, no Region"; `quickConnect` in `src/ui/DeployPanel.tsx`, hosted unlinked players). The card: the account number
   (read from the open console, `consoleAccount`, editable), the two choices (change things I made: AllowCleanup; small

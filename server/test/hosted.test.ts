@@ -428,23 +428,17 @@ describe('account linking', () => {
     expect(await linker.verify('u1', '111122223333')).toMatchObject({ status: 'linked', externalId: first.externalId });
   });
 
-  // Asked for on 23 Nov 2026: "Let the city change things you made" (player role v6 AllowCleanup), recorded like the
-  // role version: from the link the stack was installed or updated from, off unless asked, and off again when a link says so.
-  it('the switch is the link’s AllowCleanup: asked for only when the player turned it on, kept by a plain verify', async () => {
+  // Asked for on 24 Nov 2026: the switch is the city's own On/Off. Every role is made able (AllowCleanup=true in every
+  // link); a new account starts Off, and a reconnect of the same account keeps what it was.
+  it('every setup link makes the role with AllowCleanup; the switch starts Off for a new account and is kept for the same one', async () => {
     const { linker, stores, link } = setup(ok);
-    const off = await link('u1', 'us-west-2');
-    expect(off.url).not.toContain('AllowCleanup');
+    const first = await link('u1', 'us-west-2');
+    expect(first.url).toContain('param_AllowCleanup=true');
     expect(await linker.verify('u1', '111122223333')).not.toHaveProperty('cleanup');
-    const on = await linker.link('u1', 'us-west-2', { label: 'Player u1', allowCleanup: true });
-    expect(on.url).toContain('param_AllowCleanup=true');
-    // Not yet: the stack in the account hasn't changed until the player says they updated it.
-    expect(await linker.verify('u1', '111122223333')).not.toHaveProperty('cleanup');
-    expect(await linker.verify('u1', '111122223333', { updated: true })).toMatchObject({ cleanup: true });
-    // A plain verify keeps it; a link without it, then "I've updated the stack", turns it off.
-    expect(await linker.verify('u1', '111122223333')).toMatchObject({ cleanup: true });
+    // The player turned it on (account.cleanup), then disconnected: the pending record keeps it and the account.
+    await stores.accounts.put('u1', { status: 'pending', externalId: first.externalId, region: 'us-west-2', accountId: '111122223333', cleanup: true });
     await link('u1', 'us-west-2');
-    expect(await linker.verify('u1', '111122223333', { updated: true })).not.toHaveProperty('cleanup');
-    expect(await stores.accounts.get('u1')).not.toHaveProperty('cleanup');
+    expect(await linker.verify('u1', '111122223333')).toMatchObject({ status: 'linked', cleanup: true });
   });
 
   it('v2.19 Check again (recheck): asks the linked role about fixes again, read-only: no new link window, the role version stays', async () => {

@@ -2,17 +2,13 @@
 // Deploy's "Your data" and ⋯ share one "Delete my account" confirm; the linked card and City care share the step lists
 // (update the role, turn fixes on) and "Check again". The rules are pure in src/state/account.ts.
 
-import { useEffect, useRef, useState, type RefObject } from 'react';
-import { confirmRoleUpdate, deleteAccount, linkAccount, openUrl, recheckAccount } from '@/app/runtime';
+import { useEffect, useRef, type RefObject } from 'react';
+import { confirmRoleUpdate, deleteAccount, linkAccount, openUrl, recheckAccount, setCleanup } from '@/app/runtime';
 import {
   CLEANUP_OFF,
-  CLEANUP_ROLE_VERSION,
   CLEANUP_SWITCH,
-  cleanupCommand,
   cleanupOn,
-  cleanupSteps,
   connectOffer,
-  accountTitle,
   connectsPlayer,
   FIXES_ON_STEPS,
   LOCAL_FIXES_COMMAND,
@@ -192,25 +188,14 @@ export function CleanupSwitch({ region }: { region: string }) {
   const account = useCity((s) => s.account);
   const hosted = useCity((s) => s.hosted);
   const demo = useCity((s) => s.backendKind === 'mock');
-  const profile = useCity((s) => s.prefs.awsProfile);
-  const [open, setOpen] = useState(false);
-  const [copied, copy] = useCopy();
-  const [copiedCmd, copyCmd] = useCopy();
+  const offline = useCity((s) => !isOnline(s.backendKind, s.backendStatus));
   const pending = usePending();
   const { clear } = pending;
-  useEffect(() => clear('cmd'), [account.linkUrl, clear]);
+  useEffect(() => clear('cleanup'), [account.seq, account.error, clear]);
   if (!hosted && !demo) return null;
   const on = account.cleanup === true;
-  const want = !on;
-  // A role older than v6 has no AllowCleanup: the same update brings the newer template.
-  const older = account.roleVersion !== undefined && account.roleVersion < CLEANUP_ROLE_VERSION;
-  const newTemplate = older ? account.templateUrl : undefined;
-  const label = connectsPlayer(account.linkUrl);
-  const command = cleanupCommand(account, want, label, profile);
-  // No command yet because the role's version is unknown or older than v5 and the stack's ConnectsPlayer name isn't
-  // known: a fresh setup link names it (as RoleUpdate's "Get the ConnectsPlayer name" does).
-  const needsName = !command && !label && (account.roleVersion ?? 0) < 5 && !!account.templateUrl;
-  const verb = want ? 'Turn on' : 'Turn off';
+  // A plain On/Off in the city (asked for on 24 Nov 2026: "no CloudFormation, just on and off"): every role is made able
+  // to do it, and this switch decides. Turning it on asks for MFA, like a write.
   return (
     <section className="account-howto cleanup-switch" aria-labelledby="cleanup-switch-title">
       <p className="row">
@@ -218,84 +203,19 @@ export function CleanupSwitch({ region }: { region: string }) {
         <span className={`switch-state ${on ? 'on' : 'off'}`}>{on ? 'On ✅' : 'Off'}</span>
         <button
           className="btn tiny"
-          aria-expanded={open}
+          disabled={pending.is('cleanup') || offline}
+          aria-busy={pending.is('cleanup')}
           onClick={() => {
-            setOpen(!open);
-            // What the next "I've updated the stack" records (confirmRoleUpdate's link carries it).
-            if (!open) useCity.getState().patchAccount({ allowCleanup: want });
+            const requestId = setCleanup(!on);
+            if (requestId) pending.start('cleanup', requestId);
           }}
         >
-          {verb}
+          {pending.is('cleanup') ? '…' : on ? 'Turn off' : 'Turn on'}
         </button>
       </p>
       <p className="muted small">
         <Plain text={on ? cleanupOn(regionName(region)) : CLEANUP_OFF} />
       </p>
-      {open &&
-        (demo ? (
-          <p className="muted">
-            Practice account: press Use another Region or account, {want ? 'tick' : 'untick'} “{CLEANUP_SWITCH}”, then Verify again.
-          </p>
-        ) : (
-          <>
-            {/* Three steps, in the words the chat used (asked for on 24 Nov 2026: "as clear as your chat"). */}
-            <ol className="account-steps cleanup-steps" aria-label={`${verb} “${CLEANUP_SWITCH}”`}>
-              <li>
-                Open Terminal (or CloudShell) signed in to account <b>{account.accountId ? accountTitle(account.accountId) : 'the linked one'}</b>.
-                <AwsProfileInput />
-              </li>
-              <li>
-                {command ? (
-                  <>
-                    Paste this and press Enter. It takes about a minute:
-                    <code className="workshop-cmd">{command}</code>
-                    <button className="btn tiny" onClick={() => copyCmd(command)}>
-                      {copiedCmd ? 'Copied ✓' : 'Copy the command'}
-                    </button>
-                  </>
-                ) : needsName ? (
-                  <>
-                    Get your command (one press makes it for your account):{' '}
-                    <button
-                      className="btn tiny"
-                      disabled={pending.is('cmd')}
-                      aria-busy={pending.is('cmd')}
-                      onClick={() => {
-                        const requestId = linkAccount(region, { allowCleanup: want });
-                        if (requestId) pending.start('cmd', requestId);
-                      }}
-                    >
-                      {pending.is('cmd') ? 'Getting it…' : 'Get the command'}
-                    </button>
-                  </>
-                ) : (
-                  'Update the AWSCity stack in the CloudFormation console (the steps below).'
-                )}
-              </li>
-              <li>
-                When the prompt comes back with no error, press: <UpdatedStack allowCleanup={want} />
-              </li>
-            </ol>
-            <details className="why" open={!command && !needsName}>
-              <summary>Prefer clicking? Use the CloudFormation console instead</summary>
-              <StepList steps={cleanupSteps(want, newTemplate)} label={`${verb} in the CloudFormation console`} />
-              {newTemplate && (
-                <div className="template-url">
-                  <code>{newTemplate}</code>
-                  <button className="btn tiny" onClick={() => copy(newTemplate)}>
-                    {copied ? 'Copied ✓' : 'Copy the template address'}
-                  </button>
-                  {label && (
-                    <span>
-                      ConnectsPlayer: <code>{label}</code>
-                    </span>
-                  )}
-                </div>
-              )}
-              <StackLink region={region} />
-            </details>
-          </>
-        ))}
     </section>
   );
 }

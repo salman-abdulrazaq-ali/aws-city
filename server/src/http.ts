@@ -184,6 +184,7 @@ const singleTenant = (d: SingleTenantDeps & { config: Config }): TenantHub => {
     link: async (requestId, _region, emit) => emit({ type: 'account.status', requestId, linked: true, message: 'The local server uses the workshop AWS profile.' }),
     verify: async (requestId, _arn, emit) => emit({ type: 'account.status', requestId, linked: true, message: 'The local server uses the workshop AWS profile.' }),
     recheck: async (requestId, emit) => emit({ type: 'account.status', requestId, linked: true, message: 'The local server uses the workshop AWS profile.' }),
+    setCleanup: async (requestId, _on, emit) => emit({ type: 'account.status', requestId, linked: true, message: 'The local server uses the workshop AWS profile.' }),
     unlink: async (requestId, emit) => emit({ type: 'account.status', requestId, linked: true, message: 'The local server uses the workshop AWS profile, so there’s no account to disconnect.' }),
     remove: async ({ requestId }, emit) => emit({ type: 'error', requestId, message: 'This server can’t take things down directly. Ask the building’s agent instead.' }),
     deleteMe: async () => undefined,
@@ -215,6 +216,8 @@ const Command = z.discriminatedUnion('action', [
   z.object({ action: z.literal('account.unlink'), requestId: Id }).strict(),
   // contract v2.19 "Check again": the linked role's fixes answer, read again (read-only, no MFA)
   z.object({ action: z.literal('account.recheck'), requestId: Id }).strict(),
+  // "Let the city change things you made": the player's On/Off in the city (turning it on needs MFA, like a write).
+  z.object({ action: z.literal('account.cleanup'), requestId: Id, on: z.boolean() }).strict(),
   // contract v2.19: take down one thing the city built (no model; the ActionService and the player's approval)
   z.object({ action: z.literal('resource.remove'), requestId: Id, kind: z.enum(['instance', 'table', 'bucket']), id: z.string().regex(/^[A-Za-z0-9._-]{1,255}$/) }).strict(),
   // contract v2.3: city care (the citizens' findings)
@@ -730,6 +733,15 @@ export const createHttpServer = (deps: Deps) => {
         // pending, so it can still be approved once MFA is back on (or rejected, which needs no step-up).
         if (cmd.action === 'deploy.reject' || !mfaReady) return answer();
         void stepUp().then((why) => (why === 'ok' ? answer() : refuse(why)));
+        return;
+      }
+      if (cmd.action === 'account.cleanup') {
+        const failed = (err: unknown) => emit({ type: 'error', requestId: cmd.requestId, message: publicError('account change failed', err) });
+        // Turning it off takes access away: no step-up. Turning it on lets agents remove what the player made: MFA, like a write.
+        if (!cmd.on) return void tenant.setCleanup(cmd.requestId, false, emit).catch(failed);
+        void stepUp()
+          .then((why) => (why === 'ok' ? tenant.setCleanup(cmd.requestId, true, emit) : refuse(why, cmd.requestId)))
+          .catch(failed);
         return;
       }
       if (cmd.action === 'account.link' || cmd.action === 'account.verify' || cmd.action === 'account.recheck' || cmd.action === 'account.unlink') {

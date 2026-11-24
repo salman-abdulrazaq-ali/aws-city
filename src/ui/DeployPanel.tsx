@@ -504,12 +504,12 @@ export function DeployPanel() {
   };
   const connectNowPress = () => {
     quickAsked.current = 'connect';
-    getLink(region, !!account.allowFixes, !!account.allowCleanup);
+    getLink(region, !!account.allowFixes, false);
   };
   const reconnectPress = () => {
     if (!account.stackLeft) return;
     quickAsked.current = 'reconnect';
-    getLink(account.stackLeft, !!account.allowFixes, !!account.lastCleanup);
+    getLink(account.stackLeft, !!account.allowFixes, false);
   };
   /** The account number to verify: what the player typed, else the account the open AWS console is signed in to. */
   const accountGuess = role.trim() || consoleAccount || '';
@@ -573,21 +573,12 @@ export function DeployPanel() {
               <p className="muted small">One press: AWS City’s role is still in that account.</p>
             </div>
           )}
-          <div className="row">
-            <label className="field-hint" htmlFor="quick-account">
-              Your AWS account number
-            </label>
+          {/* Asked for on 24 Nov 2026: just the number and one button (the label sat squeezed beside the box). */}
+          <label className="quick-field" htmlFor="quick-account">
+            <span>Your AWS account number</span>
             <input id="quick-account" placeholder="1234-5678-9012" value={role || consoleAccount || ''} onChange={(e) => setRole(e.target.value)} autoComplete="off" spellCheck={false} />
-          </div>
+          </label>
           {consoleAccount && !role.trim() && <p className="muted small">Filled in from the AWS console you have open.</p>}
-          <label className="check-row">
-            <input type="checkbox" checked={!!account.allowCleanup} onChange={(e) => useCity.getState().patchAccount({ allowCleanup: e.target.checked })} />
-            <span>Allow the agents to change things I made (servers and empty buckets; I type the name and approve each removal)</span>
-          </label>
-          <label className="check-row">
-            <input type="checkbox" checked={!!account.allowFixes} onChange={(e) => useCity.getState().patchAccount({ allowFixes: e.target.checked })} />
-            <span>Allow small safety fixes (I approve each one)</span>
-          </label>
           <PendingButton
             className={account.stackLeft && account.lastAccountId ? 'btn' : 'btn primary'}
             pending={!(account.stackLeft && account.lastAccountId) && (pending.is('link') || pending.is('verify'))}
@@ -598,14 +589,23 @@ export function DeployPanel() {
           >
             🔗 Connect your AWS account
           </PendingButton>
-          <p className="muted small">
-            Connects in {regionName(region)}, the city you’re in. Already set up? It connects at once. The first time, AWS asks you to approve AWS City once.
-          </p>
+          <p className="muted small">Connects in {regionName(region)}. Already set up? It connects at once.</p>
         </>
       )}
       <details className="why">
-        <summary>Prefer step by step?</summary>
-        {linkSteps}
+        <summary>More options</summary>
+        <p className="muted small">
+          Optional: everything else in AWS City works without this. The agents only use a role you approve once in your AWS account, and you approve
+          every change they make.
+        </p>
+        <label className="check-row">
+          <input type="checkbox" checked={!!account.allowFixes} onChange={(e) => useCity.getState().patchAccount({ allowFixes: e.target.checked })} />
+          <span>Allow small safety fixes (I approve each one)</span>
+        </label>
+        <details className="why">
+          <summary>Step by step</summary>
+          {linkSteps}
+        </details>
       </details>
     </div>
   );
@@ -1018,16 +1018,24 @@ export function DeployPanel() {
               </>
             ) : (
               <>
-                <p className="muted">
-                  Optional. Everything else in AWS City works without this. Link an account when you want the agents to build real things in it. They only use a
-                  role you create, and you approve every change.
-                  {kind === 'mock' && ' (Demo: nothing real is created.)'}
-                </p>
-                <details className="why">
-                  <summary>Why is this safe?</summary>
-                  <Plain text="Only AWS City’s server can use the role, with an ExternalId tied to you, and you approve every change. It builds only small things the city made, in the Region you pick; a few reads cover your whole account (the linking steps list them). Delete the AWSCity stack to remove it at any time." />
-                </details>
-                {!mfaFirst && (kind === 'mock' ? linkSteps : quickConnect())}
+                {kind === 'mock' ? (
+                  <>
+                    <p className="muted">
+                      Optional. Everything else in AWS City works without this. Link an account when you want the agents to build real things in it. They only use
+                      a role you create, and you approve every change. (Demo: nothing real is created.)
+                    </p>
+                    <details className="why">
+                      <summary>Why is this safe?</summary>
+                      <Plain text="Only AWS City’s server can use the role, with an ExternalId tied to you, and you approve every change. It builds only small things the city made, in the Region you pick; a few reads cover your whole account (the linking steps list them). Delete the AWSCity stack to remove it at any time." />
+                    </details>
+                    {!mfaFirst && linkSteps}
+                  </>
+                ) : (
+                  <>
+                    <p className="muted">Let AWS City’s agents work in your AWS account. You approve every change.</p>
+                    {!mfaFirst && quickConnect()}
+                  </>
+                )}
               </>
             )}
           </>

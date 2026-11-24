@@ -372,3 +372,17 @@
   margin-top: var(--s-2);
   font-weight: 600;
 }
+
+/* Connect (24 Nov 2026): the account number's label sits above its box, never squeezed beside it. */
+.quick-connect .quick-field {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0;
+}
+.quick-connect .quick-field input {
+  width: 100%;
+  max-width: 260px;
+}
+.quick-connect .reconnect-one {
+  margin-bottom: 10px;
+}
