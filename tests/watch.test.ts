@@ -22,6 +22,17 @@ describe('the story', () => {
     expect(taskStory(task({ agentId: 'lambda' })).who).toBe('Lola');
   });
 
+  // Seen 24 Nov 2026: "delete my bucket" was framed "Sally will store your holiday photos", with a storage-classes lesson.
+  it('the hand-written story is only for its own task: any other task at that building gets the building’s own words', () => {
+    const s = taskStory(task({ prompt: 'delete my bucket finaldemo-1', agentId: 's3' }));
+    expect(s.framing).toBe('Sally will take this on at S3 Lake.');
+    expect(s.teaches).not.toMatch(/storage classes/);
+    expect(s.teaches.length).toBeGreaterThan(10);
+    expect(s.templateId).toBeUndefined();
+    // The story's own words, in any case and spacing, still get it.
+    expect(taskStory(task({ prompt: '  store my HOLIDAY photos cheaply ' })).framing).toBe('Sally will store your holiday photos in S3 Lake.');
+  });
+
   it('any building has a story (its own first lesson when nothing is hand-written)', () => {
     const s = taskStory(task({ prompt: 'Something about Amazon SQS queues', agentId: 'sqs' }));
     expect(s.framing).toMatch(/will take this on at/);
@@ -31,7 +42,7 @@ describe('the story', () => {
 
   it('only offers "See it in Deploy" for a real practice template that uses the agent’s service', () => {
     for (const id of ['s3', 'lambda', 'iam', 'route53', 'dynamodb', 'shield', 'bedrock', 'ec2']) {
-      const s = taskStory(task({ agentId: id }));
+      const s = taskStory(task({ agentId: id, prompt: agentOffer(id)!.prompt }));
       if (!s.templateId) continue;
       const t = templatesJson.templates.find((x) => x.id === s.templateId);
       expect(t, s.templateId).toBeTruthy();

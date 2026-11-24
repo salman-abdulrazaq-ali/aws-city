@@ -62,7 +62,7 @@ describe('Watch it done', () => {
     // After: what was built, what it teaches, what it paid, See it in Deploy and the next step.
     send({ type: 'task.done', taskId: 't1', ok: true, result: 'Your photos are stored cheaply.', xp: [{ serviceId: 's3', amount: 15 }] });
     rerender(view());
-    expect(container.querySelector('.watch-result .task-result')?.textContent).toMatch(/What Sally built: Your photos are stored cheaply/);
+    expect(container.querySelector('.watch-result .task-result')?.textContent).toMatch(/Sally: Your photos are stored cheaply/);
     expect(container.querySelector('.watch-teaches')?.textContent).toMatch(/What it teaches: S3 storage classes/);
     // A task pays a little (the agent did the work): at most TASK_STARS, whatever the server reports.
     expect(screen.getByText('+3 ⭐ S3 Lake')).toBeTruthy();

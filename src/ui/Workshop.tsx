@@ -372,7 +372,12 @@ function StepView(props: {
   // otherwise Copy waited for a <region> there was nowhere to type.
   const linkedRegion = useCity((s) => s.account.region);
   const linkedAccount = useCity((s) => s.account.accountId);
-  const typed = placeholdersIn(step.cli).filter((n) => n !== 'region' || !linkedRegion);
+  // The demo has no real AWS: "for real" there runs in the practice terminal and pays practice (store: honestMode).
+  const realHere = mode === 'real' && !demo;
+  // For real, a step can have its own command (`realCli`: one that looks the version id up, or prints the download), so it
+  // runs as pasted (seen 24 Nov 2026: "1", "3" and "0" typed as the version id). The practice terminal keeps `cli`.
+  const cli = (realHere && step.realCli) || step.cli;
+  const typed = placeholdersIn(cli).filter((n) => n !== 'region' || !linkedRegion);
   const [form, setForm] = useState<Record<string, string>>(() => Object.fromEntries([...new Set([...typed, ...asks])].map((n) => [n, names[n] ?? ''])));
   const [copied, copyText] = useCopy();
   const remember = (patch: { names?: Record<string, string>; line?: string }) => useCity.getState().rememberWorkshop(w.id, patch);
@@ -380,20 +385,20 @@ function StepView(props: {
     remember({ names: typed });
     useCity.getState().workshopStep(w.id, step.id, m, hints);
   };
-  // The demo has no real AWS: "for real" there runs in the practice terminal and pays practice (store: honestMode).
-  const realHere = mode === 'real' && !demo;
   // The player runs the commands in their own terminal: no Open CloudShell (ShellChoice).
   const terminal = useCity((st) => st.prefs.workshopShell === 'terminal');
   const worth = stepReward(progress.workshops?.[w.id], step.id, realHere ? 'real' : 'practice');
   const answered = check && !check.pending;
+  // A check that wants the thing gone (bucket-gone, table-gone, instance-gone…).
+  const gone = isChecked(step) && step.verify.check.endsWith('-gone');
   useEffect(() => {
     if (answered && !check?.ok) feel.bad();
   }, [answered, check?.ok]);
   // The command as you'd type it. Practice: without the optional parts (the terminal takes either). For real: with the
   // optional parts the Region needs (S3's LocationConstraint outside us-east-1), and the names typed in the boxes.
   const { text: filled, unfilled } = useMemo(
-    () => commandFor(step.cli ?? '', realHere ? { ...names, ...form, ...(linkedRegion ? { region: linkedRegion } : {}) } : names, realHere),
-    [step.cli, names, form, realHere, linkedRegion],
+    () => commandFor(cli ?? '', realHere ? { ...names, ...form, ...(linkedRegion ? { region: linkedRegion } : {}) } : names, realHere),
+    [cli, names, form, realHere, linkedRegion],
   );
   // For real, the step's setup (a file CloudShell doesn't have) runs first, in the same line, so one Copy does both.
   const shown = realHere && step.setup && filled ? `${step.setup} && ${filled}` : filled;
@@ -551,8 +556,14 @@ function StepView(props: {
               <button className="btn primary" disabled={check?.pending || asks.some((n) => !form[n]?.trim())}>
                 {check?.pending ? 'Checking…' : 'Check my account'}
               </button>
-              {answered && <p className={check.ok ? 'ok-note' : 'muted'}>{check.ok ? `✓ ${check.detail}` : check.detail}</p>}
-              {answered && !check.ok && linkedAccount && (
+              {/* A clean-up step whose thing is still there says so loudly (seen 24 Nov 2026: grey small text, "people don't
+                  read"); the account is clearly the right one, so the "which account" line stays out. */}
+              {answered && (
+                <p className={check.ok ? 'ok-note' : gone ? 'field-error' : 'muted'} role={!check.ok && gone ? 'alert' : undefined}>
+                  {check.ok ? `✓ ${check.detail}` : gone ? `⚠️ ${check.detail}` : check.detail}
+                </p>
+              )}
+              {answered && !check.ok && !gone && linkedAccount && (
                 <p className="muted small">
                   The city looked in account {accountLabel(linkedAccount)}
                   {linkedRegion ? `, ${regionName(linkedRegion)}` : ''}. Ran it there? <code>aws sts get-caller-identity --query Account --output text</code> in
@@ -573,7 +584,7 @@ function StepView(props: {
           {paid.mode === 'practice' && mode === 'real' && demo && ' (practice: this is the demo)'}
         </p>
       )}
-      <ErrorHelp w={w} errors={step.errors} />
+      <ErrorHelp w={w} stepId={step.id} errors={step.errors} values={{ ...names, ...form, ...(linkedRegion ? { region: linkedRegion } : {}) }} />
       {done && (
         <button className="btn wide" onClick={onNext}>
           Next step →
@@ -635,11 +646,22 @@ export function AnswerWithCode({ who, text }: { who: string; text: string }) {
   );
 }
 
-function ErrorHelp({ w, errors }: { w: WorkshopDef; errors?: TerminalError[] }) {
-  const [text, setText] = useState('');
+/**
+ * Each step's error help while the city is open (`<workshop>/<step>`): seen 24 Nov 2026, the agent's answer was gone
+ * after a look at Deploy, because it lived only in this component. Not saved: a reload starts clean.
+ */
+const errorHelpMemory = new Map<string, { text: string; known?: TerminalError | null; asked?: { districtId: string; requestId: string } }>();
+
+function ErrorHelp({ w, stepId, errors, values }: { w: WorkshopDef; stepId: string; errors?: TerminalError[]; values: Record<string, string> }) {
+  const key = `${w.id}/${stepId}`;
+  const [kept] = useState(() => errorHelpMemory.get(key));
+  const [text, setText] = useState(kept?.text ?? '');
   const noteId = useId();
-  const [known, setKnown] = useState<TerminalError | null>();
-  const [asked, setAsked] = useState<{ districtId: string; requestId: string }>();
+  const [known, setKnown] = useState<TerminalError | null | undefined>(kept?.known);
+  const [asked, setAsked] = useState<{ districtId: string; requestId: string } | undefined>(kept?.asked);
+  useEffect(() => {
+    errorHelpMemory.set(key, { text, known, asked });
+  }, [key, text, known, asked]);
   const agent = placeFor(w.serviceId)?.agentName.split(' the ')[0] ?? 'the agent';
   // The agent's answer, here under the step (seen 22 Nov 2026: it went only to the HQ chat, and the player was lost).
   const answer = useCity((s) => (asked ? s.chats[asked.districtId]?.find((m) => m.id === `a-${asked.requestId}`) : undefined));
@@ -659,7 +681,8 @@ function ErrorHelp({ w, errors }: { w: WorkshopDef; errors?: TerminalError[] }) 
     feel.send();
   };
   return (
-    <details className="workshop-error">
+    // Open again on the way back when it had an answer.
+    <details className="workshop-error" open={kept?.known || kept?.asked ? true : undefined}>
       <summary>I got an error</summary>
       <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} placeholder="Paste the error here" aria-label="The error you got" aria-describedby={noteId} />
       <AiNote id={noteId} />
@@ -667,9 +690,12 @@ function ErrorHelp({ w, errors }: { w: WorkshopDef; errors?: TerminalError[] }) 
         Help me fix it
       </button>
       {known && (
-        <p>
-          💡 <Plain text={known.explain} /> <b>{known.fix}</b>
-        </p>
+        <>
+          <p>
+            💡 <Plain text={known.explain} /> <b>{known.fix}</b>
+          </p>
+          {known.fixCli && <CodeChip code={commandFor(known.fixCli, values, true).text} />}
+        </>
       )}
       {known === null && asked && (
         <div className="workshop-answer" aria-live="polite">

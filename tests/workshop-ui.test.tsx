@@ -315,6 +315,79 @@ describe('for real', () => {
   });
 });
 
+// Seen 24 Nov 2026 in a terminal: the version id was typed as 1, 3 and 0 (InvalidArgument), the download "went nowhere",
+// the bucket then wouldn't delete (BucketNotEmpty), and the failed clean-up check was small grey text.
+describe('for real, the S3 commands just work', () => {
+  const S3 = 's3-first-bucket';
+  const BUCKET = 'city-workshop-1a2b3c4d';
+  const LOOKUP = `aws s3api delete-object --bucket ${BUCKET} --key sample.txt --version-id "$(aws s3api head-object --bucket ${BUCKET} --key sample.txt --query VersionId --output text)"`;
+  const forReal = () => {
+    useCity.setState({ backendKind: 'server', account: { linked: true, region: 'us-west-2' }, chats: {} });
+    useCity.getState().setPref('workshopShell', undefined);
+    useCity.getState().rememberWorkshop(S3, { names: { bucket: BUCKET } });
+    act(() => useCity.getState().openWorkshop(S3));
+    render(<Workshop />);
+    fireEvent.click(screen.getByRole('button', { name: /For real \(CloudShell or your terminal\)/ }));
+  };
+  const paste = (text: string) => {
+    const box = document.querySelector('.workshop-error') as HTMLDetailsElement;
+    fireEvent.change(within(box).getByRole('textbox', { name: 'The error you got' }), { target: { value: text } });
+    fireEvent.click(within(box).getByRole('button', { name: 'Help me fix it' }));
+    return box;
+  };
+
+  it('Delete the file’s version looks its id up (no box to type it in); practice still asks for it', () => {
+    forReal();
+    fireEvent.click(screen.getByRole('button', { name: /^Delete the file's version/ }));
+    expect(document.querySelector('.workshop-cmd')?.textContent).toBe(LOOKUP);
+    expect(screen.queryByRole('textbox', { name: /Your version/ })).toBeNull();
+    expect((screen.getByRole('button', { name: 'Copy' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText(/the \$\(…\) part looks the version id up for you/)).toBeTruthy();
+    // The practice terminal keeps the command that teaches the version id.
+    fireEvent.click(screen.getByRole('button', { name: /Practice terminal/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Delete the file's version/ }));
+    expect(document.querySelector('.workshop-cmd')?.textContent).toMatch(/--version-id <version>$/);
+  });
+
+  it('Download it again prints the file it saved', () => {
+    forReal();
+    fireEvent.click(screen.getByRole('button', { name: /^Download it again/ }));
+    expect(document.querySelector('.workshop-cmd')?.textContent).toBe(`aws s3api get-object --bucket ${BUCKET} --key sample.txt downloaded-sample.txt && cat downloaded-sample.txt`);
+  });
+
+  it('BucketNotEmpty and a wrong version id come with a command to copy, the bucket filled in, with no agent call', () => {
+    forReal();
+    const calls = asked.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: /^Delete the bucket/ }));
+    fireEvent.click(screen.getByText('I got an error'));
+    let box = paste('An error occurred (BucketNotEmpty) when calling the DeleteBucket operation: The bucket you tried to delete is not empty. You must delete all versions in the bucket.');
+    expect(box.textContent).toMatch(/Something is still inside/);
+    expect(box.querySelector('.workshop-cmd')?.textContent).toBe(`${LOOKUP} && aws s3api delete-bucket --bucket ${BUCKET}`);
+    expect(within(box).getByRole('button', { name: 'Copy' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /^Delete the file's version/ }));
+    fireEvent.click(screen.getByText('I got an error'));
+    box = paste('aws: [ERROR]: An error occurred (InvalidArgument) when calling the DeleteObject operation: Invalid version id specified');
+    expect(box.textContent).toMatch(/S3 version ids are long strings like KcvdShWg…, not 1 or 0/);
+    expect(box.querySelector('.workshop-cmd')?.textContent).toBe(LOOKUP);
+    expect(asked.mock.calls.length).toBe(calls);
+  });
+
+  it('a clean-up check that finds the bucket still there is a warning, without the "which account" line', () => {
+    forReal();
+    useCity.setState({ account: { linked: true, accountId: '047463438585', region: 'us-west-2' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Delete the bucket/ }));
+    act(() => useCity.getState().applyServerEvent({ type: 'workshop.verified', workshopId: S3, stepId: 'cleanup', ok: false, detail: `S3 bucket ${BUCKET} is still there. Delete it, then check again.` }));
+    const warning = screen.getByRole('alert');
+    expect(warning.textContent).toBe(`⚠️ S3 bucket ${BUCKET} is still there. Delete it, then check again.`);
+    expect(warning.className).toBe('field-error');
+    expect(screen.queryByText(/The city looked in account/)).toBeNull();
+    // A check that wants the thing there still says where it looked.
+    fireEvent.click(screen.getByRole('button', { name: /^Create the bucket/ }));
+    act(() => useCity.getState().applyServerEvent({ type: 'workshop.verified', workshopId: S3, stepId: 'create', ok: false, detail: `No S3 bucket called ${BUCKET}.` }));
+    expect(screen.getByText(/The city looked in account/)).toBeTruthy();
+  });
+});
+
 // Seen 22 Nov 2026: "Help me fix it" said the answer would come up in the Feed, and the player couldn't find it.
 describe('I got an error', () => {
   it('an unknown error is asked of the building’s agent, and the answer shows here under the step', () => {
@@ -344,6 +417,23 @@ describe('I got an error', () => {
     const chip = document.querySelector('.workshop-answer .code-row .workshop-cmd');
     expect(chip?.textContent).toBe('aws dynamodb list-tables --region us-west-2');
     expect(document.querySelector('.workshop-answer .code-row button')?.textContent).toBe('Copy');
+  });
+
+  // Seen 24 Nov 2026: after a look at Deploy the answer was gone ("Why is it gone?").
+  it('the question and its answer are still there after leaving the workshop and coming back', () => {
+    useCity.setState({ chats: {}, backendKind: 'mock' });
+    act(() => useCity.getState().openWorkshop('s3-first-bucket'));
+    render(<Workshop />);
+    fireEvent.click(screen.getByText('I got an error'));
+    fireEvent.change(screen.getByRole('textbox', { name: 'The error you got' }), { target: { value: 'aws: error: a brand new problem' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Help me fix it' }));
+    const districtId = asked.mock.calls.at(-1)![0];
+    act(() => useCity.getState().applyServerEvent({ type: 'chat.answer', requestId: 'err-1', districtId, agentId: 's3', delta: 'Check the bucket name.', done: true }));
+    cleanup();
+    render(<Workshop />);
+    expect((document.querySelector('.workshop-error') as HTMLDetailsElement).open).toBe(true);
+    expect((screen.getByRole('textbox', { name: 'The error you got' }) as HTMLTextAreaElement).value).toBe('aws: error: a brand new problem');
+    expect(document.querySelector('.workshop-answer')?.textContent).toMatch(/Check the bucket name/);
   });
 });
 
