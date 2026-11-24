@@ -567,7 +567,7 @@ export function DeployPanel() {
             <div className="reconnect-one">
               <PendingButton
                 className="btn primary"
-                pending={pending.is('link') || pending.is('verify')}
+                pending={!otherAccount && (pending.is('link') || pending.is('verify'))}
                 busyLabel="Connecting…"
                 disabled={!!offline}
                 title={offline}
@@ -592,7 +592,7 @@ export function DeployPanel() {
               {consoleAccount && !role.trim() && <p className="muted small">Filled in from the AWS console you have open.</p>}
               <PendingButton
                 className={lastAccount ? 'btn' : 'btn primary'}
-                pending={!lastAccount && (pending.is('link') || pending.is('verify'))}
+                pending={(!lastAccount || otherAccount) && (pending.is('link') || pending.is('verify'))}
                 busyLabel="Connecting…"
                 disabled={!!offline}
                 title={offline}
