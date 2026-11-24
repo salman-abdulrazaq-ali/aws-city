@@ -1,7 +1,8 @@
 import { useRef, type RefObject } from 'react';
 import { startQuest as notifyQuest } from '@/app/runtime';
 import { nextUnlock } from '@/state/ladder';
-import { useCity } from '@/state/store';
+import { questOffer } from '@/state/next';
+import { SETTLE, useCity, whenSettled } from '@/state/store';
 import { questById, QUESTS } from '@/world/content';
 import { placeFor } from '@/world/places';
 import { FIRST_STEPS, FIRST_STEPS_QUEST, fill } from '@/state/firstSteps';
@@ -57,14 +58,27 @@ function QuestDone({ openTab }: { openTab?: (t: 'home') => void }) {
     // The next quest's first step is on the City tab's list (a quest often ends in Learn or Deploy).
     openTab?.('home');
   };
-  if (graduation)
+  if (graduation) {
+    // The quest Home will really offer next (src/state/next.ts questOffer): one under way (a replay's player may have
+    // quest 2 at step 3) is continued from the City tab's list, a new one starts; never a quest already begun.
+    const offer = questOffer(quests);
+    const goOn = () => {
+      close(undefined);
+      if (offer && !offer.started) {
+        feel.questStart();
+        start(offer.quest.id);
+        // Connie's word on it waits its turn after the card (graduation's after-moments, store SETTLE).
+        whenSettled(SETTLE.connie, () => notifyQuest(offer.quest.id));
+      }
+      openTab?.('home');
+    };
     return (
       <div ref={scrim} className="finding-scrim app-modal celebrate-scrim" role="presentation" onClick={(e) => e.target === e.currentTarget && close(undefined)}>
         <Graduation
           box={box}
           primary={primary}
-          next={next && (next.id === 'storage-static-site' ? FIRST_STEPS.grad.next : `Next: ${next.title} →`)}
-          onNext={go}
+          next={offer && fill(FIRST_STEPS.grad.next, { quest: offer.quest.title })}
+          onNext={goOn}
           onLater={() => {
             close(undefined);
             openTab?.('home');
@@ -72,6 +86,7 @@ function QuestDone({ openTab }: { openTab?: (t: 'home') => void }) {
         />
       </div>
     );
+  }
 
   return (
     <div ref={scrim} className="finding-scrim app-modal celebrate-scrim" role="presentation" onClick={(e) => e.target === e.currentTarget && close(undefined)}>

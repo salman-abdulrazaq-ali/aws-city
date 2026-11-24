@@ -31,7 +31,8 @@ const { LandmarkCard } = await import('@/ui/LandmarkCard');
 const { RequestCard } = await import('@/ui/RequestCard');
 const { Celebrate } = await import('@/ui/Celebrate');
 const { ANNOUNCE_GAP_MS } = await import('@/state/announce');
-const { useFirstRunTour, TOUR_FALLBACK_MS } = await import('@/ui/Tour');
+const { CoachTips, useFirstRunTour, TOUR_FALLBACK_MS } = await import('@/ui/Tour');
+const { EventBanner } = await import('@/ui/EventBanner');
 const { isTourDone } = await import('@/ui/logic');
 
 const REGION = 'us-west-2';
@@ -98,10 +99,26 @@ describe('the guide card', () => {
     }
   });
 
-  it('says the lake grew once the fishing paid enough', () => {
-    useCity.setState({ progress: onStep(2, { cities: { [REGION]: { landmarks: { s3: { discovered: true, xp: 12 } } } } }) });
+  it('names what the fishing really grew: the level reached, else the stars it paid', () => {
+    const s = useCity.getState;
+    const fish = (stars: number) =>
+      act(() => {
+        s().arrive('s3');
+        // As the fishing scene does: the round's stars, then the round.
+        s().addXp('s3', stars);
+        s().recordGame('fishing', 4);
+      });
+    // A first run: the round takes the lake to Novice.
+    fish(12);
+    const first = render(<GuideCard openTab={() => {}} />);
+    expect(first.container.querySelector('.guide-done')?.textContent).toMatch(/S3 Lake grew to Novice! Stars ⭐ are what you've learned/);
+    first.unmount();
+    // A replay over a Practitioner lake (seen 24 Nov 2026: "grew to Novice!" over level 2): no level reached, so its stars.
+    useCity.setState({ progress: onStep(0, { cities: { [REGION]: { landmarks: { s3: { discovered: true, xp: 50 } } } } }) });
+    fish(6);
     const { container } = render(<GuideCard openTab={() => {}} />);
-    expect(container.querySelector('.guide-done')?.textContent).toMatch(/S3 Lake grew to Novice! Stars ⭐ are what you've learned/);
+    expect(container.querySelector('.guide-done')?.textContent).toMatch(/\+6 ⭐ for S3 Lake\. Stars ⭐ are what you've learned/);
+    expect(container.textContent).not.toMatch(/grew to/);
   });
 
   it('each button does its step’s thing', () => {
@@ -398,7 +415,7 @@ describe('the citizen’s question', () => {
 });
 
 describe('graduation', () => {
-  it('says what was learned, where the city is, what opened, and offers Your First Bucket', () => {
+  it('says what was learned, where the city is, what opened, and offers the City Brochure Site', () => {
     const opened: string[] = [];
     useCity.setState({
       progress: { version: 2, landmarks: {}, updatedAt: '', quests: { 'first-steps': { status: 'done', step: 6 } }, wallet: { earned: 37, spent: 0 } },
@@ -409,12 +426,27 @@ describe('graduation', () => {
     for (const line of FIRST_STEPS.grad.learned) expect(card.textContent).toContain(line);
     expect(card.textContent).toContain('Your city is the Oregon Region. AWS writes it us-west-2.');
     expect(card.textContent).toContain('🌳 Decorate: spend your 37 City Coins on your city');
-    const next = within(card).getByRole('button', { name: 'Next: Your First Bucket →' });
+    const next = within(card).getByRole('button', { name: 'Next: The City Brochure Site →' });
     expect(next.className).toMatch(/primary/);
     expect(document.activeElement).toBe(next);
     expect(card.querySelectorAll('.btn.primary')).toHaveLength(1);
     fireEvent.click(next);
-    expect(useCity.getState().progress.quests?.['storage-static-site']?.status).toBe('active');
+    // Quest 2 starts after what the path already did: its walk to S3 Lake and its S3 cards.
+    expect(useCity.getState().progress.quests?.['storage-static-site']).toMatchObject({ status: 'active', step: 2 });
+    expect(opened).toEqual(['home']);
+  });
+
+  it('names the quest the City tab will really offer: one under way is continued, never one already begun', () => {
+    const opened: string[] = [];
+    useCity.setState({
+      progress: { version: 2, landmarks: {}, updatedAt: '', quests: { 'first-steps': { status: 'done', step: 6 }, 'storage-static-site': { status: 'active', step: 3, count: 0 } } },
+      celebration: 'first-steps',
+    } as never);
+    render(<Celebrate openTab={(t) => opened.push(t)} />);
+    // Not "Fire Up the Grill" (the first quest not started), seen 24 Nov 2026 in a replay.
+    fireEvent.click(screen.getByRole('button', { name: 'Next: The City Brochure Site →' }));
+    expect(useCity.getState().progress.quests?.['storage-static-site']).toMatchObject({ status: 'active', step: 3 });
+    expect(useCity.getState().progress.quests?.['compute-first-function']).toBeUndefined();
     expect(opened).toEqual(['home']);
   });
 });
@@ -482,5 +514,101 @@ describe('the old first-run tour', () => {
     expect(isTourDone()).toBe(false);
     act(() => useCity.getState().skipFirstSteps());
     expect(isTourDone()).toBe(true);
+  });
+});
+
+describe('graduation’s after-moments, one at a time', () => {
+  const grad = { version: 2, landmarks: {}, updatedAt: '', quests: { 'first-steps': { status: 'done', step: 6 } }, wallet: { earned: 37, spent: 0 } } as Progress;
+
+  it('the coins note waits for the card to close, and names the total', () => {
+    useCity.setState({ progress: grad, celebration: 'first-steps' } as never);
+    const { rerender } = render(<Hud layout="full" />);
+    // Seen 24 Nov 2026: the note showed with the card, in its old words.
+    expect(screen.queryByRole('note')).toBeNull();
+    act(() => useCity.setState({ celebration: undefined }));
+    rerender(<Hud layout="full" />);
+    expect(screen.getByRole('note').textContent).toMatch(/^You've earned 37 City Coins: spend them in 🌳 Decorate\. Stars ⭐ are never spent\./);
+  });
+
+  it('Deploy behind the card stays the path’s plan, not the whole Connect and blueprints page', () => {
+    useCity.setState({
+      backendKind: 'server',
+      hosted: true,
+      account: { linked: false },
+      progress: grad,
+      celebration: 'first-steps',
+      deploys: { 'practice-x': { deployId: 'practice-x', templateId: 'photo-bucket', stackName: 'A private bucket for your photos (practice)', region: 'practice', changes: [], status: 'complete' } },
+    } as never);
+    const { container } = render(<DeployPanel />);
+    expect(screen.queryByRole('list', { name: 'Build for real, step by step' })).toBeNull();
+    expect(container.textContent).not.toMatch(/Blueprints|Your AWS account/);
+    expect(container.textContent).toMatch(/A private bucket for your photos/);
+  });
+
+  it('the event banner waits its turn behind the card and the first moments', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-12-01T18:00:00Z'));
+    useCity.setState({ progress: grad, celebration: 'first-steps', settle: 0 } as never);
+    const { container, rerender } = render(<EventBanner />);
+    expect(container.querySelector('.event-banner')).toBeNull();
+    act(() => useCity.setState({ celebration: undefined, settle: 2 } as never));
+    rerender(<EventBanner />);
+    expect(container.querySelector('.event-banner')).toBeNull();
+    act(() => useCity.setState({ settle: 3 } as never));
+    rerender(<EventBanner />);
+    expect(container.querySelector('.event-banner')).toBeTruthy();
+  });
+
+  describe('coach tips', () => {
+    beforeEach(() => {
+      Object.defineProperty(navigator, 'webdriver', { configurable: true, get: () => false });
+      vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+        const at = (top: number, height: number) => ({ top, left: 0, width: 400, height, right: 400, bottom: top + height, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+        if (this.classList.contains('stage')) return at(40, 300);
+        if (this.classList.contains('todo')) return at(400, 300);
+        if (this.classList.contains('composer') || this.classList.contains('console-btn')) return at(800, 40);
+        return at(0, 0);
+      });
+      useCity.setState({ progress: grad, celebration: undefined, settle: 0, tourOpen: false } as never);
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+      delete (navigator as { webdriver?: boolean }).webdriver;
+    });
+    const page = () =>
+      render(
+        <>
+          <div className="stage" />
+          <div className="todo" />
+          <div className="composer">
+            <button className="console-btn">Do it in my console</button>
+            <textarea aria-label="Ask" />
+          </div>
+          <CoachTips layout="panel" />
+        </>,
+      );
+
+    it('come one by one from the player’s own move, graphite, never over the To-do (Copilot only after Ask)', () => {
+      page();
+      // Nothing on its own (seen 24 Nov 2026: the Copilot tip over the To-do right after graduation).
+      expect(screen.queryByRole('dialog')).toBeNull();
+      act(() => screen.getByRole('textbox', { name: 'Ask' }).focus());
+      const ask = screen.getByRole('dialog', { name: 'Ask for anything' });
+      expect(within(ask).getByRole('button', { name: 'Got it' }).className).not.toMatch(/primary/);
+      // Above the box would cover the To-do: it stands over the map instead.
+      const top = parseFloat(ask.style.top);
+      expect(top + 160).toBeLessThanOrEqual(400);
+      fireEvent.click(within(ask).getByRole('button', { name: 'Got it' }));
+      act(() => (document.activeElement as HTMLElement).blur());
+      act(() => screen.getByRole('textbox', { name: 'Ask' }).focus());
+      expect(screen.getByRole('dialog', { name: /Console Copilot/ })).toBeTruthy();
+    });
+
+    it('wait while graduation’s after-moments play', () => {
+      useCity.setState({ settle: 1 } as never);
+      page();
+      act(() => screen.getByRole('textbox', { name: 'Ask' }).focus());
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
   });
 });

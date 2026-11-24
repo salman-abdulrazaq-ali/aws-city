@@ -3,7 +3,7 @@ import { ClientDone, ClientTask } from '@/ui/clients/ClientTask';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type UIEvent } from 'react';
 import { REGIONS } from '@/world/culture';
 import { bus } from '@/state/bus';
-import { openFindings, useCity } from '@/state/store';
+import { openFindings, SETTLE, settledTo, useCity } from '@/state/store';
 import { ChatPanel } from '@/ui/ChatPanel';
 import { Hud, SyncNote } from '@/ui/Hud';
 import { Workshop } from '@/ui/Workshop';
@@ -78,6 +78,8 @@ export function App({ layout }: { layout: Layout }) {
   // Build mode in the side panel takes the panel's whole height for the city and its drawer (styles/26-build.css).
   const building = useCity((s) => !!s.build);
   const celebrating = useCity((s) => !!s.celebration);
+  // After graduation's card, AWS news waits its turn (store SETTLE): the coins note and Connie's word come first.
+  const newsTurn = useCity((s) => settledTo(s, SETTLE.banner));
   const stage = useCity((s) => s.prefs.stage);
   const setPref = useCity((s) => s.setPref);
   const cityRegion = useCity((s) => s.cityRegion);
@@ -288,7 +290,7 @@ export function App({ layout }: { layout: Layout }) {
       <div className="stage">
         <GameCanvas />
         {/* Not while a quest's celebration card is up: the first quest opens AWS news, and it arrives after the card. */}
-        {l.news && shows('news', prefs) && !celebrating && (view.name === 'city' || view.name === 'world') && <NewsTicker layout={layout} />}
+        {l.news && shows('news', prefs) && !celebrating && newsTurn && (view.name === 'city' || view.name === 'world') && <NewsTicker layout={layout} />}
         <Toasts />
         <CityAnnouncer />
         <SoundCaptions />

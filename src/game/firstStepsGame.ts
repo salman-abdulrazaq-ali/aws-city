@@ -80,6 +80,15 @@ export function plantedRequest(p: Progress, serviceId: string, cardId?: string):
 }
 
 /** On the path's walk to its building, the camera walks with Kai (and settles on the building when he's there). */
+/**
+ * A line an agent says to the player (bus `say`: Sally's introduction, her fishing line) is read before that agent's next
+ * one replaces it: this long, by its length (seen 24 Nov 2026: her fishing line 3.5 s after arrival hid the introduction).
+ */
+export const sayReadMs = (text: string) => Math.min(6000, 1500 + 40 * text.length);
+/** A `say` line for an agent who isn't standing in the city yet (put up a moment ago) is tried again this often, this long. */
+export const SAY_RETRY_MS = 250;
+export const SAY_GIVE_UP_MS = 8000;
+
 export const followsKai = (step: QuestStep | undefined, id: string) => step?.kind === 'visit' && step.serviceId === id;
 
 // ── The world map ─────────────────────────────────────────────

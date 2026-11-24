@@ -5,7 +5,6 @@ import { bus } from '@/state/bus';
 import { useCity } from '@/state/store';
 import { QUESTS } from '@/world/content';
 import { feel } from './feedback';
-import { activeSteps } from '@/state/ladder';
 import { isTourDone, markTourDone, readPref, TIP_ASK_KEY, TIP_COPILOT_KEY, writePref } from './logic';
 import { Portrait } from './Portrait';
 import { walkTo } from '@/state/walk';
@@ -293,21 +292,40 @@ const TIPS: Record<TipId, { key: string; title: string; body: (layout: Layout) =
     target: '.workshop-list',
   },
 };
+/** A tip's height, about (its card: a title, two or three lines and a button). */
+const TIP_H = 160;
+
+/**
+ * Where a coach tip stands: above its target when there's room, else below it; never over the City tab's To-do list or
+ * the shift's big button (the screen's one amber button): then over the map instead.
+ */
+function tipTop(rect: Rect | undefined, vh: number): number {
+  const top = rect ? (rect.top > TIP_H + 10 ? rect.top - TIP_H : Math.min(rect.top + rect.height + 10, vh - TIP_H - 10)) : vh / 2 - 80;
+  const task = document.querySelector('.todo, .next')?.getBoundingClientRect();
+  if (!task || task.height === 0 || top >= task.bottom || top + TIP_H <= task.top) return top;
+  const map = document.querySelector('.stage')?.getBoundingClientRect();
+  return map && map.height > 0 ? Math.max(map.top + 8, map.bottom - TIP_H - 8) : top;
+}
+
 /** Tips that show the first time their target appears on screen (after the city has given the player a reason). */
 const WATCHED: TipId[] = ['workshop'];
 
-/** "Ask" on the first ask step (or the first time the box is used); "Copilot" when its button first shows (panel only). */
+/**
+ * "Ask" the first time the player puts focus in the box; "Copilot" (panel only) the next time, once "Ask" was put away:
+ * each comes from the player's own move, never on its own over the To-do list (seen 24 Nov 2026: the Copilot tip, with
+ * its own amber button, over the To-do right after graduation).
+ */
 export function CoachTips({ layout }: { layout: Layout }) {
   const tourOpen = useCity((s) => s.tourOpen);
   // They wait while the first steps run (the quiet city), and come after graduation: a player on the path never sees
   // the old tour, so "tour done" alone would hold them back for good.
   const prefs = useCity((s) => s.prefs);
   const quiet = useQuiet();
-  const allowed = shows('coachTips', prefs, quiet);
+  // After graduation's card, what opened comes one thing at a time (store SETTLE): tips come last.
+  const allowed = useCity((s) => s.settle === 0) && shows('coachTips', prefs, quiet);
   const graduated = useFirstSteps().graduated;
   // Never over a celebration card (graduation's included): the tip comes once it closes.
   const celebrating = useCity((s) => !!s.celebration);
-  const askStep = useCity((s) => activeSteps(s.progress).some((x) => x.kind === 'ask'));
   const [tip, setTip] = useState<TipId>();
   const [rect, setRect] = useState<Rect>();
   const showing = useRef<TipId | undefined>(undefined);
@@ -324,9 +342,6 @@ export function CoachTips({ layout }: { layout: Layout }) {
     [tourOpen, allowed, graduated, celebrating],
   );
 
-  useEffect(() => {
-    if (askStep) offer('ask');
-  }, [askStep, offer]);
   // The rank tip waits for the first building, so there's something to be Mayor of.
   const built = useCity((s) => Object.values(s.progress.cities?.[s.cityRegion]?.landmarks ?? {}).some((l) => l.discovered));
   useEffect(() => {
@@ -345,21 +360,15 @@ export function CoachTips({ layout }: { layout: Layout }) {
     return () => mo.disconnect();
   }, [offer]);
   useEffect(() => {
-    const onFocus = (e: FocusEvent) => e.target instanceof Element && e.target.closest('.composer') && offer('ask');
+    const onFocus = (e: FocusEvent) => {
+      if (!(e.target instanceof Element) || !e.target.closest('.composer')) return;
+      // The second time (Ask already seen and put away): the Copilot switch above the box, in the panel.
+      if (readPref(TIP_ASK_KEY) === '1') return void (layout === 'panel' && offer('copilot'));
+      offer('ask');
+    };
     document.addEventListener('focusin', onFocus);
     return () => document.removeEventListener('focusin', onFocus);
-  }, [offer]);
-  useEffect(() => {
-    if (layout !== 'panel' || readPref(TIP_COPILOT_KEY) === '1') return;
-    const check = () => {
-      if (document.querySelector('.console-btn')) offer('copilot');
-      if (readPref(TIP_COPILOT_KEY) === '1') mo.disconnect();
-    };
-    const mo = new MutationObserver(check);
-    check();
-    mo.observe(document.body, { childList: true, subtree: true });
-    return () => mo.disconnect();
-  }, [layout, offer]);
+  }, [offer, layout]);
 
   useLayoutEffect(() => {
     if (!tip) return;
@@ -375,12 +384,13 @@ export function CoachTips({ layout }: { layout: Layout }) {
   const vh = window.innerHeight;
   const w = Math.min(280, vw - 24);
   const left = rect ? Math.max(12, Math.min(rect.left + rect.width / 2 - w / 2, vw - w - 12)) : (vw - w) / 2;
-  const top = rect ? (rect.top > 170 ? rect.top - 160 : Math.min(rect.top + rect.height + 10, vh - 170)) : vh / 2 - 80;
+  const top = tipTop(rect, vh);
   return (
     <div className="coach-tip" role="dialog" aria-labelledby="coach-title" style={{ top, left }}>
       <b id="coach-title">{t.title}</b>
       <p>{t.body(layout)}</p>
-      <button className="btn primary tiny" onClick={() => setTip(undefined)}>
+      {/* Graphite: the screen's one amber button stays the task's (the To-do's, the guide's). */}
+      <button className="btn tiny" onClick={() => setTip(undefined)}>
         Got it
       </button>
     </div>

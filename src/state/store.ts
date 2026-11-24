@@ -64,11 +64,11 @@ export const CLASSIFY_STARS = 3;
 import { FINISH_XP, honestMode, stepReward, withStep, type StepMode } from '@/learning/workshopRewards';
 import { awardCitizens as awardPure, cardReviewsFor, CITIZEN_XP, citizensForPuzzle, citizensForService, levelCan, levelName, type Award } from './citizens';
 import type { PageFocus } from './types';
-import { agentName, cityHealth, emptyProgress, HEALTH_COST, isDiscovered, knownAgents, openFindings, questTargets, severityRank, taskRunning, tierOf } from './selectors';
+import { agentName, cityHealth, emptyProgress, HEALTH_COST, isChatter, isDiscovered, knownAgents, openFindings, questTargets, severityRank, taskRunning, tierOf } from './selectors';
 import { shows } from './simple';
 
 // Pure reads of the store's state (no zustand): kept in ./selectors, exported from here as before.
-export { agentName, cityHealth, emptyProgress, HEALTH_COST, isDiscovered, knownAgents, openFindings, questTargets, severityRank, taskRunning, tierOf };
+export { agentName, cityHealth, emptyProgress, HEALTH_COST, isChatter, isDiscovered, knownAgents, openFindings, questTargets, severityRank, taskRunning, tierOf };
 
 export interface FeedItem {
   id: number;
@@ -147,8 +147,29 @@ const listOf = (xs: string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(', ')}
  */
 /** The page is in the background (the city's tab behind the console): a toast now would time out unseen. */
 const pageHidden = () => globalThis.document?.visibilityState === 'hidden';
-export const toastsHeld = (s: { celebration?: string; workshopDone?: string; clientDone?: unknown; view: { name: string } }) =>
-  !!s.celebration || !!s.workshopDone || !!s.clientDone || s.view.name === 'game' || pageHidden();
+export const toastsHeld = (s: { celebration?: string; workshopDone?: string; clientDone?: unknown; view: { name: string }; settle?: number }) =>
+  !!s.celebration || !!s.workshopDone || !!s.clientDone || !!s.settle || s.view.name === 'game' || pageHidden();
+
+/**
+ * Graduation's after-moments, one thing at a time (DESIGN-tutorial §6.6; seen 24 Nov 2026: a step toast, Connie's line,
+ * the event banner, a storm toast and a coach tip all came within 8 s of the card closing). Once the card closes: the
+ * coins note (`note`), then Connie's word on the next quest (`connie`), then the event banner and AWS news (`banner`),
+ * each SETTLE_BEAT_MS apart; then the city is settled (0): waiting toasts come one by one and coach tips may show.
+ */
+export const SETTLE = { note: 1, connie: 2, banner: 3 } as const;
+export const SETTLE_BEAT_MS = 3500;
+/** The after-moment `stage` has come (or the city is settled). */
+export const settledTo = (s: { settle: number }, stage: number) => s.settle === 0 || s.settle >= stage;
+let settleTimer: ReturnType<typeof setTimeout> | undefined;
+/** Runs `fn` once graduation's after-moments reach `stage` (at once when nothing is settling). */
+export function whenSettled(stage: number, fn: () => void) {
+  if (settledTo(useCity.getState(), stage)) return fn();
+  const off = useCity.subscribe((s) => {
+    if (!settledTo(s, stage)) return;
+    off();
+    fn();
+  });
+}
 /** The next waiting toast, once nothing else shows and nothing holds the floor. */
 const nextToast = (get: () => CityState) => {
   const s = get();
@@ -560,6 +581,11 @@ export interface CityState {
   choiceOpen?: string;
   /** A quest just finished: its celebration card is showing (src/ui/Celebrate.tsx). */
   celebration?: string;
+  /**
+   * After graduation's card closes, what opened comes one thing at a time (SETTLE): the stage showing now, 0 once
+   * settled. Never saved.
+   */
+  settle: number;
   openChoice(id?: string): void;
   /** Shows (or, with no id, closes) a finished quest's celebration card. */
   celebrate(questId?: string): void;
@@ -850,9 +876,12 @@ export const useCity = create<CityState>()((set, get) => ({
   findings: {},
   openIncident: (id) => set({ incidentOpen: id }),
   openChoice: (id) => set({ choiceOpen: id }),
+  settle: 0,
   celebrate: (questId) => {
     if (questId) stepAside(get);
+    const graduation = !questId && get().celebration === FIRST_STEPS_QUEST;
     set({ celebration: questId });
+    if (graduation) return settleStage(get, set, SETTLE.note);
     if (!questId) nextToast(get);
   },
   celebrateWorkshop: (workshopId) => {
@@ -1286,7 +1315,7 @@ export const useCity = create<CityState>()((set, get) => ({
         break;
       }
       case 'agent.message': {
-        s.log({ kind: 'message', from: e.from, to: e.to, text: e.text, ambient: e.to !== 'user' && !taskRunning(s) });
+        s.log({ kind: 'message', from: e.from, to: e.to, text: e.text, ambient: isChatter(s, e.from, e.to) });
         // A change the player made in AWS themselves (a console bucket): its agent may be off screen, so a toast too,
         // which waits while the page is hidden (toastsHeld).
         const news = e.to === 'user' ? accountNews(e.text) : undefined;
@@ -1597,7 +1626,9 @@ export const useCity = create<CityState>()((set, get) => ({
     // Findings held for this player must not reach the next one.
     heldFindings.clear();
     stopDrip();
+    clearTimeout(settleTimer);
     set({
+      settle: 0,
       progress: emptyProgress(),
       saveRefused: false,
       agents: {},
@@ -1919,7 +1950,11 @@ export const useCity = create<CityState>()((set, get) => ({
     if (!q || status === 'active' || status === 'done') return;
     // A quest re-cut since saves were made marks this save as the new order when it starts (migrateQuestCut).
     const cut: NonNullable<Progress['quests']> = questId === QUEST_CUT.questId ? { [QUEST_CUT.marker]: { status: 'active', step: 0 } } : {};
-    set({ progress: { ...progress, quests: { ...progress.quests, [questId]: { status: 'active', step: 0, count: 0 }, ...cut }, updatedAt: new Date().toISOString() } });
+    // Past the first steps (done, not skipped), quest 2 starts after what the path already did: its walk to S3 Lake and
+    // its S3 cards never tick themselves with a toast of their own (seen 24 Nov 2026, right after graduation).
+    const pathDone = progress.quests?.[FIRST_STEPS_QUEST]?.status === 'done' && get().prefs.firstSteps !== 'skipped';
+    const from = pathDone ? Math.min(q.afterFirstSteps ?? 0, q.steps.length - 1) : 0;
+    set({ progress: { ...progress, quests: { ...progress.quests, [questId]: { status: 'active', step: from, count: 0 }, ...cut }, updatedAt: new Date().toISOString() } });
     get().log({ kind: 'system', text: `📜 ${q.title}: ${q.intro}` });
     // Already standing at the first step's landmark (console page or selected place): that visit counts now.
     const { focus, selected } = get();
@@ -1956,6 +1991,7 @@ export const useCity = create<CityState>()((set, get) => ({
         setTimeout(() => q.serviceIds.forEach((sid) => get().addXp(sid, share)), 0);
         if (id === FIRST_STEPS_QUEST) graduatedNow = true;
       } else {
+        if (id === FIRST_STEPS_QUEST) notePathStep(get, st.step);
         quests[id] = { status: 'active', step: next, count: 0 };
         get().log({ kind: 'system', text: `📜 ${q.title} — next: ${q.steps[next].text}` });
         // A step done is a moment: a ✓ toast and its building bumps (CityScene), every time.
@@ -2002,6 +2038,29 @@ function markChat(get: () => CityState, districtId: string, id: string, note: { 
 /** The first steps' plan (the deploy step's practice template): Sally says how it went. */
 const FIRST_STEPS_TEMPLATE = 'photo-bucket';
 
+/**
+ * What the first steps' game step grew, for the guide's ✓ line (src/ui/FirstSteps.tsx): a level only when one was really
+ * reached, else the stars it paid (seen 24 Nov 2026: a replay said "S3 Lake grew to Novice!" over a level-2 lake). The
+ * building's stars as each step begins, and the game step's result once it's done; this session only (a reload says
+ * what it can from the city as it stands).
+ */
+let pathMark: { step: number; xp: number } | undefined;
+let gameGrowth: { stars: number; tier?: number } | undefined;
+export const pathGrowth = () => gameGrowth;
+function notePathStep(get: () => CityState, done: number) {
+  const steps = questById(FIRST_STEPS_QUEST)?.steps ?? [];
+  const xpOf = (step?: QuestStep) => {
+    const id = step && stepService(FIRST_STEPS_QUEST, step);
+    return (id && landmarkOf(get().progress, id, get().cityRegion)?.xp) || 0;
+  };
+  if (steps[done]?.kind === 'game') {
+    const xp = xpOf(steps[done]);
+    const before = pathMark?.step === done ? pathMark.xp : undefined;
+    gameGrowth = before === undefined ? undefined : { stars: xp - before, ...(tierForXp(xp) > tierForXp(before) ? { tier: tierForXp(xp) } : {}) };
+  }
+  pathMark = { step: done + 1, xp: xpOf(steps[done + 1]) };
+}
+
 /** A step of the first steps done: Sally greets the player on arrival (the guide card and announce are the UI's). */
 function firstStepMoment(step: QuestStep) {
   if (step.kind === 'visit') bus.emit('say', { agentId: step.serviceId, text: FIRST_STEPS.steps[0].sally ?? '', tone: 'good' });
@@ -2019,6 +2078,7 @@ function replayEvent(get: () => CityState, set: (p: Partial<CityState>) => void,
   if (!q || !step || !match(step)) return;
   if (countable && step.kind === 'cards' && (r.count ?? 0) + 1 < step.count) return s.setPref('firstStepsReplay', { step: r.step, count: (r.count ?? 0) + 1 });
   if (r.step + 1 < q.steps.length) {
+    notePathStep(get, r.step);
     s.setPref('firstStepsReplay', { step: r.step + 1 });
     s.log({ kind: 'system', text: `📜 ${q.title} — next: ${q.steps[r.step + 1].text}` });
     bus.emit('questStep', { questId: FIRST_STEPS_QUEST, step: r.step, serviceId: stepService(FIRST_STEPS_QUEST, step) });
@@ -2043,8 +2103,20 @@ function replayEvent(get: () => CityState, set: (p: Partial<CityState>) => void,
   bus.emit('graduated');
 }
 
+/** Graduation's after-moments (SETTLE): this stage now, the next one a beat later, then settled and the toasts flow. */
+function settleStage(get: () => CityState, set: (p: Partial<CityState>) => void, stage: number) {
+  clearTimeout(settleTimer);
+  set({ settle: stage });
+  settleTimer = setTimeout(() => {
+    settleTimer = undefined;
+    if (stage < SETTLE.banner) return settleStage(get, set, stage + 1);
+    set({ settle: 0 });
+    nextToast(get);
+  }, SETTLE_BEAT_MS);
+}
+
 /**
- * Quest 2 ("Your First Bucket") was re-cut on 24 Nov 2026: its S3 workshop moved from the third step to the last, so the
+ * Quest 2 (then "Your First Bucket", now "The City Brochure Site") was re-cut on 24 Nov 2026: its S3 workshop moved from the third step to the last, so the
  * first command line comes after the drawing and the build. A save from before moves to the same step in the new order
  * (one on the workshop goes on to the CloudFront cards; the workshop waits at the end). The marker (an entry no quest
  * has) says a save is in the new order: written here and when the quest starts, so the move runs once, on any device.

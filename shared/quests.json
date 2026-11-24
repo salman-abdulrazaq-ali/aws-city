@@ -19,11 +19,12 @@
     },
     {
       "id": "storage-static-site",
-      "title": "Your First Bucket",
+      "title": "The City Brochure Site",
       "districtId": "storage",
       "serviceIds": ["s3", "cloudfront", "route53"],
-      "intro": "Every fish in my lake is an object and every net is a bucket. Let's put the city's brochure in a bucket and send it around the world.",
+      "intro": "Every fish in my lake is an object, kept in a bucket. Let's put the city's brochure in a bucket and send it around the world.",
       "rewardXp": 40,
+      "afterFirstSteps": 2,
       "steps": [
         { "kind": "visit", "serviceId": "s3", "text": "Walk to S3 Lake and talk to Sally" },
         { "kind": "cards", "serviceId": "s3", "count": 5, "text": "Learn 5 S3 cards, like buckets, durability and storage classes" },

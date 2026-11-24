@@ -118,6 +118,7 @@ export interface FirstStepCopy {
   done?: string;
   end?: string;
   grew?: string;
+  gained?: string;
   notyet?: string;
   strip?: string;
   terms?: string;
@@ -151,7 +152,7 @@ export interface FirstStepsCopy {
 
 export const FIRST_STEPS: FirstStepsCopy = copyJson as FirstStepsCopy;
 
-/** Fills `{n}`, `{k}`, `{step}`, `{answer}` in a line: fill(FIRST_STEPS.hud.steps, { n: 2 }) → "First steps 2/6". */
+/** Fills `{n}`, `{k}`, `{step}`, `{answer}`, `{level}`, `{quest}` in a line: fill(FIRST_STEPS.hud.steps, { n: 2 }) → "First steps 2/6". */
 export const fill = (text: string, vars: Record<string, string | number>) => text.replace(/\{(\w+)\}/g, (m, k: string) => (k in vars ? String(vars[k]) : m));
 
 /** The tutorial deck's card ids (s3-01, s3-04, s3-05). */

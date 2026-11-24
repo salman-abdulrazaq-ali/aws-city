@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import type { AwsNewsItem, Progress, ServerEvent } from '@/backend/contract';
 import { bus } from '@/state/bus';
 import { announce, stepLine } from '@/state/announce';
-import { agentName, isDiscovered, openFindings, severityRank, taskRunning, tierOf, useCity, type Inventory } from '@/state/store';
+import { agentName, isChatter, isDiscovered, openFindings, severityRank, taskRunning, tierOf, useCity, type Inventory } from '@/state/store';
 import { bubbleText, failedBubble } from '@/state/watch';
 import { dueFor } from '@/state/srs';
 import { citizenLevel, levelName } from '@/state/citizens';
@@ -95,7 +95,7 @@ import { SCALERS, SURGE_MS, SURGE_WORKERS, type CourierLeg } from '@/world/couri
 import { nextLevelPreview } from '@/world/preview';
 import { shows } from '@/state/simple';
 import { FIRST_STEPS_QUEST, firstStep } from '@/state/firstSteps';
-import { followsKai } from '../firstStepsGame';
+import { followsKai, SAY_GIVE_UP_MS, SAY_RETRY_MS, sayReadMs } from '../firstStepsGame';
 
 /**
  * The season to draw: the `?season=winter` dev param (not in store builds: seasonParam), else prefs.season (testing),
@@ -1440,6 +1440,36 @@ export class CityScene extends Phaser.Scene {
     });
   }
 
+  /** Lines waiting to be said to the player (bus `say`), by agent, and when each agent's last one has been read (game time). */
+  private sayLines = new Map<string, { text: string; tone?: 'info' | 'good'; at: number }[]>();
+  private sayRead = new Map<string, number>();
+
+  /** The agent's next `say` line, once they stand in the city and their last line has been read (firstStepsGame.ts). */
+  private nextSay(agentId: string): void {
+    const q = this.sayLines.get(agentId);
+    const line = q?.[0];
+    if (!q || !line) return;
+    if (!this.sys.isActive()) return void this.sayLines.delete(agentId);
+    const a = this.agents.get(agentId);
+    const wait = (this.sayRead.get(agentId) ?? -Infinity) - this.time.now;
+    if (!a || wait > 0) {
+      // Not here yet (a building put up a moment ago spawns its agent on the next sync): try again, but not for ever.
+      if (!a && Date.now() - line.at > SAY_GIVE_UP_MS) {
+        q.shift();
+        return this.nextSay(agentId);
+      }
+      this.time.delayedCall(Math.max(wait, SAY_RETRY_MS), () => this.nextSay(agentId));
+      return;
+    }
+    q.shift();
+    if (a.say(line.text, { caption: 'to you', tone: line.tone === 'good' ? 'done' : 'speech' })) {
+      this.sayRead.set(agentId, this.time.now + sayReadMs(line.text));
+      this.cheering = a;
+      announce(`${a.shortName} says: ${line.text}`);
+    }
+    if (q.length) this.nextSay(agentId);
+  }
+
   /** When the first steps' graduation last played here (game time): one moment however many times it's sent. */
   private graduatedAt = -Infinity;
   private onGraduated() {
@@ -1624,13 +1654,14 @@ export class CityScene extends Phaser.Scene {
         this.onLandmarkClick(id);
       }),
       // A landmark's agent says a line to the player (the first steps: Sally's greeting, her plan's outcome). Never a
-      // model call; one bubble at a time (the panel's solo rule, and no cheer over it); read out too.
+      // model call; one bubble at a time (the panel's solo rule, and no cheer over it); read out too. Each agent's lines
+      // come in order, each read before the next (her introduction before her fishing line).
       bus.on('say', ({ agentId, text, tone }) => {
-        const a = this.agents.get(agentId);
-        if (!a || !text || !this.sys.isActive()) return;
-        if (!a.say(text, { caption: 'to you', tone: tone === 'good' ? 'done' : 'speech' })) return;
-        this.cheering = a;
-        announce(`${a.shortName} says: ${text}`);
+        if (!text || !this.sys.isActive()) return;
+        const q = this.sayLines.get(agentId) ?? [];
+        q.push({ text, tone, at: Date.now() });
+        this.sayLines.set(agentId, q);
+        if (q.length === 1) this.nextSay(agentId);
       }),
       // The first steps are done: Celebrate's card is the moment; the city adds a gentle camera visit to the building
       // they grew, unless its tier-up (which flies there itself) is playing. Once; nothing under reduced motion.
@@ -2153,8 +2184,9 @@ export class CityScene extends Phaser.Scene {
         if (!from) return;
         const to = e.to === 'user' ? 'you' : agentName(e.to);
         // The bubble gets one short line; the panel keeps the full text and its caveats.
-        // Agents talking among themselves with no task of yours running are ambient: a bubble only with chatter on.
-        const ambient = e.to !== 'user' && !taskRunning(useCity.getState());
+        // Agents talking among themselves about anything but your task are ambient: a bubble only with chatter on (never
+        // on the first steps: src/game/Agent.ts).
+        const ambient = isChatter(useCity.getState(), e.from, e.to);
         // Only a line to the player blips: agents talking among themselves are seen, not heard.
         from.say(firstLine(e.text), { caption: `to ${to}`, priority: ambient ? 'ambient' : 'normal', silent: e.to !== 'user' });
         const a = this.agentTile(e.from);

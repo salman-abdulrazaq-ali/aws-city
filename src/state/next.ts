@@ -4,7 +4,7 @@
 import type { Progress } from '@/backend/contract';
 import { isDue } from '@/learning/srs';
 import { clientName, CLIENTS, currentLevel, taskOpen } from '@/world/clients';
-import { cardsFor, puzzleById, questById, QUESTS, type QuestStep } from '@/world/content';
+import { cardsFor, puzzleById, questById, QUESTS, type Quest, type QuestStep } from '@/world/content';
 import { placeFor } from '@/world/places';
 import { offered } from '@/world/regions';
 import { SERVICES } from '@/world/taxonomy';
@@ -230,6 +230,20 @@ export function openJobs(p: Progress, region: string, focus?: string, max = 3): 
 }
 
 /**
+ * The quest the next action offers: the first one under way (its step), else the first not started. Never the first
+ * steps: they're led by their guide card (src/state/firstSteps.ts), not offered as a step or as a new quest (a legacy
+ * save or a graduate never gets them; quest 2 is the first offer after them). Graduation's Next names this one.
+ */
+export function questOffer(quests: Progress['quests'] = {}): { quest: Quest; started: boolean } | undefined {
+  for (const q of QUESTS) {
+    const st = quests[q.id];
+    if (q.id !== FIRST_STEPS_QUEST && st?.status === 'active' && q.steps[st.step]) return { quest: q, started: true };
+  }
+  const fresh = QUESTS.find((q) => q.id !== FIRST_STEPS_QUEST && !quests[q.id]);
+  return fresh && { quest: fresh, started: false };
+}
+
+/**
  * The one next action, in this order: the active quest's step; cards due again (DUE_MIN or more); a new quest; a
  * building one action from its next level; a client's job; then Connie's after-quests offers; else a walk round town.
  */
@@ -237,13 +251,12 @@ export function planNext(i: NextInput): NextPlan {
   const p = i.progress;
   const region = i.cityRegion;
   const quests = p.quests ?? {};
-  // The first steps are led by their guide card (src/state/firstSteps.ts), never offered here: not as a step, and not
-  // as a new quest (a legacy save or a graduate never gets them; quest 2 is the first offer after them).
-  for (const q of QUESTS) {
-    if (q.id === FIRST_STEPS_QUEST) continue;
-    const st = quests[q.id];
-    const step = st?.status === 'active' ? q.steps[st.step] : undefined;
-    if (step) return { kind: 'step', label: stepAction(step, st!.count ?? 0), where: stepWhere(step), questId: q.id, step, serviceId: stepService(q.id, step) };
+  const offer = questOffer(quests);
+  if (offer?.started) {
+    const q = offer.quest;
+    const st = quests[q.id]!;
+    const step = q.steps[st.step];
+    return { kind: 'step', label: stepAction(step, st.count ?? 0), where: stepWhere(step), questId: q.id, step, serviceId: stepService(q.id, step) };
   }
   const due = dueNow(p, region, i.now);
   if (due.n >= DUE_MIN && due.serviceId) {
@@ -251,8 +264,7 @@ export function planNext(i: NextInput): NextPlan {
     const count = Math.min(due.count, REVIEW_MAX);
     return { kind: 'review', label: `Review ${plural(count, 'card')}`, where: 'Learn', serviceId: due.serviceId, count };
   }
-  const fresh = QUESTS.find((q) => q.id !== FIRST_STEPS_QUEST && !quests[q.id]);
-  if (fresh) return { kind: 'quest', label: `Start: ${fresh.title}`, questId: fresh.id };
+  if (offer) return { kind: 'quest', label: `Start: ${offer.quest.title}`, questId: offer.quest.id };
   const ready = readyToUpgrade(p, region, 1, i.now)[0];
   if (ready) return { kind: 'upgrade', label: upgradeLabel(ready), where: 'Learn', serviceId: ready.serviceId, reviews: ready.reviews };
   const clientsOpen = i.clients ?? Object.values(quests).some((q) => q.status === 'done');

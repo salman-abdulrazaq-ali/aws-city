@@ -5,9 +5,9 @@ import { announce } from '@/state/announce';
 import { bus } from '@/state/bus';
 import { FIRST_STEPS, FIRST_STEPS_OF, fill, firstSteps, quietContext, type FirstSteps as Path } from '@/state/firstSteps';
 import { tierOf } from '@/state/selectors';
-import { useCity } from '@/state/store';
+import { pathGrowth, useCity } from '@/state/store';
 import { walkTo } from '@/state/walk';
-import { TIER_XP } from '@/world/places';
+import { TIER_NAMES, TIER_XP } from '@/world/places';
 import { landmarkOf } from '@/state/cities';
 import type { Progress } from '@/backend/contract';
 import { TaskCard } from './ActivityFeed';
@@ -64,11 +64,19 @@ function starsToGrow(p: Progress, region: string) {
   return Math.max(1, TIER_XP[1] - (landmarkOf(p, S3, region)?.xp ?? 0));
 }
 
-/** The line for the step just done, shown above the next title (the fishing step's says whether the lake grew). */
+/**
+ * The line for the step just done, shown above the next title. The fishing step's names what really happened
+ * (pathGrowth): the level the lake reached, else how far it has to go, else the stars the round paid.
+ */
 function doneLine(step: number, toGrow: number): string | undefined {
   if (step <= 0) return undefined;
   if (step === 1) return copyOf(0).done ?? `Done: ${copyOf(0).title}.`;
-  if (step === 2) return toGrow > 0 ? fill(copyOf(1).notyet ?? '', { n: toGrow }) : copyOf(1).grew;
+  if (step === 2) {
+    const g = pathGrowth();
+    if (g?.tier) return fill(copyOf(1).grew ?? '', { level: TIER_NAMES[g.tier] });
+    if (toGrow > 0) return fill(copyOf(1).notyet ?? '', { n: toGrow });
+    if (g?.stars) return fill(copyOf(1).gained ?? '', { n: g.stars });
+  }
   return `Done: ${copyOf(step - 1).title}.`;
 }
 

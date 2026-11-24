@@ -61,7 +61,7 @@ describe('one thing over the short map at a time', () => {
     const p = useCity.getState().progress;
     useCity.setState({ progress: { ...p, wallet: { earned: 20, spent: 0 } } } as never);
     render(<Hud layout="panel" />);
-    expect(screen.getByRole('note').textContent).toMatch(/spend them on decorations/);
+    expect(screen.getByRole('note').textContent).toMatch(/You've earned 20 City Coins: spend them in 🌳 Decorate\./);
     act(() => useCity.setState({ toasts: [toast] } as never));
     expect(screen.queryByRole('note')).toBeNull();
     act(() => useCity.setState({ toasts: [] } as never));
@@ -94,7 +94,7 @@ describe('one thing over the short map at a time', () => {
     expect(note.classList.contains('hud-tip-line')).toBe(true);
     // At the map's top-left, where the ticker's line stands (--s-3 in), under the coin counter.
     expect([note.style.position, note.style.top, note.style.left]).toEqual(['fixed', '54px', '14px']);
-    expect(note.textContent).toMatch(/spend them on decorations in 🌳 Decorate/); // the line hides the extra words in CSS
+    expect(note.textContent).toMatch(/You've earned 20 City Coins: spend them in 🌳 Decorate\./); // the line hides the extra words in CSS
     expect(container.querySelector('.ticker')).toBeNull();
     // A toast takes the top edge from both, then the note has its line back.
     act(() => useCity.setState({ toasts: [toast] } as never));

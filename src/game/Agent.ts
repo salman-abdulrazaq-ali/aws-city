@@ -6,6 +6,7 @@ import { findPath, type RouteCache } from './pathfinding';
 import { crisp, SpeechBubble, TEXT_FONT, type SayOptions } from './SpeechBubble';
 import { mayShowBubble } from './calm';
 import { useCity } from '@/state/store';
+import { quietCity } from '@/state/firstSteps';
 import { CSS, labelStyle } from './theme';
 
 /** What a walker needs to know about the world it walks in. */
@@ -210,7 +211,9 @@ export class Agent {
    * An ambient line stays quiet unless chatter is on and nobody else is talking; returns whether it showed.
    */
   say(text: string, opts?: SayOptions): boolean {
-    if (!mayShowBubble(opts?.priority ?? 'normal', this.visibleBubbles(), useCity.getState().prefs.chatter)) return false;
+    // Chatter waits while the first steps run (the quiet city), whatever ⋯ says.
+    const { prefs, progress } = useCity.getState();
+    if (!mayShowBubble(opts?.priority ?? 'normal', this.visibleBubbles(), prefs.chatter && !quietCity(progress, prefs))) return false;
     this.bubble.say(text, this.shortName, opts);
     this.spokeAt = this.scene.time.now;
     if (!opts?.silent) this.onSpeak?.(this);

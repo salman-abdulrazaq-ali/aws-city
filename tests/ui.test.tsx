@@ -401,9 +401,10 @@ describe('the HUD’s small helpers', () => {
     const p = useCity.getState().progress;
     const region = useCity.getState().cityRegion;
     localStorage.removeItem('awscity.tip.coins');
-    useCity.setState({ view: { name: 'city' }, prefs: { ...useCity.getState().prefs, region, simple: false }, progress: { ...p, wallet: { earned: 20, spent: 0 } } } as never);
+    // No celebration card up (an earlier test's): the note waits for one to close.
+    useCity.setState({ view: { name: 'city' }, celebration: undefined, prefs: { ...useCity.getState().prefs, region, simple: false }, progress: { ...p, wallet: { earned: 20, spent: 0 } } } as never);
     const { container } = render(<Hud layout="panel" />);
-    expect(screen.getByRole('note').textContent).toMatch(/spend them on decorations in 🌳 Decorate/);
+    expect(screen.getByRole('note').textContent).toMatch(/You've earned 20 City Coins: spend them in 🌳 Decorate\./);
     fireEvent.click(screen.getByRole('button', { name: 'Got it' }));
     expect(screen.queryByRole('note')).toBeNull();
     expect(localStorage.getItem('awscity.tip.coins')).toBe('1');

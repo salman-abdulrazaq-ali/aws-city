@@ -2,10 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Progress } from '@/backend/contract';
 import { FIRST_STEPS, FIRST_STEPS_OF, FIRST_STEPS_QUEST, fill, firstStep, firstSteps, isLegacy, quietCity, quietContext, startsFirstSteps, TUTORIAL_DECK } from '@/state/firstSteps';
 import { ladder } from '@/state/ladder';
-import { planNext } from '@/state/next';
+import { planNext, questOffer } from '@/state/next';
 import { shows } from '@/state/simple';
 import { bus } from '@/state/bus';
-import { migrateQuestCut, QUEST_CUT, useCity } from '@/state/store';
+import { isChatter, migrateQuestCut, QUEST_CUT, SETTLE, SETTLE_BEAT_MS, useCity, whenSettled } from '@/state/store';
 import { cardsFor, questById, QUESTS } from '@/world/content';
 
 const p = (over: Partial<Progress> = {}): Progress => ({ version: 1, landmarks: {}, updatedAt: '2026-01-01T00:00:00.000Z', ...over });
@@ -239,5 +239,91 @@ describe("quest 2's re-cut (its workshop last)", () => {
     s().startQuest('storage-static-site');
     expect(s().progress.quests?.[QUEST_CUT.marker]).toBeDefined();
     expect(migrateQuestCut(s().progress)).toBe(s().progress);
+  });
+});
+
+describe('after the first steps', () => {
+  beforeEach(() => {
+    s().resetSession();
+    s().clearToasts();
+    s().setPref('firstSteps', 'beginner');
+    useCity.setState({ celebration: undefined, selected: undefined });
+  });
+
+  it('quest 2 starts after what the path already did, and never ticks a step with a toast of its own', () => {
+    useCity.setState({ progress: done, selected: 's3' });
+    expect(questOffer(done.quests)).toMatchObject({ quest: { id: 'storage-static-site', title: 'The City Brochure Site' }, started: false });
+    s().startQuest('storage-static-site');
+    expect(s().progress.quests?.['storage-static-site']).toMatchObject({ status: 'active', step: 2, count: 0 });
+    expect(questById('storage-static-site')!.steps[2]).toMatchObject({ kind: 'cards', serviceId: 'cloudfront' });
+    // Standing at S3 Lake ticks nothing (seen 24 Nov 2026: "✓ Step 1 of 7 done: Walk to S3 Lake…" right after graduation).
+    expect(s().toasts.map((t) => t.text).join()).not.toMatch(/Step \d+ of \d+ done/);
+    // The new order's marker is written, so the re-cut's migration leaves it alone.
+    expect(migrateQuestCut(s().progress)).toBe(s().progress);
+  });
+
+  it('a player who skipped the path, or never did it, starts quest 2 from its first step', () => {
+    s().setPref('firstSteps', 'skipped');
+    useCity.setState({ progress: done });
+    s().startQuest('storage-static-site');
+    expect(s().progress.quests?.['storage-static-site']?.step).toBe(0);
+    s().resetSession();
+    s().setPref('firstSteps', undefined);
+    s().startQuest('storage-static-site');
+    expect(s().progress.quests?.['storage-static-site']?.step).toBe(0);
+  });
+
+  it('the quest offered is one under way before one not started (what graduation’s Next names)', () => {
+    const under = p({ quests: { [FIRST_STEPS_QUEST]: { status: 'done', step: 6 }, 'storage-static-site': { status: 'active', step: 3, count: 0 } } });
+    expect(questOffer(under.quests)).toMatchObject({ quest: { id: 'storage-static-site' }, started: true });
+    expect(planNext({ progress: under, cityRegion: 'us-west-2' })).toMatchObject({ kind: 'step', questId: 'storage-static-site' });
+    expect(questOffer(on(2).quests)).toMatchObject({ quest: { id: 'storage-static-site' }, started: false });
+  });
+
+  it('graduation’s after-moments come one at a time: the coins note, Connie, the banner, then toasts one by one', () => {
+    vi.useFakeTimers();
+    try {
+      const said = vi.fn();
+      useCity.setState({ progress: done, celebration: FIRST_STEPS_QUEST });
+      s().toast('🧯', 'Practice storm: nothing is wrong with your city.');
+      expect(s().toasts).toHaveLength(0);
+      s().celebrate(undefined);
+      expect(s().settle).toBe(SETTLE.note);
+      whenSettled(SETTLE.connie, said);
+      expect(said).not.toHaveBeenCalled();
+      s().toast('🏅', 'A badge');
+      expect(s().toasts).toHaveLength(0);
+      vi.advanceTimersByTime(SETTLE_BEAT_MS);
+      expect(s().settle).toBe(SETTLE.connie);
+      expect(said).toHaveBeenCalledOnce();
+      vi.advanceTimersByTime(SETTLE_BEAT_MS);
+      expect(s().settle).toBe(SETTLE.banner);
+      expect(s().toasts).toHaveLength(0);
+      vi.advanceTimersByTime(SETTLE_BEAT_MS);
+      expect(s().settle).toBe(0);
+      // Then the toasts, one at a time.
+      expect(s().toasts.map((t) => t.text)).toEqual(['Practice storm: nothing is wrong with your city.']);
+      // Another quest's card settles nothing.
+      useCity.setState({ celebration: 'storage-static-site' });
+      s().celebrate(undefined);
+      expect(s().settle).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('agents talking among themselves are chatter unless it’s the player’s task (a practice task too)', () => {
+    const running = { 'practice-task-z': { taskId: 'practice-task-z', prompt: 'x', agentId: 's3', steps: [], status: 'running' as const } };
+    // Seen 24 Nov 2026: "Connie · to Luke the Lookout" during Sally's practice task, with the chat switched off.
+    expect(isChatter({ tasks: running }, 'concierge', 'lookout')).toBe(true);
+    expect(isChatter({ tasks: running }, 'concierge', 's3')).toBe(false);
+    expect(isChatter({ tasks: running }, 's3', 'concierge')).toBe(false);
+    expect(isChatter({ tasks: running }, 'concierge', 'user')).toBe(false);
+    expect(isChatter({ tasks: {} }, 'concierge', 'lookout')).toBe(true);
+    // Being routed (no agent yet): Connie's lines are the task's.
+    expect(isChatter({ tasks: { t: { taskId: 't', prompt: 'x', steps: [], status: 'routing' } } }, 'concierge', 'lambda')).toBe(false);
+    useCity.setState({ tasks: running });
+    s().applyServerEvent({ type: 'agent.message', from: 'concierge', to: 'lookout', text: 'Luke, anything new?' });
+    expect(s().feed.at(-1)).toMatchObject({ kind: 'message', ambient: true });
   });
 });

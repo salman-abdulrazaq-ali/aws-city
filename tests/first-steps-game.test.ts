@@ -17,6 +17,7 @@ import {
   plantedFor,
   plantedRequest,
   plantTile,
+  sayReadMs,
   stormLine,
   stormLook,
   streetQuestions,
@@ -218,6 +219,21 @@ describe('the scenes are wired to the path (static: Phaser scenes don’t run un
     expect(read('src/game/Requests.ts')).toContain("cityShows('citizenRequests'");
     expect(read('src/game/scenes/WorldScene.ts')).toMatch(/stormLook\(/);
     expect(read('src/game/scenes/FishingScene.ts')).toMatch(/fishingEnd\(this\.onPath/);
+  });
+
+  it('Sally’s introduction is read before her next line, and a line waits for her to stand in the city', () => {
+    // Seen 24 Nov 2026: her fishing line, 3.5 s after the arrival, hid "Hi, I'm Sally!…" before it could be read.
+    const intro = FIRST_STEPS.steps[0].sally!;
+    expect(sayReadMs(intro)).toBeGreaterThan(3500);
+    expect(sayReadMs(intro)).toBeLessThanOrEqual(6000);
+    const city = read('src/game/scenes/CityScene.ts');
+    expect(city).toMatch(/private nextSay\(agentId: string\)/);
+    expect(city).toMatch(/this\.sayRead\.set\(agentId, this\.time\.now \+ sayReadMs\(line\.text\)\)/);
+  });
+
+  it('the stars of a fishing round land before the round is recorded (the guide names what it grew)', () => {
+    const fish = read('src/game/scenes/FishingScene.ts');
+    expect(fish.indexOf("s.addXp('s3', stars)")).toBeLessThan(fish.indexOf("s.recordGame('fishing'"));
   });
 
   it('the rules draw nothing at random (determinism, CLAUDE.md)', () => {

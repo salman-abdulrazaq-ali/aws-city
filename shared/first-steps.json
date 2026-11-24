@@ -26,7 +26,8 @@
       "button": "🎣 Play S3 Fishing",
       "sally": "Sort my fish onto the right shelves and the lake grows!",
       "end": "Back to the city",
-      "grew": "S3 Lake grew to Novice! Stars ⭐ are what you've learned, and they grow your buildings.",
+      "grew": "S3 Lake grew to {level}! Stars ⭐ are what you've learned, and they grow your buildings.",
+      "gained": "+{n} ⭐ for S3 Lake. Stars ⭐ are what you've learned, and they grow your buildings.",
       "notyet": "Nice fishing! S3 Lake needs {n} more ⭐ to grow. Sally's cards will get it there."
     },
     {
@@ -90,7 +91,7 @@
       "decorate": "🌳 Decorate: spend your {n} City Coins on your city",
       "ask": "💬 Ask the city: type what you want in plain words"
     },
-    "next": "Next: Your First Bucket →",
+    "next": "Next: {quest} →",
     "later": "Look around first"
   },
   "coins": { "note": "You've earned {n} City Coins: spend them in 🌳 Decorate. Stars ⭐ are never spent." },
@@ -105,7 +106,7 @@
   "menu": { "play": "▶ Play the first steps", "replay": "↺ Replay the first steps", "tour": "Show the quick tour" },
   "hud": { "steps": "First steps {n}/6" },
   "q2": {
-    "title": "Your First Bucket",
+    "title": "The City Brochure Site",
     "intro": "Your photos have a home. Now let's put the city's brochure online, fast for visitors everywhere."
   }
 }

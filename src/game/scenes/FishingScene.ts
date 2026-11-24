@@ -448,10 +448,12 @@ export class FishingScene extends Phaser.Scene {
     const weekly = weeklyChallenge().game === 'fishing';
     const roundsBefore = countRound('fishing');
     const stars = Math.round(fishingStars(this.correct, perfect, roundsBefore, this.correct > best) * (weekly ? WEEKLY_BONUS : 1));
+    // The stars land before the round is recorded: the first steps' fishing step ends there, and its ✓ line says what
+    // the round grew (src/state/store.ts pathGrowth).
+    if (stars > 0) s.addXp('s3', stars);
     // A round that caught something pays City Coins too (store.recordGame, contract v2.14).
     const coins = s.recordGame('fishing', this.correct, { timed: !relaxed() });
     const halved = this.correct > 0 && this.correct <= best && roundsBefore >= FULL_ROUNDS_A_DAY;
-    if (stars > 0) s.addXp('s3', stars);
     if (this.correct > 0) s.noteLearning('games');
     const record = this.correct > best && best > 0 ? ' New best!' : '';
     // On the first steps: no tips, no Expert round, no coins (they wait for graduation), and "Back to the city" leads.

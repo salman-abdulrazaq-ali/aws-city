@@ -37,6 +37,7 @@ import { isSimple, shows } from '@/state/simple';
 import { useTodo } from './today';
 import { DeleteAccountDialog, openAccountCard } from './Account';
 import { playLabel, stepsChip, useFirstSteps, useQuiet } from './FirstSteps';
+import { FIRST_STEPS, fill } from '@/state/firstSteps';
 
 
 /** How long the coins note stays on the map before it counts as read (Got it and Decorate put it away sooner). */
@@ -57,8 +58,9 @@ export const SHORT_MAP_PX = 480;
 function CoinsTip({ wallet }: { wallet: number }) {
   const [seen, setSeen] = useState(() => readPref(TIP_COINS_KEY) === '1');
   const building = useCity((s) => !!s.build);
-  // Only on the city itself: a mini-game, an HQ or the world map keeps its own screen clear.
-  const inCity = useCity((s) => s.view.name === 'city');
+  // Only on the city itself: a mini-game, an HQ or the world map keeps its own screen clear. Never with a celebration
+  // card up: graduation's card names the coins, and the note comes once it closes (seen 24 Nov 2026: both at once).
+  const inCity = useCity((s) => s.view.name === 'city' && !s.celebration);
   const toastUp = useCity((s) => s.toasts.some((t) => !t.leaving));
   const done = () => (writePref(TIP_COINS_KEY, '1'), setSeen(true));
   useEffect(() => {
@@ -118,12 +120,15 @@ function CoinsTip({ wallet }: { wallet: number }) {
     return () => (ro?.disconnect(), mo?.disconnect(), window.removeEventListener('resize', place));
   }, [visible]);
   if (!visible) return null;
+  const text = fill(FIRST_STEPS.coins.note, { n: wallet });
+  const cut = text.indexOf('. ') + 1;
+  const note = cut > 0 ? { main: text.slice(0, cut), more: text.slice(cut + 1) } : { main: text };
   return (
     <span ref={ref} className={`hud-tip${line ? ' hud-tip-line' : ''}`} role="note" style={at}>
-      {/* The line keeps the point (spend them in Decorate) and drops the rest (styles/02-hud.css .tip-more). */}
+      {/* "You've earned N City Coins: spend them in 🌳 Decorate." The line keeps that and drops the rest (.tip-more). */}
       <span>
-        <b>City Coins</b>: spend them <span className="tip-more">on decorations </span>in 🌳 Decorate.
-        <span className="tip-more"> Stars ⭐ are never spent.</span>
+        {note.main}
+        {note.more && <span className="tip-more"> {note.more}</span>}
       </span>
       <button className="btn tiny" onClick={done}>
         Got it

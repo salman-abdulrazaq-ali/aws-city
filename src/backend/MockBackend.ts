@@ -700,7 +700,21 @@ export class MockBackend implements AgentBackend {
 
   /** A practice task (src/backend/practiceTasks.ts), played like the server's: locally, never a model call. */
   practiceTask(scriptId: string, taskId?: string) {
-    return playPracticeTask(scriptId, (e) => this.emit(e), { taskId, speed: this.speed });
+    // Like a real task, it holds the city's chatter back while it runs.
+    let running = true;
+    this.running++;
+    const id = playPracticeTask(
+      scriptId,
+      (e) => {
+        if (running && (e.type === 'task.done' || e.type === 'error')) {
+          running = false;
+          this.running--;
+        }
+        this.emit(e);
+      },
+      { taskId, speed: this.speed },
+    );
+    return id;
   }
 
   private async planDeploy({ requestId, templateId, taskId }: DeployPlan) {

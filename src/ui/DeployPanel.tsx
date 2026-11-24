@@ -58,7 +58,8 @@ import { useCanConnect } from './useLadder';
 import { QrCode } from './QrCode';
 import { ForLearners } from './Term';
 import { Plain } from './Term';
-import { FIRST_STEPS, firstStep, quietCity } from '@/state/firstSteps';
+import { FIRST_STEPS, FIRST_STEPS_QUEST, firstStep, quietCity } from '@/state/firstSteps';
+import { isPracticeTemplate } from '@/backend/practiceTasks';
 
 /**
  * What a build preview costs: in the practice account, plainly free (the real estimate folds away for learners);
@@ -422,7 +423,8 @@ export function DeployPanel() {
    * blueprints, no account number), for every player, a hosted one with a linked account too. The plan is a practice
    * build, decided on this device (src/backend/ServerBackend.ts planPractice): nothing is sent, nothing touches AWS.
    */
-  const onPath = useCity((s) => quietCity(s.progress, s.prefs));
+  // Graduation's card keeps it so while it's up (seen 24 Nov 2026: the whole Connect and blueprints page behind the scrim).
+  const onPath = useCity((s) => quietCity(s.progress, s.prefs) || s.celebration === FIRST_STEPS_QUEST);
   /** The plan the path's deploy step asks for (photo-bucket), while that's the step on screen. */
   const pathPlan = useCity((s) => {
     const st = firstStep(s.progress, s.prefs);
@@ -792,6 +794,9 @@ export function DeployPanel() {
             <h4 id="waiting-ok-title">Waiting for your OK</h4>
             {waiting.map(renderCard)}
           </section>
+        ) : !pathPlan ? (
+          // Just decided (graduation's card is up): the plan as it ended.
+          settled.filter(({ d }) => isPracticeTemplate(d.templateId)).map(renderCard)
         ) : (
           pathPlan && (
             <div className="card">

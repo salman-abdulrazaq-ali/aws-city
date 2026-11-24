@@ -10,6 +10,16 @@ import { landmarkOf } from './cities';
 
 export const taskRunning = (s: { tasks: Record<string, TaskView> }) => Object.values(s.tasks).some((t) => t.status === 'routing' || t.status === 'running');
 
+/**
+ * Agents talking among themselves that isn't the player's own task: the city's chatter (a bubble only with ⋯ → Agents
+ * chat in the city on, never on the first steps). A line is the task's when its agent says it or is told it (while a
+ * task is still being routed, Connie's); any other line is chatter, even while a task runs (seen 24 Nov 2026: "Connie ·
+ * to Luke the Lookout" during Sally's practice task, with the chat switched off).
+ */
+export const isChatter = (s: { tasks: Record<string, TaskView> }, from: string, to: string) =>
+  to !== 'user' &&
+  !Object.values(s.tasks).some((t) => (t.status === 'routing' || t.status === 'running') && (t.agentId ? t.agentId === from || t.agentId === to : from === 'concierge' || to === 'concierge'));
+
 export const emptyProgress = (): Progress => ({ version: 1, landmarks: {}, updatedAt: new Date(0).toISOString() });
 
 export const agentName = (id: string) =>

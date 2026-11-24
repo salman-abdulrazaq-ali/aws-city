@@ -154,6 +154,11 @@ export interface Quest {
   intro: string;
   rewardXp: number;
   steps: QuestStep[];
+  /**
+   * Where this quest starts for a player who finished the first steps (src/state/firstSteps.ts): its opening steps that
+   * the path already did (quest 2's walk to S3 Lake and its S3 cards) count as done, so it never repeats them.
+   */
+  afterFirstSteps?: number;
 }
 
 export interface DeployTemplate {
