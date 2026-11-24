@@ -8,7 +8,7 @@ import { accountLabel, accountTitle, regionName } from '@/state/account';
 import { bus } from '@/state/bus';
 import { growthLine, growthOf } from '@/state/growth';
 import { levelOf } from '@/state/mastery';
-import { useCity } from '@/state/store';
+import { AWS_PROFILE_NAME, useCity } from '@/state/store';
 import { questById } from '@/world/content';
 import { placeFor } from '@/world/places';
 import { serviceById } from '@/world/taxonomy';
@@ -145,6 +145,8 @@ function ShellChoice() {
 function AccountCheck() {
   const account = useCity((s) => s.account);
   const terminal = useCity((s) => s.prefs.workshopShell === 'terminal');
+  // The same profile as the switch's command (prefs.awsProfile): filled in, the export is ready to paste.
+  const profile = useCity((s) => s.prefs.awsProfile);
   if (!account.linked || !account.accountId) return null;
   const which = (
     <>
@@ -170,7 +172,17 @@ function AccountCheck() {
           </li>
           <li>
             Sign in to that account (<CodeChip code="aws login" /> or your usual profile), then use it for every command:{' '}
-            <CodeChip code="export AWS_PROFILE=<your profile>" />
+            <label className="row aws-profile">
+              <span className="label">Your AWS CLI profile</span>
+              <input
+                value={profile ?? ''}
+                placeholder="e.g. city-047"
+                onChange={(e) => useCity.getState().setPref('awsProfile', AWS_PROFILE_NAME.test(e.target.value.trim()) ? e.target.value.trim() : undefined)}
+                spellCheck={false}
+                autoCapitalize="off"
+              />
+            </label>
+            <CodeChip code={`export AWS_PROFILE=${profile ?? '<your profile>'}`} />
           </li>
           <li>Check you’re in the right account: {which}</li>
         </ol>

@@ -175,7 +175,7 @@ export const CLEANUP_ROLE_VERSION = 6;
  * gets the newer template, and one older than v5 the ConnectsPlayer name, without which there's no command (the
  * console steps stay). Unknown version: nothing is assumed.
  */
-export function cleanupCommand(a: { region?: string; roleVersion?: number; templateUrl?: string; fixes?: boolean }, on: boolean, label?: string): string | undefined {
+export function cleanupCommand(a: { region?: string; roleVersion?: number; templateUrl?: string; fixes?: boolean }, on: boolean, label?: string, profile?: string): string | undefined {
   if (!a.region || !/^[a-z]{2}(-[a-z]+)+-\d$/.test(a.region)) return undefined;
   const v = a.roleVersion ?? 0;
   if (v < CLEANUP_ROLE_VERSION && !a.templateUrl) return undefined;
@@ -187,7 +187,10 @@ export function cleanupCommand(a: { region?: string; roleVersion?: number; templ
     `ParameterKey=AllowCleanup,ParameterValue=${on}`,
   ];
   const template = v >= CLEANUP_ROLE_VERSION ? '--use-previous-template' : `--template-url ${a.templateUrl}`;
-  const where = `--region ${a.region} --stack-name AWSCity`;
+  // A terminal's profile goes in both commands, so a pasted command works without an export first (seen 24 Nov 2026:
+  // NoCredentials). Anything that isn't a plain profile name is left out.
+  const as = profile && /^[A-Za-z0-9_.+-]{1,64}$/.test(profile) ? ` --profile ${profile}` : '';
+  const where = `--region ${a.region} --stack-name AWSCity${as}`;
   return `aws cloudformation update-stack ${where} ${template} --capabilities CAPABILITY_NAMED_IAM --parameters ${params.join(' ')} && aws cloudformation wait stack-update-complete ${where}`;
 }
 

@@ -24,7 +24,7 @@ import {
 } from '@/state/account';
 import { connectTask } from '@/state/simple';
 import { bus } from '@/state/bus';
-import { useCity } from '@/state/store';
+import { AWS_PROFILE_NAME, useCity } from '@/state/store';
 import { useCopy } from './feedback';
 import { isOnline } from './logic';
 import type { OpenTab } from './QuestLog';
@@ -175,6 +175,7 @@ export function CleanupSwitch({ region }: { region: string }) {
   const account = useCity((s) => s.account);
   const hosted = useCity((s) => s.hosted);
   const demo = useCity((s) => s.backendKind === 'mock');
+  const profile = useCity((s) => s.prefs.awsProfile);
   const [open, setOpen] = useState(false);
   const [copied, copy] = useCopy();
   const [copiedCmd, copyCmd] = useCopy();
@@ -188,15 +189,16 @@ export function CleanupSwitch({ region }: { region: string }) {
   const older = account.roleVersion !== undefined && account.roleVersion < CLEANUP_ROLE_VERSION;
   const newTemplate = older ? account.templateUrl : undefined;
   const label = connectsPlayer(account.linkUrl);
-  const command = cleanupCommand(account, want, label);
+  const command = cleanupCommand(account, want, label, profile);
   // No command yet because the role's version is unknown or older than v5 and the stack's ConnectsPlayer name isn't
   // known: a fresh setup link names it (as RoleUpdate's "Get the ConnectsPlayer name" does).
   const needsName = !command && !label && (account.roleVersion ?? 0) < 5 && !!account.templateUrl;
+  const verb = want ? 'Turn on' : 'Turn off';
   return (
     <section className="account-howto cleanup-switch" aria-labelledby="cleanup-switch-title">
       <p className="row">
         <b id="cleanup-switch-title">{CLEANUP_SWITCH}:</b>{' '}
-        <span className={`switch-state ${on ? 'on' : 'off'}`}>{on ? 'On' : 'Off'}</span>
+        <span className={`switch-state ${on ? 'on' : 'off'}`}>{on ? 'On ✅' : 'Off'}</span>
         <button
           className="btn tiny"
           aria-expanded={open}
@@ -206,7 +208,7 @@ export function CleanupSwitch({ region }: { region: string }) {
             if (!open) useCity.getState().patchAccount({ allowCleanup: want });
           }}
         >
-          {on ? 'Turn off' : 'Turn on'}
+          {verb}
         </button>
       </p>
       <p className="muted small">
@@ -219,56 +221,71 @@ export function CleanupSwitch({ region }: { region: string }) {
           </p>
         ) : (
           <>
-            {command && (
-              <div className="cleanup-command">
-                <p className="muted small">
-                  Quickest: run this one command in CloudShell or your own terminal, signed in to account{' '}
-                  {account.accountId ? accountTitle(account.accountId) : 'the linked one'} (in a terminal, <code>export AWS_PROFILE=&lt;your profile&gt;</code> first). It
-                  updates the AWSCity stack and waits until it’s done. Then press “I’ve updated the stack”.
-                </p>
-                <code className="workshop-cmd">{command}</code>
-                <button className="btn tiny" onClick={() => copyCmd(command)}>
-                  {copiedCmd ? 'Copied ✓' : 'Copy the command'}
-                </button>
-              </div>
-            )}
-            {needsName && (
-              <p className="muted small">
-                Quickest: one command for CloudShell or your terminal.{' '}
-                <button
-                  className="btn tiny"
-                  disabled={pending.is('cmd')}
-                  aria-busy={pending.is('cmd')}
-                  onClick={() => {
-                    const requestId = linkAccount(region, { allowCleanup: want });
-                    if (requestId) pending.start('cmd', requestId);
-                  }}
-                >
-                  {pending.is('cmd') ? 'Getting it…' : 'Get the command'}
-                </button>
-              </p>
-            )}
-            <details className="why" open={!command && !needsName}>
-              <summary>{command ? 'Or click through the CloudFormation console' : 'In the CloudFormation console'}</summary>
-              <StepList steps={cleanupSteps(want, newTemplate)} label={want ? `Turn on “${CLEANUP_SWITCH}”` : `Turn off “${CLEANUP_SWITCH}”`} />
-            {newTemplate && (
-              <div className="template-url">
-                <code>{newTemplate}</code>
-                <button className="btn tiny" onClick={() => copy(newTemplate)}>
-                  {copied ? 'Copied ✓' : 'Copy the template address'}
-                </button>
-                {label && (
-                  <span>
-                    ConnectsPlayer: <code>{label}</code>
-                  </span>
+            {/* Three steps, in the words the chat used (asked for on 24 Nov 2026: "as clear as your chat"). */}
+            <ol className="account-steps cleanup-steps" aria-label={`${verb} “${CLEANUP_SWITCH}”`}>
+              <li>
+                Open Terminal (or CloudShell) signed in to account <b>{account.accountId ? accountTitle(account.accountId) : 'the linked one'}</b>.
+                <label className="row aws-profile">
+                  <span className="label">Your AWS CLI profile</span>
+                  <input
+                    value={profile ?? ''}
+                    placeholder="e.g. city-047 (leave empty in CloudShell)"
+                    onChange={(e) => useCity.getState().setPref('awsProfile', AWS_PROFILE_NAME.test(e.target.value.trim()) ? e.target.value.trim() : undefined)}
+                    spellCheck={false}
+                    autoCapitalize="off"
+                  />
+                </label>
+              </li>
+              <li>
+                {command ? (
+                  <>
+                    Paste this and press Enter. It takes about a minute:
+                    <code className="workshop-cmd">{command}</code>
+                    <button className="btn tiny" onClick={() => copyCmd(command)}>
+                      {copiedCmd ? 'Copied ✓' : 'Copy the command'}
+                    </button>
+                  </>
+                ) : needsName ? (
+                  <>
+                    Get your command (one press makes it for your account):{' '}
+                    <button
+                      className="btn tiny"
+                      disabled={pending.is('cmd')}
+                      aria-busy={pending.is('cmd')}
+                      onClick={() => {
+                        const requestId = linkAccount(region, { allowCleanup: want });
+                        if (requestId) pending.start('cmd', requestId);
+                      }}
+                    >
+                      {pending.is('cmd') ? 'Getting it…' : 'Get the command'}
+                    </button>
+                  </>
+                ) : (
+                  'Update the AWSCity stack in the CloudFormation console (the steps below).'
                 )}
-              </div>
-            )}
-            </details>
-            <div className="row">
+              </li>
+              <li>
+                When the prompt comes back with no error, press: <UpdatedStack allowCleanup={want} />
+              </li>
+            </ol>
+            <details className="why" open={!command && !needsName}>
+              <summary>Prefer clicking? Use the CloudFormation console instead</summary>
+              <StepList steps={cleanupSteps(want, newTemplate)} label={`${verb} in the CloudFormation console`} />
+              {newTemplate && (
+                <div className="template-url">
+                  <code>{newTemplate}</code>
+                  <button className="btn tiny" onClick={() => copy(newTemplate)}>
+                    {copied ? 'Copied ✓' : 'Copy the template address'}
+                  </button>
+                  {label && (
+                    <span>
+                      ConnectsPlayer: <code>{label}</code>
+                    </span>
+                  )}
+                </div>
+              )}
               <StackLink region={region} />
-              <UpdatedStack allowCleanup={want} />
-            </div>
+            </details>
           </>
         ))}
     </section>

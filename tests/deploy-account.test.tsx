@@ -78,7 +78,19 @@ describe('the Deploy tab’s account cards', () => {
     // The quickest way first: one command for CloudShell or a terminal (the console steps fold under it).
     expect(within(card).getByText(/update-stack --region us-west-2 --stack-name AWSCity --use-previous-template/).textContent).toContain('AllowCleanup,ParameterValue=true');
     expect(within(card).getByRole('button', { name: 'Copy the command' })).toBeTruthy();
-    const steps = within(card).getByRole('list', { name: /Turn on/ });
+    // Three numbered steps, as the chat said them (24 Nov 2026), then the console steps folded under them.
+    const three = within(card).getByRole('list', { name: 'Turn on “Let the city change things you made”' });
+    expect([...three.querySelectorAll(':scope > li')].map((li) => li.textContent?.slice(0, 40))).toEqual([
+      expect.stringMatching(/^Open Terminal \(or CloudShell\) signed in/),
+      expect.stringMatching(/^Paste this and press Enter/),
+      expect.stringMatching(/^When the prompt comes back with no error/),
+    ]);
+    // The profile goes into the command, so a pasted command works without an export first.
+    fireEvent.change(within(card).getByLabelText('Your AWS CLI profile'), { target: { value: 'city-047' } });
+    expect(within(card).getByText(/update-stack/).textContent).toContain('--stack-name AWSCity --profile city-047 --use-previous-template');
+    expect(within(card).getByText(/update-stack/).textContent).toContain('wait stack-update-complete --region us-west-2 --stack-name AWSCity --profile city-047');
+    fireEvent.change(within(card).getByLabelText('Your AWS CLI profile'), { target: { value: '' } });
+    const steps = within(card).getByRole('list', { name: /Turn on in the CloudFormation console/ });
     expect(steps.textContent).toMatch(/set AllowCleanup to true/);
     expect(steps.textContent).toMatch(/Use existing template/);
     fireEvent.click(within(card).getByRole('button', { name: 'I’ve updated the stack' }));
@@ -93,7 +105,7 @@ describe('the Deploy tab’s account cards', () => {
     expect(on.textContent).toMatch(/type its name or ID, then your MFA code and Approve/);
     expect(on.textContent).toMatch(/never read/);
     fireEvent.click(within(on).getByRole('button', { name: 'Turn off' }));
-    expect(within(on).getByRole('list', { name: /Turn off/ }).textContent).toMatch(/set AllowCleanup to false/);
+    expect(within(on).getByRole('list', { name: /Turn off in the CloudFormation console/ }).textContent).toMatch(/set AllowCleanup to false/);
     fireEvent.click(within(on).getByRole('button', { name: 'I’ve updated the stack' }));
     expect(rt.confirmRoleUpdate).toHaveBeenCalledWith({ allowCleanup: false });
   });
@@ -103,7 +115,7 @@ describe('the Deploy tab’s account cards', () => {
     render(<DeployPanel />);
     const card = screen.getByRole('region', { name: /Let the city change things you made/ });
     fireEvent.click(within(card).getByRole('button', { name: 'Turn on' }));
-    expect(within(card).getByRole('list', { name: /Turn on/ }).textContent).toMatch(/Replace existing template.*v6\.yaml/);
+    expect(within(card).getByRole('list', { name: /Turn on in the CloudFormation console/ }).textContent).toMatch(/Replace existing template.*v6\.yaml/);
   });
 
   // Seen 24 Nov 2026: a role linked before versions were recorded showed only the console steps.

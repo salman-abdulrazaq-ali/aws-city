@@ -376,9 +376,11 @@ When a change touches a decision, update its entry and run its Proof.
   The city can't turn it on: the setup link asks for `param_AllowCleanup=true` only when ticked, and the record's
   `cleanup` is the link's `linkCleanup`, recorded at verify when the stack was installed or updated from that link (like
   `roleVersion`; `server/src/accounts/link.ts`), so the card's Turn on/off is a stack update plus "I've updated the
-  stack" (`CleanupSwitch`, `src/ui/Account.tsx`; `confirmRoleUpdate({ allowCleanup })`), quickest as one command for
-  CloudShell or a terminal (`cleanupCommand`, `src/state/account.ts`: `update-stack` keeping every value the installed
-  role has, then `wait stack-update-complete`; the console steps fold under it), and a request refused because it's off
+  stack" (`CleanupSwitch`, `src/ui/Account.tsx`; `confirmRoleUpdate({ allowCleanup })`), as three numbered steps
+  (open Terminal or CloudShell in the linked account, with the player's AWS CLI profile `prefs.awsProfile`, shared with
+  the workshop's terminal box; paste one command; then "I've updated the stack"): `cleanupCommand`, `src/state/account.ts`,
+  `update-stack` keeping every value the installed role has, then `wait stack-update-complete`, both with `--profile`
+  when given (seen 24 Nov 2026: NoCredentials in a terminal without an export); the console steps fold under it, and a request refused because it's off
   offers "Turn it on (Deploy) →" on its task card (seen 23 Nov 2026: the console steps confused, no way from the refusal). Policy (`checkAction`'s
   `cleanup`, `server/src/agents/policy.ts`) lets the player's servers and buckets through only then (a bucket only in the
   home Region), naming the switch when it's off; ActionService reads the world's `cleanup` at each write; the gate widens

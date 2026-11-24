@@ -176,6 +176,11 @@ describe('for real', () => {
       'aws sts get-caller-identity --query Account --output text',
     ]);
     expect(within(setup).getByRole('button', { name: 'Install the AWS CLI ↗' })).toBeTruthy();
+    // The profile typed once (the switch card shares it) makes the export ready to paste.
+    fireEvent.change(within(setup).getByLabelText('Your AWS CLI profile'), { target: { value: 'city-047' } });
+    expect(useCity.getState().prefs.awsProfile).toBe('city-047');
+    expect(within(setup).getByText('export AWS_PROFILE=city-047')).toBeTruthy();
+    fireEvent.change(within(setup).getByLabelText('Your AWS CLI profile'), { target: { value: '' } });
     expect(screen.queryByRole('button', { name: /Open CloudShell/ })).toBeNull();
     // And back.
     fireEvent.click(within(choice).getByRole('button', { name: '☁️ CloudShell' }));

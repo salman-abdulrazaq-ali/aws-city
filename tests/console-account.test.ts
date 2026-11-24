@@ -71,6 +71,11 @@ describe('the one command that turns the switch on or off', () => {
     expect(v3).toContain('ParameterKey=AllowFixes,ParameterValue=false');
     expect(cleanupCommand({ region: 'us-west-2', roleVersion: 5, templateUrl: T }, true)).toContain('ConnectsPlayer,UsePreviousValue=true');
   });
+  it('a terminal profile goes into both commands; anything that isn’t a plain profile name is left out', () => {
+    const cmd = cleanupCommand({ region: 'us-west-2', roleVersion: 6 }, false, undefined, 'city-047')!;
+    expect(cmd.match(/--profile city-047/g)).toHaveLength(2);
+    expect(cleanupCommand({ region: 'us-west-2', roleVersion: 6 }, false, undefined, 'x; rm -rf ~')).not.toContain('--profile');
+  });
   it('no command it can’t make right: no name for an old role, no newer template, an odd Region or label', () => {
     expect(cleanupCommand({ region: 'us-west-2', roleVersion: 4, templateUrl: T }, true)).toBeUndefined();
     expect(cleanupCommand({ region: 'us-west-2', roleVersion: 5 }, true)).toBeUndefined();
