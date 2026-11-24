@@ -552,6 +552,13 @@ export class MockBackend implements AgentBackend {
           // Linked: the practice account's replication to other Regions shows now (world map arcs, highway tankers).
           this.emit(demoInventory(new Date(), { crossRegion: true, without: this.removed }));
         });
+      case 'account.cleanup':
+        // The practice account's On/Off, like the server's (no MFA in the demo).
+        return void this.sleep(300).then(() => {
+          if (!this.account) return this.emit({ type: 'error', requestId: cmd.requestId, code: 'unlinked', message: 'Connect your AWS account first.' });
+          this.account = { ...this.account, cleanup: cmd.on };
+          this.emit({ type: 'account.status', requestId: cmd.requestId, linked: true, ...this.account, message: 'Practice account linked.' });
+        });
       case 'account.recheck':
         // v2.19 "Check again", like the server: read-only, answered on account.status (fixes as the practice account was linked).
         return void this.sleep(400).then(() => {

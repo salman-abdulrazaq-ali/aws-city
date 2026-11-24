@@ -197,6 +197,16 @@ interface AccountRecheck {
   requestId: string;
 }
 
+/**
+ * "Let the city change things you made": the player's On/Off, stored on their link. Turning it on needs MFA (step-up, like
+ * a write); off doesn't. Answered with account.status {requestId, cleanup} on every tab; nothing linked is error {requestId}.
+ */
+interface AccountCleanup {
+  action: 'account.cleanup';
+  requestId: string;
+  on: boolean;
+}
+
 interface QuestStart {
   action: 'quest.start';
   questId: string;
@@ -356,6 +366,7 @@ export type ClientCommand =
   | AccountLink
   | AccountVerify
   | AccountRecheck
+  | AccountCleanup
   | AccountUnlink
   | ResourceRemove
   | QuestStart

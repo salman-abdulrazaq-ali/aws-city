@@ -3,7 +3,7 @@ import { socialFor } from './social.js';
 import type { Knowledge } from './knowledge/mcp.js';
 import type { AwsCredentialIdentityProvider } from '@smithy/types';
 import type { AccountLinker } from './accounts/link.js';
-import { connectsPlayerLabel, LinkError } from './accounts/link.js';
+import { connectsPlayerLabel, LINK_CHANGED_MESSAGE, LinkError } from './accounts/link.js';
 import type { Llm } from './agents/llm.js';
 import { metered, withErrorCodes } from './agents/metered.js';
 import { parseAction } from './agents/actions.js';
@@ -70,6 +70,8 @@ export interface Tenant {
   verify(requestId: string, roleArn: string, emit: Emit, updated?: boolean): Promise<void>;
   /** v2.19 account.recheck ("Check again"): asks the linked role again whether fixes are allowed; read-only, no MFA. */
   recheck(requestId: string, emit: Emit): Promise<void>;
+  /** "Let the city change things you made": the player's On/Off, stored on the link (turning it on needs MFA: http.ts). */
+  setCleanup(requestId: string, on: boolean, emit: Emit): Promise<void>;
   /** v2.19 account.unlink: forget the link, stop reading the account, tell every tab. No MFA: taking access away. */
   unlink(requestId: string, emit: Emit): Promise<void>;
   /**
@@ -638,15 +640,49 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
           emit({ type: 'error', requestId, message: err instanceof LinkError ? err.message : 'Couldn’t check your AWS account. Try again.' });
         }
       }),
+      setCleanup: (requestId, on, emit) => serial(async () => {
+        // The local server reads the developer's own account with their profile: there's no switch there.
+        if (!deps.linker) return emit(accountStatus(requestId));
+        const stored = await deps.stores.accounts.get(sub);
+        if (!world.linked || stored?.status !== 'linked') return emit({ type: 'error', requestId, code: 'unlinked', message: 'Connect your AWS account first.' });
+        // In place, on the link this world was built from: a new link or a Disconnect elsewhere meanwhile is never written over.
+        const record = await deps.stores.accounts.update(sub, { cleanup: on }, stored);
+        if (!record) return emit({ type: 'error', requestId, message: LINK_CHANGED_MESSAGE });
+        world.cleanup = record.cleanup === true;
+        log.info('cleanup switched', { who: who(sub), on: world.cleanup });
+        broadcast([accountStatus(requestId)]);
+        if (subscribers.size === 0) emit(accountStatus(requestId));
+      }),
       unlink: (requestId, emit) => serial(async () => {
         if (!deps.linker) return emit({ ...accountStatus(requestId), message: 'The local server uses the workshop AWS profile, so there’s no account to disconnect.' });
         // Under the account lock: a write already past its live check finishes first; none can change it afterwards.
-        await forgetUnderLock(sub, () => deps.stores.accounts.delete(sub), world.accountId);
-        replaceWorld(await makeWorld(undefined), DISCONNECTED_MESSAGE);
+        // Disconnect stops the city using the account but keeps its setup (the ExternalId and Region) as a pending record,
+        // which nothing reads with (playerAws needs a linked one): Reconnect is then a new link plus Verify, with no change
+        // in AWS (seen 24 Nov 2026: forgetting the ExternalId left the player's AWSCity role trusting a link the city no
+        // longer had). DELETE /me still forgets everything. A link another task changed meanwhile is left as it is.
+        let kept: AccountRecord | undefined;
+        await forgetUnderLock(
+          sub,
+          async () => {
+            const stored = await deps.stores.accounts.get(sub);
+            if (!stored) return;
+            // The account and the city's On/Off stay too (a reconnect keeps them); nothing reads with a pending record.
+            const pending: AccountRecord = {
+              status: 'pending',
+              externalId: stored.externalId,
+              region: stored.region,
+              ...(stored.accountId ? { accountId: stored.accountId } : {}),
+              ...(stored.cleanup ? { cleanup: true } : {}),
+            };
+            if (await deps.stores.accounts.put(sub, pending, stored)) kept = pending;
+          },
+          world.accountId,
+        );
+        replaceWorld(await makeWorld(kept), DISCONNECTED_MESSAGE);
         log.info('account unlinked', { who: who(sub) });
         const status: AccountStatusEvent = {
           ...accountStatus(requestId),
-          message: 'Disconnected: AWS City no longer reads or changes your AWS account. To remove its role too, delete the AWSCity stack in CloudFormation.',
+          message: 'Disconnected: AWS City no longer reads or changes your AWS account. Reconnect any time with one press; to remove its role for good, delete the AWSCity stack in CloudFormation.',
         };
         // Every open tab of this player sees the account go (the asking socket is a subscriber too).
         broadcast([status]);

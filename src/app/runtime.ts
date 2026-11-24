@@ -796,6 +796,7 @@ export type StepUp =
   | { action: 'account.verify'; roleArn: string; updated?: boolean }
   | { action: 'finding.fix' }
   | { action: 'resource.remove' }
+  | { action: 'account.cleanup' }
   | { action: 'deploy.approve' };
 /** requestId → the step-up command sent with it (its mfa_required error carries that id; deploy.approve's carries none). */
 const stepUps = new Map<string, StepUp>();
@@ -818,6 +819,7 @@ const AGAIN: Record<StepUp['action'], string> = {
   'deploy.approve': ', then ask for the change again',
   'finding.fix': ', then press Fix again',
   'resource.remove': ', then press Take it down again',
+  'account.cleanup': ', then press Turn on again',
 };
 
 /**
@@ -911,6 +913,16 @@ function askAccount(requestId: string) {
  * without changing anything, whether it allows fixes. No setup link, no MFA; the role version stays as it was. Returns
  * the requestId (the answer, account.status, or an error carries it).
  */
+/** "Let the city change things you made": On (MFA, like a write) or Off; the answer is account.status {cleanup}. */
+export function setCleanup(on: boolean) {
+  if (!backend || !store().account.linked) return undefined;
+  const requestId = uid();
+  if (on) noteStepUp(requestId, { action: 'account.cleanup' });
+  askAccount(requestId);
+  backend.send({ action: 'account.cleanup', requestId, on });
+  return requestId;
+}
+
 export function recheckAccount() {
   const { accountId, region, linked } = store().account;
   if (!backend || !linked || !accountId || !region) return undefined;

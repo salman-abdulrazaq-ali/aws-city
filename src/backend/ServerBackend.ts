@@ -406,6 +406,7 @@ export class ServerBackend implements AgentBackend {
       // v2.19: disconnect the account; ask the role again whether fixes are allowed (read-only); take down one thing the city built (approved like any write).
       case 'account.unlink':
       case 'account.recheck':
+      case 'account.cleanup':
       case 'resource.remove':
       // v2.10: a workshop step checked with a read-only look at the account.
       case 'workshop.verify':

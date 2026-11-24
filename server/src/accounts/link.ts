@@ -106,7 +106,8 @@ export const createAccountLinker = (deps: {
       // Visible on the quick-create page: who this link connects (a stranger's link names a stranger).
       param_ConnectsPlayer: opts.label,
       ...(opts.allowFixes ? { param_AllowFixes: 'true' } : {}),
-      ...(opts.allowCleanup ? { param_AllowCleanup: 'true' } : {}),
+      // Every role is made able to change what the player made; the city's own On/Off (account.cleanup) decides when.
+      param_AllowCleanup: 'true',
       // No trust parameters: the published template has our account fixed in it.
     };
     // %20 for spaces (not form-encoding's +), so the console reads the label as written.
@@ -136,7 +137,16 @@ export const createAccountLinker = (deps: {
       if (existing?.status === 'linked' && !existing.brokenAt) {
         const { pendingRegion: _, linkRoleVersion: _v, ...linked } = existing;
         record = { ...(existing.region === region ? linked : { ...linked, pendingRegion: region }), ...issued };
-      } else record = { status: 'pending', externalId: existing?.externalId ?? randomBytes(24).toString('base64url'), region, ...issued };
+      } else
+        record = {
+          status: 'pending',
+          externalId: existing?.externalId ?? randomBytes(24).toString('base64url'),
+          region,
+          // After a Disconnect: the account it was and the city's On/Off, so a reconnect of that account keeps the switch.
+          ...(existing?.accountId ? { accountId: existing.accountId } : {}),
+          ...(existing?.cleanup ? { cleanup: true } : {}),
+          ...issued,
+        };
       // Onto the record read (a first link only creates): another task's first link, a DELETE /me or Disconnect since wins.
       if (!(await deps.accounts.put(sub, record, existing ?? 'new'))) throw new LinkError(LINK_CHANGED_MESSAGE);
       return { url: quickCreateUrl(region, record.externalId, opts), externalId: record.externalId };
@@ -176,8 +186,8 @@ export const createAccountLinker = (deps: {
       // Installed from this link: a first verify (pending), a new Region or account, or the player updated the stack.
       const installed = stored.status !== 'linked' || pendingRegion !== undefined || stored.accountId !== m[1] || opts.updated === true;
       const roleVersion = installed ? record.linkRoleVersion : stored.roleVersion;
-      // The same rule for AllowCleanup: what the link the stack came from asked for.
-      const cleanup = installed ? record.linkCleanup === true : stored.cleanup === true;
+      // The city's On/Off: kept for the same account (a reconnect), off for a new one.
+      const cleanup = stored.accountId === m[1] && stored.cleanup === true;
       const linked = {
         ...record,
         status: 'linked' as const,

@@ -129,18 +129,19 @@ The card shows "Small fixes: off" with **Turn small fixes on**. In CloudFormatio
 fixes, and changes nothing. City care also says up front when fixes are off, so you aren't asked to approve something
 that can't run.
 
+### Disconnect and reconnect
+
+**Disconnect** stops AWS City reading or changing your account at once. It keeps the setup (your AWSCity role and its
+ExternalId), so **🔁 Reconnect** brings it back with one press and no change in AWS. To remove AWS City for good, delete
+the `AWSCity` stack in CloudFormation as well.
+
 ### Let the city change things you made (on or off)
 
-Off by default: the agents look at everything in your account but change only what the city built. The card's **Let the
-city change things you made: Off · Turn on** shows how to turn it on, in your own AWS account (the city can't turn it on
-itself): in CloudFormation open the `AWSCity` stack → **Update** → **Use existing template** (or, on a role older than v6,
-**Replace existing template** with the address shown) → **Next** → set `AllowCleanup` to `true` (keep the ExternalId) →
-tick the IAM acknowledgement → **Update**. When it says `UPDATE_COMPLETE` press **I've updated the stack** in the game.
-
-On, the agents may also stop, start or terminate servers, and delete empty buckets, that you made yourself in that
-Region (only buckets your account owns). Every removal asks you to type its name or ID, then your MFA code and Approve,
-exactly as for what the city built. Nothing ever reads what's in a bucket, and tables stay the city's own. Turn it off
-the same way (`AllowCleanup` = `false`).
+Off by default: the agents look at everything in your account but change only what the city built. Once connected,
+press **Turn on** on the card (your MFA code is asked) and the agents may also stop, start or remove servers, and remove
+empty buckets, that you made yourself in that Region (only buckets your account owns). Every removal asks you to type its
+name or ID, then your MFA code and Approve. Nothing ever reads what's in a bucket, and tables stay the city's own. Press
+**Turn off** to stop it. Nothing changes in AWS either way: the role is made able to do it, and the switch decides.
 
 ### Update your role (v3 → v5 and so on)
 
