@@ -80,6 +80,28 @@ const firstTabs = await page.locator('.tabs button').evaluateAll((bs) => bs.map(
 if (firstTabs.join() !== 'City') errors.push(`first run: tabs should start as City only, got ${firstTabs.join()}`);
 await shot('01-start');
 
+// First steps (src/state/firstSteps.ts, src/ui/FirstSteps.tsx): a new player lands on the guided path: Connie's guide
+// card says the one next thing, the HUD counts "First steps n/6", and the quiet city hides coins, Decorate and the
+// prompt bar until graduation. The rest of the smoke checks every feature, so it skips the path once this is seen.
+await wait(1500);
+const fs0 = await page.evaluate(() => ({
+  active: window.awsCity.useCity.getState().prefs.firstSteps,
+  guide: !!document.querySelector('#city-tabpanel .guide'),
+  button: document.querySelector('#city-tabpanel .guide .btn.primary')?.textContent?.trim() ?? '',
+  hud: document.querySelector('.hud .hud-steps')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+  quiet: [...document.querySelectorAll('.hud .hud-coins, .hud .build-toggle, .composer')].filter((e) => e.offsetParent).length,
+}));
+console.log('first steps (first city):', JSON.stringify(fs0));
+if (fs0.active !== 'beginner') errors.push(`first steps: a new player should be on the path, pref is ${fs0.active}`);
+if (!fs0.guide) errors.push('first steps: no guide card on the City tab');
+if (!/S3 Lake/i.test(fs0.button)) errors.push(`first steps: step 1's button should walk to S3 Lake, says "${fs0.button}"`);
+if (!/1\s*\/\s*6/.test(fs0.hud)) errors.push(`first steps: the HUD should count 1/6, says "${fs0.hud}"`);
+if (fs0.quiet) errors.push(`first steps: ${fs0.quiet} of coins, Decorate or the prompt bar show in the quiet city`);
+await shot('01f-first-steps');
+await audit('first steps guide');
+await city(() => window.awsCity.useCity.getState().skipFirstSteps());
+await wait(500);
+
 // Simple mode is the default (src/state/simple.ts): a first city's City tab is one To-do list, and the HUD shows ⭐,
 // coins, "To do", Decorate and ⋯ only. The checks after this look at every feature, so they turn Everything on first.
 const simple0 = await page.evaluate(() => ({
@@ -695,7 +717,8 @@ if (await page.locator('.request-card').count()) errors.push('Escape should clos
 // Past Master, crowns come from knowledge (src/state/mastery.ts): every S3 card known for a month, a passed S3 drawing,
 // a finished S3 quest and rounds of fishing make S3 Lake Lv 7, and its card says so.
 const s3Puzzle = JSON.parse(fs.readFileSync('shared/puzzles.json', 'utf8')).puzzles.find((z) => z.required.includes('s3'));
-const s3Quest = JSON.parse(fs.readFileSync('shared/quests.json', 'utf8')).quests.find((q) => q.serviceIds.includes('s3'));
+// The first S3 quest after the first steps (quest 1 is 'first-steps' since 24 Nov 2026).
+const s3Quest = JSON.parse(fs.readFileSync('shared/quests.json', 'utf8')).quests.find((q) => q.id === 'storage-static-site');
 await city(({ cards, puzzle, quest }) => {
   const p = structuredClone(window.awsCity.useCity.getState().progress);
   p.cities = p.cities ?? {};
