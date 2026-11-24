@@ -305,6 +305,8 @@ export interface Prefs {
   region?: string;
   /** The role "Switch role" asks for in the linked account (an AWS Organization's is OrganizationAccountAccessRole). */
   consoleRole?: string;
+  /** Where a workshop for real runs its commands: absent = CloudShell; 'terminal' = the player's own terminal and AWS CLI. */
+  workshopShell?: 'terminal';
   /** Show the map's technical labels (AZ IDs, network notes, distance signs). Off: the city stays calm. */
   mapDetails?: boolean;
   /** The minimap (M): absent = the surface's default (shown in the full tab, hidden in the side panel). */
@@ -364,6 +366,8 @@ const loadPrefs = (): Prefs => {
         chatter: !!v.chatter,
         stage: v.stage === 'tall' ? 'tall' : 'compact',
         ...(v.mapDetails === true ? { mapDetails: true } : {}),
+        ...(typeof v.consoleRole === 'string' && /^[\w+=,.@-]{1,64}$/.test(v.consoleRole) ? { consoleRole: v.consoleRole } : {}),
+        ...(v.workshopShell === 'terminal' ? { workshopShell: 'terminal' as const } : {}),
         ...(typeof v.minimap === 'boolean' ? { minimap: v.minimap } : {}),
         ...(typeof v.region === 'string' && /^[a-z]{2}(-[a-z]+)+-\d$/.test(v.region) ? { region: v.region } : {}),
         ...(v.textSize === 125 || v.textSize === 150 ? { textSize: v.textSize } : {}),

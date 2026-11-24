@@ -1229,9 +1229,11 @@ When a change touches a decision, update its entry and run its Proof.
   `prefs.consoleRole`, default OrganizationAccountAccessRole). The linked account is named as the console names it after
   Switch role, then its number (`accountTitle`: "AWSCity-8585 (0474-6343-8585)", the link's `displayName` is
   `accountName`; asked on 23 Nov 2026); seen 23 Nov 2026: a console bucket and a CloudShell one went
-  to the city's own account. A workshop for real says which account CloudShell must run in, where a failed check
-  looked, and what to do when a new account's CloudShell is still being verified (up to 2 days: the same commands in
-  your own terminal; seen 23 Nov 2026). Proof: `npx vitest run tests/console-account.test.ts tests/deploy-account.test.tsx tests/workshop-ui.test.tsx`,
+  to the city's own account. A workshop for real asks where the commands run (`ShellChoice`, `src/ui/Workshop.tsx`;
+  `prefs.workshopShell`): CloudShell (which account it must run in, and when a new account's CloudShell is still being
+  verified, up to 2 days, "Use my own terminal instead" and Ask AWS Support), or the player's own terminal (a set-up-once
+  box: `aws --version` or Install the AWS CLI, `aws login`, `export AWS_PROFILE=…`, then `aws sts get-caller-identity`
+  printing the linked account; no Open CloudShell), and where a failed check looked (seen 23 Nov 2026). Proof: `npx vitest run tests/console-account.test.ts tests/deploy-account.test.tsx tests/workshop-ui.test.tsx`,
   `npx vitest run tests/runtime-session.test.ts -t "console’s account"`.
   Proof: `npx vitest run tests/taxonomy.test.ts tests/deploy-account.test.tsx`, `npx vitest run tests/runtime-session.test.ts -t "Open the console"`.
 - **State vs moments.** Persistent state goes in the zustand store (`src/state/store.ts`); one-off

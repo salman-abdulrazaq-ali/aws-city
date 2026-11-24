@@ -178,6 +178,9 @@ export function CleanupSwitch({ region }: { region: string }) {
   const [open, setOpen] = useState(false);
   const [copied, copy] = useCopy();
   const [copiedCmd, copyCmd] = useCopy();
+  const pending = usePending();
+  const { clear } = pending;
+  useEffect(() => clear('cmd'), [account.linkUrl, clear]);
   if (!hosted && !demo) return null;
   const on = account.cleanup === true;
   const want = !on;
@@ -186,6 +189,9 @@ export function CleanupSwitch({ region }: { region: string }) {
   const newTemplate = older ? account.templateUrl : undefined;
   const label = connectsPlayer(account.linkUrl);
   const command = cleanupCommand(account, want, label);
+  // No command yet because the role's version is unknown or older than v5 and the stack's ConnectsPlayer name isn't
+  // known: a fresh setup link names it (as RoleUpdate's "Get the ConnectsPlayer name" does).
+  const needsName = !command && !label && (account.roleVersion ?? 0) < 5 && !!account.templateUrl;
   return (
     <section className="account-howto cleanup-switch" aria-labelledby="cleanup-switch-title">
       <p className="row">
@@ -226,7 +232,23 @@ export function CleanupSwitch({ region }: { region: string }) {
                 </button>
               </div>
             )}
-            <details className="why" open={!command}>
+            {needsName && (
+              <p className="muted small">
+                Quickest: one command for CloudShell or your terminal.{' '}
+                <button
+                  className="btn tiny"
+                  disabled={pending.is('cmd')}
+                  aria-busy={pending.is('cmd')}
+                  onClick={() => {
+                    const requestId = linkAccount(region, { allowCleanup: want });
+                    if (requestId) pending.start('cmd', requestId);
+                  }}
+                >
+                  {pending.is('cmd') ? 'Getting it…' : 'Get the command'}
+                </button>
+              </p>
+            )}
+            <details className="why" open={!command && !needsName}>
               <summary>{command ? 'Or click through the CloudFormation console' : 'In the CloudFormation console'}</summary>
               <StepList steps={cleanupSteps(want, newTemplate)} label={want ? `Turn on “${CLEANUP_SWITCH}”` : `Turn off “${CLEANUP_SWITCH}”`} />
             {newTemplate && (

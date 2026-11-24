@@ -106,6 +106,22 @@ describe('the Deploy tab’s account cards', () => {
     expect(within(card).getByRole('list', { name: /Turn on/ }).textContent).toMatch(/Replace existing template.*v6\.yaml/);
   });
 
+  // Seen 24 Nov 2026: a role linked before versions were recorded showed only the console steps.
+  it('a role of unknown version gets "Get the command": a fresh link names the stack, then the one command uses the v6 template', () => {
+    useCity.setState({ account: { linked: true, accountId: '047463438585', region: 'us-west-2', latestRoleVersion: 6, templateUrl: 'https://t.example/player-role/v6.yaml' } });
+    const { rerender } = render(<DeployPanel />);
+    let card = screen.getByRole('region', { name: /Let the city change things you made/ });
+    fireEvent.click(within(card).getByRole('button', { name: 'Turn on' }));
+    fireEvent.click(within(card).getByRole('button', { name: 'Get the command' }));
+    expect(rt.linkAccount).toHaveBeenLastCalledWith('us-west-2', { allowCleanup: true });
+    act(() => useCity.getState().patchAccount({ linkUrl: 'https://us-west-2.console.aws.amazon.com/cloudformation/home#/stacks/quickcreate?param_ConnectsPlayer=Player%20u1' }));
+    rerender(<DeployPanel />);
+    card = screen.getByRole('region', { name: /Let the city change things you made/ });
+    const cmd = within(card).getByText(/update-stack --region us-west-2 --stack-name AWSCity --template-url https:\/\/t.example\/player-role\/v6.yaml/).textContent!;
+    expect(cmd).toContain('"ParameterKey=ConnectsPlayer,ParameterValue=Player u1"');
+    expect(cmd).toContain('ParameterKey=AllowCleanup,ParameterValue=true');
+  });
+
   it('the link step asks for it with its own box, off by default', () => {
     useCity.setState({ account: { linked: false, wantsLink: true, linkUrl: 'https://x.example/#/stacks/quickcreate?param_ConnectsPlayer=P', externalId: 'e' } });
     render(<DeployPanel />);
