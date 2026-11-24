@@ -13,7 +13,7 @@ import { setPublicErrors } from '../src/log.js';
 import { RETIRED_REASON } from '../src/agents/service.js';
 import { createApprovals } from '../src/contract/approvals.js';
 import resourceProps from '../../shared/resource-props.json' with { type: 'json' };
-import { CFN_TYPE, enrich, GEO_RETRY_MS, inventoryEvent, readGeo, readInventory, serviceForArn } from '../src/state/inventory.js';
+import { CFN_TYPE, enrich, GEO_RETRY_MS, inventoryEvent, isAwsDefault, readGeo, readInventory, serviceForArn } from '../src/state/inventory.js';
 import type { Resource } from '../src/state/model.js';
 import { LockLostError } from '../src/store/types.js';
 import type { CityFinding, Progress, ServerEvent } from '../src/world.js';
@@ -153,6 +153,75 @@ describe('inventory: the account mirrored as city buildings', () => {
     // The poller also reads the global table's Oregon side, which the listing hadn't caught up with: it's added.
     expect(e.regions).toEqual({ 'us-west-2': 2, 'eu-west-1': 1 });
     expect(e.counts).toEqual({ ec2: 1, dynamodb: 1 }); // the home city counts only its own Region
+  });
+
+  // Seen 24 Nov 2026 in a fresh account (…8585, us-west-2): Resource Explorer's list of AWS's own defaults put EventBridge,
+  // Athena and ElastiCache on My AWS, with an S3 → EventBridge line, though the player made none of them.
+  it('isAwsDefault: what AWS makes in every account by itself, matched on the ARN (look-alikes stay)', () => {
+    const A = 'arn:aws:';
+    for (const arn of [
+      `${A}events:us-west-2:1:event-bus/default`,
+      `${A}scheduler:us-west-2:1:schedule-group/default`,
+      `${A}athena:us-west-2:1:workgroup/primary`,
+      `${A}athena:us-west-2:1:datacatalog/AwsDataCatalog`,
+      `${A}elasticache:us-west-2:1:user:default`,
+      `${A}elasticache:us-west-2:1:user:default.iam-user`,
+      `${A}elasticache:us-west-2:1:usergroup:default.iam-user-group`,
+      `${A}memorydb:us-west-2:1:acl/open-access`,
+      `${A}memorydb:us-west-2:1:user/default`,
+      `${A}memorydb:us-west-2:1:parametergroup/default.memorydb-redis7`,
+      `${A}memorydb:us-west-2:1:parametergroup/default.memorydb-valkey7.search`,
+      `${A}xray:us-west-2:1:group/Default`,
+      `${A}xray:us-west-2:1:sampling-rule/Default`,
+      `${A}apprunner:us-west-2:1:autoscalingconfiguration/DefaultConfiguration/1/abc123`,
+      `${A}kms:us-west-2:1:alias/aws/s3`,
+    ])
+      expect(isAwsDefault(arn), arn).toBe(true);
+    for (const arn of [
+      `${A}events:us-west-2:1:event-bus/orders`,
+      `${A}athena:us-west-2:1:workgroup/primary-reports`,
+      `${A}xray:us-west-2:1:group/Defaults`,
+      `${A}kms:us-west-2:1:key/1234abcd-12ab-34cd-56ef-1234567890ab`,
+      `${A}kms:us-west-2:1:alias/my-key`,
+      `${A}elasticache:us-west-2:1:user:default-app`,
+      `${A}memorydb:us-west-2:1:parametergroup/my-group`,
+      'arn:aws:s3:::default',
+      `${A}dynamodb:us-west-2:1:table/default`,
+    ])
+      expect(isAwsDefault(arn), arn).toBe(false);
+  });
+
+  it('leaves AWS’s defaults out of the listing, its counts and its Regions (before the item cap)', async () => {
+    explorer.on(ListIndexesCommand).resolves({ Indexes: [{ Region: 'us-west-2', Type: 'AGGREGATOR' }] });
+    explorer.on(SearchCommand).resolves({
+      Resources: [
+        { Arn: 'arn:aws:s3:::testdemo-1', Region: 'us-west-2' },
+        { Arn: 'arn:aws:events:us-west-2:1:event-bus/default', Region: 'us-west-2' },
+        { Arn: 'arn:aws:athena:us-west-2:1:workgroup/primary', Region: 'us-west-2' },
+        { Arn: 'arn:aws:elasticache:us-west-2:1:user:default', Region: 'us-west-2' },
+        // Another Region with only defaults in it isn't put on the map.
+        { Arn: 'arn:aws:events:eu-west-1:1:event-bus/default', Region: 'eu-west-1' },
+        { Arn: 'arn:aws:xray:eu-west-1:1:group/Default', Region: 'eu-west-1' },
+      ],
+    });
+    const inv = (await readInventory(clients, 'us-west-2'))!;
+    expect(inv.items.map((i) => i.arn)).toEqual(['arn:aws:s3:::testdemo-1']);
+    const e = inventoryEvent(inv, 'us-west-2');
+    expect(e.counts).toEqual({ s3: 1 });
+    expect(Object.keys(e.regions ?? {})).toEqual(['us-west-2']);
+
+    // The tagging API's listing too.
+    explorer.on(ListIndexesCommand).resolves({ Indexes: [] });
+    tagging.on(GetResourcesCommand).resolves({ ResourceTagMappingList: [{ ResourceARN: 'arn:aws:kms:us-west-2:1:alias/aws/s3' }, { ResourceARN: 'arn:aws:dynamodb:us-west-2:1:table/city-x' }] });
+    expect((await readInventory(clients, 'us-west-2'))!.items.map((i) => i.serviceId)).toEqual(['dynamodb']);
+  });
+
+  it('a VPC’s security group named "default" is AWS’s and left out; one the player named stays', () => {
+    const sg = (id: string) => ({ arn: `arn:aws:ec2:us-west-2:1:security-group/${id}`, ...serviceForArn(`arn:aws:ec2:us-west-2:1:security-group/${id}`), districtId: null, managedByGame: false, region: 'us-west-2' });
+    const group = (id: string, name: string) => ({ id, service: 'ec2' as const, kind: 'security-group' as const, name, state: '0 inbound rules', managedByGame: false, meta: { vpcId: 'vpc-1' } });
+    const world = snapshot([group('sg-0default1', 'default'), group('sg-0web22222', 'web')]);
+    const { items } = enrich({ source: 'resource-explorer', complete: true, items: [sg('sg-0default1'), sg('sg-0web22222')] }, world, 'us-west-2');
+    expect(items.map((i) => i.name)).toEqual(['sg-0web22222']);
   });
 });
 

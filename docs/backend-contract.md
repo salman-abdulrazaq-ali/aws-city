@@ -108,6 +108,9 @@ Client-internal, not on the wire: `storage.local` keeps `progress.parked` (a sig
 - `city.inventory` also carries `homeRegion`, `regions {code: count}` and `links[]` (`{id, serviceId, from{region,az?},
   to{region,az?}, kind: replication|standby|traffic, twoWay?, label}`); items carry `region?` and `az?`. With a Resource
   Explorer aggregator index in the home Region the list spans every Region; otherwise only the home Region.
+  AWS's automatic defaults are left out of the items, `counts` and `regions` (the default event bus, Athena's primary
+  workgroup, ElastiCache and MemoryDB default users, X-Ray's Default, AWS-managed KMS aliases, each VPC's `default`
+  security group: `shared/arn-services.json` `awsDefaults`); the event's shape is unchanged.
   Servers, tables and buckets follow the poller's snapshot (DescribeInstances, DescribeTable, ListBuckets), not the
   listing, which lags by minutes: what's on its way out is left out, what the listing hasn't caught up with is added,
   and servers are named from their Name tag. A poll that creates, removes or changes one sends `city.inventory` again

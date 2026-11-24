@@ -46,7 +46,7 @@ and the infra job cfn-lints `infra/player-role/player-role.yaml`.
 - **Three projects, one protocol.** The extension (`src/`, WXT `srcDir`), the server (`server/`: `tsx` in dev, an
   esbuild bundle in the image) and the CDK app (`infra/`: stacks in `lib/`, the deploy wizard `setup/setup.mjs` that the root's
   `npm run setup` runs, the role players install in `player-role/`). `server/src/world.ts` re-exports the extension's `src/backend/contract.ts`,
-  `src/world/taxonomy.ts` and `src/world/places.ts` (`server/src/contract/console.ts` imports `src/console/risk.ts`), so
+  `src/world/taxonomy.ts`, `src/world/places.ts` and `src/world/liveEvents.ts` (`server/src/contract/console.ts` imports `src/console/risk.ts`), so
   whatever those files import must also compile as NodeNext ESM in `server/`.
 - **The backend is picked at build time** (`createBackend`, `src/backend/index.ts`): `WXT_BACKEND=aws` is the local server,
   `hosted` is the deployed one with Cognito sign-in, and anything else (or a hosted build in "Play the demo") is
@@ -647,7 +647,13 @@ When a change touches a decision, update its entry and run its Proof.
   grants `cloudwatch:GetMetricData` alone, held to its Region (v4). The city drives request cars for the rates
   (`carsPerMinute`): load balancer requests to the AZ islands that served them, the rest to their buildings.
   Proof: `cd server && npx vitest run test/flow.test.ts test/player-role.test.ts`, `npx vitest run tests/contract.test.ts tests/carriers.test.ts`.
-- **The city mirrors the account's map; the bill is opt-in.** `city.inventory.zones`/`regionStatus` come from
+- **The city mirrors the account's map; the bill is opt-in.** AWS's own defaults are left out of the listing, its
+  counts and its Regions (seen 24 Nov 2026: a fresh account showed EventBridge, Athena and ElastiCache, with an S3 →
+  EventBridge line): `isAwsDefault` (`server/src/state/inventory.ts`) matches the ARN's `service:resource` against
+  `shared/arn-services.json` `awsDefaults` (the default event bus, Athena's primary workgroup, ElastiCache and MemoryDB
+  default users, X-Ray's Default, AWS-managed KMS aliases…), before the item cap; `enrich` drops each VPC's security
+  group named `default` (home Region). The default VPC itself stays until a role can read `IsDefault` (player role v7).
+  Proof: `cd server && npx vitest run test/care.test.ts -t "isAwsDefault|default"`. `city.inventory.zones`/`regionStatus` come from
   `ec2:DescribeAvailabilityZones`/`DescribeRegions`, cached a day; a Region that can't be read is left out. `city.bill`
   (`ce:GetCostAndUsage`, $0.01 a request) is read only after `bill.enable {on:true}`, then at most once a day per player;
   `shared/ce-services.json` maps only verified Cost Explorer service names (the rest show as "other"). Servers, tables and
@@ -1226,6 +1232,8 @@ When a change touches a decision, update its entry and run its Proof.
   hidden. Costs (`src/world/accountCost.ts`): AWS's month so far per service; a day = that ÷ UTC days so far, a month = a
   day × the month's days, both marked est. There's no list-price estimate: the client doesn't know a server's size or
   whether it's running. Each box is a real button (arrow keys move, `nextSlot`) labelled with its name and figures.
+  AWS's automatic defaults never reach it (the server leaves them out; the legend says so), so a bucket alone draws no
+  EventBridge and no S3 → EventBridge line (`npx vitest run tests/account-diagram.test.ts -t "bucket alone"`).
   What the city has no building for is listed, not just counted (`unmappedItems`: tap "No building yet" in the Diagram,
   or open "N more…" under Services; seen 22 Nov 2026: "×15" said nothing). A server named from its Name tag shows its id
   beside it (`itemLine`: "server demo2 (i-0d3e…)", to copy for "Terminate i-…"); months read "November 2026"
