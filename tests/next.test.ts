@@ -21,6 +21,8 @@ import {
 } from '@/state/next';
 import { CLIENTS } from '@/world/clients';
 import { cardsFor, QUESTS, type QuestStep } from '@/world/content';
+/** The first quest a player is offered (the first steps are led by their guide, never offered: src/state/next.ts). */
+const QUEST1 = QUESTS.find((x) => x.id !== 'first-steps')!;
 import { TIER_XP } from '@/world/places';
 import { SERVICES } from '@/world/taxonomy';
 import { coinsToday } from '@/state/wallet';
@@ -42,11 +44,11 @@ const dueCards = (n: number, due = NOW - 1) => Object.fromEntries(cardsFor('s3')
 
 describe('the next action', () => {
   it('a brand-new player starts the first quest', () => {
-    expect(plan(base())).toMatchObject({ kind: 'quest', label: `Start: ${QUESTS[0].title}`, questId: QUESTS[0].id });
+    expect(plan(base())).toMatchObject({ kind: 'quest', label: `Start: ${QUEST1.title}`, questId: QUEST1.id });
   });
 
   it('an active quest step comes first, labelled with exactly what happens', () => {
-    const q = QUESTS[0];
+    const q = QUEST1;
     const at = (i: number, count = 0) => plan(base({ quests: { [q.id]: { status: 'active', step: i, count } }, cards: dueCards(5) }));
     expect(at(0)).toMatchObject({ kind: 'step', label: 'Walk to S3 Lake', serviceId: 's3' });
     expect(at(0).kind === 'step' && at(0)).not.toHaveProperty('where', expect.anything());
@@ -59,7 +61,7 @@ describe('the next action', () => {
   });
 
   it('then cards due again (at least DUE_MIN), then a new quest', () => {
-    const quests = { [QUESTS[0].id]: { status: 'done' as const, step: 9 } };
+    const quests = { [QUEST1.id]: { status: 'done' as const, step: 9 } };
     const p = base({ quests, ...built({ s3: 0 }) });
     expect(plan({ ...p, cards: dueCards(DUE_MIN - 1) }).kind).toBe('quest');
     expect(plan({ ...p, cards: dueCards(DUE_MIN) })).toMatchObject({ kind: 'review', label: `Review ${DUE_MIN} cards`, where: 'Learn', serviceId: 's3' });
@@ -184,7 +186,7 @@ describe('“Review N cards” counts the deck it opens', () => {
   it('names the building’s own due cards, not every city’s', () => {
     // 4 due at S3, 3 at EC2 (in another deck): the button opens S3's deck of 4.
     const ec2 = Object.fromEntries(cardsFor('ec2').slice(0, 3).map((c) => [c.id, { interval: 1, ease: 2.5, due: NOW - 1, reps: 1 }]));
-    const p = base({ quests: { [QUESTS[0].id]: { status: 'done' as const, step: 9 } }, ...built({ s3: 0, ec2: 0 }), cards: { ...dueCards(4), ...ec2 } });
+    const p = base({ quests: { [QUEST1.id]: { status: 'done' as const, step: 9 } }, ...built({ s3: 0, ec2: 0 }), cards: { ...dueCards(4), ...ec2 } });
     expect(plan(p)).toMatchObject({ kind: 'review', serviceId: 's3', count: 4, label: 'Review 4 cards' });
   });
 });
@@ -262,7 +264,7 @@ describe('a quest step done is a moment', () => {
     const s = () => useCity.getState();
     s().resetSession();
     s().clearToasts();
-    const q = QUESTS[0];
+    const q = QUEST1;
     const bumps: unknown[] = [];
     const off = bus.on('questStep', (e) => bumps.push(e));
     s().startQuest(q.id);
@@ -282,7 +284,7 @@ describe('a quest step done is a moment', () => {
     s().resetSession();
     s().clearToasts();
     for (let i = 0; i < 9; i++) s().toast('🚧', `noise ${i}`);
-    s().startQuest(QUESTS[0].id);
+    s().startQuest(QUEST1.id);
     s().arrive('s3');
     // The one on screen goes; the ✓ is next.
     for (const t of s().toasts) s().dismissToast(t.id);
@@ -298,7 +300,7 @@ describe('starting a quest', () => {
     const { useCity } = await import('@/state/store');
     const s = () => useCity.getState();
     s().resetSession();
-    const q = QUESTS[0];
+    const q = QUEST1;
     useCity.setState({ progress: { ...s().progress, quests: { [q.id]: { status: 'done', step: q.steps.length, count: 0 } } } });
     const before = s().progress;
     s().startQuest(q.id);

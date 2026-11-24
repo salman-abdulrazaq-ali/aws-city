@@ -8,6 +8,21 @@ import regionFacts from '../shared/region-facts.json' with { type: 'json' };
 import { ruleById } from '@/world/citizens';
 import { serviceById } from '@/world/taxonomy';
 
+/** The first steps add no command: the practice task and the practice build are played by the backend itself. */
+describe('the first steps change no contract', () => {
+  it('a practice task emits only contract events, and nothing is sent', async () => {
+    const mock = new MockBackend({ speed: 1000 });
+    const events: ServerEvent[] = [];
+    mock.onEvent((e) => events.push(e));
+    const send = vi.spyOn(mock, 'send');
+    const taskId = mock.practiceTask('s3-first')!;
+    await vi.waitFor(() => expect(events.some((e) => e.type === 'task.done' && e.taskId === taskId)).toBe(true));
+    for (const e of events) expect(isServerEvent(e), e.type).toBe(true);
+    expect(send).not.toHaveBeenCalled();
+    expect(CONTRACT_VERSION).toBe('2.19');
+  });
+});
+
 /** The mock is the executable spec for the backend team: every event it emits must satisfy the contract. */
 describe('MockBackend speaks the contract', () => {
   it('task.submit → plan, steps, working/idle states, done', async () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Progress } from '@/backend/contract';
-import { countRequest, pickRequest, REQUESTS_A_DAY, requestsLeft } from '@/state/requests';
+import { countRequest, pickRequest, requestFor, REQUESTS_A_DAY, requestsLeft } from '@/state/requests';
+import { TUTORIAL_DECK } from '@/state/firstSteps';
 import { cardsFor } from '@/world/content';
 
 const city = (ids: string[], cards: Progress['cards'] = {}): Progress => ({
@@ -53,5 +54,26 @@ describe('citizen requests (src/state/requests.ts)', () => {
     for (let i = 0; i < REQUESTS_A_DAY; i++) log = countRequest(log, '2026-10-13');
     expect(requestsLeft(log, '2026-10-13')).toBe(0);
     expect(requestsLeft(log, '2026-10-14')).toBe(REQUESTS_A_DAY);
+  });
+});
+
+describe('the planted citizen (bus requestNow, src/state/requests.ts requestFor)', () => {
+  const answered = (grades: Record<string, number>): Progress['cards'] =>
+    Object.fromEntries(Object.entries(grades).map(([id, reps]) => [id, { interval: reps ? 1 : 0, ease: 2.5, due: 0, reps }]));
+
+  it('asks about the tutorial deck, a card answered "Didn’t know" first', () => {
+    const r = requestFor(city(['s3'], answered({ 's3-01': 1, 's3-04': 0, 's3-05': 1 })), 's3', { deck: TUTORIAL_DECK })!;
+    expect(r.cardId).toBe('s3-04');
+    // Its wrong answers are the deck's other cards: things just learned, so it asks which is which.
+    const deck = cardsFor('s3').filter((c) => TUTORIAL_DECK.includes(c.id)).map((c) => c.simple ?? c.a);
+    expect([...r.options].sort()).toEqual([...deck].sort());
+    expect(r.options[r.right]).toBe(cardsFor('s3').find((c) => c.id === 's3-04')!.simple);
+  });
+
+  it('else a deck card already answered, else the deck’s first; a named card wins', () => {
+    expect(requestFor(city(['s3'], answered({ 's3-05': 1 })), 's3', { deck: TUTORIAL_DECK })!.cardId).toBe('s3-05');
+    expect(requestFor(city(['s3']), 's3', { deck: TUTORIAL_DECK })!.cardId).toBe(TUTORIAL_DECK[0]);
+    expect(requestFor(city(['s3']), 's3', { cardId: 's3-02', deck: TUTORIAL_DECK })!.cardId).toBe('s3-02');
+    expect(requestFor(city([]), 'nope')).toBeUndefined();
   });
 });

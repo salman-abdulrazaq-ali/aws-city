@@ -6,6 +6,8 @@ import { openJobs, planNext, type NextPlan, type OpenJob } from '@/state/next';
 import { todayGoals, type TodayGoal } from '@/state/progress';
 import { buildTodo as buildList, doneLine, isSimple, shows, TODO_MAX, todoProgress, type Feature, type TodoInput, type TodoTask } from '@/state/simple';
 import { QUESTS } from '@/world/content';
+/** The first quest a player is offered (the first steps are led by their guide, never offered: src/state/next.ts). */
+const QUEST1 = QUESTS.find((x) => x.id !== 'first-steps')!;
 
 /** The rows on screen (the tests below read the list's rows; the overflow and the day's end have their own). */
 const buildTodo = (i: TodoInput) => buildList(i).tasks;
@@ -52,6 +54,20 @@ describe('shows(feature, prefs)', () => {
     expect(shows(f, EVERYTHING)).toBe(true);
   });
 
+  it('the quiet city (the first steps) hides everything but the path, in both modes; Deploy only for its plan', () => {
+    const waits = ['coins', 'decorate', 'promptBar', 'copilotSwitch', 'eventBanner', 'comingUp', 'connect', 'accountCard', 'tokens', 'citizenRequests', 'coachTips'] as const;
+    for (const f of [...HIDDEN, 'todo', ...waits] as const) {
+      expect(shows(f, SIMPLE, { quiet: true, steps: ['game'] }), f).toBe(false);
+      expect(shows(f, EVERYTHING, { quiet: true, steps: ['game'], linked: true, questsDone: 3 }), f).toBe(false);
+    }
+    expect(shows('deployTab', SIMPLE, { quiet: true, steps: ['deploy'] })).toBe(true);
+    // Off the path, the parts that wait in it show in both modes.
+    for (const f of waits) {
+      expect(shows(f, SIMPLE), f).toBe(true);
+      expect(shows(f, EVERYTHING), f).toBe(true);
+    }
+  });
+
   it('the To-do list is Simple’s alone (Everything has the shift)', () => {
     expect(shows('todo', SIMPLE)).toBe(true);
     expect(shows('todo', EVERYTHING)).toBe(false);
@@ -79,7 +95,7 @@ describe('shows(feature, prefs)', () => {
 
 const goal = (id: TodayGoal['id'], have: number, of = 1, bonus?: boolean): TodayGoal => ({ id, label: id, have, goal: of, ...(bonus ? { bonus } : {}) });
 const job = (n: number): OpenJob => ({ taskId: `t${n}`, clientId: 'bank', title: `Job ${n}`, station: 'desk', client: 'Riverside Bank' });
-const q = QUESTS[0];
+const q = QUEST1;
 const step = (i: number): NextPlan => ({ kind: 'step', label: `Step ${i}`, questId: q.id, step: q.steps[i] });
 const runnable = (t: TodoTask) =>
   t.run.kind === 'plan'
