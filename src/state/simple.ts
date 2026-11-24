@@ -282,6 +282,10 @@ export function buildTodo(i: TodoInput): TodoList {
     if (k === undefined) return (at.set(t.key, out.length), void out.push(t));
     // The same thing twice: the first keeps its place, button and words; a goal brings its tick and count.
     const first = out[k];
+    // A goal already met never ticks a quest step that's still to do (seen 24 Nov 2026: after replaying the first steps,
+    // "Review 5 cards" was met and struck "The City Brochure Site · step 3 of 7"): the met goal is its own row.
+    const stepStillToDo = first.run.kind === 'plan' && first.run.plan.kind === 'step';
+    if (t.counts && t.done && stepStillToDo) return (at.set(`${t.key}:met`, out.length), void out.push({ ...t, key: `${t.key}:met` }));
     if (t.counts && !first.counts) out[k] = { ...first, done: t.done, counts: true, have: t.have, goal: t.goal };
   };
   const first = planTask(i.next);

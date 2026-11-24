@@ -128,6 +128,16 @@ describe('the To-do list', () => {
     wellFormed(tasks);
   });
 
+  it('a met goal never ticks a quest step still to do (after a replay of the first steps, 24 Nov 2026)', () => {
+    const cardsStep = q.steps.findIndex((x) => x.kind === 'cards');
+    const tasks = buildTodo({ next: step(cardsStep), goals: [goal('cards', 5, 5), goal('puzzles', 0)], jobs: [] });
+    const row = tasks.find((t) => t.run.kind === 'plan')!;
+    expect(row.done).toBe(false);
+    expect(row.title).toMatch(/· step \d+ of /);
+    expect(tasks.some((t) => t.key === 'cards:met' && t.done)).toBe(true);
+    wellFormed(tasks);
+  });
+
   it('dedupes: a plan that is one of today’s goals merges into it (its button, the goal’s tick)', () => {
     // A quest's cards step and today's cards goal are one task.
     const tasks = buildTodo({ next: step(1), goals: [goal('cards', 2, 5), goal('puzzles', 0)], jobs: [] });
