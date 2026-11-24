@@ -93,6 +93,21 @@ describe('Watch it done', () => {
     expect(screen.getByText(/Link the practice account in Deploy first/)).toBeTruthy();
   });
 
+  // Asked for on 23 Nov 2026: refused because "Let the city change things you made" is off, the card offers one press there.
+  it('a request refused because the switch is off offers Turn it on (Deploy); other refusals don’t', () => {
+    const openTab = vi.fn();
+    act(() => useCity.getState().addTask('t9', 'Delete the bucket test-demo-salman-7'));
+    send({ type: 'task.done', taskId: 't9', ok: false, result: '"test-demo-salman-7" wasn’t built by the city, so the agents can look at it but not change it. To let them, turn on “Let the city change things you made” in Deploy → Your AWS account.', xp: [] });
+    const { unmount } = render(<TaskCard task={useCity.getState().tasks.t9} openTab={openTab} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Turn it on (Deploy) →' }));
+    expect(openTab).toHaveBeenCalledWith('deploy');
+    unmount();
+    act(() => useCity.getState().addTask('t10', 'Launch a server called big m5.large'));
+    send({ type: 'task.done', taskId: 't10', ok: false, result: 'The city only builds small servers.', xp: [] });
+    render(<TaskCard task={useCity.getState().tasks.t10} openTab={openTab} />);
+    expect(screen.queryByRole('button', { name: /Turn it on/ })).toBeNull();
+  });
+
   it('an agent offers a job as a little story, and Watch it done sends it', () => {
     render(<AgentOffer serviceId="s3" ask="Got holiday photos?" />);
     expect(screen.getByText(/Sally the Angler/)).toBeTruthy();

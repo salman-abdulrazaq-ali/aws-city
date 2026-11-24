@@ -129,6 +129,10 @@ function AccountCheck() {
       <CodeChip code="aws sts get-caller-identity --query Account --output text" />
       {/* Asked on 23 Nov 2026: "what is --output text?" */}
       <p className="muted small">It prints just the 12-digit account number (--output text drops the JSON around it).</p>
+      {/* Seen 23 Nov 2026: CloudShell was blocked, and every pasted command needed --profile added by hand. */}
+      <p className="muted small">
+        In your own terminal instead? Run <code>export AWS_PROFILE=&lt;your profile&gt;</code> once, then paste each command as it is.
+      </p>
       <ConsoleAccountWarning />
       {/* Seen 23 Nov 2026: a new account's CloudShell said "account verification is in progress" (up to 2 days). */}
       <p className="muted small workshop-no-cloudshell">

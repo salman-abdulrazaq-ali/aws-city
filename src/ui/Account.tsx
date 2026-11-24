@@ -8,9 +8,11 @@ import {
   CLEANUP_OFF,
   CLEANUP_ROLE_VERSION,
   CLEANUP_SWITCH,
+  cleanupCommand,
   cleanupOn,
   cleanupSteps,
   connectOffer,
+  accountTitle,
   connectsPlayer,
   FIXES_ON_STEPS,
   LOCAL_FIXES_COMMAND,
@@ -175,6 +177,7 @@ export function CleanupSwitch({ region }: { region: string }) {
   const demo = useCity((s) => s.backendKind === 'mock');
   const [open, setOpen] = useState(false);
   const [copied, copy] = useCopy();
+  const [copiedCmd, copyCmd] = useCopy();
   if (!hosted && !demo) return null;
   const on = account.cleanup === true;
   const want = !on;
@@ -182,6 +185,7 @@ export function CleanupSwitch({ region }: { region: string }) {
   const older = account.roleVersion !== undefined && account.roleVersion < CLEANUP_ROLE_VERSION;
   const newTemplate = older ? account.templateUrl : undefined;
   const label = connectsPlayer(account.linkUrl);
+  const command = cleanupCommand(account, want, label);
   return (
     <section className="account-howto cleanup-switch" aria-labelledby="cleanup-switch-title">
       <p className="row">
@@ -209,7 +213,22 @@ export function CleanupSwitch({ region }: { region: string }) {
           </p>
         ) : (
           <>
-            <StepList steps={cleanupSteps(want, newTemplate)} label={want ? `Turn on “${CLEANUP_SWITCH}”` : `Turn off “${CLEANUP_SWITCH}”`} />
+            {command && (
+              <div className="cleanup-command">
+                <p className="muted small">
+                  Quickest: run this one command in CloudShell or your own terminal, signed in to account{' '}
+                  {account.accountId ? accountTitle(account.accountId) : 'the linked one'} (in a terminal, <code>export AWS_PROFILE=&lt;your profile&gt;</code> first). It
+                  updates the AWSCity stack and waits until it’s done. Then press “I’ve updated the stack”.
+                </p>
+                <code className="workshop-cmd">{command}</code>
+                <button className="btn tiny" onClick={() => copyCmd(command)}>
+                  {copiedCmd ? 'Copied ✓' : 'Copy the command'}
+                </button>
+              </div>
+            )}
+            <details className="why" open={!command}>
+              <summary>{command ? 'Or click through the CloudFormation console' : 'In the CloudFormation console'}</summary>
+              <StepList steps={cleanupSteps(want, newTemplate)} label={want ? `Turn on “${CLEANUP_SWITCH}”` : `Turn off “${CLEANUP_SWITCH}”`} />
             {newTemplate && (
               <div className="template-url">
                 <code>{newTemplate}</code>
@@ -223,6 +242,7 @@ export function CleanupSwitch({ region }: { region: string }) {
                 )}
               </div>
             )}
+            </details>
             <div className="row">
               <StackLink region={region} />
               <UpdatedStack allowCleanup={want} />
