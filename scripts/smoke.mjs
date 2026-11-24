@@ -99,6 +99,14 @@ if (!/1\s*\/\s*6/.test(fs0.hud)) errors.push(`first steps: the HUD should count 
 if (fs0.quiet) errors.push(`first steps: ${fs0.quiet} of coins, Decorate or the prompt bar show in the quiet city`);
 await shot('01f-first-steps');
 await audit('first steps guide');
+// A new player isn't flooded: the demo's findings arrive from 3 s on, but stay held while the first steps run (City
+// care opens at graduation, or at once for a player who skips them).
+await wait(12_000);
+const calm = await city(() => ({ findings: Object.keys(window.awsCity.useCity.getState().findings).length, toasts: window.awsCity.useCity.getState().toasts.length }));
+console.log('calm city after 12 s on the first steps:', JSON.stringify(calm));
+if (calm.findings) errors.push(`calm city: ${calm.findings} findings shown during the first steps`);
+if (calm.toasts > 1) errors.push(`calm city: ${calm.toasts} toasts queued in the first seconds`);
+await shot('01c-calm');
 await city(() => window.awsCity.useCity.getState().skipFirstSteps());
 await wait(500);
 
@@ -120,13 +128,6 @@ await shot('01s-simple-first-city');
 await city(() => window.awsCity.useCity.getState().setPref('simple', false));
 await wait(300);
 
-// A new player isn't flooded: the demo's findings arrive from 3 s on, but stay held until city care unlocks.
-await wait(12_000);
-const calm = await city(() => ({ findings: Object.keys(window.awsCity.useCity.getState().findings).length, toasts: window.awsCity.useCity.getState().toasts.length }));
-console.log('calm city after 12 s:', JSON.stringify(calm));
-if (calm.findings) errors.push(`calm city: ${calm.findings} findings shown before care unlocked`);
-if (calm.toasts > 1) errors.push(`calm city: ${calm.toasts} toasts queued in the first seconds`);
-await shot('01c-calm');
 
 // City care: once released (a quest done, 4 landmarks or a linked account), findings drip in; a citizen walks to the first one.
 await city(() => window.awsCity.releaseCare());

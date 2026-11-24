@@ -155,7 +155,7 @@ describe('the guide card', () => {
     expect(container.querySelector('.guide .btn.primary')).toBeNull();
     // Her task card sits under the guide, with no follow-ups of its own.
     expect(container.querySelector('.guide-task .task')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /^Next:|See it in Deploy/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^(?:Next:|See it in Deploy)/ })).toBeNull();
   });
 
   it('takes focus to the step’s button when it starts (never from somewhere the player is)', () => {
