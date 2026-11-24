@@ -385,8 +385,11 @@ When a change touches a decision, update its entry and run its Proof.
   `cleanup` (`actionGrant`, `WireContext.cleanup`), still the one approved bucket with `ExpectedBucketOwner`. Every removal
   keeps its typed name or id (`confirmText`), MFA, Jev and Approve. The card (`CleanupSwitch`, `src/ui/Account.tsx`) is
   one On/Off button (`setCleanup`, `src/app/runtime.ts`); a refusal because it's off offers "Turn it on (Deploy) →" on its
-  task card. Proof: `cd server && npx vitest run test/player-role.test.ts test/guard.test.ts test/service.test.ts
-  test/hosted.test.ts test/tenants.test.ts -t "AllowCleanup|cleanup|player made|switch|v6"`, `npx vitest run
+  task card. The models are told too (24 Nov 2026: on, Sally still said no): the agents' and chat's snapshot carries
+  `letCityChangeWhatPlayerMade` (`agentSnapshot` in `server/src/tenants.ts`, `switchFor` in `server/src/agents/runner.ts`),
+  and `RULES` / `CHAT_CAN_DO` say what each value means. Proof: `cd server && npx vitest run test/player-role.test.ts
+  test/guard.test.ts test/service.test.ts test/hosted.test.ts test/tenants.test.ts test/runner.test.ts
+  -t "AllowCleanup|cleanup|player made|switch|v6"`, `npx vitest run
   tests/deploy-account.test.tsx -t "change things you made"`, and on a real account `cd infra && AWS_PROFILE=aws-city node
   scripts/check-player-role.mjs --account <id> --assume <role> --cleanup`.
 - **Connecting is one press, and Reconnect after a Disconnect is one press** (asked for on 24 Nov 2026: "one click, no

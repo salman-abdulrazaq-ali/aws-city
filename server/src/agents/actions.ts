@@ -13,12 +13,12 @@ export const ACTION_SCHEMAS = {
     .object({ name: displayName, instanceType: z.enum(['t4g.nano', 't4g.micro']).default('t4g.micro') })
     .strict()
     .describe('Build a house: launch a small EC2 instance (t4g.nano or t4g.micro, Amazon Linux 2023).'),
-  stop_instance: z.object({ instanceId }).strict().describe('Put a house to sleep: stop an EC2 instance built by the game.'),
-  start_instance: z.object({ instanceId }).strict().describe('Wake a house up: start a stopped EC2 instance built by the game.'),
+  stop_instance: z.object({ instanceId }).strict().describe('Put a house to sleep: stop an EC2 instance built by the game (or one the player made, when they allow it).'),
+  start_instance: z.object({ instanceId }).strict().describe('Wake a house up: start a stopped EC2 instance built by the game (or one the player made, when they allow it).'),
   terminate_instance: z
     .object({ instanceId })
     .strict()
-    .describe('Demolish a house: permanently terminate an EC2 instance built by the game. The player must approve.'),
+    .describe('Demolish a house: permanently terminate an EC2 instance built by the game (or one the player made, when they allow it). The player types its id and approves.'),
   create_table: z
     .object({ name: z.string().regex(new RegExp(`^${TABLE_PREFIX}[a-z0-9-]{1,40}$`), `must start with "${TABLE_PREFIX}", lowercase letters, digits and - only`) })
     .strict()

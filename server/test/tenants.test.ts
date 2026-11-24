@@ -160,7 +160,7 @@ describe('the account lifecycle (v2.19)', () => {
   const ACCOUNT = '111122223333';
   const linkedRecord = { status: 'linked' as const, externalId: 'x'.repeat(32), region: 'us-west-2', roleArn: `arn:aws:iam::${ACCOUNT}:role/AWSCityPlayerRole-us-west-2`, accountId: ACCOUNT, roleVersion: 4, fixes: false };
   /** A hosted-like hub: a linker that hands out links and verifies, and awsFor that acts only for a linked record. */
-  const hub = (opts: { verify?: AccountLinker['verify'] } = {}) => {
+  const hub = (opts: { verify?: AccountLinker['verify']; llm?: ReturnType<typeof fakeLlm>['llm'] } = {}) => {
     pollers.length = 0;
     reading.snap = undefined;
     const stores = localStores(`${process.env.TEMP ?? '/tmp'}/aws-city-lifecycle-${Date.now()}-${Math.random()}/progress.json`);
@@ -185,7 +185,7 @@ describe('the account lifecycle (v2.19)', () => {
       config: loadConfig({}),
       stores,
       uploads: createUploadStore('http://127.0.0.1:1'),
-      llm: fakeLlm([]).llm,
+      llm: opts.llm ?? fakeLlm([]).llm,
       enabled: async () => true,
       awsFor: (_sub, record) => (record?.status === 'linked' && record.accountId ? { clients: {} as AwsClients, accountId: record.accountId, region: record.region } : undefined),
       linker,
@@ -234,6 +234,22 @@ describe('the account lifecycle (v2.19)', () => {
     const errors: ServerEvent[] = [];
     await tenant.setCleanup('r-x', true, (e) => errors.push(e));
     expect(errors).toEqual([expect.objectContaining({ type: 'error', requestId: 'r-x', code: 'unlinked' })]);
+    tenants.closeAll();
+  });
+
+  // Seen 24 Nov 2026: the switch was on, but nothing told the model, so Sally said she couldn't change the console bucket.
+  it('the agents read the switch with the city, and see it flip at once', async () => {
+    const fake = fakeLlm([]);
+    const { tenants, stores } = hub({ llm: fake.llm });
+    await stores.accounts.put('u1', { ...linkedRecord, linkedAt: '2026-11-24T00:00:00.000Z' });
+    const tenant = await tenants.acquire({ sub: 'u1' });
+    const asked = async () => {
+      await tenant.orchestrator().ask({ requestId: 'q', districtId: 'storage', question: 'What buckets do I have?', context: {} }, () => {});
+      return JSON.stringify(fake.calls.at(-1)?.messages ?? '');
+    };
+    expect(await asked()).toContain('letCityChangeWhatPlayerMade\\":false');
+    await tenant.setCleanup('r-on', true, () => {});
+    expect(await asked()).toContain('letCityChangeWhatPlayerMade\\":true');
     tenants.closeAll();
   });
 
