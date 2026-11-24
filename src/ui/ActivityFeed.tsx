@@ -143,7 +143,7 @@ export function TaskCard({ task, openTab, quiet = false }: { task: TaskView; ope
         <div className="watch-result">
           {task.result && (
             <p className="task-result">
-              <b>What {story.who} built:</b> <Plain text={task.result} />
+              <b>{story.who}:</b> <Plain text={task.result} />
             </p>
           )}
           {story.teaches && (

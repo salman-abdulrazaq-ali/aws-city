@@ -128,8 +128,9 @@
         {
           "id": "download",
           "title": "Download it again",
-          "body": "get-object saves the object to the file you name at the end.",
+          "body": "get-object saves the object to the file you name at the end, in the folder your terminal is in. For real, cat then prints it: Hello from AWS City.",
           "cli": "aws s3api get-object --bucket <bucket> --key sample.txt downloaded-sample.txt",
+          "realCli": "aws s3api get-object --bucket <bucket> --key sample.txt downloaded-sample.txt && cat downloaded-sample.txt",
           "output": "{\n    \"AcceptRanges\": \"bytes\",\n    \"ContentLength\": 10,\n    \"ETag\": \"\\\"34604da2079f37530dc71b117b9cd58b\\\"\",\n    \"VersionId\": \"3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY\",\n    \"ContentType\": \"binary/octet-stream\"\n}",
           "errors": [
             { "code": "NoSuchKey", "message": "An error occurred (NoSuchKey) when calling the GetObject operation: The specified key does not exist.", "when": { "flag": "--key", "value": "^(?!sample\\.txt$)" }, "explain": "There's no object under that key. Keys are exact, including capitals.", "fix": "Use the key you uploaded: sample.txt." }
@@ -147,11 +148,13 @@
         {
           "id": "delete-version",
           "title": "Delete the file's version",
-          "body": "In a versioned bucket a plain delete only adds a delete marker; the old version stays. Delete the version itself by its id (from the upload, or aws s3api list-object-versions).",
+          "body": "In a versioned bucket a plain delete only adds a delete marker; the old version stays. Delete the version itself by its id (from the upload, or aws s3api list-object-versions). For real, the $(…) part looks the version id up for you.",
           "cli": "aws s3api delete-object --bucket <bucket> --key sample.txt --version-id <version>",
+          "realCli": "aws s3api delete-object --bucket <bucket> --key sample.txt --version-id \"$(aws s3api head-object --bucket <bucket> --key sample.txt --query VersionId --output text)\"",
           "output": "{\n    \"VersionId\": \"{{version}}\"\n}",
           "errors": [
-            { "code": "DeleteMarker", "message": "Practice terminal: stopped. Without --version-id this only adds a delete marker (the answer says \"DeleteMarker\": true): sample.txt looks gone, but its version is still stored, and still billed.", "when": { "missing": "--version-id" }, "explain": "In a versioned bucket a delete without a version id hides the object behind a delete marker and keeps every version: that's the undo versioning gives you.", "fix": "Add --version-id with the VersionId from the upload (or from aws s3api list-object-versions)." }
+            { "code": "DeleteMarker", "message": "Practice terminal: stopped. Without --version-id this only adds a delete marker (the answer says \"DeleteMarker\": true): sample.txt looks gone, but its version is still stored, and still billed.", "when": { "missing": "--version-id" }, "explain": "In a versioned bucket a delete without a version id hides the object behind a delete marker and keeps every version: that's the undo versioning gives you.", "fix": "Add --version-id with the VersionId from the upload (or from aws s3api list-object-versions)." },
+            { "code": "Invalid version id specified", "message": "An error occurred (InvalidArgument) when calling the DeleteObject operation: Invalid version id specified", "explain": "That isn't the file's version id: S3 version ids are long strings like KcvdShWg…, not 1 or 0.", "fix": "Run this: it looks the version id up for you.", "fixCli": "aws s3api delete-object --bucket <bucket> --key sample.txt --version-id \"$(aws s3api head-object --bucket <bucket> --key sample.txt --query VersionId --output text)\"" }
           ],
           "cleanup": true,
           "verify": { "manual": true }
@@ -163,7 +166,7 @@
           "cli": "aws s3api delete-bucket --bucket <bucket>",
           "output": "",
           "errors": [
-            { "code": "BucketNotEmpty", "message": "An error occurred (BucketNotEmpty) when calling the DeleteBucket operation: The bucket you tried to delete is not empty. You must delete all versions in the bucket.", "explain": "Something is still inside: an object, an old version or a delete marker.", "fix": "List what's left with aws s3api list-object-versions, delete each with --version-id, then try again." }
+            { "code": "BucketNotEmpty", "message": "An error occurred (BucketNotEmpty) when calling the DeleteBucket operation: The bucket you tried to delete is not empty. You must delete all versions in the bucket.", "explain": "Something is still inside: an object, an old version or a delete marker.", "fix": "Run this: it deletes sample.txt's version, then the bucket. Anything else left? List it with aws s3api list-object-versions and delete each with --version-id.", "fixCli": "aws s3api delete-object --bucket <bucket> --key sample.txt --version-id \"$(aws s3api head-object --bucket <bucket> --key sample.txt --query VersionId --output text)\" && aws s3api delete-bucket --bucket <bucket>" }
           ],
           "cleanup": true,
           "verify": { "check": "bucket-gone", "value": "bucket" }

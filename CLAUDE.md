@@ -931,11 +931,17 @@ When a change touches a decision, update its entry and run its Proof.
   `src/world/workshops.ts`), so S3 keeps `LocationConstraint` outside us-east-1 and Copy waits until nothing is left as
   `<x>` (seen 22 Nov 2026: Oregon got `--bucket <bucket>` with no constraint, and CloudShell refused it). A step's `setup`
   (a file CloudShell doesn't have: `echo … > sample.txt`) runs first in the same line for real only (seen 23 Nov 2026:
-  "Upload a file" failed in CloudShell). The bucket box has 🎲 Suggest a free name (`freeBucketName`: bucket names are
+  "Upload a file" failed in CloudShell). A step's `realCli` replaces its command for real only, so it runs as pasted
+  (seen 24 Nov 2026: the version id was typed as 1, 3 and 0, and the download "went nowhere"): Delete the file's version
+  looks the id up with `$(aws s3api head-object …)`, Download prints the file with `&& cat`; no `[…]` in it (`commandFor`
+  reads brackets as optional). The bucket box has 🎲 Suggest a free name (`freeBucketName`: bucket names are
   global, "testdemo" was taken) and says what S3 would refuse before Copy (`bucketNameProblem`). Pasted errors
-  match the step's known ones first, then go to the building's agent as quoted, redacted data, and its answer shows under
+  match the step's known ones first (a known one's `fixCli` is a ready command with Copy, the names filled in: BucketNotEmpty,
+  a wrong version id), then go to the building's agent as quoted, redacted data, and its answer shows under
   the step, not only in the HQ chat, with the agent's portrait while it reads and each command in it (between backticks)
-  on its own line with a Copy button (`AnswerWithCode`).
+  on its own line with a Copy button (`AnswerWithCode`); the question and answer stay while the city is open
+  (`errorHelpMemory`: seen 24 Nov 2026, the answer was gone after a look at Deploy). A clean-up check that finds the thing
+  still there (`*-gone`) is a ⚠️ warning, without the "which account" line.
   Steps pay stars once per mode, ever (`src/learning/workshopRewards.ts`, real > practice; no daily ledger, so a
   workshop done in one sitting pays in full). The step list has real tick boxes (asked for on 24 Nov 2026: the ⬜ only
   opened the step): a tick by hand is practice (Check my account makes it real, ✅), the title opens the step, and an
@@ -1015,10 +1021,11 @@ When a change touches a decision, update its entry and run its Proof.
   vitest run test/progress.test.ts`.
 - **Agent tasks are "Watch it done"** (`src/state/watch.ts`, `TaskCard` and `AgentOffer` in `src/ui/ActivityFeed.tsx`).
   Before the agent works, the card frames a little story ("Sally will store your holiday photos in S3 Lake. Watch Sally
-  walk there.") with 👀 Watch (the camera follows the agent: `flyTo` `agent:<id>`; the card folds to one live step, the
+  walk there.": a building's hand-written story only for its own request, any other task "Sally will take this on at S3
+  Lake." with the building's own lesson, seen 24 Nov 2026 when "delete my bucket" read "holiday photos") with 👀 Watch (the camera follows the agent: `flyTo` `agent:<id>`; the card folds to one live step, the
   walk there included, the same step the canvas bubble shows);
-  during, its steps mirror the city (the demo plans every step it runs, the helper's visit included); after, what was
-  built, what it teaches in one line, what it paid (`TASK_STARS` 3⭐, a helper `TASK_HELPER_STARS` 1⭐: the agent did the
+  during, its steps mirror the city (the demo plans every step it runs, the helper's visit included); after, the agent's
+  result ("Sally: …"), what it teaches in one line, what it paid (`TASK_STARS` 3⭐, a helper `TASK_HELPER_STARS` 1⭐: the agent did the
   work; a building's first task a day and the city's first `TASK_PAID_A_DAY_TOTAL` 5, else the daily-cap line:
   `TaskView.paid`/`capped`; a practice deploy pays what it reports, once per template), the next step
   (`nextAction`) and, in the demo when a task matches a practice template, 🏗️ See it in Deploy (`planDeploy`, link first

@@ -19,6 +19,11 @@ export interface TerminalError {
   when?: { missing?: string; flag?: string; value?: string; mismatch?: string };
   explain: string;
   fix: string;
+  /**
+   * A command that does the fix, shown with its own Copy under the explanation (`<placeholders>` filled from the step's
+   * names). Seen 24 Nov 2026: "I expected to have a code to do it, ready", after BucketNotEmpty said "list … delete each".
+   */
+  fixCli?: string;
 }
 
 export interface TerminalStep {

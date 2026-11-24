@@ -89,7 +89,10 @@ export function taskStory(task: Pick<TaskView, 'agentId' | 'prompt'>): TaskStory
   const p = placeFor(agentId);
   const who = p ? firstName(p.agentName) : 'An agent';
   const place = p?.place ?? serviceById(agentId)?.name ?? 'town';
-  const def = STORIES[agentId];
+  // The hand-written story only for its own task (seen 24 Nov 2026: "delete my bucket" read "Sally will store your
+  // holiday photos", with a storage-classes lesson); any other task gets the building's own words.
+  const story = STORIES[agentId];
+  const def = story && task.prompt.trim().toLowerCase() === story.prompt.toLowerCase() ? story : undefined;
   const framing = def ? `${who} will ${def.will} in ${place}.` : `${who} will take this on at ${place}.`;
   const teaches = def?.teaches ?? p?.simple ?? p?.teaches[0] ?? '';
   return { agentId, who, place, framing, watch: `Watch ${who} walk there.`, teaches, ...(def?.templateId ? { templateId: def.templateId } : {}) };

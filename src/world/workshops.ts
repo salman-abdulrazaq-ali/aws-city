@@ -11,6 +11,13 @@ export interface WorkshopStep {
   /** The command, with `<placeholders>` (absent for a console-only step). */
   cli?: string;
   /**
+   * For real only (CloudShell or the player's terminal): the command as it should be pasted there, when it differs from
+   * the practice one, e.g. one that looks the version id up with `$(…)` instead of asking for it, or that prints the file
+   * it downloaded. Seen 24 Nov 2026: the version id was typed as 1, 3 and 0, and the download "went nowhere". No `[…]`:
+   * commandFor reads square brackets as an optional part.
+   */
+  realCli?: string;
+  /**
    * For real only: a command that makes what the step's command reads (a file CloudShell doesn't have), run first in the
    * same line. Seen 23 Nov 2026: "Upload a file" failed in CloudShell, which starts with no sample.txt.
    */
