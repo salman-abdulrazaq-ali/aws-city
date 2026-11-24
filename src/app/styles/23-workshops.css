@@ -38,6 +38,19 @@
   flex-wrap: wrap;
   gap: 4px;
 }
+.workshop-steps li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.workshop-steps input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex: none;
+  accent-color: var(--accent, #ff9900);
+  cursor: pointer;
+}
 .workshop-steps li.now .btn {
   border-color: var(--accent-line);
   background: var(--accent-soft);

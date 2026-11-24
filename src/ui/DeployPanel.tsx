@@ -379,6 +379,9 @@ export function DeployPanel() {
   // set up links with no AWS page), and only an account AWS City's role isn't in yet opens AWS's one approval page.
   const quickAsked = useRef<'connect' | 'reconnect' | undefined>(undefined);
   const [quickPhase, setQuickPhase] = useState<'idle' | 'verifying' | 'first'>('idle');
+  /** After a Disconnect: the account it had (one Connect button), unless the player asked for another account. */
+  const lastAccount = account.stackLeft ? account.lastAccountId : undefined;
+  const [otherAccount, setOtherAccount] = useState(false);
   const consoleAccount = useCity((s) => s.consoleAccount);
   const stackPath = stackChoice ?? (account.stackLeft ? 'reconnect' : 'fresh');
   const [linkCopied, copyLink] = useCopy();
@@ -558,38 +561,48 @@ export function DeployPanel() {
         </>
       ) : (
         <>
-          {account.stackLeft && account.lastAccountId && (
+          {/* After a Disconnect: one Connect button for the account it had (asked for on 24 Nov 2026: "two buttons that
+              do the same thing; just say Connect"); another account is one tap away. */}
+          {lastAccount && (
             <div className="reconnect-one">
               <PendingButton
                 className="btn primary"
                 pending={pending.is('link') || pending.is('verify')}
-                busyLabel="Reconnecting…"
+                busyLabel="Connecting…"
                 disabled={!!offline}
                 title={offline}
                 onClick={reconnectPress}
               >
-                🔁 Reconnect {accountTitle(account.lastAccountId)}
+                🔗 Connect {accountTitle(lastAccount)}
               </PendingButton>
-              <p className="muted small">One press: AWS City’s role is still in that account.</p>
+              {!otherAccount && (
+                <button className="btn tiny ghost" onClick={() => setOtherAccount(true)}>
+                  Another account?
+                </button>
+              )}
             </div>
           )}
-          {/* Asked for on 24 Nov 2026: just the number and one button (the label sat squeezed beside the box). */}
-          <label className="quick-field" htmlFor="quick-account">
-            <span>Your AWS account number</span>
-            <input id="quick-account" placeholder="1234-5678-9012" value={role || consoleAccount || ''} onChange={(e) => setRole(e.target.value)} autoComplete="off" spellCheck={false} />
-          </label>
-          {consoleAccount && !role.trim() && <p className="muted small">Filled in from the AWS console you have open.</p>}
-          <PendingButton
-            className={account.stackLeft && account.lastAccountId ? 'btn' : 'btn primary'}
-            pending={!(account.stackLeft && account.lastAccountId) && (pending.is('link') || pending.is('verify'))}
-            busyLabel="Connecting…"
-            disabled={!!offline}
-            title={offline}
-            onClick={connectNowPress}
-          >
-            🔗 Connect your AWS account
-          </PendingButton>
-          <p className="muted small">Connects in {regionName(region)}. Already set up? It connects at once.</p>
+          {(!lastAccount || otherAccount) && (
+            <>
+              {/* Asked for on 24 Nov 2026: just the number and one button (the label sat squeezed beside the box). */}
+              <label className="quick-field" htmlFor="quick-account">
+                <span>Your AWS account number</span>
+                <input id="quick-account" placeholder="1234-5678-9012" value={role || consoleAccount || ''} onChange={(e) => setRole(e.target.value)} autoComplete="off" spellCheck={false} />
+              </label>
+              {consoleAccount && !role.trim() && <p className="muted small">Filled in from the AWS console you have open.</p>}
+              <PendingButton
+                className={lastAccount ? 'btn' : 'btn primary'}
+                pending={!lastAccount && (pending.is('link') || pending.is('verify'))}
+                busyLabel="Connecting…"
+                disabled={!!offline}
+                title={offline}
+                onClick={connectNowPress}
+              >
+                🔗 Connect your AWS account
+              </PendingButton>
+              <p className="muted small">Connects in {regionName(region)}. Already set up? It connects at once.</p>
+            </>
+          )}
         </>
       )}
       <details className="why">
@@ -985,7 +998,7 @@ export function DeployPanel() {
                   {/* Seen 24 Nov 2026: reconnecting failed, because the old stack trusts the old link (Disconnect forgets its
                       ExternalId) and its name is taken; "to remove it too" read as optional. */}
                   <Plain
-                    text={`Disconnected: the city stopped reading your account. Reconnect any time with one press below. To remove AWS City for good, delete the AWSCity stack in ${regionName(account.stackLeft)} (Stacks, then AWSCity, then Delete).`}
+                    text={`Disconnected: the city stopped reading your account. Connect again any time with one press below. To remove AWS City for good, delete the AWSCity stack in ${regionName(account.stackLeft)} (Stacks, then AWSCity, then Delete).`}
                   />
                 </p>
                 <StackLink region={account.stackLeft} />

@@ -396,8 +396,9 @@ When a change touches a decision, update its entry and run its Proof.
   link; when that link lands (only a link this press asked for) the city verifies at once: an account that already has
   AWS City's role links with no AWS page; when verify can't use a role (or no number is known) AWS's one approval page
   opens ("First time in this account…", Create stack, then ✅ Connect now; the raw error is replaced). Disconnect keeps
-  the setup (below), so after it the card offers 🔁 Reconnect <account>: a link in that Region with the switch it had
-  (`lastAccountId`/`lastCleanup` beside `stackLeft`), then Verify. The three steps stay under "Prefer step by step?";
+  the setup (below), so after it the card is one 🔗 Connect <account> button (asked for on 24 Nov 2026: Reconnect and
+  Connect side by side did the same thing): a link in that Region with the switch it had (`lastAccountId`/`lastCleanup`
+  beside `stackLeft`), then Verify; "Another account?" shows the number box and its own Connect. The three steps stay under "Prefer step by step?";
   the demo keeps its own card. Proof: `npx vitest run tests/deploy-account.test.tsx -t "Connect|Reconnect"`.
 - **The player's own AWS account: easy to find, linked where they choose, easy to let go** (contract v2.19; rules pure in
   `src/state/account.ts`, `src/ui/Account.tsx`, the card in `src/ui/DeployPanel.tsx`). On the hosted server (and on any build that can sign in, once signed in: `hosted || signedIn && canSignIn()` in
@@ -933,7 +934,10 @@ When a change touches a decision, update its entry and run its Proof.
   the step, not only in the HQ chat, with the agent's portrait while it reads and each command in it (between backticks)
   on its own line with a Copy button (`AnswerWithCode`).
   Steps pay stars once per mode, ever (`src/learning/workshopRewards.ts`, real > practice; no daily ledger, so a
-  workshop done in one sitting pays in full). The terminal helps like a shell: Tab finishes a word, ↑ recalls lines,
+  workshop done in one sitting pays in full). The step list has real tick boxes (asked for on 24 Nov 2026: the ⬜ only
+  opened the step): a tick by hand is practice (Check my account makes it real, ✅), the title opens the step, and an
+  untick (`untickWorkshopStep`) keeps a finished workshop finished and remembers what the step had on the device
+  (`prefs.workshopUnticked`), so ticking again pays nothing twice and a real step comes back real. The terminal helps like a shell: Tab finishes a word, ↑ recalls lines,
   💡 Hint types the next word for −1⭐ on that step (a paying step still pays one), and Fill my names swaps `<table>` for
   the name used earlier; names and lines are remembered per workshop (`prefs.workshopMemory`, `rememberWorkshop`). The
   demo is honest: "for real" there runs in the practice terminal and pays practice, never "real" (`honestMode`). Six
