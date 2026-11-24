@@ -1656,7 +1656,12 @@ export class CityScene extends Phaser.Scene {
         const left = canvas.left + (b.x - cam.worldView.x) * cam.zoom;
         const top = canvas.top + (b.y - cam.worldView.y) * cam.zoom;
         const r = { top, left, width: b.width * cam.zoom, height: b.height * cam.zoom };
-        const inView = r.left + r.width > canvas.left && r.left < canvas.right && r.top + r.height > canvas.top && r.top < canvas.bottom;
+        // Only the canvas the stage shows counts: the panel's map shrinks (330 → 200 px) before Phaser resizes the
+        // canvas, and a building in the clipped part would be "found" over the tabs below (seen 24 Nov 2026).
+        const seen = this.game.canvas.closest?.('.stage')?.getBoundingClientRect() ?? canvas;
+        const [l, t] = [Math.max(canvas.left, seen.left), Math.max(canvas.top, seen.top)];
+        const [rt, bt] = [Math.min(canvas.right, seen.right), Math.min(canvas.bottom, seen.bottom)];
+        const inView = r.left + r.width > l && r.left < rt && r.top + r.height > t && r.top < bt;
         reply(inView ? r : undefined);
       }),
       bus.on('discovered', ({ serviceId, quiet }) => this.onDiscovered(serviceId, quiet)),

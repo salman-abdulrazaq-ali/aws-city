@@ -28,7 +28,7 @@ vi.mock('@/app/runtime', async (importOriginal) => ({ ...(await importOriginal<t
 const { useCity } = await import('@/state/store');
 const { bus } = await import('@/state/bus');
 const { FIRST_STEPS } = await import('@/state/firstSteps');
-const { Tour, CoachTips, quickTourStops, placeCard, tourBuilding, TOUR_FALLBACK_MS, startQuickTourAfterDive } = await import('@/ui/Tour');
+const { Tour, CoachTips, quickTourStops, placeCoach, overlaps, ALWAYS_CLEAR, MORE_BUTTON, tourBuilding, TOUR_FALLBACK_MS, startQuickTourAfterDive } = await import('@/ui/Tour');
 const { Hud } = await import('@/ui/Hud');
 const { App } = await import('@/app/App');
 const { freshLines, HELD_LINE_FRESH_MS } = await import('@/game/calm');
@@ -123,28 +123,108 @@ describe('the six stops', () => {
   }
 });
 
-describe('the card stands beside its target, never over it', () => {
-  const view = { w: 400, h: 860 };
-  const box = { w: 376, h: 190 };
-  const overlaps = (p: { top: number; left: number }, t: { top: number; left: number; width: number; height: number }) =>
-    p.left < t.left + t.width && p.left + box.w > t.left && p.top < t.top + t.height && p.top + box.h > t.top;
-  it('below a tab, above the box at the bottom, beside a building on the map, at the bottom with no target', () => {
-    const tabs = { top: 300, left: 200, width: 90, height: 36 };
-    const composer = { top: 790, left: 10, width: 380, height: 50 };
-    const lake = { top: 120, left: 150, width: 90, height: 80 };
-    for (const t of [tabs, composer, lake]) {
-      const p = placeCard(t, box, view);
-      expect(overlaps(p, t)).toBe(false);
-      expect(p.top).toBeGreaterThanOrEqual(12);
-      expect(p.top + box.h).toBeLessThanOrEqual(view.h - 12);
-    }
-    expect(placeCard(tabs, box, view).top).toBe(tabs.top + tabs.height + 10);
-    expect(placeCard(composer, box, view).top).toBe(composer.top - 10 - box.h);
-    // The tab: a tall target on a wide map, no room below or above: to its side.
-    const low = { top: 60, left: 400, width: 120, height: 800 };
-    const wide = placeCard(low, { w: 320, h: 200 }, { w: 1400, h: 880 });
-    expect(wide.left).toBe(low.left + low.width + 10);
-    expect(placeCard(undefined, box, view).top).toBe(view.h - box.h - 12);
+describe('where the card stands: never over its target, its stop’s controls or the tabs', () => {
+  type B = { top: number; left: number; width: number; height: number };
+  const at = (top: number, left: number, width: number, height: number): B => ({ top, left, width, height });
+  const card = { w: 320, h: 210 };
+  const pill = { w: 260, h: 40 };
+  /** Asserts the spot is on screen and covers neither the target nor anything kept clear; returns its box. */
+  const check = (o: Parameters<typeof placeCoach>[0]) => {
+    const spot = placeCoach(o);
+    const size = spot.mode === 'card' ? o.card : o.pill;
+    const b = { top: spot.top, left: spot.left, width: size.w, height: size.h };
+    expect(b.left).toBeGreaterThanOrEqual(0);
+    expect(b.top).toBeGreaterThanOrEqual(0);
+    expect(b.left + b.width).toBeLessThanOrEqual(o.view.w);
+    expect(b.top + b.height).toBeLessThanOrEqual(o.view.h);
+    if (o.target) expect(overlaps(b, o.target), 'over the target').toBe(false);
+    for (const k of o.keepClear ?? []) expect(overlaps(b, k), `over ${JSON.stringify(k)}`).toBe(false);
+    return { spot, b };
+  };
+
+  // The side panel, 400 × 860: the HUD, the map (44–330), the side column with the tabs (340–390), the box at the bottom.
+  const panel = { view: { w: 400, h: 860 }, card, pill, stage: at(44, 0, 400, 286), side: at(330, 0, 400, 530) };
+  const pHud = at(0, 0, 400, 44);
+  const pTabs = at(340, 0, 400, 50);
+  const pComposer = at(800, 8, 384, 48);
+  // The tab, 1400 × 880: the map on the left, the side column from x = 1000.
+  const tab = { view: { w: 1400, h: 880 }, card, pill, stage: at(48, 0, 1000, 832), side: at(48, 1000, 400, 832) };
+  const tHud = at(0, 0, 1400, 48);
+  const tTabs = at(48, 1000, 400, 48);
+
+  it('below a tab, above the box at the bottom, beside a building, docked at the bottom with no target', () => {
+    const tabs = at(300, 200, 90, 36);
+    expect(check({ ...panel, target: tabs }).spot).toEqual({ mode: 'card', top: tabs.top + tabs.height + 10, left: 68 });
+    expect(check({ ...panel, target: pComposer }).spot.top).toBe(pComposer.top - 10 - card.h);
+    check({ ...panel, target: at(120, 150, 90, 80) });
+    expect(check({ ...panel }).spot).toEqual({ mode: 'card', top: 860 - card.h - 12, left: 40 });
+    // A tall target on a wide map, no room below or above: to its side.
+    const low = at(60, 400, 120, 800);
+    expect(check({ ...tab, target: low }).spot.left).toBe(low.left + low.width + 10);
+  });
+
+  it('stop 3 in the panel: never over “Use the practice account” or the linked account’s actions', () => {
+    const deployTab = at(336, 296, 108, 58);
+    const practice = at(470, 16, 368, 36);
+    const actions = at(520, 16, 368, 36);
+    const { spot, b } = check({ ...panel, target: deployTab, keepClear: [practice, actions, pTabs, pHud] });
+    expect(spot.mode).toBe('card');
+    // Over the map, above the tab it names (the old rule put it below, over the practice button).
+    expect(b.top + b.height).toBeLessThanOrEqual(deployTab.top);
+    // Linked, with a waiting approval's Approve / Reject further down: still clear of all of them.
+    check({ ...panel, target: deployTab, keepClear: [at(400, 16, 368, 36), at(450, 16, 368, 36), at(700, 16, 368, 40), pTabs, pHud] });
+  });
+
+  it('stop 1 in the panel after scrolling: the map shrank to 200 px, the building card’s actions stay pressable', () => {
+    const stage = at(44, 0, 400, 200);
+    const lake = at(120, 160, 90, 70);
+    const actions = [at(310, 16, 368, 40), at(360, 16, 368, 32), at(400, 16, 368, 160), at(600, 16, 368, 200)];
+    const { spot } = check({ ...panel, stage, side: at(244, 0, 400, 616), target: lake, keepClear: [...actions, at(254, 0, 400, 50), pHud] });
+    // The card can't stand anywhere clear (the map is too short): the pill, off the building.
+    expect(spot.mode).toBe('pill');
+  });
+
+  it('the tabs always stay pressable (panel stop 1, the tab’s stop 5)', () => {
+    const lake = at(250, 150, 90, 70); // low on the panel's map: below it would be the tabs
+    check({ ...panel, target: lake, keepClear: [pTabs, pHud] });
+    // The tab's ⋯ at the top right: below it are the side column's tabs.
+    const more = at(4, 1350, 44, 44);
+    const menu = at(52, 1150, 240, 420);
+    const { spot } = check({ ...tab, target: more, keepClear: [more, menu, tTabs, tHud] });
+    expect(spot.mode).toBe('card');
+  });
+
+  it('the tab: a stop in the side column (x ≥ 1000) takes the map beside it when its controls fill the column', () => {
+    const deployTab = at(44, 1296, 108, 56);
+    const practice = at(150, 1016, 368, 36);
+    const { b } = check({ ...tab, target: deployTab, keepClear: [practice, at(200, 1016, 368, 620), tTabs, tHud] });
+    expect(b.left + b.width).toBeLessThanOrEqual(1000);
+  });
+
+  it('crowded: the card folds to the pill, which covers nothing', () => {
+    const task = at(450, 8, 384, 290);
+    const keep = [pComposer, at(460, 300, 60, 28), task, panel.stage, pTabs, pHud];
+    const { spot, b } = check({ ...panel, target: pComposer, keepClear: keep });
+    expect(spot.mode).toBe('pill');
+    expect(b.top).toBeGreaterThanOrEqual(pTabs.top + pTabs.height);
+    expect(b.top + b.height).toBeLessThanOrEqual(task.top);
+  });
+
+  it('every stop keeps its own controls clear; the panel’s stop 5 rings the Copilot switch on the City tab', () => {
+    for (const layout of ['panel', 'full'] as const)
+      for (const stop of quickTourStops(layout, 'demo', 'sidepanel')) expect(stop.keepClear.length, `${stop.id} ${layout}`).toBeGreaterThan(0);
+    const [building, ask, deploy, learn, consoleStop, more] = quickTourStops('panel', 'demo', 'sidepanel');
+    expect(building.keepClear).toEqual(['.place-do .actions', '.place-do .agent-asks', '.place-live-task']);
+    expect(ask.keepClearTried).toEqual(['.task .watch-btn', '.task', '.stage']);
+    expect(quickTourStops('full', 'demo', 'sidepanel')[1].keepClearTried).toEqual(['.task .watch-btn', '.task']);
+    expect(deploy.keepClear).toContain('.card.account > .btn');
+    expect(learn.keepClear[0]).toBe('#tab-learn');
+    expect(consoleStop.targets[0]).toBe('.console-btn');
+    expect(consoleStop.tab).toBe('home');
+    expect(consoleStop.keepClear[0]).toBe('.console-btn');
+    expect(more.keepClear[0]).toBe(MORE_BUTTON);
+    expect(quickTourStops('full', 'demo', 'sidepanel')[4].tab).toBeUndefined();
+    expect(ALWAYS_CLEAR).toEqual(['.tabs', '.hud']);
   });
 });
 
@@ -263,6 +343,102 @@ describe('Try it', () => {
     fireEvent.click(within(card()).getByRole('button', { name: 'Try it' }));
     expect(rt.startPracticeTask).toHaveBeenCalledWith();
     for (const f of [rt.submitPrompt, rt.startConsoleCopilot, rt.askDistrict, rt.planDeploy]) expect(f).not.toHaveBeenCalled();
+  });
+});
+
+describe('the card follows the page and folds when there’s no room', () => {
+  /** Gives an element a box (jsdom has no layout). */
+  const boxed = (el: Element, top: number, left: number, width: number, height: number) =>
+    (el.getBoundingClientRect = () => ({ top, left, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON: () => ({}) }));
+
+  it('stop 1: the building card’s actions fill the screen, so the card folds to the pill; stop 2 unfolds it', () => {
+    const offLocate = bus.on('locate', ({ reply }) => reply({ top: 100, left: 100, width: 80, height: 60 }));
+    const { container } = render(
+      <>
+        <section className="place-do">
+          <div className="actions">
+            <button>💬 Ask a question</button>
+          </div>
+        </section>
+        <Tour layout="panel" />
+      </>,
+    );
+    boxed(container.querySelector('.place-do .actions')!, 0, 0, window.innerWidth, window.innerHeight - 100);
+    act(() => useCity.getState().setTourOpen(true));
+    const c = card();
+    expect(c.className).toMatch(/\bpill\b/);
+    // Still the same dialog: its name, the stop's words for screen readers, Next and End tour, the keys.
+    expect(within(c).getByRole('heading').textContent).toBe(TITLES[0]);
+    expect(c.textContent).toContain('Quick tour · 1 of 6');
+    expect(within(c).getByRole('button', { name: 'End tour' })).toBeTruthy();
+    const top = parseFloat(c.style.top);
+    expect(top).toBeGreaterThanOrEqual(window.innerHeight - 100);
+    fireEvent.keyDown(within(c).getByRole('heading'), { key: 'Enter' });
+    expect(within(card()).getByRole('heading').textContent).toBe(TITLES[1]);
+    expect(card().className).not.toMatch(/\bpill\b/);
+    offLocate();
+  });
+
+  it('a stop placed again when the page under it changes (a card opening below the target)', async () => {
+    const offLocate = bus.on('locate', ({ reply }) => reply({ top: 100, left: 100, width: 80, height: 60 }));
+    const { container } = render(
+      <>
+        <section className="place-do" />
+        <Tour layout="panel" />
+      </>,
+    );
+    act(() => useCity.getState().setTourOpen(true));
+    expect(card().className).not.toMatch(/\bpill\b/);
+    // The building's card opens with its actions over most of the screen: the tour moves aside on the next frame.
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    boxed(actions, 0, 0, window.innerWidth, window.innerHeight - 100);
+    act(() => void container.querySelector('.place-do')!.append(actions));
+    for (let k = 0; k < 2; k++) await act(() => new Promise((r) => requestAnimationFrame(() => r(undefined))));
+    expect(card().className).toMatch(/\bpill\b/);
+    offLocate();
+  });
+
+  it('panel stop 5 shows the City tab first when the Copilot switch isn’t there (another tab)', () => {
+    const tabs: string[] = [];
+    const off = bus.on('showTab', ({ tab }) => tabs.push(tab));
+    render(<Tour layout="panel" />);
+    act(() => useCity.getState().setTourOpen(true));
+    for (let k = 0; k < 4; k++) fireEvent.click(within(card()).getByRole('button', { name: 'Next' }));
+    expect(within(card()).getByRole('heading').textContent).toBe(TITLES[4]);
+    expect(tabs).toEqual(['home']);
+    off();
+  });
+
+  it('not when the switch is already on screen, nor in the tab (its stop 5 points at ⋯)', () => {
+    const tabs: string[] = [];
+    const off = bus.on('showTab', ({ tab }) => tabs.push(tab));
+    const { unmount } = render(
+      <>
+        <button className="console-btn">Do it in my console</button>
+        <Tour layout="panel" />
+      </>,
+    );
+    act(() => useCity.getState().setTourOpen(true));
+    for (let k = 0; k < 4; k++) fireEvent.click(within(card()).getByRole('button', { name: 'Next' }));
+    unmount();
+    act(() => useCity.getState().setTourOpen(false));
+    render(<Tour layout="full" />);
+    act(() => useCity.getState().setTourOpen(true));
+    for (let k = 0; k < 4; k++) fireEvent.click(within(card()).getByRole('button', { name: 'Next' }));
+    expect(tabs).toEqual([]);
+    off();
+  });
+
+  it('Try it shows the City tab, where Sally’s steps are', () => {
+    const tabs: string[] = [];
+    const off = bus.on('showTab', ({ tab }) => tabs.push(tab));
+    render(<Tour layout="panel" />);
+    act(() => useCity.getState().setTourOpen(true));
+    fireEvent.click(within(card()).getByRole('button', { name: 'Next' }));
+    fireEvent.click(within(card()).getByRole('button', { name: 'Try it' }));
+    expect(tabs).toEqual(['home']);
+    off();
   });
 });
 

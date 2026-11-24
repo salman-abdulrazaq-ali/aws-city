@@ -83,3 +83,27 @@
 .tour-foot .pips {
   margin-right: auto;
 }
+/* No room beside the stop's controls: the card folds to one docked row (Quick tour · n of 6, Next, End tour) that
+   covers nothing the stop names. Its title and words stay for screen readers (sr-only). */
+.tour-card.pill {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: auto;
+  max-width: calc(100vw - 24px);
+  padding: var(--s-2) var(--s-3);
+}
+.tour-card.pill .tour-head,
+.tour-card.pill .tour-foot {
+  display: contents;
+}
+.tour-card.pill .tour-end {
+  order: 1;
+  align-self: center;
+}
+.tour-pill-n {
+  margin-right: auto;
+  font-size: var(--fs-xs);
+  color: var(--ink-soft);
+  white-space: nowrap;
+}

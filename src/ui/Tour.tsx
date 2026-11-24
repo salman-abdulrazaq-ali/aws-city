@@ -24,12 +24,23 @@ export interface TourStop {
    * or a landmark (`@s3`) on the map, asked of the city (bus `locate`). None found: the card stands at the bottom.
    */
   targets: string[];
+  /**
+   * What the card never covers, most important first: the controls the stop names or the player needs next (CSS
+   * selectors; the ones not on screen are skipped). The tabs and the HUD come after these on every stop (ALWAYS_CLEAR).
+   */
+  keepClear: string[];
+  /** More to keep in sight once Try it ran: Sally's task card and its 👀 Watch (and, in the panel, the map she walks). */
+  keepClearTried?: string[];
+  /** The tab that holds the target: shown first when the target isn't there (the panel's Copilot switch: City). */
+  tab?: 'home';
   /** Stop 2's "Try it": Sally's practice task (local in every build, never a model or AWS). */
   tryIt?: boolean;
 }
 
 /** ⋯, the HUD's menu button. */
 export const MORE_BUTTON = '.more > [aria-haspopup="menu"]';
+/** ⋯'s open menu. */
+const MORE_MENU = '.more > [role="menu"]';
 
 /** What each stop points at, by layout (the copy is data: shared/first-steps.json `tour`). */
 const TARGETS: Record<string, (layout: Layout, building: string) => string[]> = {
@@ -43,6 +54,22 @@ const TARGETS: Record<string, (layout: Layout, building: string) => string[]> = 
 };
 
 /**
+ * What each stop leaves in sight (seen 24 Nov 2026: the card over "Use the practice account", over Ask / Watch it done /
+ * Play on a scrolled building card, over Sally's 👀 Watch): the building card's actions and its task; the box; the
+ * practice account, the linked account's actions and a waiting approval; the Learn tab; the Copilot switch and ⋯.
+ */
+const KEEP_CLEAR: Record<string, string[]> = {
+  building: ['.place-do .actions', '.place-do .agent-asks', '.place-live-task'],
+  ask: ['.composer'],
+  deploy: ['.card.account > .btn', '.card.account .account-actions', '.card.stack.preview .actions'],
+  learn: ['#tab-learn', '.tab-body [role="group"][aria-label="Learn"]'],
+  console: ['.console-btn', MORE_BUTTON, MORE_MENU],
+  more: [MORE_BUTTON, MORE_MENU],
+};
+/** Every stop leaves the tabs pressable and the HUD in sight, after its own controls. */
+export const ALWAYS_CLEAR = ['.tabs', '.hud'];
+
+/**
  * The six stops for this surface and build: a stop's body is its build's or layout's own where the copy has one. Stop 1
  * points at `building` (tourBuilding: S3 Lake, or a building already up when S3 Lake isn't).
  */
@@ -52,7 +79,19 @@ export function quickTourStops(layout: Layout, build: TourBuild, surface: Surfac
     if (build === 'hosted' && c.hosted) body = c.hosted;
     if (build === 'local' && c.local) body = c.local;
     if (layout === 'full' && c.tab) body = surface === 'tab' && c.safari ? c.safari : fill(c.tab, { surface: SURFACE_NAME[surface] });
-    return { id: c.id, title: c.title, body, targets: TARGETS[c.id]?.(layout, building) ?? [], tryIt: c.id === 'ask' };
+    const tryIt = c.id === 'ask';
+    return {
+      id: c.id,
+      title: c.title,
+      body,
+      targets: TARGETS[c.id]?.(layout, building) ?? [],
+      keepClear: KEEP_CLEAR[c.id] ?? [],
+      // The panel's map is where Sally walks: the card folds rather than stand over it.
+      keepClearTried: tryIt ? ['.task .watch-btn', '.task', ...(layout === 'panel' ? ['.stage'] : [])] : undefined,
+      // The switch stands on the City tab only (seen 24 Nov 2026: from Learn, stop 5 ringed the box instead).
+      tab: c.id === 'console' && layout === 'panel' ? 'home' : undefined,
+      tryIt,
+    };
   });
 }
 
@@ -65,14 +104,33 @@ export function tourBuilding(landmarks: Record<string, { discovered?: boolean }>
   return up.includes('s3') || !up.length ? 's3' : up[0];
 }
 
-type Rect = { top: number; left: number; width: number; height: number };
+/** A box on the page, in CSS pixels (a DOMRect fits). */
+export type Box = { top: number; left: number; width: number; height: number };
+type Rect = Box;
+type Size = { w: number; h: number };
+
+/** The part of `a` inside `b`, or undefined when less than `min` px of it shows either way. */
+function clip(a: Box, b: Box, min = 1): Box | undefined {
+  const left = Math.max(a.left, b.left);
+  const top = Math.max(a.top, b.top);
+  const width = Math.min(a.left + a.width, b.left + b.width) - left;
+  const height = Math.min(a.top + a.height, b.top + b.height) - top;
+  return width >= min && height >= min ? { top, left, width, height } : undefined;
+}
+
+/** A building on the map shows this much at least, or it isn't ringed (the stop falls back to the map itself). */
+const MIN_SEEN = 8;
 
 /** A target's box on the page, a little bigger (the ring stands just outside it); undefined when it isn't on screen. */
 function findTarget(selectors: string[]): Rect | undefined {
   for (const sel of selectors) {
     let r: Rect | undefined;
-    if (sel.startsWith('@')) bus.emit('locate', { id: sel.slice(1), reply: (found) => (r = found) });
-    else {
+    if (sel.startsWith('@')) {
+      bus.emit('locate', { id: sel.slice(1), reply: (found) => (r = found) });
+      // Only the part of the map in sight: the panel's stage shrinks and scrolls, and the ring never lands on the tabs.
+      const stage = document.querySelector('.stage')?.getBoundingClientRect();
+      if (r && stage && stage.width > 0 && stage.height > 0) r = clip(r, stage, MIN_SEEN);
+    } else {
       const b = document.querySelector(sel)?.getBoundingClientRect();
       if (b && b.width > 0 && b.height > 0) r = b;
     }
@@ -81,29 +139,99 @@ function findTarget(selectors: string[]): Rect | undefined {
   return undefined;
 }
 
-const MARGIN = 12;
-const GAP = 10;
+/** An element's box when it's on the page with a size. */
+function boxOf(sel: string): Box | undefined {
+  const b = document.querySelector(sel)?.getBoundingClientRect();
+  return b && b.width > 0 && b.height > 0 ? b : undefined;
+}
 
 /**
- * Where the coach card stands: below its target, else above, else to the right, else to the left, always on screen and
- * never over the target. Only when no side has room does it take the roomier side's edge. No target: the bottom middle.
- * Pure (tests/quick-tour.test.tsx checks it).
+ * The boxes a stop keeps in sight, in its order: each selector's elements, cut to what their scrolling boxes and the
+ * window show (a button scrolled out of the panel's body covers nothing); ones not there or out of sight are skipped.
  */
-export function placeCard(t: Rect | undefined, card: { w: number; h: number }, view: { w: number; h: number }): { top: number; left: number } {
-  const x = (v: number) => Math.max(MARGIN, Math.min(v, view.w - card.w - MARGIN));
-  const y = (v: number) => Math.max(MARGIN, Math.min(v, view.h - card.h - MARGIN));
-  if (!t) return { top: y(view.h - card.h - MARGIN), left: x((view.w - card.w) / 2) };
-  const cx = x(t.left + t.width / 2 - card.w / 2);
-  const cy = y(t.top + t.height / 2 - card.h / 2);
-  const below = t.top + t.height + GAP;
-  const above = t.top - GAP - card.h;
-  const right = t.left + t.width + GAP;
-  const left = t.left - GAP - card.w;
-  if (below + card.h <= view.h - MARGIN) return { top: below, left: cx };
-  if (above >= MARGIN) return { top: above, left: cx };
-  if (right + card.w <= view.w - MARGIN) return { top: cy, left: right };
-  if (left >= MARGIN) return { top: cy, left };
-  return t.top > view.h - (t.top + t.height) ? { top: MARGIN, left: cx } : { top: y(below), left: cx };
+function keepClearBoxes(selectors: string[]): Box[] {
+  const view = { top: 0, left: 0, width: window.innerWidth, height: window.innerHeight };
+  const out: Box[] = [];
+  for (const sel of selectors) {
+    for (const el of [...document.querySelectorAll(sel)].slice(0, 8)) {
+      let b: Box | undefined = el.getBoundingClientRect();
+      for (let p = el.parentElement; b && p && p !== document.body; p = p.parentElement) {
+        const s = getComputedStyle(p);
+        if (/auto|scroll|hidden|clip/.test(`${s.overflowX} ${s.overflowY}`)) b = clip(b, p.getBoundingClientRect());
+      }
+      if (b) b = clip(b, view);
+      if (b) out.push(b);
+    }
+  }
+  return out;
+}
+
+const MARGIN = 12;
+const GAP = 10;
+/** The pill's last resort walks the screen in steps this big. */
+const STEP = 12;
+
+/** Whether two boxes share any area (touching edges don't). */
+export const overlaps = (a: Box, b: Box) => a.left < b.left + b.width && a.left + a.width > b.left && a.top < b.top + b.height && a.top + a.height > b.top;
+
+/** Where the coach stands: the full card, or folded to the docked pill ("Quick tour · 3 of 6", Next, End tour). */
+export interface CoachSpot {
+  mode: 'card' | 'pill';
+  top: number;
+  left: number;
+}
+
+/**
+ * Where the coach card stands (pure; tests/quick-tour.test.tsx checks it). The first spot that is wholly on screen, off
+ * the target and off every keep-clear box: below the target, above, right, left (centred, then lined up with either
+ * edge), the side column's far corner from the target, the map's far corner, a strip docked at the bottom. None: the
+ * card folds to the pill, at the map's far corner, a corner of the screen or the side column, else the first clear spot
+ * from the top right. Only when the keep-clear boxes leave no room even for the pill are the last of them (the HUD,
+ * then the tabs) let go, one at a time.
+ */
+export function placeCoach({ target, keepClear = [], card, pill, view, side, stage }: { target?: Box; keepClear?: Box[]; card: Size; pill: Size; view: Size; side?: Box; stage?: Box }): CoachSpot {
+  const box = (top: number, left: number, s: Size): Box => ({ top, left, width: s.w, height: s.h });
+  const xIn = (v: number, w: number) => Math.max(MARGIN, Math.min(v, view.w - w - MARGIN));
+  const yIn = (v: number, h: number) => Math.max(MARGIN, Math.min(v, view.h - h - MARGIN));
+  const onScreen = (b: Box) => b.left >= 0 && b.top >= 0 && b.left + b.width <= view.w && b.top + b.height <= view.h;
+  const clear = (b: Box, keep: Box[]) => onScreen(b) && !(target && overlaps(b, target)) && !keep.some((k) => overlaps(b, k));
+  // The middle of the target (none: the middle of the screen), and a region's corners farthest from it first.
+  const cx = target ? target.left + target.width / 2 : view.w / 2;
+  const cy = target ? target.top + target.height / 2 : view.h / 2;
+  const corners = (r: Box | undefined, s: Size): Box[] =>
+    !r
+      ? []
+      : [r.top + MARGIN, r.top + r.height - s.h - MARGIN]
+          .flatMap((top) => [box(top, r.left + MARGIN, s), box(top, r.left + r.width - s.w - MARGIN, s)])
+          .map((b) => ({ b, d: Math.hypot(b.left + s.w / 2 - cx, b.top + s.h / 2 - cy) }))
+          .sort((a, z) => z.d - a.d)
+          .map(({ b }) => b);
+
+  const { w, h } = card;
+  const docked = box(view.h - h - MARGIN, xIn((view.w - w) / 2, w), card);
+  const spots: Box[] = [];
+  if (target) {
+    const t = target;
+    const xs = [t.left + t.width / 2 - w / 2, t.left, t.left + t.width - w].map((x) => xIn(x, w));
+    const ys = [t.top + t.height / 2 - h / 2, t.top, t.top + t.height - h].map((y) => yIn(y, h));
+    spots.push(...xs.map((x) => box(t.top + t.height + GAP, x, card)));
+    spots.push(...xs.map((x) => box(t.top - GAP - h, x, card)));
+    spots.push(...ys.map((y) => box(y, t.left + t.width + GAP, card)));
+    spots.push(...ys.map((y) => box(y, t.left - GAP - w, card)));
+  } else spots.push(docked);
+  spots.push(...corners(side, card), ...corners(stage, card), docked);
+  const spot = spots.find((b) => clear(b, keepClear));
+  if (spot) return { mode: 'card', top: spot.top, left: spot.left };
+
+  const pills = [...corners(stage, pill), ...corners({ top: 0, left: 0, width: view.w, height: view.h }, pill), ...corners(side, pill)];
+  for (let n = keepClear.length; n >= 0; n--) {
+    const keep = keepClear.slice(0, n);
+    let p = n === keepClear.length ? pills.find((b) => clear(b, keep)) : undefined;
+    for (let y = MARGIN; !p && y + pill.h <= view.h - MARGIN; y += STEP)
+      for (let x = view.w - pill.w - MARGIN; !p && x >= MARGIN; x -= STEP) if (clear(box(y, x, pill), keep)) p = box(y, x, pill);
+    if (p) return { mode: 'pill', top: p.top, left: p.left };
+  }
+  return { mode: 'pill', top: view.h - pill.h - MARGIN, left: view.w - pill.w - MARGIN };
 }
 
 /** After the city has arrived, the tour waits this long at most for the `arrived` moment. */
@@ -170,9 +298,10 @@ export function useFirstRunTour() {
 /**
  * The coach engine: one card at a time over the real UI, never modal. No scrim and nothing over the map (the ring takes no
  * presses), so the player can tap a building or type in the box mid-tour. The card is a non-modal dialog: Enter goes
- * next, Escape ends, Tab leaves it. It stands beside its target, never over it, follows it as the layout or the camera
- * moves, and steps aside while the city sleeps (a game, an HQ, the world map) or a celebration card is up. Each stop is
- * read out (announce).
+ * next, Escape ends, Tab leaves it. It stands beside its target, never over it, its stop's controls or the tabs (with
+ * no room it folds to the docked pill: placeCoach), follows them as the page scrolls, the layout or the camera moves,
+ * and steps aside while the city sleeps (a game, an HQ, the world map) or a celebration card is up. Each stop is read
+ * out (announce).
  */
 export function Tour({ layout }: { layout: Layout }) {
   const open = useCity((s) => s.tourOpen);
@@ -183,9 +312,14 @@ export function Tour({ layout }: { layout: Layout }) {
   const [i, setI] = useState(0);
   const [tried, setTried] = useState(false);
   const [rect, setRect] = useState<Rect>();
-  const [pos, setPos] = useState<{ top: number; left: number }>();
+  const [pos, setPos] = useState<CoachSpot>();
   const card = useRef<HTMLDivElement>(null);
+  const layer = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(null);
+  /** The card's and the pill's last measured sizes (only the one on screen can be measured). */
+  const sizes = useRef<{ card: Size; pill: Size }>({ card: { w: 320, h: 200 }, pill: { w: 260, h: 44 } });
+  /** Sally's task card was brought into the panel's view once after Try it. */
+  const taskShown = useRef(false);
   const stops = quickTourStops(layout, build, SURFACE, building);
   const stop = stops[Math.min(i, stops.length - 1)];
   const last = i === stops.length - 1;
@@ -227,26 +361,73 @@ export function Tour({ layout }: { layout: Layout }) {
     if (free) card.current?.querySelector<HTMLButtonElement>('[data-primary]')?.focus({ preventScroll: true });
   }, [live, i, stops.length, stop.title, stop.body]);
 
-  // Follow the target: the layout settles, the camera pans, the panel's rows slide.
+  // The panel's Copilot switch stands on the City tab only: from another tab, the stop shows City first.
+  const showTab = stop.tab;
+  const firstTarget = stop.targets[0];
+  useEffect(() => {
+    if (live && showTab && !document.querySelector(firstTarget)) bus.emit('showTab', { tab: showTab });
+  }, [live, showTab, firstTarget]);
+
+  // Follow the target and keep the stop's controls in sight: any scroll (the panel's body, a card's list), the window,
+  // the map and the side column resizing (the panel's map shrinks as its body scrolls), the page changing under the card
+  // (a tab, a card, Sally's task), and for a building on the map the camera too (it pans with no change on the page).
   const targetKey = stop.targets.join('|');
+  const keepKey = [...stop.keepClear, ...(tried ? (stop.keepClearTried ?? []) : []), ...ALWAYS_CLEAR].join('|');
+  const bringTask = layout === 'panel' && !!stop.tryIt && tried;
+  const mode = pos?.mode;
   useLayoutEffect(() => {
     if (!live) return;
     const targets = targetKey.split('|');
+    const keep = keepKey.split('|');
+    let frame = 0;
     const place = () => {
+      frame = 0;
+      const el = card.current;
+      if (el?.offsetWidth) sizes.current[el.classList.contains('pill') ? 'pill' : 'card'] = { w: el.offsetWidth, h: el.offsetHeight };
+      // After Try it, the panel brings Sally's steps into view once, so the task isn't finished unseen.
+      const task = bringTask && !taskShown.current ? document.querySelector<HTMLElement>('.tab-body .task') : null;
+      if (task) {
+        taskShown.current = true;
+        task.scrollIntoView?.({ block: 'nearest' });
+      }
       const r = findTarget(targets);
-      const box = card.current;
-      const p = placeCard(r, { w: box?.offsetWidth || 320, h: box?.offsetHeight || 200 }, { w: window.innerWidth, h: window.innerHeight });
+      const p = placeCoach({
+        target: r,
+        keepClear: keepClearBoxes(keep),
+        ...sizes.current,
+        view: { w: window.innerWidth, h: window.innerHeight },
+        side: boxOf('.side'),
+        stage: boxOf('.stage'),
+      });
       setRect((prev) => (prev && r && prev.top === r.top && prev.left === r.left && prev.width === r.width && prev.height === r.height ? prev : r));
-      setPos((prev) => (prev && prev.top === p.top && prev.left === p.left ? prev : p));
+      setPos((prev) => (prev && prev.mode === p.mode && prev.top === p.top && prev.left === p.left ? prev : p));
+    };
+    const soon = () => {
+      if (!frame) frame = requestAnimationFrame(place);
     };
     place();
-    window.addEventListener('resize', place);
-    const timer = setInterval(place, 400);
+    window.addEventListener('resize', soon);
+    window.addEventListener('scroll', soon, true);
+    const sizesSeen = typeof ResizeObserver === 'function' ? new ResizeObserver(soon) : undefined;
+    for (const sel of ['.stage', '.side']) {
+      const el = document.querySelector(sel);
+      if (el) sizesSeen?.observe(el);
+    }
+    // The card's own changes (its place, its size) are left out, or it would chase itself.
+    const changes = new MutationObserver((list) => {
+      if (list.some((m) => !layer.current?.contains(m.target))) soon();
+    });
+    changes.observe(document.querySelector('.app') ?? document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+    const timer = targets.some((t) => t.startsWith('@')) ? setInterval(soon, 400) : undefined;
     return () => {
-      window.removeEventListener('resize', place);
+      cancelAnimationFrame(frame);
+      window.removeEventListener('resize', soon);
+      window.removeEventListener('scroll', soon, true);
+      sizesSeen?.disconnect();
+      changes.disconnect();
       clearInterval(timer);
     };
-  }, [live, targetKey, tried, i]);
+  }, [live, targetKey, keepKey, bringTask, tried, i, mode]);
 
   if (!live) return null;
 
@@ -254,7 +435,10 @@ export function Tour({ layout }: { layout: Layout }) {
   const tryIt = () => {
     if (tried) return;
     setTried(true);
+    taskShown.current = false;
     startPracticeTask();
+    // Her steps are on the City tab's shift (the copy says so): it shows, a building's card or another tab giving way.
+    bus.emit('showTab', { tab: 'home' });
     // Try it goes from the card: the keys move to Next, the new amber button (never to <body>).
     requestAnimationFrame(() => card.current?.querySelector<HTMLButtonElement>('[data-next]')?.focus({ preventScroll: true }));
     bus.emit('flyTo', { id: `agent:${FIRST_STEPS.task.agentId}` });
@@ -274,31 +458,50 @@ export function Tour({ layout }: { layout: Layout }) {
   // own amber button isn't matched by a second one on most stops. The keys go to Try it until it's been tried, then Next.
   const tryFirst = !!stop.tryIt && !tried;
 
+  // No room beside the stop's controls: the same dialog folds to one docked row (its title and words stay for screen
+  // readers, and Enter, Escape and the buttons work the same).
+  const pill = pos?.mode === 'pill';
+
   return (
     // The layer takes no room and no presses (display: contents): only the card's own keys (Enter, Escape) are its.
-    <div className="tour-layer" role="presentation" onKeyDown={onKey}>
+    <div ref={layer} className="tour-layer" role="presentation" onKeyDown={onKey}>
       <div className={`tour-ring ${rect ? '' : 'none'}`} style={rect} aria-hidden="true" />
-      <div ref={card} className="tour-card" role="dialog" aria-labelledby="tour-title" aria-describedby="tour-body" style={pos ?? { top: 0, left: 0, opacity: 0 }}>
+      <div
+        ref={card}
+        className={`tour-card${pill ? ' pill' : ''}`}
+        role="dialog"
+        aria-labelledby="tour-title"
+        aria-describedby="tour-body"
+        style={pos ? { top: pos.top, left: pos.left } : { top: 0, left: 0, opacity: 0 }}
+      >
         <div className="tour-head">
-          <Portrait id="concierge" size={32} />
-          <h2 id="tour-title">{stop.title}</h2>
+          {!pill && <Portrait id="concierge" size={32} />}
+          <h2 id="tour-title" className={pill ? 'sr-only' : undefined}>
+            {stop.title}
+          </h2>
           <button className="btn ghost tiny tour-end" onClick={end}>
             {t.end}
           </button>
         </div>
-        <p id="tour-body">{stop.body}</p>
+        <p id="tour-body" className={pill ? 'sr-only' : undefined}>
+          {stop.body}
+        </p>
         {stop.tryIt && tried && (
-          <p className="tour-tried" role="status">
+          <p className={`tour-tried${pill ? ' sr-only' : ''}`} role="status">
             {t.tried}
           </p>
         )}
         <div className="tour-foot">
-          <span className="pips" role="img" aria-label={fill(t.label, { n: i + 1, of: stops.length })}>
-            {stops.map((_, k) => (
-              <i key={k} className={k === i ? 'on' : k < i ? 'done' : ''} />
-            ))}
-          </span>
-          {i > 0 && (
+          {pill ? (
+            <span className="tour-pill-n">{fill(t.label, { n: i + 1, of: stops.length })}</span>
+          ) : (
+            <span className="pips" role="img" aria-label={fill(t.label, { n: i + 1, of: stops.length })}>
+              {stops.map((_, k) => (
+                <i key={k} className={k === i ? 'on' : k < i ? 'done' : ''} />
+              ))}
+            </span>
+          )}
+          {i > 0 && !pill && (
             <button className="btn" onClick={() => setI(i - 1)}>
               {t.back}
             </button>
