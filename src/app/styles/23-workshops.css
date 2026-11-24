@@ -807,3 +807,11 @@
   gap: 4px;
   margin: 4px 0 8px;
 }
+
+/* The account number the check should print, large enough to compare digit by digit (asked for on 24 Nov 2026). */
+.account-number {
+  font-family: var(--font-mono);
+  font-size: 1.15em;
+  letter-spacing: 0.04em;
+  color: var(--ink-hi);
+}

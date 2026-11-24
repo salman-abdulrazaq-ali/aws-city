@@ -170,9 +170,10 @@ export function TaskCard({ task, openTab, quiet = false }: { task: TaskView; ope
       {phase === 'failed' && (
         <div className="task-result">
           {task.result && <Plain text={task.result} />}
-          {!quiet && (
+          {/* Refused because the switch is off (asked for on 23 Nov 2026): one press to where it's turned on, in Simple
+              mode's quiet card too (seen 24 Nov 2026: "this should show a button: turn it on, then ask again"). */}
+          {(!quiet || task.result?.includes(CLEANUP_SWITCH)) && (
             <div className="actions">
-              {/* Refused because the switch is off (asked for on 23 Nov 2026): one press to where it's turned on. */}
               {task.result?.includes(CLEANUP_SWITCH) && (
                 <button className="btn tiny primary" onClick={() => (feel.tap(), openAccountCard(openTab))}>
                   Turn it on (Deploy) →

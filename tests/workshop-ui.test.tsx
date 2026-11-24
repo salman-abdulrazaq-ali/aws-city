@@ -313,6 +313,33 @@ describe('for real', () => {
     expect(screen.queryByRole('alert')).toBeNull();
     expect(copy.disabled).toBe(false);
   });
+
+  // Seen 24 Nov 2026: after 🎲 the other steps still showed the old bucket until Check was pressed.
+  it('a new bucket name reaches every step at once, typed or suggested', () => {
+    useCity.setState({ backendKind: 'server', account: { linked: true, region: 'us-west-2' } });
+    useCity.getState().rememberWorkshop('s3-first-bucket', { names: { bucket: 'old-bucket-111' } });
+    act(() => useCity.getState().openWorkshop('s3-first-bucket'));
+    render(<Workshop />);
+    fireEvent.click(screen.getByRole('button', { name: /For real \(CloudShell or your terminal\)/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Suggest a free name/ }));
+    const suggested = (screen.getByRole('textbox', { name: /Your bucket name/ }) as HTMLInputElement).value;
+    expect(useCity.getState().prefs.workshopMemory?.['s3-first-bucket']?.names.bucket).toBe(suggested);
+    // Another step (Turn on versioning) shows the new name, not the old one.
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on versioning' }));
+    expect(document.querySelector('.workshop-cmd')?.textContent).toContain(`--bucket ${suggested} `);
+    expect(document.querySelector('.workshop-cmd')?.textContent).not.toContain('old-bucket-111');
+    // Typed by hand: the same.
+    fireEvent.change(screen.getByRole('textbox', { name: /Your bucket name/ }), { target: { value: 'typed-by-hand-222' } });
+    expect(useCity.getState().prefs.workshopMemory?.['s3-first-bucket']?.names.bucket).toBe('typed-by-hand-222');
+  });
+
+  it('the account number the check should print stands out', () => {
+    useCity.setState({ backendKind: 'server', account: { linked: true, region: 'us-west-2', accountId: '047463438585' } });
+    act(() => useCity.getState().openWorkshop('s3-first-bucket'));
+    render(<Workshop />);
+    fireEvent.click(screen.getByRole('button', { name: /For real \(CloudShell or your terminal\)/ }));
+    expect(document.querySelector('.account-number')?.textContent).toBe('047463438585');
+  });
 });
 
 // Seen 24 Nov 2026 in a terminal: the version id was typed as 1, 3 and 0 (InvalidArgument), the download "went nowhere",

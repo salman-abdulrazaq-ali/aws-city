@@ -108,6 +108,23 @@ describe('Watch it done', () => {
     expect(screen.queryByRole('button', { name: /Turn it on/ })).toBeNull();
   });
 
+  // Seen 24 Nov 2026: in Simple mode's quiet card the refusal had no button ("turn it on, then ask again").
+  it('a quiet card (Simple mode) still offers Turn it on and Try again for a switch refusal, and nothing else', () => {
+    const openTab = vi.fn();
+    act(() => useCity.getState().addTask('t11', 'delete my bucket test-demo-salman-8'));
+    send({ type: 'task.done', taskId: 't11', ok: false, result: '"test-demo-salman-8" wasn’t built by the city, so the agents can look at it but not change it. To let them, turn on “Let the city change things you made” in Deploy → Your AWS account.', xp: [] });
+    const { unmount } = render(<TaskCard task={useCity.getState().tasks.t11} openTab={openTab} quiet />);
+    expect(screen.getByRole('button', { name: /↻ Try again/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Turn it on (Deploy) →' }));
+    expect(openTab).toHaveBeenCalledWith('deploy');
+    unmount();
+    act(() => useCity.getState().addTask('t12', 'Launch a server called big m5.large'));
+    send({ type: 'task.done', taskId: 't12', ok: false, result: 'The city only builds small servers.', xp: [] });
+    render(<TaskCard task={useCity.getState().tasks.t12} openTab={openTab} quiet />);
+    expect(screen.queryByRole('button', { name: /Turn it on/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
+  });
+
   it('an agent offers a job as a little story, and Watch it done sends it', () => {
     render(<AgentOffer serviceId="s3" ask="Got holiday photos?" />);
     expect(screen.getByText(/Sally the Angler/)).toBeTruthy();
