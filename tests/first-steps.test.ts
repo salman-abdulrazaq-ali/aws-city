@@ -197,7 +197,8 @@ describe('the store on the path', () => {
       s().applyServerEvent({ type: 'deploy.preview', deployId: 'practice-2', templateId: 'photo-bucket', stackName: 'x', region: 'practice', changes: [] });
       s().applyServerEvent({ type: 'deploy.status', deployId: 'practice-2', status: 'complete' });
       vi.runAllTimers();
-      expect(s().prefs.firstSteps).toBeUndefined();
+      // The choice stays made (a cleared pref let the old first-run tour open over graduation's card).
+      expect(s().prefs.firstSteps).toBe('beginner');
       expect(firstSteps(s().progress, s().prefs)).toMatchObject({ active: false, graduated: true });
       expect(s().celebration).toBe(FIRST_STEPS_QUEST);
       // No quest stars a second time.

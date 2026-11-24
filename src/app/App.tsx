@@ -35,7 +35,7 @@ import { runPlan, type OpenTab as GoTo } from '@/ui/QuestLog';
 import { Home, taskMovedOn } from '@/ui/Home';
 import { Navigator } from '@/ui/Navigator';
 import { Icon, type IconName } from '@/ui/icons';
-import { CoachTips, Tour } from '@/ui/Tour';
+import { CoachTips, Tour, useFirstRunTour } from '@/ui/Tour';
 import { FirstStepsMoments, GuideCard, GuideStrip, useFirstSteps, useQuiet } from '@/ui/FirstSteps';
 import { FIRST_STEPS_QUEST } from '@/state/firstSteps';
 import { WorldIntro } from '@/ui/WorldIntro';
@@ -46,7 +46,7 @@ import { SoundCaptions } from '@/ui/SoundCaptions';
 import { BuildDrawer } from '@/ui/BuildDrawer';
 import { useKeepFocus } from '@/ui/useDialog';
 import { cardWaitsForKai } from '@/state/walk';
-import { citySummary, isTourDone, newlyUnlocked, nextTabIndex, readPref, readSet, TAB_KEY, UNLOCK_TOASTS_KEY, unlockText, writePref, writeSet } from '@/ui/logic';
+import { citySummary, newlyUnlocked, nextTabIndex, readPref, readSet, TAB_KEY, UNLOCK_TOASTS_KEY, unlockText, writePref, writeSet } from '@/ui/logic';
 import { GameCanvas } from './GameCanvas';
 import type { Layout } from './runtime';
 
@@ -68,9 +68,6 @@ const labelOf = (t: Tab) => TABS.find(([id]) => id === t)![2];
 /** The side panel's map at its smallest (styles/01-layout.css): it shrinks there while the tab below is scrolled. */
 const STAGE_FLOOR = 150;
 
-/** After the city has arrived, the first-run tour waits this long at most for the `arrived` moment. */
-const TOUR_FALLBACK_MS = 900;
-
 const savedTab = (): Tab => {
   const t = readPref(TAB_KEY);
   return TABS.some(([id]) => id === t) ? (t as Tab) : 'home';
@@ -81,7 +78,6 @@ export function App({ layout }: { layout: Layout }) {
   // Build mode in the side panel takes the panel's whole height for the city and its drawer (styles/26-build.css).
   const building = useCity((s) => !!s.build);
   const celebrating = useCity((s) => !!s.celebration);
-  const setTourOpen = useCity((s) => s.setTourOpen);
   const stage = useCity((s) => s.prefs.stage);
   const setPref = useCity((s) => s.setPref);
   const cityRegion = useCity((s) => s.cityRegion);
@@ -248,25 +244,8 @@ export function App({ layout }: { layout: Layout }) {
       }),
     [],
   );
-  // First run: the coach-mark tour, once the city has arrived (not on the world map, and not under automation, so
-  // scripted smoke runs aren't blocked; they open it with awsCity.useCity.getState().setTourOpen(true)).
-  // Not for a player on (or past) the first steps: the guide card teaches the city, and it never covers the map.
-  const pathChosen = !!prefs.firstSteps || path.active;
-  useEffect(() => {
-    if (view.name !== 'city' || pathChosen || isTourDone() || navigator.webdriver) return;
-    let timer: ReturnType<typeof setTimeout> | undefined = undefined;
-    const open = () => {
-      clearTimeout(timer);
-      off();
-      if (!isTourDone() && useCity.getState().view.name === 'city') setTourOpen(true);
-    };
-    const off = bus.on('arrived', open);
-    timer = setTimeout(open, TOUR_FALLBACK_MS);
-    return () => {
-      clearTimeout(timer);
-      off();
-    };
-  }, [view.name, setTourOpen, pathChosen]);
+  // First run: the coach-mark tour, once the city has arrived; never for a player on, past or back from the first steps.
+  useFirstRunTour();
 
   // A tab that newly appears: one toast (once per browser) and a dot until it's opened.
   const prevTabs = useRef<ReadonlySet<Tab> | undefined>(undefined);

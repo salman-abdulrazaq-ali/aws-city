@@ -89,6 +89,41 @@ function findTarget(selectors: string[]): Rect | undefined {
   return undefined;
 }
 
+/** After the city has arrived, the first-run tour waits this long at most for the `arrived` moment. */
+export const TOUR_FALLBACK_MS = 900;
+
+/**
+ * The first-run tour opens once the city has arrived (not on the world map, and not under automation, so scripted smoke
+ * runs aren't blocked; they open it with awsCity.useCity.getState().setTourOpen(true)). Never for a player who chose the
+ * first steps, is on them, is past them or is back from a replay: the guide card taught the city, so their tour is marked
+ * done (seen 24 Nov 2026: a replay's end cleared its pref and the old tour opened over graduation's card).
+ */
+export function useFirstRunTour() {
+  const city = useCity((s) => s.view.name === 'city');
+  const setOpen = useCity((s) => s.setTourOpen);
+  const chosen = useCity((s) => !!s.prefs.firstSteps);
+  const fs = useFirstSteps();
+  const path = chosen || fs.active || fs.graduated;
+  useEffect(() => {
+    if (path) markTourDone();
+  }, [path]);
+  useEffect(() => {
+    if (!city || path || isTourDone() || navigator.webdriver) return;
+    let timer: ReturnType<typeof setTimeout> | undefined = undefined;
+    const open = () => {
+      clearTimeout(timer);
+      off();
+      if (!isTourDone() && useCity.getState().view.name === 'city') setOpen(true);
+    };
+    const off = bus.on('arrived', open);
+    timer = setTimeout(open, TOUR_FALLBACK_MS);
+    return () => {
+      clearTimeout(timer);
+      off();
+    };
+  }, [city, setOpen, path]);
+}
+
 /** Three-step coach-mark tour. Esc skips, Enter goes next, Tab stays inside the card. */
 export function Tour({ layout }: { layout: Layout }) {
   const open = useCity((s) => s.tourOpen);

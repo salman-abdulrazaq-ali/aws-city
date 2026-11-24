@@ -31,6 +31,8 @@ const { LandmarkCard } = await import('@/ui/LandmarkCard');
 const { RequestCard } = await import('@/ui/RequestCard');
 const { Celebrate } = await import('@/ui/Celebrate');
 const { ANNOUNCE_GAP_MS } = await import('@/state/announce');
+const { useFirstRunTour, TOUR_FALLBACK_MS } = await import('@/ui/Tour');
+const { isTourDone } = await import('@/ui/logic');
 
 const REGION = 'us-west-2';
 /** A player on the first steps at `step` (0..5), S3 Lake put up. */
@@ -414,5 +416,71 @@ describe('graduation', () => {
     fireEvent.click(next);
     expect(useCity.getState().progress.quests?.['storage-static-site']?.status).toBe('active');
     expect(opened).toEqual(['home']);
+  });
+});
+
+describe('the old first-run tour', () => {
+  function Probe() {
+    useFirstRunTour();
+    return null;
+  }
+  // The tour stays out of scripted runs (navigator.webdriver), which is why the smoke never saw this: here the browser
+  // says it isn't automated, as on stage.
+  beforeEach(() => {
+    Object.defineProperty(navigator, 'webdriver', { configurable: true, get: () => false });
+    useCity.setState({ tourOpen: false });
+  });
+  afterEach(() => {
+    delete (navigator as { webdriver?: boolean }).webdriver;
+  });
+
+  it('still opens for a player who never chose the first steps (so this test can see it open)', () => {
+    vi.useFakeTimers();
+    useCity.setState({ prefs: { ...useCity.getState().prefs, firstSteps: undefined }, progress: { version: 2, landmarks: {}, updatedAt: '' } } as never);
+    render(<Probe />);
+    act(() => void vi.advanceTimersByTime(TOUR_FALLBACK_MS + 50));
+    expect(useCity.getState().tourOpen).toBe(true);
+  });
+
+  it('never opens when a replay ends, over graduation’s card (a legacy player who never saw the tour)', () => {
+    vi.useFakeTimers();
+    const s = () => useCity.getState();
+    useCity.setState({
+      prefs: { ...s().prefs, firstSteps: undefined },
+      progress: { version: 2, landmarks: {}, updatedAt: '', quests: { 'storage-static-site': { status: 'done', step: 7 } }, cities: { [REGION]: { landmarks: { s3: { discovered: true, xp: 100 } } } } },
+    } as never);
+    expect(isTourDone()).toBe(false);
+    render(<Probe />);
+    act(() => s().playFirstSteps());
+    act(() => {
+      s().arrive('s3');
+      s().recordGame('fishing', 3);
+      for (const id of FIRST_STEPS.deck) s().reviewCard(id, 'good');
+      bus.emit('citizenRequestDone', { answered: true });
+      s().applyServerEvent({ type: 'task.plan', taskId: 'practice-task-t', agentId: 's3', targetServiceId: 's3', steps: ['a'] });
+      s().applyServerEvent({ type: 'task.done', taskId: 'practice-task-t', ok: true, result: 'ok', xp: [] });
+      s().applyServerEvent({ type: 'deploy.preview', deployId: 'practice-t', templateId: 'photo-bucket', stackName: 'x', region: 'practice', changes: [] });
+      s().applyServerEvent({ type: 'deploy.status', deployId: 'practice-t', status: 'complete' });
+    });
+    expect(s().celebration).toBe('first-steps');
+    act(() => {
+      bus.emit('arrived', undefined);
+      vi.advanceTimersByTime(TOUR_FALLBACK_MS * 3);
+    });
+    expect(s().tourOpen).toBe(false);
+    expect(isTourDone()).toBe(true);
+    expect(s().prefs.firstSteps).toBe('beginner');
+  });
+
+  it('is marked done once a path is chosen, or skipped', () => {
+    render(<Probe />);
+    expect(isTourDone()).toBe(true);
+    cleanup();
+    localStorage.clear();
+    useCity.setState({ prefs: { ...useCity.getState().prefs, firstSteps: undefined }, progress: { version: 2, landmarks: {}, updatedAt: '' } } as never);
+    render(<Probe />);
+    expect(isTourDone()).toBe(false);
+    act(() => useCity.getState().skipFirstSteps());
+    expect(isTourDone()).toBe(true);
   });
 });

@@ -2027,7 +2027,9 @@ function replayEvent(get: () => CityState, set: (p: Partial<CityState>) => void,
   }
   const was = s.progress.quests?.[FIRST_STEPS_QUEST]?.status;
   s.setPref('firstStepsReplay', undefined);
-  s.setPref('firstSteps', undefined);
+  // The player has chosen (and now done) the path: a cleared pref read as "never chose", and the old first-run tour
+  // opened over graduation's card (src/ui/Tour.tsx useFirstRunTour).
+  s.setPref('firstSteps', 'beginner');
   const p = get().progress;
   if (was !== 'done') set({ progress: { ...p, quests: { ...p.quests, [FIRST_STEPS_QUEST]: { status: 'done', step: q.steps.length } }, updatedAt: new Date().toISOString() } });
   set({ celebration: FIRST_STEPS_QUEST });
