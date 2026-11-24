@@ -5,7 +5,7 @@ import flavourJson from '../../shared/region-flavour.json' with { type: 'json' }
 const FLAVOUR = flavourJson as { regions: Record<string, { hello: string; language: string }> };
 import type { ConnectionStatus } from '@/backend/AgentBackend';
 import type { AwsHealthEvent, AwsNewsEvent, CityBillEvent, LeaderboardStateEvent, PresenceStateEvent, SavedDesign,
-  CityFlowEvent, CityFinding, CityInventoryEvent, DeployChange, DeployStatusEvent, PillarKey, Progress, ServerEvent, StepStatus } from '@/backend/contract';
+  CityFlowEvent, CityFinding, CityInventoryEvent, DeployChange, DeployStatusEvent, PillarKey, Progress, ServerEvent, StepStatus, WorkshopProgress } from '@/backend/contract';
 import { placeFor, TIER_NAMES, tierForXp, type GameId } from '@/world/places';
 import { questById, serviceOfCard, type QuestStep } from '@/world/content';
 import { review, xpFor, type Grade } from '@/learning/srs';
@@ -223,7 +223,7 @@ export interface AccountState {
   unlinking?: string;
   /** After a Disconnect: the Region whose AWSCity stack is still in the account until the player deletes it. */
   stackLeft?: string;
-  /** After a Disconnect: the account and switch it had, so 🔁 Reconnect is one press (the server kept its ExternalId). */
+  /** After a Disconnect: the account and switch it had, so Connect is one press (the server kept its ExternalId). */
   lastAccountId?: string;
   lastCleanup?: boolean;
 }
@@ -332,6 +332,11 @@ export interface Prefs {
   certGoal?: string;
   /** Each workshop's names (`<table>` → `orders`) and terminal history, so ↑, Tab and CloudShell's check reuse them. */
   workshopMemory?: Record<string, WorkshopMemory>;
+  /**
+   * Workshop steps the player unticked (`<workshop>/<step>` → what the step had): ticking it again, or doing it again,
+   * pays nothing twice and a step done for real comes back as real (untickWorkshopStep). On this device only.
+   */
+  workshopUnticked?: Record<string, StepMode>;
   /** The season the city is drawn in (spring, summer, autumn, winter: a test override, CityScene); absent = the calendar's. */
   season?: string;
   /** v2.15: the season road a finished shift fills (src/state/season.ts id); absent = this month's. Was `season` before round 3 step 5. */
@@ -362,6 +367,15 @@ export const cleanWorkshopMemory = (v: unknown): Record<string, WorkshopMemory> 
   }
   return Object.keys(out).length ? out : undefined;
 };
+/** prefs.workshopUnticked as stored: `<workshop>/<step>` ids → 'practice' | 'real' (at most 500). */
+export const cleanUnticked = (v: unknown): Record<string, StepMode> | undefined => {
+  if (!v || typeof v !== 'object') return undefined;
+  const out: Record<string, StepMode> = {};
+  for (const [k, m] of Object.entries(v as Record<string, unknown>).slice(0, 500)) {
+    if (/^[a-z0-9-]{1,60}\/[a-z0-9-]{1,60}$/.test(k) && (m === 'practice' || m === 'real')) out[k] = m;
+  }
+  return Object.keys(out).length ? out : undefined;
+};
 const PREFS_KEY = 'aws-city-prefs';
 /** An AWS CLI profile name the city will put in a command (letters, digits and . _ + -, no spaces or shell characters). */
 export const AWS_PROFILE_NAME = /^[A-Za-z0-9_.+-]{1,64}$/;
@@ -386,6 +400,7 @@ const loadPrefs = (): Prefs => {
         ...(v.builder === true ? { builder: true } : {}),
         ...(typeof v.certGoal === 'string' && /^[a-z0-9-]{3,60}$/.test(v.certGoal) ? { certGoal: v.certGoal } : {}),
         ...(cleanWorkshopMemory(v.workshopMemory) ? { workshopMemory: cleanWorkshopMemory(v.workshopMemory) } : {}),
+        ...(cleanUnticked(v.workshopUnticked) ? { workshopUnticked: cleanUnticked(v.workshopUnticked) } : {}),
         // The road pick moved from `season` (which also named the art's season) to `road`: an old road pick moves over.
         ...(typeof v.season === 'string' && /^[a-z0-9-]{3,40}$/.test(v.season) && !seasonById(v.season) ? { season: v.season } : {}),
         ...(typeof v.road === 'string' && seasonById(v.road) ? { road: v.road } : typeof v.season === 'string' && seasonById(v.season) ? { road: v.season } : {}),
@@ -512,6 +527,8 @@ export interface CityState {
    * a star less for each hint taken. In the offline demo "real" counts as practice. Returns the stars paid.
    */
   workshopStep(workshopId: string, stepId: string, mode: StepMode, hints?: number): number;
+  /** Unticks a workshop step: it's no longer done, the stars it paid stay paid (prefs.workshopUnticked), and a finished workshop stays finished. */
+  untickWorkshopStep(workshopId: string, stepId: string): void;
   /** Keeps a workshop's names and a terminal line (prefs.workshopMemory). */
   rememberWorkshop(workshopId: string, patch: { names?: Record<string, string>; line?: string }): void;
   /** v2.10: an AWS North Hall talk's check passed: its buildings grow (TALK_XP each), once per talk. */
@@ -983,13 +1000,22 @@ export const useCity = create<CityState>()((set, get) => ({
     const w = workshopById(workshopId);
     if (!w?.steps.some((st) => st.id === stepId)) return 0;
     const mode = honestMode(asked, get().backendKind === 'mock');
-    const { progress } = get();
-    const prev = progress.workshops?.[workshopId];
+    const stored = get().progress.workshops?.[workshopId];
+    // A step unticked earlier counts as what it had (prefs.workshopUnticked): done again, it pays nothing twice and a
+    // step done for real comes back as real.
+    const key = `${workshopId}/${stepId}`;
+    const unticked = get().prefs.workshopUnticked;
+    const had = stored?.steps[stepId] ? undefined : unticked?.[key];
+    const prev: WorkshopProgress | undefined = had ? { ...stored, steps: { ...stored?.steps, [stepId]: had } } : stored;
+    if (unticked?.[key]) {
+      const { [key]: _gone, ...rest } = unticked;
+      get().setPref('workshopUnticked', Object.keys(rest).length ? rest : undefined);
+    }
     const stars = stepReward(prev, stepId, mode, hints);
     const { next, finished } = withStep(prev, w.steps.map((st) => st.id), stepId, mode, dayKey());
     // A quest's workshop step counts any step done there, a step done again included (so a finished one never sticks).
     get().questEvent((st) => st.kind === 'workshop' && st.workshopId === workshopId);
-    if (JSON.stringify(next) === JSON.stringify(prev)) {
+    if (JSON.stringify(next) === JSON.stringify(stored)) {
       bus.emit('workshopStep', { workshopId, stepId, mode, stars: 0, finished: false });
       return 0;
     }
@@ -1007,6 +1033,15 @@ export const useCity = create<CityState>()((set, get) => ({
       bus.emit('workshopDone', { workshopId, serviceId: w.serviceId });
     }
     return stars;
+  },
+  untickWorkshopStep: (workshopId, stepId) => {
+    const stored = get().progress.workshops?.[workshopId];
+    const had = stored?.steps[stepId];
+    if (!had) return;
+    const { [stepId]: _gone, ...steps } = stored.steps;
+    // The finish stays (the building stays established, its bonus isn't paid again); what the step had is remembered.
+    set({ progress: { ...get().progress, workshops: { ...get().progress.workshops, [workshopId]: { ...stored, steps } }, updatedAt: new Date().toISOString() } });
+    get().setPref('workshopUnticked', { ...get().prefs.workshopUnticked, [`${workshopId}/${stepId}`]: had });
   },
   rememberWorkshop: (workshopId, { names, line }) => {
     const all = get().prefs.workshopMemory ?? {};

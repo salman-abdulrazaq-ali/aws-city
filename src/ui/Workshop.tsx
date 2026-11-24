@@ -294,14 +294,33 @@ function WorkshopBody({ w }: { w: WorkshopDef }) {
       <ModeIntro mode={mode} demo={demo} names={names} />
       {mode === 'real' && !demo && <ShellChoice />}
       {mode === 'real' && !demo && <AccountCheck />}
+      {/* Real tick boxes (asked for on 24 Nov 2026: the ⬜ looked like a box but only opened the step): the box ticks or
+          unticks the step, the title opens it. A tick by hand is practice; Check my account makes it real (✅). */}
       <ol className="workshop-steps">
-        {w.steps.map((s, i) => (
-          <li key={s.id} className={i === at ? 'now' : ''}>
-            <button className="btn ghost tiny" aria-current={i === at ? 'step' : undefined} onClick={() => setAt(i)}>
-              <span aria-hidden="true">{progress?.steps[s.id] === 'real' ? '✅' : progress?.steps[s.id] ? '☑️' : s.cleanup ? '🧹' : '⬜'}</span> {s.title}
-            </button>
-          </li>
-        ))}
+        {w.steps.map((s, i) => {
+          const had = progress?.steps[s.id];
+          return (
+            <li key={s.id} className={i === at ? 'now' : ''}>
+              <input
+                type="checkbox"
+                checked={!!had}
+                aria-label={`${s.title} done`}
+                onChange={(e) => {
+                  if (e.target.checked) useCity.getState().workshopStep(w.id, s.id, 'practice');
+                  else {
+                    useCity.getState().untickWorkshopStep(w.id, s.id);
+                    feel.tap();
+                  }
+                }}
+              />
+              <button className="btn ghost tiny" aria-current={i === at ? 'step' : undefined} onClick={() => setAt(i)}>
+                {s.cleanup && <span aria-hidden="true">🧹 </span>}
+                {s.title}
+                {had === 'real' && <span aria-hidden="true"> ✅</span>}
+              </button>
+            </li>
+          );
+        })}
       </ol>
       {step && (
         <StepView
@@ -390,7 +409,7 @@ function StepView(props: {
       )}
       <h4>
         {step.title}
-        {done && <span className="muted small"> · {done === 'real' ? 'checked in your account' : 'done in practice'}</span>}
+        {done && <span className="muted small"> · {done === 'real' ? 'checked in your account' : 'done'}</span>}
       </h4>
       {/* Once the step is done its description folds away, so the terminal and its tools sit higher. */}
       {done ? (

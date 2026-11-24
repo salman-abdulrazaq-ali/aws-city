@@ -13,7 +13,7 @@ const asked = vi.fn((districtId: string, _q: string, shown: string) => {
 });
 vi.mock('@/app/runtime', async (importOriginal) => ({ ...(await importOriginal<object>()), verifyWorkshopStep: verify, askDistrict: asked }));
 
-const { useCity } = await import('@/state/store');
+const { useCity, cleanUnticked } = await import('@/state/store');
 const { bus } = await import('@/state/bus');
 const { Workshop } = await import('@/ui/Workshop');
 const { WorkshopDone, DONE_CARD_MS } = await import('@/ui/WorkshopDone');
@@ -80,6 +80,68 @@ describe('the practice terminal in a workshop', () => {
     fireEvent.change(terminal(), { target: { value: 'aws dynamodb wait table-exists --table-name ' } });
     fireEvent.keyDown(terminal(), { key: 'Tab' });
     expect(terminal().value).toBe('aws dynamodb wait table-exists --table-name shop ');
+  });
+});
+
+// Asked for on 24 Nov 2026: the ⬜ looked like a tick box but only opened the step.
+describe('the step list’s tick boxes', () => {
+  const box = (title: string) => screen.getByLabelText(`${title} done`) as HTMLInputElement;
+  const steps = () => useCity.getState().progress.workshops?.[ID]?.steps ?? {};
+
+  it('a tick marks the step done (practice stars, once); unticking undoes it, and ticking again pays nothing twice', () => {
+    useCity.setState({ prefs: { ...useCity.getState().prefs, workshopUnticked: undefined } });
+    open();
+    render(<Workshop />);
+    expect(box('Check who you are').checked).toBe(false);
+    const before = useCity.getState().progress;
+    act(() => fireEvent.click(box('Check who you are')));
+    expect(steps().whoami).toBe('practice');
+    expect(box('Check who you are').checked).toBe(true);
+    const paid = JSON.stringify(useCity.getState().progress.landmarks) !== JSON.stringify(before.landmarks) || JSON.stringify(useCity.getState().progress.cities) !== JSON.stringify(before.cities);
+    expect(paid).toBe(true);
+    act(() => fireEvent.click(box('Check who you are')));
+    expect(steps().whoami).toBeUndefined();
+    expect(box('Check who you are').checked).toBe(false);
+    expect(useCity.getState().prefs.workshopUnticked).toEqual({ [`${ID}/whoami`]: 'practice' });
+    // Ticked again: done again, no new stars, and the ledger entry goes.
+    let stars = -1;
+    const off = bus.on('workshopStep', (e) => (stars = e.stars));
+    act(() => fireEvent.click(box('Check who you are')));
+    off();
+    expect(stars).toBe(0);
+    expect(steps().whoami).toBe('practice');
+    expect(useCity.getState().prefs.workshopUnticked).toBeUndefined();
+  });
+
+  it('a step checked for real shows ✅; unticked and ticked again, it comes back as real', () => {
+    useCity.setState({ progress: { ...base, workshops: { [ID]: { steps: { whoami: 'real' } } } }, prefs: { ...useCity.getState().prefs, workshopUnticked: undefined } });
+    open();
+    render(<Workshop />);
+    expect(screen.getByRole('button', { name: /Check who you are/ }).textContent).toMatch(/✅/);
+    act(() => fireEvent.click(box('Check who you are')));
+    expect(steps().whoami).toBeUndefined();
+    act(() => fireEvent.click(box('Check who you are')));
+    expect(steps().whoami).toBe('real');
+  });
+
+  it('unticking keeps a finished workshop finished (its bonus isn’t paid again)', () => {
+    useCity.setState({ progress: { ...base, workshops: { [ID]: { steps: { whoami: 'practice' }, done: '2026-11-20' } } } });
+    act(() => useCity.getState().untickWorkshopStep(ID, 'whoami'));
+    expect(useCity.getState().progress.workshops?.[ID]).toEqual({ steps: {}, done: '2026-11-20' });
+  });
+
+  it('the unticked steps read back strictly from storage', () => {
+    expect(cleanUnticked({ [`${ID}/whoami`]: 'real', 'x/y': 'practice', 'bad key': 'real', [`${ID}/create`]: 'maybe' })).toEqual({ [`${ID}/whoami`]: 'real', 'x/y': 'practice' });
+    expect(cleanUnticked('nope')).toBeUndefined();
+    expect(cleanUnticked({})).toBeUndefined();
+  });
+
+  it('pressing a step’s title opens it without ticking it', () => {
+    open();
+    render(<Workshop />);
+    fireEvent.click(screen.getByRole('button', { name: /Create the table/ }));
+    expect(screen.getByRole('region', { name: 'Create the table' })).toBeTruthy();
+    expect(steps().create).toBeUndefined();
   });
 });
 
