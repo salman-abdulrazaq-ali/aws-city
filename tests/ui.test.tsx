@@ -123,7 +123,8 @@ describe('explain it back', () => {
   it('asks one question, waits for a few words, then shows the key ideas used and the agent’s reply', async () => {
     const { ExplainBack } = await import('@/ui/ExplainBack');
     const { QUESTS } = await import('@/world/content');
-    const q = QUESTS[0];
+    // The first regular quest (QUESTS[0] is the first steps, played with Connie's guide).
+    const q = QUESTS.find((x) => x.id !== 'first-steps')!;
     render(<ExplainBack quest={q} />);
     fireEvent.click(screen.getByRole('button', { name: /Explain it back/ }));
     const box = screen.getByRole('textbox', { name: /In your own words/ });
@@ -420,7 +421,8 @@ describe('the City tab: today’s shift', () => {
     const { QUESTS } = await import('@/world/content');
     const { setNextRunner } = await import('@/state/next');
     const region = useCity.getState().cityRegion;
-    const q = QUESTS[0];
+    // The first regular quest (QUESTS[0] is the first steps, played with Connie's guide).
+    const q = QUESTS.find((x) => x.id !== 'first-steps')!;
     useCity.setState({
       view: { name: 'city' },
       prefs: { ...useCity.getState().prefs, region, simple: false },
@@ -450,7 +452,8 @@ describe('the City tab: today’s shift', () => {
     const { Home } = await import('@/ui/Home');
     const { QUESTS } = await import('@/world/content');
     const region = useCity.getState().cityRegion;
-    const q = QUESTS[0];
+    // The first regular quest (QUESTS[0] is the first steps, played with Connie's guide).
+    const q = QUESTS.find((x) => x.id !== 'first-steps')!;
     useCity.setState({
       view: { name: 'city' },
       prefs: { ...useCity.getState().prefs, region, simple: false },

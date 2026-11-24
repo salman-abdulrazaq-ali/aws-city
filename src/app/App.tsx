@@ -36,6 +36,8 @@ import { Home, taskMovedOn } from '@/ui/Home';
 import { Navigator } from '@/ui/Navigator';
 import { Icon, type IconName } from '@/ui/icons';
 import { CoachTips, Tour } from '@/ui/Tour';
+import { FirstStepsMoments, GuideCard, GuideStrip, useFirstSteps, useQuiet } from '@/ui/FirstSteps';
+import { FIRST_STEPS_QUEST } from '@/state/firstSteps';
 import { WorldIntro } from '@/ui/WorldIntro';
 import { useCanConnect, useLadder } from '@/ui/useLadder';
 import { FindingCard } from '@/ui/FindingCard';
@@ -124,7 +126,10 @@ export function App({ layout }: { layout: Layout }) {
   // hosted player with no account linked yet (Deploy is where it connects).
   const linkingNow = useCity((s) => linking(s.account));
   const canConnect = useCanConnect();
-  const simpleCtx = { steps: steps.split(','), linked, deployWaiting, linking: linkingNow, canConnect };
+  // The first steps (src/state/firstSteps.ts): the quiet city hides what the path doesn't teach yet, in either mode.
+  const path = useFirstSteps();
+  const quiet = useQuiet();
+  const simpleCtx = { steps: steps.split(','), linked, deployWaiting, linking: linkingNow, canConnect, ...quiet };
   const deployShown = shows('deployTab', prefs, simpleCtx);
   /** The tabs this player has earned and this mode shows (a new one gets the unlock toast). */
   const earned = useMemo(() => new Set([...l.tabs].filter((t) => t !== 'deploy' || deployShown)), [l.tabs, deployShown]);
@@ -245,8 +250,10 @@ export function App({ layout }: { layout: Layout }) {
   );
   // First run: the coach-mark tour, once the city has arrived (not on the world map, and not under automation, so
   // scripted smoke runs aren't blocked; they open it with awsCity.useCity.getState().setTourOpen(true)).
+  // Not for a player on (or past) the first steps: the guide card teaches the city, and it never covers the map.
+  const pathChosen = !!prefs.firstSteps || path.active;
   useEffect(() => {
-    if (view.name !== 'city' || isTourDone() || navigator.webdriver) return;
+    if (view.name !== 'city' || pathChosen || isTourDone() || navigator.webdriver) return;
     let timer: ReturnType<typeof setTimeout> | undefined = undefined;
     const open = () => {
       clearTimeout(timer);
@@ -259,7 +266,7 @@ export function App({ layout }: { layout: Layout }) {
       clearTimeout(timer);
       off();
     };
-  }, [view.name, setTourOpen]);
+  }, [view.name, setTourOpen, pathChosen]);
 
   // A tab that newly appears: one toast (once per browser) and a dot until it's opened.
   const prevTabs = useRef<ReadonlySet<Tab> | undefined>(undefined);
@@ -276,6 +283,8 @@ export function App({ layout }: { layout: Layout }) {
     if (!added.length) return;
     writeSet(UNLOCK_TOASTS_KEY, [...shown, ...added]);
     setFresh((f) => new Set([...f, ...added]));
+    // Graduation's card names what opened: the tabs get their dot, never a toast on top of it.
+    if (useCity.getState().celebration === FIRST_STEPS_QUEST) return;
     useCity.getState().toast('🔓', unlockText(added.map(labelOf)));
   }, [earned]);
 
@@ -305,7 +314,6 @@ export function App({ layout }: { layout: Layout }) {
         <CityAnnouncer />
         <SoundCaptions />
         <CarrierCard />
-        <RequestCard />
         {/* The panel's map is short: Connie's card stands just under it (in the side column), never over the dots. */}
         {layout === 'full' && <WorldIntro />}
         <Minimap layout={layout} />
@@ -370,11 +378,14 @@ export function App({ layout }: { layout: Layout }) {
             </div>
             <div ref={body} className="tab-body" role="tabpanel" id="city-tabpanel" aria-labelledby={`tab-${shownTab}`} tabIndex={0} onScroll={layout === 'panel' ? onBodyScroll : undefined}>
               <ErrorBoundary what="This tab" resetKey={shownTab}>
+              {/* The first steps: Connie's guide stands above whatever the City tab shows, a building's card included. */}
+              {shownTab === 'home' && <GuideCard openTab={setTab} />}
+              {(shownTab === 'learn' || shownTab === 'deploy') && <GuideStrip tab={shownTab} openTab={setTab} />}
               {shownTab === 'home' &&
                 (place ? (
                   <>
                     <button className="btn ghost tiny back-link" onClick={() => setPlace(false)}>
-                      <Icon name="back" size={10} /> {simple ? 'To do' : 'Today’s shift'}
+                      <Icon name="back" size={10} /> {path.active ? 'Back' : simple ? 'To do' : 'Today’s shift'}
                     </button>
                     <LandmarkCard openTab={setTab} layout={layout} />
                   </>
@@ -406,13 +417,18 @@ export function App({ layout }: { layout: Layout }) {
               {shownTab === 'deploy' && <DeployPanel />}
               </ErrorBoundary>
             </div>
-            {/* The Copilot's switch stands on the City tab (and wherever a console page or the Copilot is on). */}
-            <PromptBar layout={layout} consoleHere={shownTab === 'home'} />
+            {/* The Copilot's switch stands on the City tab (and wherever a console page or the Copilot is on). Both wait
+                while the first steps run (introduced at graduation as "Ask the city"). */}
+            {shows('promptBar', prefs, quiet) && <PromptBar layout={layout} consoleHere={shownTab === 'home'} />}
             <ErrorBoundary what="This card">
               <FindingCard openTab={setTab} />
             </ErrorBoundary>
           </>
         )}
+        {/* A citizen's question is a bottom sheet over the side column, every answer in view (never squeezed into the
+            panel's short map). */}
+        <RequestCard />
+        <FirstStepsMoments />
       </aside>
       <ErrorBoundary what="This card">
         <IncidentCard openTab={setTab} />

@@ -29,8 +29,9 @@ describe('first screen', () => {
     const offMap = setDiver(() => true); // the world map is drawn (the card waits for it)
     render(<WorldIntro />);
     const text = screen.getByRole('region', { name: 'Where to start' }).textContent ?? '';
-    expect(text).toMatch(/AWS is Amazon’s cloud/);
-    expect(text.indexOf('AWS is')).toBeLessThan(text.indexOf('Pick one'));
+    expect(text).toMatch(/AWS is Amazon['’]s cloud/);
+    // AWS first, then what a Region is (shared/first-steps.json map.connie, DESIGN-tutorial §3).
+    expect(text.indexOf('AWS is')).toBeLessThan(text.indexOf('Region'));
     offMap();
   });
 });

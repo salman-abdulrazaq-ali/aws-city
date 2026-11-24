@@ -8,11 +8,16 @@ import { feel } from './feedback';
 import { readPref, writePref } from './logic';
 import { ForLearners, Plain } from './Term';
 import { useDialog, useShieldGame } from './useDialog';
+import { FIRST_STEPS, fill, quietCity } from '@/state/firstSteps';
+import { announce } from '@/state/announce';
 
 /**
  * A citizen's question (src/state/requests.ts, raised by src/game/Requests.ts when Kai walks up): three answers in
  * simple words. Answering is a flashcard review for that building (right = good, wrong = again), and a right answer
  * adds a small thank-you. The card then says which building grew.
+ *
+ * A bottom sheet over the side column (App.tsx), never squeezed into the panel's short map: every answer in view, keys
+ * 1–3 answer, and once answered the verdict leads ("Right!" / "Not quite: …"), with "Back to the city" focused.
  */
 /** Only an answered question uses up one of the day's five (closed unanswered, the citizen keeps their "?"). */
 function countAnswer() {
@@ -25,11 +30,22 @@ function countAnswer() {
   }
 }
 
+/** The verdict that leads the sheet once answered (the first steps say it their own way). */
+function verdictOf(r: CitizenRequest, picked: number, onPath: boolean): string {
+  const c = FIRST_STEPS.steps[3];
+  if (picked === r.right) return onPath && c.right ? c.right : `Thanks! +${THANKS_STARS} ⭐`;
+  return onPath && c.wrong ? fill(c.wrong, { answer: r.options[r.right] }) : 'Not quite, but now you both know.';
+}
+
 export function RequestCard() {
   const [ask, setAsk] = useState<{ request: CitizenRequest; name: string }>();
   const [picked, setPicked] = useState<number>();
   const box = useRef<HTMLElement>(null);
   const scrim = useRef<HTMLDivElement>(null);
+  const back = useRef<HTMLButtonElement>(null);
+  const choice = useRef<(i: number) => void>(() => undefined);
+  // The first steps' citizen: the path's own words for the verdict.
+  const onPath = useCity((s) => quietCity(s.progress, s.prefs));
   useEffect(
     () =>
       bus.on('citizenRequest', (r) => {
@@ -52,12 +68,32 @@ export function RequestCard() {
   useDialog(shown, box, close);
   // The backdrop is modal for the city too: a tap on it never selects a building, pans or walks Kai away.
   useShieldGame(shown, scrim);
+  // 1–3 answer while the question is open (first, so a flashcard behind it on Learn isn't graded by the same key).
+  const open = shown && picked === undefined;
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || !/^[1-9]$/.test(e.key)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      choice.current(Number(e.key) - 1);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [open]);
+  // Answered: the verdict leads (and is said), and "Back to the city" takes focus (Enter goes back).
+  const said = ask && picked !== undefined ? verdictOf(ask.request, picked, onPath) : undefined;
+  useEffect(() => {
+    if (!said) return;
+    announce(said);
+    back.current?.focus({ preventScroll: true });
+  }, [said]);
   if (!ask || building) return null;
   const { request: r, name } = ask;
   const answered = picked !== undefined;
   const right = picked === r.right;
   const choose = (i: number) => {
-    if (answered) return;
+    if (answered || i < 0 || i >= r.options.length) return;
     setPicked(i);
     countAnswer();
     const s = useCity.getState();
@@ -68,6 +104,7 @@ export function RequestCard() {
     } else feel.bad();
     bus.emit('answer', { serviceId: r.serviceId, ok: i === r.right });
   };
+  choice.current = choose;
   const st = useCity.getState();
   return (
     <div ref={scrim} className="finding-scrim" role="presentation">
@@ -84,6 +121,13 @@ export function RequestCard() {
             ✕
           </button>
         </header>
+        {said && (
+          <p className={`request-verdict ${right ? 'right' : 'wrong'}`}>
+            <b>
+              <Plain text={said} still />
+            </b>
+          </p>
+        )}
         <p className="request-q">
           <Plain text={r.question} />
         </p>
@@ -96,27 +140,29 @@ export function RequestCard() {
               aria-pressed={picked === i}
               onClick={() => choose(i)}
             >
+              <span className="kbd" aria-hidden="true">
+                {i + 1}
+              </span>
               <Plain text={o} still />
             </button>
           ))}
         </div>
         {answered && (
-          <div className="request-result" role="status">
-            <p>
-              <b>{right ? `Thanks! +${THANKS_STARS} ⭐` : 'Not quite, but now you both know.'}</b>
-            </p>
-            {!right && (
+          <div className="request-result">
+            {!right && !onPath && (
               <p>
                 The answer: <Plain text={r.options[r.right]} />
               </p>
             )}
             <p className="muted">🏗️ {growthLine(growthOf(st.progress, r.serviceId, st.cityRegion))}</p>
-            <ForLearners>
-              <p>
-                <Plain text={r.answer} />
-              </p>
-            </ForLearners>
-            <button className="btn primary" onClick={close}>
+            {!onPath && (
+              <ForLearners>
+                <p>
+                  <Plain text={r.answer} />
+                </p>
+              </ForLearners>
+            )}
+            <button ref={back} className="btn primary" onClick={close}>
               Back to the city
             </button>
           </div>

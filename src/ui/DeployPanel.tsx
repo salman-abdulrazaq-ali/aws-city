@@ -58,6 +58,7 @@ import { useCanConnect } from './useLadder';
 import { QrCode } from './QrCode';
 import { ForLearners } from './Term';
 import { Plain } from './Term';
+import { FIRST_STEPS, firstStep, quietCity } from '@/state/firstSteps';
 
 /**
  * What a build preview costs: in the practice account, plainly free (the real estimate folds away for learners);
@@ -416,6 +417,17 @@ export function DeployPanel() {
   const { clear } = pending;
   /** The server asked for an authenticator first: its setup shows, and the linking steps wait until it's done. */
   const mfaFirst = !!account.mfaRequired && canSetUpMfa();
+  /**
+   * The first steps (DESIGN-tutorial §4.2 stage 6): only the waiting approval, said plainly (no account steps, no
+   * blueprints, no account number), for every player, a hosted one with a linked account too. The plan is a practice
+   * build, decided on this device (src/backend/ServerBackend.ts planPractice): nothing is sent, nothing touches AWS.
+   */
+  const onPath = useCity((s) => quietCity(s.progress, s.prefs));
+  /** The plan the path's deploy step asks for (photo-bucket), while that's the step on screen. */
+  const pathPlan = useCity((s) => {
+    const st = firstStep(s.progress, s.prefs);
+    return st?.kind === 'deploy' ? st.templateId : undefined;
+  });
   // A new setup link (another Region, Allow small fixes, Link again) means a new stack: step 3 waits for it again.
   useEffect(() => setStackMade(false), [account.linkUrl]);
 
@@ -461,6 +473,13 @@ export function DeployPanel() {
     heading.focus({ preventScroll: true });
     useCity.getState().clearDeployFocus();
   }, [focusId, previewKey]);
+  // On the first steps, Sally's plan arriving takes focus to its title too (Tab then reaches Approve), never Approve.
+  useEffect(() => {
+    if (!onPath || !previewKey) return;
+    const heading = headingRefs.current.get(previewKey.split(',')[0]);
+    if (!heading || heading.closest('.card')?.contains(document.activeElement)) return;
+    heading.focus({ preventScroll: true });
+  }, [onPath, previewKey]);
 
   const verify = () => {
     const requestId = verifyAccount(accountInput(role));
@@ -677,7 +696,7 @@ export function DeployPanel() {
     // title row says neither again; an older server's preview with no account id keeps the Region here.
     const targetShown = preview && !!(d.accountId ?? (kind === 'mock' ? account.accountId : undefined));
     const meta = [
-      targetShown ? undefined : d.region,
+      targetShown || onPath ? undefined : d.region,
       preview ? undefined : isPracticeDeploy(d.deployId) && d.status === 'complete' ? 'practice: nothing was created' : group ? statusWord(d) : (STATUS_TEXT[d.status] ?? d.status),
     ]
       .filter(Boolean)
@@ -701,8 +720,10 @@ export function DeployPanel() {
         {d.status === 'preview' && (
           <BuildPreview
             d={d}
+            plain={onPath}
             grouped={!!group}
-            offline={offline}
+            // A practice build is decided on this device (ServerBackend.answerPractice): no connection needed.
+            offline={isPracticeDeploy(d.deployId) ? undefined : offline}
             deciding={deciding}
             onDecide={(approve, typed) => {
               decideDeploy(d.deployId, approve, typed);
@@ -762,6 +783,34 @@ export function DeployPanel() {
   // Waiting approvals come first, above the blueprints and My builds' Take it down rows (the highest-stakes card).
   const waiting = cards.filter(({ d }) => d.status === 'preview');
   const settled = cards.filter(({ d }) => d.status !== 'preview');
+
+  if (onPath)
+    return (
+      <div className="deploy deploy-path">
+        {waiting.length > 0 ? (
+          <section className="waiting-ok" aria-labelledby="waiting-ok-title">
+            <h4 id="waiting-ok-title">Waiting for your OK</h4>
+            {waiting.map(renderCard)}
+          </section>
+        ) : (
+          pathPlan && (
+            <div className="card">
+              <p className="muted">
+                <Plain text={FIRST_STEPS.steps[5].body} />
+              </p>
+              <PendingButton
+                className="btn primary"
+                pending={pending.is(`plan:${pathPlan}`)}
+                busyLabel="Sally is planning…"
+                onClick={() => pending.start(`plan:${pathPlan}`, planDeploy(pathPlan))}
+              >
+                {FIRST_STEPS.steps[5].button.replace(/\s*\(Deploy tab\)$/, '')}
+              </PendingButton>
+            </div>
+          )
+        )}
+      </div>
+    );
 
   // Where the player is in building for real: connect, pick a blueprint, approve it.
   const at = !account.linked ? 0 : stacks.some((d) => d.status === 'preview') ? 2 : stacks.length ? 3 : 1;
@@ -1083,8 +1132,10 @@ export function DeployPanel() {
  * A build's preview, approved here: what's added or removed, the server's own lines in words ("Safety check: …"), what
  * it costs, and the typed name when the server asks for one (the same rule as a fix's Approve in City care).
  */
-function BuildPreview({ d, grouped, offline, deciding, onDecide }: {
+function BuildPreview({ d, plain = false, grouped, offline, deciding, onDecide }: {
   d: DeployView;
+  /** The first steps: the practice line alone says where it goes (no account number), and no For AWS learners fold. */
+  plain?: boolean;
   /** One resource's card (src/state/builds.ts): the approval's own words say what this change does. */
   grouped: boolean;
   offline?: string;
@@ -1104,7 +1155,7 @@ function BuildPreview({ d, grouped, offline, deciding, onDecide }: {
       {/* What this approval changes, in words ("Permanently terminate EC2 instance i-…"). */}
       {grouped && <div className="build-change">{d.stackName}</div>}
       {/* Where first: the account and Region this approval writes to. */}
-      <ChangeTarget d={d} practice={practice} />
+      {!plain && <ChangeTarget d={d} practice={practice} />}
       {/* One plain line per resource ("Add S3 bucket"), its name in the template second. */}
       {resources.length > 0 && (
         <ul className="change-list" aria-label="What changes">
@@ -1131,7 +1182,7 @@ function BuildPreview({ d, grouped, offline, deciding, onDecide }: {
       )}
       {d.costNote && <CostNote note={d.costNote} fold={false} className="muted change-cost" />}
       {/* One fold for whoever wants more: the CloudFormation resource types and the real account's price. */}
-      {(resources.length > 0 || realCost) && (
+      {!plain && (resources.length > 0 || realCost) && (
         <ForLearners>
           {resources.length > 0 && (
             <table className="changes">

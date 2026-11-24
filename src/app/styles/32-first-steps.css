@@ -1,0 +1,198 @@
+/* ── The first steps (src/ui/FirstSteps.tsx, DESIGN-tutorial §6): Connie's guide card at the top of the City tab, its
+   one-row strip on Learn and Deploy, and the pieces of other surfaces the path changes. Tokens only; flat (the Flat
+   Desk Rule), the progress marks 4 px (the District Square Rule), and the card's button is the screen's one lamp. ── */
+
+.guide {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  margin-bottom: var(--s-4);
+  padding: var(--s-5);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+.guide-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+}
+.guide-label {
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  color: var(--muted);
+}
+/* Six marks: done in good, now in amber, still to come a hairline. */
+.guide-segs {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: var(--s-2);
+}
+.guide-segs i {
+  height: 4px;
+  border-radius: var(--r-sm);
+  background: var(--line-strong);
+  transition: background-color var(--dur-3) var(--ease-step);
+}
+.guide-segs i.done {
+  background: var(--good);
+}
+.guide-segs i.now {
+  background: var(--accent);
+}
+/* Each step enters from 0.6 (the shared `enter`), so its words show even when the panel draws slowly. */
+.guide-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  animation: enter var(--dur-3) var(--ease-out);
+}
+.guide-done {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--good-ink);
+}
+.guide h3 {
+  margin: var(--s-2) 0 0;
+  font-size: var(--fs-lg);
+  font-weight: 800;
+  line-height: 1.3;
+  color: var(--ink-hi);
+  text-wrap: balance;
+}
+.guide-text {
+  margin: 0;
+  font-size: var(--fs-md);
+  line-height: 1.45;
+  color: var(--ink);
+}
+.guide-go {
+  min-height: 40px;
+  white-space: normal;
+  line-height: 1.25;
+}
+/* The step runs elsewhere (Kai walking, Sally working): a line in its place, never a button. */
+.guide-running {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: 40px;
+  margin: 0;
+  padding: var(--s-3) var(--s-5);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+.guide-note {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--ink-soft);
+}
+.guide-skip-link {
+  align-self: flex-end;
+}
+/* Skipping isn't destructive: the confirm is graphite, not the warning red. */
+.guide .confirm.guide-skip {
+  margin-top: 0;
+  border: 1px solid var(--line-strong);
+  background: var(--panel-2);
+}
+.guide-skip b {
+  color: var(--ink-hi);
+}
+.guide-task {
+  margin-bottom: var(--s-4);
+}
+
+/* Learn and Deploy: one row under the tabs. */
+.guide-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: 36px;
+  margin-bottom: var(--s-4);
+  padding: var(--s-2) var(--s-4);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  color: var(--ink-soft);
+}
+.guide-strip-text {
+  flex: 1;
+  min-width: 0;
+}
+.guide-strip .btn {
+  flex: none;
+}
+
+/* The world map's card: the start and its honest note together, the ghost choice under them. */
+.world-intro-go {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-4);
+}
+.world-intro-note {
+  font-size: var(--fs-sm);
+  color: var(--ink-soft);
+}
+
+/* Flashcards: the three answers dock to the bottom of the tab while a long answer would push them below the fold. */
+.cards .grades {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding: var(--s-4) 0;
+  background: var(--bg);
+}
+.flash-terms {
+  margin: var(--s-3) 0 0;
+}
+
+/* A citizen's question: the verdict leads once answered; each answer names its key. */
+.request-card {
+  gap: var(--s-3);
+}
+.request-verdict {
+  margin: 0;
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--r-md);
+  background: var(--panel-2);
+  color: var(--ink-hi);
+}
+.request-verdict.right {
+  background: color-mix(in srgb, var(--good) 18%, var(--panel));
+  color: var(--good-ink);
+}
+.request-option {
+  gap: var(--s-3);
+}
+.request-option .kbd {
+  flex: none;
+}
+
+/* Graduation: the celebration's lists read left to right. */
+.graduate .grad-list {
+  text-align: left;
+}
+.grad-list .label {
+  margin: 0 0 var(--s-2);
+}
+.grad-list ul {
+  display: grid;
+  gap: var(--s-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-md);
+}
+.grad-region {
+  margin: var(--s-3) 0 0;
+  font-size: var(--fs-sm);
+  color: var(--ink-soft);
+}

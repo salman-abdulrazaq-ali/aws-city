@@ -9,7 +9,9 @@ import { activeSteps } from '@/state/ladder';
 import { isTourDone, markTourDone, readPref, TIP_ASK_KEY, TIP_COPILOT_KEY, writePref } from './logic';
 import { Portrait } from './Portrait';
 import { walkTo } from '@/state/walk';
-import { isSimple } from '@/state/simple';
+import { isSimple, shows } from '@/state/simple';
+import { FIRST_STEPS_QUEST } from '@/state/firstSteps';
+import { useFirstSteps, useQuiet } from './FirstSteps';
 
 interface Step {
   title: string;
@@ -49,9 +51,15 @@ const SIMPLE_STEPS: Step[] = EVERYTHING_STEPS.map((s, i) =>
 );
 const tourSteps = (simple: boolean) => (simple ? SIMPLE_STEPS : EVERYTHING_STEPS);
 
+/**
+ * The tour's first job: the first regular quest. The first steps (quest 1) are chosen on the world map and played
+ * with Connie's guide, never started from here, so a player who has a save from before them is never put in them.
+ */
+const firstJob = () => QUESTS.find((q) => q.id !== FIRST_STEPS_QUEST);
+
 /** Where the first job starts: the first quest's current step, when it points at a landmark. */
 function firstJobTarget(): string | undefined {
-  const first = QUESTS[0];
+  const first = firstJob();
   const st = first && useCity.getState().progress.quests?.[first.id];
   const step = first && st?.status === 'active' ? first.steps[st.step] : undefined;
   return step && (step.kind === 'visit' || step.kind === 'cards') ? step.serviceId : undefined;
@@ -101,7 +109,7 @@ export function Tour({ layout }: { layout: Layout }) {
       setI(0);
       if (finished) {
         feel.questStart();
-        const first = QUESTS[0];
+        const first = firstJob();
         const quests = useCity.getState().progress.quests;
         if (first && !quests?.[first.id]) {
           useCity.getState().startQuest(first.id);
@@ -256,6 +264,14 @@ const WATCHED: TipId[] = ['workshop'];
 /** "Ask" on the first ask step (or the first time the box is used); "Copilot" when its button first shows (panel only). */
 export function CoachTips({ layout }: { layout: Layout }) {
   const tourOpen = useCity((s) => s.tourOpen);
+  // They wait while the first steps run (the quiet city), and come after graduation: a player on the path never sees
+  // the old tour, so "tour done" alone would hold them back for good.
+  const prefs = useCity((s) => s.prefs);
+  const quiet = useQuiet();
+  const allowed = shows('coachTips', prefs, quiet);
+  const graduated = useFirstSteps().graduated;
+  // Never over a celebration card (graduation's included): the tip comes once it closes.
+  const celebrating = useCity((s) => !!s.celebration);
   const askStep = useCity((s) => activeSteps(s.progress).some((x) => x.kind === 'ask'));
   const [tip, setTip] = useState<TipId>();
   const [rect, setRect] = useState<Rect>();
@@ -265,12 +281,12 @@ export function CoachTips({ layout }: { layout: Layout }) {
   const offer = useCallback(
     (id: TipId) => {
       // Never over the tour, never before it (the tour comes first), never twice, never under automation.
-      if (showing.current || tourOpen || !isTourDone() || navigator.webdriver || readPref(TIPS[id].key) === '1') return;
+      if (showing.current || tourOpen || celebrating || !allowed || !(isTourDone() || graduated) || navigator.webdriver || readPref(TIPS[id].key) === '1') return;
       if (!findTarget([TIPS[id].target])) return;
       writePref(TIPS[id].key, '1');
       setTip(id);
     },
-    [tourOpen],
+    [tourOpen, allowed, graduated, celebrating],
   );
 
   useEffect(() => {

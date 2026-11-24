@@ -4,6 +4,7 @@ import { bus } from '@/state/bus';
 import { nextAction } from '@/state/next';
 import { agentName, useCity, type FeedItem, type TaskView } from '@/state/store';
 import { agentOffer, liveStep, paidLine, taskPhase, taskStory, thinkingLine, watchLine } from '@/state/watch';
+import { quietCity } from '@/state/firstSteps';
 import { placeFor } from '@/world/places';
 import { feel } from './feedback';
 import { offlineReason } from './logic';
@@ -59,12 +60,14 @@ export function TaskCard({ task, openTab, quiet = false }: { task: TaskView; ope
   const progress = useCity((s) => s.progress);
   const cityRegion = useCity((s) => s.cityRegion);
   const clientFocus = useCity((s) => s.clientFocus);
+  // The first steps: no follow-ups (no next step, no "See it in Deploy"): Connie's guide holds the next step.
+  const onPath = useCity((s) => quietCity(s.progress, s.prefs));
   // The agent's model call is running (a small CPU model can take most of a minute): the card says so.
   const thinking = useCity((s) => (finished ? undefined : thinkingLine(s.agents[who], story.who)));
   // A change this task asked for, waiting for the player's OK in Deploy (the card says so and takes them there).
   const waiting = useCity((s) => Object.values(s.deploys).find((d) => d.taskId === task.taskId && d.status === 'preview'));
   // The one next step (src/state/next.ts), read once the task is done.
-  const next = useMemo(() => (phase === 'result' && !quiet ? nextAction({ progress, cityRegion, clientFocus }) : undefined), [phase, quiet, progress, cityRegion, clientFocus]);
+  const next = useMemo(() => (phase === 'result' && !quiet && !onPath ? nextAction({ progress, cityRegion, clientFocus }) : undefined), [phase, quiet, onPath, progress, cityRegion, clientFocus]);
   const now = liveStep(task);
   const showSteps = task.steps.length > 0 && (finished ? details : !watching || details);
   const hasDetails = calls.length > 0 || task.steps.length > 0;
@@ -151,7 +154,7 @@ export function TaskCard({ task, openTab, quiet = false }: { task: TaskView; ope
           )}
           {paid && <p className={`watch-paid ${task.capped ? 'capped' : ''}`}>{paid}</p>}
           <div className="actions">
-            {demo && story.templateId && (
+            {demo && story.templateId && !onPath && (
               <button className={`btn tiny ${quiet ? '' : 'primary'}`} disabled={!!offline || deploy === 'asked'} title={offline ?? 'Plan the real thing in the practice account: you see every change and approve it'} onClick={seeInDeploy}>
                 {deploy === 'asked' ? '✓ Preview on its way in Deploy' : '🏗️ See it in Deploy'}
               </button>

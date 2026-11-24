@@ -36,6 +36,7 @@ import { BuildToggle } from './BuildDrawer';
 import { isSimple, shows } from '@/state/simple';
 import { useTodo } from './today';
 import { DeleteAccountDialog, openAccountCard } from './Account';
+import { playLabel, stepsChip, useFirstSteps, useQuiet } from './FirstSteps';
 
 
 /** How long the coins note stays on the map before it counts as read (Got it and Decorate put it away sooner). */
@@ -158,6 +159,22 @@ function TodoChip() {
         <b>
           {done}/{of}
         </b>
+      </span>
+    </>
+  );
+}
+
+/** The first steps' "First steps 2/6", in To do's place while the path runs (the guide card says what's next). */
+function StepsChip({ step }: { step: number }) {
+  return (
+    <>
+      <span className="sep" aria-hidden="true">
+        ·
+      </span>
+      <span className="hud-todo hud-steps" title="Your first steps: the guide is at the top of the City tab">
+        {/* "First steps 2/6", the count in bold like To do's. */}
+        {stepsChip(step).replace(/\S+$/, '')}
+        <b>{stepsChip(step).match(/\S+$/)?.[0]}</b>
       </span>
     </>
   );
@@ -319,6 +336,10 @@ function MoreMenu({ layout }: { layout: Layout }) {
   const signedIn = useCity((s) => s.backendKind !== 'mock' && s.backendStatus !== 'signed-out');
   const locked = useLocked();
   const simple = useCity((s) => isSimple(s.prefs));
+  const hasCity = useCity((s) => !!s.prefs.region);
+  // The first steps: Play them (anyone, any time), or Replay them once done; Decorate and the old tour wait meanwhile.
+  const path = useFirstSteps();
+  const playText = playLabel(path);
   const box = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -516,9 +537,25 @@ function MoreMenu({ layout }: { layout: Layout }) {
                   <span className={`switch ${autoSnap ? 'on' : ''}`} aria-hidden="true" />
                 </button>
               )}
-              <button role="menuitem" onClick={run(() => setTourOpen(true))}>
-                Replay the tour
-              </button>
+              {hasCity && playText && (
+                <button
+                  role="menuitem"
+                  title="Connie's six short steps: walk, fish, learn, help, watch and approve. All practice: nothing real is made."
+                  onClick={run(() => {
+                    const st = useCity.getState();
+                    st.playFirstSteps();
+                    if (st.view.name !== 'city') st.setView({ name: 'city' });
+                    bus.emit('showTab', { tab: 'home' });
+                  })}
+                >
+                  {playText}
+                </button>
+              )}
+              {!path.active && (
+                <button role="menuitem" onClick={run(() => setTourOpen(true))}>
+                  Replay the tour
+                </button>
+              )}
             </div>
             <hr />
             <div role="group" aria-label="Your city">
@@ -537,7 +574,7 @@ function MoreMenu({ layout }: { layout: Layout }) {
                 🏆 Leaderboards and live city
               </button>
               {/* An action, not a setting: it opens Decorate's drawer (or closes it), like the HUD's Decorate button. */}
-              {cityView && (
+              {cityView && !path.active && (
                 <button role="menuitem" title="Decorate your city with City Coins: trees, fountains, benches, a sign with its name" onClick={run(() => setBuild(!decorating))}>
                   {decorating ? '🌳 Done decorating' : '🌳 Decorate'}
                 </button>
@@ -593,6 +630,9 @@ export function Hud({ layout }: { layout: Layout }) {
   const hasCity = useCity((s) => !!s.prefs.region);
   const prefs = useCity((s) => s.prefs);
   const simple = isSimple(prefs);
+  // The quiet city (the first steps): coins, Decorate and the extras wait; "First steps n/6" stands in for To do.
+  const path = useFirstSteps();
+  const quiet = useQuiet();
 
   // Three numbers, one meaning each: ⭐ knowledge (every city's buildings; never spent), 🪙 City Coins (what Decorate
   // spends), 💡 City Lights (a window for each learning day, src/state/lights.ts). Everything else earned lives in My City.
@@ -627,16 +667,20 @@ export function Hud({ layout }: { layout: Layout }) {
           <b>{xp}</b>
           <span className="sr-only"> stars</span>
         </span>
-        <span className="sep" aria-hidden="true">
-          ·
-        </span>
-        <span className={`hud-coins ${coinBump ? 'bump' : ''}`} title={`${wallet} City Coins to spend on decorations. Jobs, mini-games, workshops and the drawing board pay them.`}>
-          <Coin size={14} /> <b>{wallet}</b>
-          <span className="sr-only"> City Coins</span>
-          <CoinsTip wallet={wallet} />
-        </span>
-        {simple && hasCity && <TodoChip />}
-        {shows('cityLights', prefs) && (
+        {shows('coins', prefs, quiet) && (
+          <>
+            <span className="sep" aria-hidden="true">
+              ·
+            </span>
+            <span className={`hud-coins ${coinBump ? 'bump' : ''}`} title={`${wallet} City Coins to spend on decorations. Jobs, mini-games, workshops and the drawing board pay them.`}>
+              <Coin size={14} /> <b>{wallet}</b>
+              <span className="sr-only"> City Coins</span>
+              <CoinsTip wallet={wallet} />
+            </span>
+          </>
+        )}
+        {path.active ? hasCity && <StepsChip step={path.step} /> : simple && hasCity && <TodoChip />}
+        {shows('cityLights', prefs, quiet) && (
           <>
         <span className="sep" aria-hidden="true">
           ·
@@ -650,9 +694,9 @@ export function Hud({ layout }: { layout: Layout }) {
           </>
         )}
       </span>
-      {hasCity && view.name === 'city' && shows('rushSurge', prefs) && <RushChip />}
-      {hasCity && view.name === 'city' && <BuildToggle />}
-      {hasCity && shows('rank', prefs) && <RankChip />}
+      {hasCity && view.name === 'city' && shows('rushSurge', prefs, quiet) && <RushChip />}
+      {hasCity && view.name === 'city' && shows('decorate', prefs, quiet) && <BuildToggle />}
+      {hasCity && shows('rank', prefs, quiet) && <RankChip />}
       <ConnectionPill />
       <MoreMenu layout={layout} />
     </header>

@@ -31,6 +31,8 @@ import { ANY_GAME, playAt, runTodo, useCare, useTodayGoals, useTodo } from './to
 import { ConnectLine, useConnectOffer } from './Account';
 import { EventBanner } from './EventBanner';
 import { ConnectCard } from './ConnectCard';
+import { useFirstSteps } from './FirstSteps';
+import { FIRST_STEPS } from '@/state/firstSteps';
 
 export { gameBuilding } from './today';
 
@@ -47,6 +49,8 @@ export function Home({ openTab, places }: { openTab: OpenTab; places?: ReactNode
   // On a first run's world map the only thing to do is pick a Region (WorldIntro): the shift waits until the city opens.
   const choosing = useCity((s) => s.view.name === 'world' && !s.prefs.region);
   const offer = useConnectOffer();
+  // The first steps: Connie's guide (App puts it above this) replaces the To-do list, the banner and "Coming up next".
+  const onPath = useFirstSteps().active;
   const more = useRef<HTMLDetailsElement>(null);
   const careFold = useRef<HTMLDetailsElement>(null);
   /** Today's "Fix something" opens City care (inside More to do) and brings it into view. */
@@ -61,10 +65,11 @@ export function Home({ openTab, places }: { openTab: OpenTab; places?: ReactNode
     return (
       <div className="home">
         <p className="home-wait">
-          <span aria-hidden="true">🌍</span> Pick a glowing dot on the map to start your city. Your first job will be waiting here.
+          <span aria-hidden="true">🌍</span> {FIRST_STEPS.map.tab.replace(/^🌍\s*/u, '')}
         </p>
       </div>
     );
+  if (onPath) return null;
   if (simple) return <SimpleHome openTab={openTab} care={care} places={ladder.places ? places : undefined} />;
   return (
     <div className="home">

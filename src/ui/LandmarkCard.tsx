@@ -29,6 +29,7 @@ import { comparisonsFor } from '@/world/comparisons';
 import { agentOffer } from '@/state/watch';
 import { TaskCard } from './ActivityFeed';
 import { signLegend } from './logic';
+import { useFirstSteps } from './FirstSteps';
 
 /**
  * The Lookout's camera. In the side panel (or Firefox sidebar) it snaps the page beside it and shows what it last saw;
@@ -93,6 +94,10 @@ export function LandmarkCard({ openTab, layout }: { openTab?: OpenTab; layout?: 
   }, [live?.taskId]);
   const inventory = useCity((s) => s.inventory);
   const findings = useCity((s) => s.findings);
+  // The first steps: the card is trimmed to what the path has taught (What is it?, the level bar, its game), its
+  // buttons graphite, since the guide above holds the one amber button. The rest comes back after graduation.
+  const path = useFirstSteps();
+  const onPath = path.active;
   // The city follows the panel: whatever place is open here is what the camera shows.
   useEffect(() => {
     if (id && (serviceById(id) || id === 'plaza' || id === 'lookout' || id === 'workshop')) bus.emit('flyTo', { id });
@@ -121,7 +126,7 @@ export function LandmarkCard({ openTab, layout }: { openTab?: OpenTab; layout?: 
             ? 'Luke looks at the AWS page you have open and tells the city what you are working on.'
             : 'Connie runs the plaza. Every AWS service has its own page in the AWS console, and this is the way in.'}
         </p>
-        {id === 'lookout' && <LookoutSnap layout={layout} />}
+        {id === 'lookout' && !onPath && <LookoutSnap layout={layout} />}
         <div className="actions">
           <button className="btn" onClick={() => openConsole('plaza')}>
             Open console ↗
@@ -137,7 +142,7 @@ export function LandmarkCard({ openTab, layout }: { openTab?: OpenTab; layout?: 
       <div className="card edge" style={districtStyle(d.color)}>
         <h3>{d.hq}</h3>
         <p>The {d.name} team works here. Step inside to watch them and ask them anything.</p>
-        <button className="btn primary" onClick={() => setView({ name: 'interior', districtId: d.id as DistrictId })}>
+        <button className={`btn ${onPath ? '' : 'primary'}`} onClick={() => setView({ name: 'interior', districtId: d.id as DistrictId })}>
           Enter HQ
         </button>
       </div>
@@ -162,16 +167,19 @@ export function LandmarkCard({ openTab, layout }: { openTab?: OpenTab; layout?: 
     submitPrompt(`Teach me about ${svc.name}: ${place.teaches[Math.min(Math.max(tier, 0), 3)]}`);
     openTab?.('feed');
   };
-  // At most two big things to do here, picked by what this place offers: play, learn its cards, ask its agent.
+  // At most two big things to do here, picked by what this place offers: play, learn its cards, ask its agent. On the
+  // first steps: never asking an agent (a model call), the cards only once the path has opened Learn, all graphite.
   const things: { key: string; label: string; primary?: boolean; run: () => void }[] =
     tier < 0
-      ? [{ key: 'ask', label: `👋 Ask ${agent} to move in`, primary: true, run: teach }]
+      ? onPath
+        ? []
+        : [{ key: 'ask', label: `👋 Ask ${agent} to move in`, primary: true, run: teach }]
       : [
           ...(place.game ? [{ key: 'play', label: `🎮 Play ${GAME_NAME[place.game]}${bestLine(progress.games?.[place.game])}`, run: () => (feel.tap(), setView({ name: 'game', game: place.game! })) }] : []),
-          { key: 'cards', label: '🃏 Learn with cards', run: () => (feel.tap(), openTab?.('learn')) },
+          ...(!onPath || path.step >= 2 ? [{ key: 'cards', label: '🃏 Learn with cards', run: () => (feel.tap(), openTab?.('learn')) }] : []),
         ]
           .slice(0, 2)
-          .map((t, i) => ({ ...t, primary: i === 0 }));
+          .map((t, i) => ({ ...t, primary: i === 0 && !onPath }));
   // Two different things the agent does, said plainly: answer your question (the team's HQ chat), or do a job for you
   // that you watch step by step (Watch it done, src/state/watch.ts).
   const offer = agentOffer(id);
@@ -201,7 +209,7 @@ export function LandmarkCard({ openTab, layout }: { openTab?: OpenTab; layout?: 
           )}
         </div>
       </div>
-      {isGlobalService(id) && (
+      {isGlobalService(id) && !onPath && (
         <p className="global-ribbon">
           🌐 <b>Global:</b> the same in every city, because AWS runs it worldwide.
         </p>
@@ -212,7 +220,7 @@ export function LandmarkCard({ openTab, layout }: { openTab?: OpenTab; layout?: 
           <Plain text={place.simple ?? place.blurb} except={id} />
         </p>
       </section>
-      {legend.length > 0 && (
+      {legend.length > 0 && !onPath && (
         <ul className="sign-legend" aria-label="What its sign shows">
           {legend.map((l) => (
             <li key={l.mark}>
@@ -233,10 +241,11 @@ export function LandmarkCard({ openTab, layout }: { openTab?: OpenTab; layout?: 
           </div>
           <span className="muted">{tier < 4 ? `${xp} ⭐ · ${next - xp} more to grow to ${TIER_NAMES[tier + 1]}` : `${xp} ⭐ · Master`}</span>
           {/* What the next level adds (the map shows it over the building only with Everything on). */}
-          {nextAdds && <span className="tier-adds">Next level adds “{nextAdds}”</span>}
-          {tier >= 4 && <CrownNext progress={progress} id={id} level={level} />}
+          {nextAdds && !onPath && <span className="tier-adds">Next level adds “{nextAdds}”</span>}
+          {tier >= 4 && !onPath && <CrownNext progress={progress} id={id} level={level} />}
         </div>
       )}
+      {(!onPath || things.length > 0) && (
       <section className="place-do" aria-label="What can I do here?">
         <h4 className="label">What can I do here?</h4>
         <div className="actions">
@@ -246,7 +255,7 @@ export function LandmarkCard({ openTab, layout }: { openTab?: OpenTab; layout?: 
             </button>
           ))}
         </div>
-        {tier >= 0 && (
+        {tier >= 0 && !onPath && (
           <div className="agent-asks" role="group" aria-label={`What ${agent} can do`}>
             {hasHq && (
               <button className="btn tiny" title={`Chat with the ${d.name} team in ${d.hq}: ask anything, get an answer`} onClick={() => (feel.tap(), setView({ name: 'interior', districtId: svc.districtId }))}>
@@ -264,7 +273,9 @@ export function LandmarkCard({ openTab, layout }: { openTab?: OpenTab; layout?: 
           </div>
         )}
       </section>
-      {comparisonsFor(id).length > 0 && (
+      )}
+      {/* The rest waits until the first steps are done (DESIGN-tutorial §6.6). */}
+      {!onPath && comparisonsFor(id).length > 0 && (
         <section className="place-compare" aria-label="Which one should I pick?">
           <h4 className="label">Which one should I pick?</h4>
           <div className="compare-chips">
@@ -276,14 +287,14 @@ export function LandmarkCard({ openTab, layout }: { openTab?: OpenTab; layout?: 
           </div>
         </section>
       )}
-      {workshopsFor(id).length > 0 && (
+      {!onPath && workshopsFor(id).length > 0 && (
         <section className="place-workshops" aria-label="Hands-on workshops">
           <h4 className="label">Hands-on workshops</h4>
           <WorkshopList ids={workshopsFor(id).map((w) => w.id)} progress={progress.workshops} />
         </section>
       )}
-      <WhatsNew serviceId={id} />
-      <ReadingShelf serviceId={id} />
+      {!onPath && <WhatsNew serviceId={id} />}
+      {!onPath && <ReadingShelf serviceId={id} />}
       <CompareCard
         id={compare}
         onClose={() => setCompare(undefined)}
@@ -293,6 +304,7 @@ export function LandmarkCard({ openTab, layout }: { openTab?: OpenTab; layout?: 
         }}
       />
       {/* The detail stays one tap away: what it teaches at each level, its prices, the console and the team's HQ. */}
+      {!onPath && (
       <ForLearners>
         <p className="blurb">
           <Term text={place.blurb} />
@@ -320,6 +332,7 @@ export function LandmarkCard({ openTab, layout }: { openTab?: OpenTab; layout?: 
           )}
         </div>
       </ForLearners>
+      )}
     </div>
   );
 }

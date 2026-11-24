@@ -15,6 +15,8 @@ import { NEW_CARDS_KEY, readPref, writePref } from './logic';
 import { Plain } from './Term';
 import { EmptyState } from './EmptyState';
 import { bus } from '@/state/bus';
+import { FIRST_STEPS, TUTORIAL_DECK } from '@/state/firstSteps';
+import { useFirstSteps } from './FirstSteps';
 
 /** Today's new-card count (this device). */
 const readNewLog = (): NewCardLog | undefined => {
@@ -58,15 +60,23 @@ export function Flashcards() {
   const [back, setBack] = useState<string>();
   /** Cards practised this sitting for a quest (they go to the back of the practice line). */
   const [practiced, setPracticed] = useState<ReadonlySet<string>>(new Set());
+  // The first steps' cards step: Sally's three cards in order, whatever was picked or is due (any answer counts).
+  const path = useFirstSteps();
+  const tutorial = path.active && path.step === 2;
+  const tutorialCards = useMemo(() => {
+    const s3 = cardsFor('s3');
+    return TUTORIAL_DECK.flatMap((id) => s3.find((c) => c.id === id) ?? []);
+  }, []);
 
   // "All my decks": reviewed cards that are due, then at most 10 new ones a day. A single deck shows everything due,
   // topped up with practice cards while a quest's cards step for it needs more than that (src/learning/srs.ts).
   const { queue, practice } = useMemo((): { queue: Flashcard[]; practice: ReadonlySet<string> } => {
+    if (tutorial) return { queue: tutorialCards.slice(path.count), practice: new Set() };
     if (deck === 'due') return { queue: dueDeck(progress, discovered.map((s) => s.id), newCardsLeft(readNewLog(), dayKey())), practice: new Set() };
     const due = cardsFor(deck).filter((c) => isDue(progress.cards?.[c.id])).sort((a, b) => a.tier - b.tier);
     const extra = questPracticeDeck(progress, deck, due.length, practiced);
     return { queue: [...due, ...extra], practice: new Set(extra.map((c) => c.id)) };
-  }, [deck, progress, discovered, practiced]);
+  }, [deck, progress, discovered, practiced, tutorial, tutorialCards, path.count]);
   const card = queue[0];
   const practising = !!card && practice.has(card.id);
   const serviceId = card?.id.replace(/-\d+$/, '');
@@ -130,31 +140,44 @@ export function Flashcards() {
   // Learned means known: answered Knew it / Easy (a "Didn't know" doesn't count until it's known again).
   const learned = all.filter((c) => isKnown(progress.cards?.[c.id])).length;
   return (
-    <div className="cards">
-      <div className="row">
-        <select value={deck} onChange={(e) => (setDeck(e.target.value), setFlipped(false))} aria-label="Deck">
-          <option value="due">All my decks</option>
-          {SERVICES.map((s) => {
-            const open = isDiscovered(progress, s.id);
-            return (
-              <option key={s.id} value={s.id} disabled={!open}>
-                {placeFor(s.id)?.place}
-                {open ? ` · ${cardsFor(s.id).length} cards` : ' · locked'}
-              </option>
-            );
-          })}
-        </select>
-      </div>
-      {deck !== 'due' && discovered.length < 4 && discovered.length < SERVICES.length && <div className="muted">More decks open as you discover places.</div>}
-      <div className="deck-progress">
-        <span>
-          <b>{queue.length}</b> to review · {learned} of {total} learned
-        </span>
-        <div className="meter district" aria-hidden="true">
-          <i style={{ width: `${total ? Math.round((learned / total) * 100) : 0}%` }} />
+    <div className={`cards${tutorial ? ' tutorial' : ''}`}>
+      {tutorial ? (
+        <div className="deck-progress">
+          <span>
+            <b>{Math.min(path.count, tutorialCards.length)}</b> of {tutorialCards.length}
+          </span>
+          <div className="meter district" aria-hidden="true">
+            <i style={{ width: `${Math.round((Math.min(path.count, tutorialCards.length) / Math.max(1, tutorialCards.length)) * 100)}%` }} />
+          </div>
         </div>
-        {done > 0 && <span className="muted">+{done} today</span>}
-      </div>
+      ) : (
+        <>
+          <div className="row">
+            <select value={deck} onChange={(e) => (setDeck(e.target.value), setFlipped(false))} aria-label="Deck">
+              <option value="due">All my decks</option>
+              {SERVICES.map((s) => {
+                const open = isDiscovered(progress, s.id);
+                return (
+                  <option key={s.id} value={s.id} disabled={!open}>
+                    {placeFor(s.id)?.place}
+                    {open ? ` · ${cardsFor(s.id).length} cards` : ' · locked'}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+          {deck !== 'due' && discovered.length < 4 && discovered.length < SERVICES.length && <div className="muted">More decks open as you discover places.</div>}
+          <div className="deck-progress">
+            <span>
+              <b>{queue.length}</b> to review · {learned} of {total} learned
+            </span>
+            <div className="meter district" aria-hidden="true">
+              <i style={{ width: `${total ? Math.round((learned / total) * 100) : 0}%` }} />
+            </div>
+            {done > 0 && <span className="muted">+{done} today</span>}
+          </div>
+        </>
+      )}
       {back && (
         <p key={reward?.key ?? back} className="muted flash-back" role="status">
           🔁 {back}
@@ -223,9 +246,13 @@ export function Flashcards() {
       <div className="sr-only" aria-live="polite">
         {card && flipped ? `Answer: ${card.simple ?? card.a}` : ''}
       </div>
+      {/* The first card's answer: its dotted words explain themselves (one quiet line, never over the card). */}
+      {tutorial && flipped && path.count === 0 && FIRST_STEPS.steps[2].terms && <p className="muted small flash-terms">{FIRST_STEPS.steps[2].terms}</p>}
       {card && flipped && (
         <>
-          <div className="actions grades">
+          {/* Docked to the bottom of the tab while the answer is longer than the room left (styles/10-flashcards.css):
+              the three answers are always in view, never below the fold. */}
+          <div className="actions grades" role="group" aria-label="How well did you know it?">
             <button className="btn" onClick={() => grade('again')}>
               Didn’t know <span className="kbd">1</span>
             </button>

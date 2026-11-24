@@ -37,25 +37,49 @@ afterEach(() => {
 const frame = () => act(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
 
 describe('WorldIntro', () => {
-  it('“I already build on AWS” turns Simple off: the Deploy tab is there without a deploy step', async () => {
+  it('“I already know AWS” turns Simple off and skips the first steps: the Deploy tab is there without a deploy step', async () => {
     render(<Page />);
-    fireEvent.click(screen.getByRole('button', { name: 'I already build on AWS' }));
+    fireEvent.click(screen.getByRole('button', { name: 'I already know AWS: quick tour' }));
     const prefs = useCity.getState().prefs;
     expect(prefs.builder).toBe(true);
+    expect(prefs.firstSteps).toBe('skipped');
     expect(isSimple(prefs)).toBe(false);
     expect(shows('deployTab', prefs)).toBe(true);
     expect(useCity.getState().view.name).toBe('city');
+    expect(useCity.getState().progress.quests?.['first-steps']).toBeUndefined();
     await frame();
   });
 
-  it('“Start in …” keeps Simple on', async () => {
+  it('“Start in …” keeps Simple on and starts the first steps on arrival', async () => {
+    useCity.setState({ progress: { version: 2, landmarks: {}, updatedAt: '' } } as never);
     render(<Page />);
     fireEvent.click(screen.getByRole('button', { name: /^Start in / }));
     expect(isSimple(useCity.getState().prefs)).toBe(true);
+    expect(useCity.getState().prefs.firstSteps).toBe('beginner');
+    expect(useCity.getState().progress.quests?.['first-steps']?.status).toBe('active');
     await frame();
   });
 
-  for (const name of [/^Start in /, /^I already build on AWS$/]) {
+  // DESIGN-tutorial §3: Connie defines a Region (a tappable term) and says it's practice; a dot picked on the map starts
+  // the first steps too, so the card's showing chooses them (WorldScene's own press calls enterRegion).
+  it('defines a Region, says it’s all practice, and chooses the first steps for a dot picked on the map', () => {
+    render(<Page />);
+    const card = screen.getByRole('region', { name: 'Where to start' });
+    expect(card.textContent).toMatch(/Each glowing dot is a Region/);
+    expect(card.querySelector('.term')?.textContent).toBe('Region');
+    expect(card.textContent).toMatch(/about 10 minutes\. It's all practice: nothing costs money\./);
+    expect(useCity.getState().prefs.firstSteps).toBe('beginner');
+  });
+
+  it('keeps an opt-out already set (the smoke’s), even on Start', async () => {
+    useCity.setState({ prefs: { firstSteps: 'skipped' } } as never);
+    render(<Page />);
+    fireEvent.click(screen.getByRole('button', { name: /^Start in / }));
+    expect(useCity.getState().prefs.firstSteps).toBe('skipped');
+    await frame();
+  });
+
+  for (const name of [/^Start in /, /^I already know AWS: quick tour$/]) {
     it(`focus lands in the city's panel after ${name}`, async () => {
       render(<Page />);
       const button = screen.getByRole('button', { name });
