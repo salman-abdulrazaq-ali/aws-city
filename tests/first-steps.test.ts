@@ -164,6 +164,13 @@ describe('the store on the path', () => {
     expect(s().toasts).toHaveLength(1);
   });
 
+  // Review, 24 Nov 2026: during a replay, Delete my account's "delete the AWSCity stack" was dropped with the rest.
+  it('still shows the answer to something the player just did', () => {
+    useCity.setState({ progress: on(1) });
+    s().toast('🧾', 'Your AWS City account and progress were deleted. Delete the AWSCity stack in CloudFormation to remove the role.', 'info', undefined, undefined, { prompted: true });
+    expect(s().toasts.map((t) => t.text).join()).toMatch(/Delete the AWSCity stack/);
+  });
+
   it('a legacy save never starts it', () => {
     useCity.setState({ progress: legacy });
     s().setPref('firstSteps', 'beginner');
@@ -260,6 +267,28 @@ describe('after the first steps', () => {
     expect(s().toasts.map((t) => t.text).join()).not.toMatch(/Step \d+ of \d+ done/);
     // The new order's marker is written, so the re-cut's migration leaves it alone.
     expect(migrateQuestCut(s().progress)).toBe(s().progress);
+  });
+
+  // Review, 24 Nov 2026: "I already know AWS" lived only in this device's settings, so news and City care stayed shut
+  // (they read progress) and on another device quest 2 skipped its walk and S3 cards.
+  it('a skip is in the synced save too: graduated, news open, and quest 2 from its first step on any device', async () => {
+    const { newsOpen } = await import('@/state/ladder');
+    // "I already know AWS" before the path ever started.
+    useCity.setState({ progress: p({}) });
+    s().skipFirstSteps();
+    expect(s().progress.quests?.[FIRST_STEPS_QUEST]).toEqual({ status: 'done', step: 0 });
+    expect(newsOpen(s().progress, false)).toBe(true);
+    // A skip isn't a quest finished: no Questing badge.
+    const { BADGES } = await import('@/state/badges');
+    expect(BADGES.find((b) => b.id === 'first-quest')!.earned(s().progress)).toBe(false);
+    // Another device: the same save, none of this device's settings.
+    const synced = s().progress;
+    s().resetSession();
+    s().setPref('firstSteps', undefined);
+    useCity.setState({ progress: synced });
+    expect(firstSteps(synced)).toMatchObject({ skipped: true, graduated: true, active: false });
+    s().startQuest('storage-static-site');
+    expect(s().progress.quests?.['storage-static-site']?.step).toBe(0);
   });
 
   it('a player who skipped the path, or never did it, starts quest 2 from its first step', () => {

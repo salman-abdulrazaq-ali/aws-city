@@ -666,8 +666,12 @@ export interface CityState {
   addTask(taskId: string, prompt: string): void;
   addUserChat(districtId: string, requestId: string, text: string): void;
   log(item: Omit<FeedItem, 'id' | 'at'>): void;
-  /** `first`: the player's own moment (a quest step done): it goes to the front of the queue and is never trimmed. */
-  toast(icon: string, text: string, kind?: Toast['kind'], merge?: { group: 'discover'; item: string }, building?: { serviceId: string; detail?: string }, opts?: { first?: boolean; action?: () => void }): void;
+  /**
+   * `first`: the player's own moment (a quest step done): it goes to the front of the queue and is never trimmed.
+   * `prompted`: the answer to something the player just did (Download my data, Delete my account, the authenticator):
+   * shown in the quiet city too, where unprompted info toasts are dropped.
+   */
+  toast(icon: string, text: string, kind?: Toast['kind'], merge?: { group: 'discover'; item: string }, building?: { serviceId: string; detail?: string }, opts?: { first?: boolean; action?: () => void; prompted?: boolean }): void;
   /** Drop every toast, shown or waiting. */
   clearToasts(): void;
   /** Internal: put one toast on screen now (toast() decides when). */
@@ -1437,7 +1441,10 @@ export const useCity = create<CityState>()((set, get) => ({
         if (e.ok && !s.deploys[e.taskId] && !isPracticeTask(e.taskId)) get().questEvent((st) => st.kind === 'ask');
         // Watch it done: a task its agent finished ticks a watch step for that building (the first steps' practice task).
         const worker = t?.agentId ?? e.xp[0]?.serviceId;
-        if (e.ok && !s.deploys[e.taskId] && worker) get().questEvent((st) => st.kind === 'watch' && st.serviceId === worker);
+        // On the first steps only their own practice task counts (review, 24 Nov 2026: a real task from S3's card, sent to
+        // the server, ticked "Watch Sally work").
+        const onPath = quietCity(get().progress, get().prefs);
+        if (e.ok && !s.deploys[e.taskId] && worker && (!onPath || isPracticeTask(e.taskId))) get().questEvent((st) => st.kind === 'watch' && st.serviceId === worker);
         break;
       }
       case 'page.classified':
@@ -1729,8 +1736,9 @@ export const useCity = create<CityState>()((set, get) => ({
   },
   toast: (icon, text, kind = 'info', merge, building, opts) => {
     // The quiet city (src/state/firstSteps.ts): on the first steps, info toasts are dropped (never held: they'd flood
-    // at graduation, whose card says what opened). Errors still show.
-    if (kind !== 'error' && quietCity(get().progress, get().prefs)) return;
+    // at graduation, whose card says what opened). Errors still show, and so does the answer to something the player
+    // just did (review, 24 Nov 2026: Delete my account's "delete the AWSCity stack" was dropped during a replay).
+    if (kind !== 'error' && !opts?.prompted && quietCity(get().progress, get().prefs)) return;
     const show = get().showToast;
     const visible = () => get().toasts.filter((t) => !t.leaving);
     if (kind === 'error') {
@@ -2011,7 +2019,9 @@ export const useCity = create<CityState>()((set, get) => ({
     const cut: NonNullable<Progress['quests']> = questId === QUEST_CUT.questId ? { [QUEST_CUT.marker]: { status: 'active', step: 0 } } : {};
     // Past the first steps (done, not skipped), quest 2 starts after what the path already did: its walk to S3 Lake and
     // its S3 cards never tick themselves with a toast of their own (seen 24 Nov 2026, right after graduation).
-    const pathDone = progress.quests?.[FIRST_STEPS_QUEST]?.status === 'done' && get().prefs.firstSteps !== 'skipped';
+    const path = progress.quests?.[FIRST_STEPS_QUEST];
+    // Done at step 0 is a skip (skipFirstSteps): on any device, quest 2 then starts from its own first step.
+    const pathDone = path?.status === 'done' && path.step > 0 && get().prefs.firstSteps !== 'skipped';
     const from = pathDone ? Math.min(q.afterFirstSteps ?? 0, q.steps.length - 1) : 0;
     set({ progress: { ...progress, quests: { ...progress.quests, [questId]: { status: 'active', step: from, count: 0 }, ...cut }, updatedAt: new Date().toISOString() } });
     get().log({ kind: 'system', text: `📜 ${q.title}: ${q.intro}` });
@@ -2071,12 +2081,15 @@ export const useCity = create<CityState>()((set, get) => ({
     if (startsFirstSteps(progress, prefs)) get().startQuest(FIRST_STEPS_QUEST);
   },
   skipFirstSteps: () => {
+    const replaying = get().prefs.firstSteps === 'replay';
     get().setPref('firstStepsReplay', undefined);
     get().setPref('firstSteps', 'skipped');
-    // A path under way ends finished (unpaid), so no surface or device offers it again; a replay leaves the quest as it was.
+    // Skipped, in the synced save too (review, 24 Nov 2026): finished (unpaid) at step 0, so every device and every gate
+    // that reads only progress (news, City care, quest 2's start) knows it, not just this device's settings. A path
+    // under way or never started ends that way; a replay leaves the quest as it was (finished, or a legacy save's none).
     const p = get().progress;
     const q = p.quests?.[FIRST_STEPS_QUEST];
-    if (q && q.status !== 'done') set({ progress: { ...p, quests: { ...p.quests, [FIRST_STEPS_QUEST]: { status: 'done', step: FIRST_STEPS_OF } }, updatedAt: new Date().toISOString() } });
+    if (!replaying && q?.status !== 'done') set({ progress: { ...p, quests: { ...p.quests, [FIRST_STEPS_QUEST]: { status: 'done', step: 0 } }, updatedAt: new Date().toISOString() } });
   },
   playFirstSteps: () => {
     get().setPref('firstStepsReplay', { step: 0 });

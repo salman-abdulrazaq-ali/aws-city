@@ -70,7 +70,8 @@ export function firstSteps(p: Progress, prefs?: FirstStepsPrefs): FirstSteps {
     const r = prefs.firstStepsReplay;
     return { active: true, step: clampStep(r?.step ?? 0), of: FIRST_STEPS_OF, count: r?.count ?? 0, graduated: false, skipped: false, replay: true, legacy };
   }
-  const skipped = prefs?.firstSteps === 'skipped';
+  // Skipped here (this device's settings) or anywhere (finished at step 0 in the synced save: skipFirstSteps).
+  const skipped = prefs?.firstSteps === 'skipped' || (q?.status === 'done' && q.step === 0);
   const active = !skipped && !legacy && q?.status === 'active';
   const graduated = !active && (q?.status === 'done' || skipped || questsDone(p) >= 1);
   return {

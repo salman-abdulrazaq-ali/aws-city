@@ -46,7 +46,8 @@ describe('WorldIntro', () => {
     expect(isSimple(prefs)).toBe(false);
     expect(shows('deployTab', prefs)).toBe(true);
     expect(useCity.getState().view.name).toBe('city');
-    expect(useCity.getState().progress.quests?.['first-steps']).toBeUndefined();
+    // The skip is in the synced save too (finished at step 0, unpaid), so news, City care and quest 2 know it on any device.
+    expect(useCity.getState().progress.quests?.['first-steps']).toEqual({ status: 'done', step: 0 });
     await frame();
   });
 

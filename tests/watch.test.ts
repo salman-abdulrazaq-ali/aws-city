@@ -28,6 +28,10 @@ describe('the story', () => {
     expect(s.framing).toBe('Sally will take this on at S3 Lake.');
     expect(s.teaches).not.toMatch(/storage classes/);
     expect(s.teaches.length).toBeGreaterThan(10);
+    // No "See it in Deploy" for a request the story wasn't written for: it would plan an unrelated stack.
+    expect(s.templateId).toBeUndefined();
+    expect(taskStory(task({ prompt: 'Create a table called orders', agentId: 'dynamodb' })).templateId).toBeUndefined();
+    expect(taskStory(task({ prompt: 'Store my holiday photos cheaply' })).templateId).toBe('static-site');
     // The story's own words, in any case and spacing, still get it.
     expect(taskStory(task({ prompt: '  store my HOLIDAY photos cheaply ' })).framing).toBe('Sally will store your holiday photos in S3 Lake.');
   });

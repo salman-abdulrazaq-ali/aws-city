@@ -132,7 +132,9 @@ export function taskStory(task: Pick<TaskView, 'agentId' | 'prompt'> & { taskId?
   // Its lesson too (seen 24 Nov 2026: the Copilot's city-photos bucket taught the holiday photos' storage classes): any
   // other request gets the building's own first lesson.
   const teaches = (scripted ? def.teaches : undefined) ?? p?.simple ?? p?.teaches[0] ?? '';
-  return { agentId, who, place, framing, watch: `Watch ${who} walk there.`, teaches, ...(def?.templateId ? { templateId: def.templateId } : {}) };
+  // "See it in Deploy" plans the story's own stack, so only for the request it was written for (seen 24 Nov 2026 in review:
+  // "delete my bucket" offered the CloudFront static-site stack).
+  return { agentId, who, place, framing, watch: `Watch ${who} walk there.`, teaches, ...(scripted && def.templateId ? { templateId: def.templateId } : {}) };
 }
 
 /** What a building's agent offers to do for you ("Do it for me"), or undefined when it has no task of its own. */
