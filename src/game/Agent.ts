@@ -4,8 +4,9 @@ import { FRAME_H, FRAME_W, frameOf, hasAnim, PIVOT, type Dir } from './assets';
 import { dirFor, entityDepth, toScreen, type Iso } from './iso';
 import { findPath, type RouteCache } from './pathfinding';
 import { crisp, SpeechBubble, TEXT_FONT, type SayOptions } from './SpeechBubble';
-import { mayShowBubble } from './calm';
+import { freshLines, mayShowBubble } from './calm';
 import { useCity } from '@/state/store';
+import { quietCity } from '@/state/firstSteps';
 import { CSS, labelStyle } from './theme';
 
 /** What a walker needs to know about the world it walks in. */
@@ -72,6 +73,21 @@ export const setBubbleTopInset = (scene: Phaser.Scene, px: number) => void topIn
  * A Habbo-style character: walks tile to tile in 4 directions, idles, emotes and works.
  * The backend drives `setWorking`; tasks drive `goTo` / `pin`.
  */
+/** Lines said while a celebration card is up: the latest per agent, said once the card closes (src/game/calm.ts). */
+const held = new Map<Agent, { text: string; opts?: SayOptions; at: number }>();
+let stopWatching: (() => void) | undefined;
+function holdLine(a: Agent, text: string, opts?: SayOptions) {
+  held.set(a, { text, opts, at: Date.now() });
+  stopWatching ??= useCity.subscribe((s) => {
+    if (s.celebration) return;
+    stopWatching?.();
+    stopWatching = undefined;
+    const lines = freshLines(held, Date.now());
+    held.clear();
+    for (const [agent, l] of lines) agent.sayHeld(l.text, l.opts);
+  });
+}
+
 export class Agent {
   readonly id: string;
   readonly name: string;
@@ -210,12 +226,24 @@ export class Agent {
    * An ambient line stays quiet unless chatter is on and nobody else is talking; returns whether it showed.
    */
   say(text: string, opts?: SayOptions): boolean {
-    if (!mayShowBubble(opts?.priority ?? 'normal', this.visibleBubbles(), useCity.getState().prefs.chatter)) return false;
+    // Chatter waits while the first steps run (the quiet city), whatever ⋯ says.
+    const { prefs, progress, celebration } = useCity.getState();
+    // Never behind a celebration card (graduation's included): the line waits for it to close.
+    if (celebration) {
+      holdLine(this, text, opts);
+      return false;
+    }
+    if (!mayShowBubble(opts?.priority ?? 'normal', this.visibleBubbles(), prefs.chatter && !quietCity(progress, prefs))) return false;
     this.bubble.say(text, this.shortName, opts);
     this.spokeAt = this.scene.time.now;
     if (!opts?.silent) this.onSpeak?.(this);
     this.sync();
     return true;
+  }
+
+  /** A line held behind a celebration card, said now if this agent is still in a running scene. */
+  sayHeld(text: string, opts?: SayOptions) {
+    if (this.scene.sys?.isActive() && this.bubble.active) this.say(text, opts);
   }
 
   /** Walk to a tile; `onArrive` fires when there (or immediately if unreachable). */
@@ -290,6 +318,34 @@ export class Agent {
     return new Phaser.Geom.Rectangle(x - w / 2, y + 3, w, this.tag.displayHeight);
   }
 
+  /**
+   * Where the name tag stands while it's wanted (shown at rest, hovered or working), whether or not the overlap pass
+   * muted it (world px): the scene's one pass over every tag (src/game/labels.ts keepTags).
+   */
+  tagBox(): Phaser.Geom.Rectangle | undefined {
+    if (!this.tagWanted()) return undefined;
+    const w = this.tag.displayWidth;
+    const h = this.tag.displayHeight;
+    return new Phaser.Geom.Rectangle(this.tag.x - w / 2, this.tagAbove ? this.tag.y - h : this.tag.y, w, h);
+  }
+
+  /** Hovered: the pass keeps this tag before any other of its kind. */
+  get tagHovered() {
+    return this.hovered;
+  }
+
+  /** The overlap pass hides a tag that would sit on one it kept first (a hovered tag always shows). */
+  private tagMuted = false;
+  muteTag(on: boolean) {
+    if (on === this.tagMuted) return;
+    this.tagMuted = on;
+    this.syncTag();
+  }
+
+  private tagWanted() {
+    return !!this.cfg.showTag || this.hovered || this.mode === 'working';
+  }
+
   /** Whether the name tag shows at rest (the scene's label budget). Hover and work always show it. */
   setTagShown(on: boolean) {
     if (this.cfg.showTag === on) return;
@@ -301,7 +357,7 @@ export class Agent {
   private syncTag() {
     const base = this.hovered ? this.name : (this.cfg.tagName ?? this.name);
     this.tag.setText(this.detail ? `${base} · ${this.detail}` : base);
-    this.tag.setVisible(!!this.cfg.showTag || this.hovered || this.mode === 'working');
+    this.tag.setVisible(this.hovered || (this.tagWanted() && !this.tagMuted));
   }
 
   setUiScale(s: number) {

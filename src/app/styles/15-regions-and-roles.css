@@ -128,7 +128,7 @@
   background: var(--panel-2);
 }
 .jacket > span {
-  font-size: 28px;
+  font-size: calc(var(--fs-md) * 28 / 13);
 }
 .jacket > div {
   flex: 1;

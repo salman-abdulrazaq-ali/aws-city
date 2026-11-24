@@ -16,6 +16,7 @@ import {
   type ServerEvent,
 } from './contract';
 import templatesJson from '../../shared/templates.json' with { type: 'json' };
+import { isPracticeTemplate, playPracticeTask } from './practiceTasks';
 
 /**
  * The AWS City server (server/): Claude on Bedrock + real AWS. Two deployments, same protocol:
@@ -376,6 +377,11 @@ export class ServerBackend implements AgentBackend {
     else if (this.queue.push(cmd) > MAX_QUEUED) this.queue.shift();
   }
 
+  /** A practice task: played here and never sent, even with a real account linked (src/backend/practiceTasks.ts). */
+  practiceTask(scriptId: string, taskId?: string) {
+    return playPracticeTask(scriptId, (e) => this.events.emit(e), { taskId });
+  }
+
   private task(prompt: string, taskId = uid()) {
     this.raw({ action: 'task.submit', taskId, prompt, context: {} });
   }
@@ -418,6 +424,8 @@ export class ServerBackend implements AgentBackend {
       case 'auth.renew':
         return this.raw(cmd);
       case 'deploy.plan': {
+        // A practice-only template (the first steps' photo-bucket) never reaches the server, linked account or not.
+        if (isPracticeTemplate(cmd.templateId)) return this.planPractice(cmd);
         const bp = GUARDED_BLUEPRINTS.find((b) => b.id === cmd.templateId) ?? GUARDED_BLUEPRINTS.find((b) => b.id === GUARDED_EQUIV[cmd.templateId]);
         // No guarded build (serverless): a practice build, so the quest step still counts and nothing bills.
         if (!bp) return this.planPractice(cmd);
@@ -466,7 +474,7 @@ export class ServerBackend implements AgentBackend {
         stackName: `${t.title} (practice)`,
         region: 'practice',
         changes: t.resources.map((r) => ({ action: 'Add' as const, logicalId: r.logicalId, resourceType: r.type })),
-        costNote: 'Practice: free, nothing is created in your AWS account. The city can’t build this kind of stack for real yet; it still counts for your quest.',
+        costNote: isPracticeTemplate(templateId) ? t.costNote : 'Practice: free, nothing is created in your AWS account. The city can’t build this kind of stack for real yet; it still counts for your quest.',
       }),
     );
   }

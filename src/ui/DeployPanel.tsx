@@ -59,20 +59,20 @@ import { useCanConnect } from './useLadder';
 import { QrCode } from './QrCode';
 import { ForLearners } from './Term';
 import { Plain } from './Term';
+import { FIRST_STEPS, FIRST_STEPS_QUEST, firstStep, quietCity } from '@/state/firstSteps';
+import { isPracticeTemplate } from '@/backend/practiceTasks';
 
 /**
  * What a build preview costs: in the practice account, plainly free (the real estimate folds away for learners);
  * against a real account, AWS's estimate.
  */
-export function CostNote({ note, className = 'muted' }: { note: string; className?: string }) {
+export function CostNote({ note, className = 'muted', fold = true }: { note: string; className?: string; /** false: the caller folds the real-account price into its own "For AWS learners". */ fold?: boolean }) {
   const kind = useCity((s) => s.backendKind);
-  // A note already written for practice (a removal: "Practice: nothing real is removed…") says what it does as it is,
-  // never "free, nothing is created" with a second "Practice:" folded under it.
-  const line = note.startsWith('Practice:') ? note : costLine(note, kind);
+  const line = costShown(note, kind);
   return (
     <div className={className}>
       💰 {line}
-      {line !== note && (
+      {fold && line !== note && (
         <ForLearners>
           <span className="muted small">In a real account: {note}</span>
         </ForLearners>
@@ -80,6 +80,12 @@ export function CostNote({ note, className = 'muted' }: { note: string; classNam
     </div>
   );
 }
+
+/**
+ * The cost line a player reads first. A note already written for practice (a removal: "Practice: nothing real is
+ * removed…") says what it does as it is, never "free, nothing is created" with a second "Practice:" folded under it.
+ */
+const costShown = (note: string, kind: Parameters<typeof costLine>[1]) => (note.startsWith('Practice:') ? note : costLine(note, kind));
 
 /** An account id as the AWS console shows it: 0474-6343-8585. */
 export { accountLabel } from '@/state/account';
@@ -139,15 +145,60 @@ function SwitchRoleLine() {
   );
 }
 
-/** v2.18: exactly where an approval writes, so a player linked to two accounts can tell which one before approving. */
-export function ChangeTarget({ d }: { d: Pick<DeployView, 'accountId' | 'region'> }) {
-  if (!d.accountId) return null;
+/**
+ * v2.18: exactly where an approval writes, so a player linked to two accounts can tell which one before approving.
+ * `practice`: the demo's linked practice account, for its previews (MockBackend sends no accountId); a real server's
+ * preview always names its own.
+ */
+/** The demo's previews carry no accountId: they name the practice account the player linked (the mock backend only). */
+export const usePracticeAccount = () => useCity((s) => (s.backendKind === 'mock' ? s.account.accountId : undefined));
+
+export function ChangeTarget({ d, practice }: { d: Pick<DeployView, 'accountId' | 'region'>; practice?: string }) {
+  const id = d.accountId ?? practice;
+  if (!id) return null;
   return (
-    <div className="muted change-target">
-      Changes AWS account <b>{accountLabel(d.accountId)}</b> · {d.region}
+    <div className="change-target">
+      {d.accountId ? 'Changes AWS account' : 'Changes the practice account'}{' '}
+      {/* The id and Region wrap together, never "us-" / "west-2" or a line starting "· us-west-2". */}
+      <span className="change-where">
+        <b>{accountLabel(id)}</b> · {d.region}
+      </span>
     </div>
   );
 }
+
+/** The CloudFormation namespaces whose service goes by another name ("AWS::Events::Rule" is an EventBridge rule). */
+const NAMESPACE: Record<string, string> = {
+  ApiGateway: 'API Gateway',
+  ApiGatewayV2: 'API Gateway',
+  Events: 'EventBridge',
+  Logs: 'CloudWatch Logs',
+  StepFunctions: 'Step Functions',
+  ElasticLoadBalancingV2: 'load balancer',
+  Account: 'account',
+};
+/** Words a type name spells in CamelCase that read as acronyms ("RestApi" → "REST API"). */
+const ACRONYM: Record<string, string> = { api: 'API', rest: 'REST', url: 'URL', ip: 'IP', vpc: 'VPC', acl: 'ACL', oac: 'OAC', http: 'HTTP', db: 'DB' };
+
+/**
+ * A CloudFormation type in plain words: "AWS::S3::Bucket" → "S3 bucket", "AWS::CloudFront::OriginAccessControl" →
+ * "CloudFront origin access control". Anything else (not an AWS:: type) is returned as it is.
+ */
+export function plainType(type: string): string {
+  const m = /^AWS::([A-Za-z0-9]+)::([A-Za-z0-9]+)$/.exec(type);
+  if (!m) return type;
+  const words = m[2]
+    .split(/(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/)
+    .map((w) => ACRONYM[w.toLowerCase()] ?? w.toLowerCase())
+    .join(' ');
+  const service = NAMESPACE[m[1]] ?? m[1];
+  const out = `${service} ${words}`;
+  return out.charAt(0).toUpperCase() + out.slice(1);
+}
+
+/** What each change row does, in words. */
+const CHANGE_VERB: Record<string, string> = { Add: 'Add', Remove: 'Remove', Modify: 'Change' };
+const CHANGE_SIGN: Record<string, string> = { Add: '+', Remove: '−', Modify: '~' };
 
 const STATUS_TEXT: Record<DeployView['status'], string> = {
   preview: 'waiting for your OK',
@@ -417,6 +468,18 @@ export function DeployPanel() {
   const { clear } = pending;
   /** The server asked for an authenticator first: its setup shows, and the linking steps wait until it's done. */
   const mfaFirst = !!account.mfaRequired && canSetUpMfa();
+  /**
+   * The first steps (DESIGN-tutorial §4.2 stage 6): only the waiting approval, said plainly (no account steps, no
+   * blueprints, no account number), for every player, a hosted one with a linked account too. The plan is a practice
+   * build, decided on this device (src/backend/ServerBackend.ts planPractice): nothing is sent, nothing touches AWS.
+   */
+  // Graduation's card keeps it so while it's up (seen 24 Nov 2026: the whole Connect and blueprints page behind the scrim).
+  const onPath = useCity((s) => quietCity(s.progress, s.prefs) || s.celebration === FIRST_STEPS_QUEST);
+  /** The plan the path's deploy step asks for (photo-bucket), while that's the step on screen. */
+  const pathPlan = useCity((s) => {
+    const st = firstStep(s.progress, s.prefs);
+    return st?.kind === 'deploy' ? st.templateId : undefined;
+  });
   // A new setup link (another Region, Allow small fixes, Link again) means a new stack: step 3 waits for it again.
   useEffect(() => setStackMade(false), [account.linkUrl]);
 
@@ -490,6 +553,13 @@ export function DeployPanel() {
     heading.focus({ preventScroll: true });
     useCity.getState().clearDeployFocus();
   }, [focusId, previewKey]);
+  // On the first steps, Sally's plan arriving takes focus to its title too (Tab then reaches Approve), never Approve.
+  useEffect(() => {
+    if (!onPath || !previewKey) return;
+    const heading = headingRefs.current.get(previewKey.split(',')[0]);
+    if (!heading || heading.closest('.card')?.contains(document.activeElement)) return;
+    heading.focus({ preventScroll: true });
+  }, [onPath, previewKey]);
 
   const verify = () => {
     const requestId = verifyAccount(accountInput(role));
@@ -852,6 +922,134 @@ export function DeployPanel() {
   );
   const update = roleUpdate(account);
 
+  /** One build card: a change waiting for the player's OK, or what an earlier one did. */
+  const renderCard = ({ d, group }: (typeof cards)[number]) => {
+    const deciding = pending.is(`decide:${d.deployId}`);
+    const history = group?.history.filter((h) => h.status === 'complete') ?? [];
+    const preview = d.status === 'preview';
+    // A waiting card sits under "Waiting for your OK" and its own line names the account and Region (ChangeTarget), so its
+    // title row says neither again; an older server's preview with no account id keeps the Region here.
+    const targetShown = preview && !!(d.accountId ?? (kind === 'mock' ? account.accountId : undefined));
+    const meta = [
+      targetShown || onPath ? undefined : d.region,
+      preview ? undefined : isPracticeDeploy(d.deployId) && d.status === 'complete' ? 'practice: nothing was created' : group ? statusWord(d) : (STATUS_TEXT[d.status] ?? d.status),
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    return (
+      <div key={group?.key ?? d.deployId} className={`card stack ${d.status}`}>
+        <div className="stack-head">
+          <b
+            className="stack-title"
+            tabIndex={preview ? -1 : undefined}
+            ref={(el) => {
+              if (el && preview) headingRefs.current.set(d.deployId, el);
+              else headingRefs.current.delete(d.deployId);
+            }}
+          >
+            {group?.title ?? d.stackName}
+          </b>{' '}
+          {meta && <span className="muted">{meta}</span>}
+        </div>
+        {group && history.length > 1 && <div className="muted small build-history">{history.map((h) => statusWord(h)).join(' → ')}</div>}
+        {d.status === 'preview' && (
+          <BuildPreview
+            d={d}
+            plain={onPath}
+            grouped={!!group}
+            // A practice build is decided on this device (ServerBackend.answerPractice): no connection needed.
+            offline={isPracticeDeploy(d.deployId) ? undefined : offline}
+            deciding={deciding}
+            onDecide={(approve, typed) => {
+              decideDeploy(d.deployId, approve, typed);
+              pending.start(`decide:${d.deployId}`);
+            }}
+          />
+        )}
+        {(d.status === 'creating' || d.status === 'deleting') && <div className="busy-bar" aria-hidden="true" />}
+        {d.outputs && (
+          <ul className="outputs">
+            {Object.entries(d.outputs).map(([k, v]) => (
+              <li key={k}>
+                {k}: {/* Outputs come from the stack: only AWS Console pages become links (the same check as openUrl). */}
+                {isSafeAwsUrl(v) ? (
+                  <a href={v} target="_blank" rel="noreferrer">
+                    {v}
+                  </a>
+                ) : (
+                  <code>{v}</code>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        {/* An agent's change: Tear down asks for the removal in plain words, so its own card shows in seconds. Not when
+            My builds' list above already offers Take it down for the same resource (one removal button each). */}
+        {group?.teardown && d.status !== 'preview' && d.status !== 'creating' && !(d.resourceId && listed.has(d.resourceId)) && (
+          <button
+            className="btn warn"
+            disabled={!!offline}
+            title={offline ?? `Asks: “${group.teardown}”. You approve it like any change.`}
+            onClick={() => submitPrompt(group.teardown!)}
+          >
+            🧹 Tear down (remove it)
+          </button>
+        )}
+        {/* A practice build made nothing in AWS: there's nothing to tear down. */}
+        {!group && d.status === 'complete' && !isPracticeDeploy(d.deployId) && (
+          <PendingButton
+            className="btn warn"
+            pending={pending.is(`teardown:${d.deployId}`)}
+            busyLabel="Tearing down…"
+            disabled={!!offline}
+            title={offline}
+            onClick={() => {
+              teardownDeploy(d.deployId);
+              pending.start(`teardown:${d.deployId}`);
+            }}
+          >
+            🧹 Tear down (delete stack)
+          </PendingButton>
+        )}
+        {d.message && <div className="muted stack-msg">{d.message}</div>}
+      </div>
+    );
+  };
+  // Waiting approvals come first, above the blueprints and My builds' Take it down rows (the highest-stakes card).
+  const waiting = cards.filter(({ d }) => d.status === 'preview');
+  const settled = cards.filter(({ d }) => d.status !== 'preview');
+
+  if (onPath)
+    return (
+      <div className="deploy deploy-path">
+        {waiting.length > 0 ? (
+          <section className="waiting-ok" aria-labelledby="waiting-ok-title">
+            <h4 id="waiting-ok-title">Waiting for your OK</h4>
+            {waiting.map(renderCard)}
+          </section>
+        ) : !pathPlan ? (
+          // Just decided (graduation's card is up): the plan as it ended.
+          settled.filter(({ d }) => isPracticeTemplate(d.templateId)).map(renderCard)
+        ) : (
+          pathPlan && (
+            <div className="card">
+              <p className="muted">
+                <Plain text={FIRST_STEPS.steps[5].body} />
+              </p>
+              <PendingButton
+                className="btn primary"
+                pending={pending.is(`plan:${pathPlan}`)}
+                busyLabel="Sally is planning…"
+                onClick={() => pending.start(`plan:${pathPlan}`, planDeploy(pathPlan))}
+              >
+                {FIRST_STEPS.steps[5].button.replace(/\s*\(Deploy tab\)$/, '')}
+              </PendingButton>
+            </div>
+          )
+        )}
+      </div>
+    );
+
   // Where the player is in building for real: connect, pick a blueprint, approve it.
   const at = !account.linked ? 0 : stacks.some((d) => d.status === 'preview') ? 2 : stacks.length ? 3 : 1;
   return (
@@ -899,9 +1097,10 @@ export function DeployPanel() {
           <>
             <p className="linked">
               <span className="linked-badge">✓ Linked</span> <b>{account.accountId ? accountTitle(account.accountId) : ''}</b>
+              {/* The Region on its own line: never a wrapped "· US West (Oregon)" starting a line. */}
               {account.region && (
-                <span>
-                  · {regionName(account.region)} <span className="muted">({account.region})</span>
+                <span className="linked-where">
+                  {regionName(account.region)} <span className="muted">({account.region})</span>
                 </span>
               )}
             </p>
@@ -1055,6 +1254,13 @@ export function DeployPanel() {
         )}
       </div>
 
+      {waiting.length > 0 && (
+        <section className="waiting-ok" aria-labelledby="waiting-ok-title">
+          <h4 id="waiting-ok-title">Waiting for your OK</h4>
+          {waiting.map(renderCard)}
+        </section>
+      )}
+
       <h4>Blueprints</h4>
       {!account.linked && <p className="muted">🔒 Connect an account above (the practice one is fine) to build these.</p>}
       {account.linked && mode === 'guarded' && <p className="muted">Built with guarded tools: only game-owned resources, small limits, your approval.</p>}
@@ -1085,7 +1291,7 @@ export function DeployPanel() {
         </div>
       ))}
 
-      {(stacks.length > 0 || builds.length > 0) && <h4>My builds</h4>}
+      {(settled.length > 0 || builds.length > 0) && <h4>My builds</h4>}
       {builds.length > 0 && (
         <>
           <ul className="my-builds" aria-label="Built by the city in your account">
@@ -1096,8 +1302,8 @@ export function DeployPanel() {
                 <li key={b.arn}>
                   <span className="my-build-name">
                     <b>{b.name}</b>{' '}
-                    <span className="muted">
-                      · {(b.serviceId && serviceById(b.serviceId)?.name) ?? b.type} · {b.region ?? inventory?.homeRegion ?? account.region}
+                    <span className="muted my-build-meta">
+                      {(b.serviceId && serviceById(b.serviceId)?.name) ?? b.type} · {b.region ?? inventory?.homeRegion ?? account.region}
                     </span>
                   </span>
                   {target ? (
@@ -1121,87 +1327,7 @@ export function DeployPanel() {
           <p className="muted small">Taking something down asks for your OK first, like any change. Until then it may keep billing.</p>
         </>
       )}
-      {cards.map(({ d, group }) => {
-        const deciding = pending.is(`decide:${d.deployId}`);
-        const history = group?.history.filter((h) => h.status === 'complete') ?? [];
-        return (
-          <div key={group?.key ?? d.deployId} className={`card stack ${d.status}`}>
-            <b
-              className="stack-title"
-              tabIndex={d.status === 'preview' ? -1 : undefined}
-              ref={(el) => {
-                if (el && d.status === 'preview') headingRefs.current.set(d.deployId, el);
-                else headingRefs.current.delete(d.deployId);
-              }}
-            >
-              {group?.title ?? d.stackName}
-            </b>{' '}
-            <span className="muted">
-              · {d.region} ·{' '}
-              {isPracticeDeploy(d.deployId) && d.status === 'complete' ? 'practice: nothing was created' : group ? statusWord(d) : (STATUS_TEXT[d.status] ?? d.status)}
-            </span>
-            {group && history.length > 1 && <div className="muted small build-history">{history.map((h) => statusWord(h)).join(' → ')}</div>}
-            {d.status === 'preview' && (
-              <BuildPreview
-                d={d}
-                grouped={!!group}
-                offline={offline}
-                deciding={deciding}
-                onDecide={(approve, typed) => {
-                  decideDeploy(d.deployId, approve, typed);
-                  pending.start(`decide:${d.deployId}`);
-                }}
-              />
-            )}
-            {(d.status === 'creating' || d.status === 'deleting') && <div className="busy-bar" aria-hidden="true" />}
-            {d.outputs && (
-              <ul className="outputs">
-                {Object.entries(d.outputs).map(([k, v]) => (
-                  <li key={k}>
-                    {k}: {/* Outputs come from the stack: only AWS Console pages become links (the same check as openUrl). */}
-                    {isSafeAwsUrl(v) ? (
-                      <a href={v} target="_blank" rel="noreferrer">
-                        {v}
-                      </a>
-                    ) : (
-                      <code>{v}</code>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-            {/* An agent's change: Tear down asks for the removal in plain words, so its own card shows in seconds. Not when
-                My builds' list above already offers Take it down for the same resource (one removal button each). */}
-            {group?.teardown && d.status !== 'preview' && d.status !== 'creating' && !(d.resourceId && listed.has(d.resourceId)) && (
-              <button
-                className="btn warn"
-                disabled={!!offline}
-                title={offline ?? `Asks: “${group.teardown}”. You approve it like any change.`}
-                onClick={() => submitPrompt(group.teardown!)}
-              >
-                🧹 Tear down (remove it)
-              </button>
-            )}
-            {/* A practice build made nothing in AWS: there's nothing to tear down. */}
-            {!group && d.status === 'complete' && !isPracticeDeploy(d.deployId) && (
-              <PendingButton
-                className="btn warn"
-                pending={pending.is(`teardown:${d.deployId}`)}
-                busyLabel="Tearing down…"
-                disabled={!!offline}
-                title={offline}
-                onClick={() => {
-                  teardownDeploy(d.deployId);
-                  pending.start(`teardown:${d.deployId}`);
-                }}
-              >
-                🧹 Tear down (delete stack)
-              </PendingButton>
-            )}
-            {d.message && <div className="muted stack-msg">{d.message}</div>}
-          </div>
-        );
-      })}
+      {settled.map(renderCard)}
       {fixes.length > 0 && (
         <>
           <h4>Fixes I approved</h4>
@@ -1255,8 +1381,10 @@ export function DeployPanel() {
  * A build's preview, approved here: what's added or removed, the server's own lines in words ("Safety check: …"), what
  * it costs, and the typed name when the server asks for one (the same rule as a fix's Approve in City care).
  */
-function BuildPreview({ d, grouped, offline, deciding, onDecide }: {
+function BuildPreview({ d, plain = false, grouped, offline, deciding, onDecide }: {
   d: DeployView;
+  /** The first steps: the practice line alone says where it goes (no account number), and no For AWS learners fold. */
+  plain?: boolean;
   /** One resource's card (src/state/builds.ts): the approval's own words say what this change does. */
   grouped: boolean;
   offline?: string;
@@ -1264,27 +1392,35 @@ function BuildPreview({ d, grouped, offline, deciding, onDecide }: {
   onDecide: (approve: boolean, typed?: string) => void;
 }) {
   const [typed, setTyped] = useState('');
+  const kind = useCity((s) => s.backendKind);
+  const practice = usePracticeAccount();
   const details = d.changes.filter((c) => c.resourceType === 'detail');
   const resources = d.changes.filter((c) => c.resourceType !== 'detail');
   const ok = !d.confirmText || typed.trim() === d.confirmText;
   const removing = resources.length > 0 && resources.every((c) => c.action === 'Remove');
+  const realCost = d.costNote && costShown(d.costNote, kind) !== d.costNote ? d.costNote : undefined;
   return (
     <>
       {/* What this approval changes, in words ("Permanently terminate EC2 instance i-…"). */}
       {grouped && <div className="build-change">{d.stackName}</div>}
-      <ChangeTarget d={d} />
-      <table className="changes">
-        <tbody>
+      {/* Where first: the account and Region this approval writes to. */}
+      {!plain && <ChangeTarget d={d} practice={practice} />}
+      {/* One plain line per resource ("Add S3 bucket"), its name in the template second. */}
+      {resources.length > 0 && (
+        <ul className="change-list" aria-label="What changes">
           {resources.map((c) => (
-            <tr key={c.logicalId}>
-              <td className={`chg ${c.action}`} aria-label={c.action}>
-                {c.action === 'Add' ? '+' : c.action === 'Remove' ? '−' : '~'}
-              </td>
-              <td>{c.logicalId}</td>
-            </tr>
+            <li key={c.logicalId} className="change-row">
+              <span className={`chg ${c.action}`} aria-hidden="true">
+                {CHANGE_SIGN[c.action] ?? '~'}
+              </span>
+              <span className="change-what">
+                {CHANGE_VERB[c.action] ?? c.action} {plainType(c.resourceType)}
+              </span>
+              <code className="change-id">{c.logicalId}</code>
+            </li>
           ))}
-        </tbody>
-      </table>
+        </ul>
+      )}
       {/* 'detail' lines spell out the change in words (why the server's safety check asks for care). */}
       {details.length > 0 && (
         <ul className="preview-changes">
@@ -1293,20 +1429,25 @@ function BuildPreview({ d, grouped, offline, deciding, onDecide }: {
           ))}
         </ul>
       )}
-      {/* The CloudFormation resource types, for whoever wants them. */}
-      <ForLearners>
-        <table className="changes">
-          <tbody>
-            {resources.map((c) => (
-              <tr key={c.logicalId}>
-                <td>{c.logicalId}</td>
-                <td className="muted">{c.resourceType}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </ForLearners>
-      {d.costNote && <CostNote note={d.costNote} />}
+      {d.costNote && <CostNote note={d.costNote} fold={false} className="muted change-cost" />}
+      {/* One fold for whoever wants more: the CloudFormation resource types and the real account's price. */}
+      {!plain && (resources.length > 0 || realCost) && (
+        <ForLearners>
+          {resources.length > 0 && (
+            <table className="changes">
+              <tbody>
+                {resources.map((c) => (
+                  <tr key={c.logicalId}>
+                    <td>{c.logicalId}</td>
+                    <td className="muted">{c.resourceType}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {realCost && <p className="muted small">💰 In a real account: {realCost}</p>}
+        </ForLearners>
+      )}
       <ReauthPrompt />
       {d.confirmText && (
         <div className="confirm-type">
@@ -1325,7 +1466,7 @@ function BuildPreview({ d, grouped, offline, deciding, onDecide }: {
           title={offline ?? (ok ? undefined : `Type ${d.confirmText} first`)}
           onClick={() => onDecide(true, d.confirmText ? typed.trim() : undefined)}
         >
-          {removing ? '✅ Approve & take down' : '✅ Approve & deploy'}
+          {removing ? 'Approve & take down' : 'Approve & deploy'}
         </PendingButton>
         <button className="btn" disabled={deciding || !!offline} title={offline} onClick={() => onDecide(false)}>
           Reject

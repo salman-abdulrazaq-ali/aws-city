@@ -4,8 +4,9 @@
 // paid and the next step; in the demo, where the task matches a practice template, "See it in Deploy" plans that stack
 // (planDeploy) for the player to approve. Pure, so it's tested without React (tests/watch.test.ts).
 import type { TaskView } from './store';
+import { isPracticeTask } from '@/backend/practiceTasks';
 import { placeFor } from '@/world/places';
-import { matchText, serviceById } from '@/world/taxonomy';
+import { FEATURED_REQUESTS, matchText, serviceById } from '@/world/taxonomy';
 
 interface StoryDef {
   /** "store your holiday photos": what the agent will do, finishing "… in <place>". */
@@ -83,19 +84,57 @@ export interface TaskStory {
 /** The agent a task goes to: the one the plan named, else the one its words point at, else the concierge's default. */
 const taskAgent = (task: Pick<TaskView, 'agentId' | 'prompt'>) => task.agentId ?? matchText(task.prompt) ?? 'bedrock';
 
+/** Words compared as words: case, punctuation and spacing don't count. */
+const asWords = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/**
+ * Whether a task's words are the ones its agent's story (and the demo's script, src/backend/MockBackend.ts `scriptFor`)
+ * was written for: the agent's own offer or a featured request it makes, word for word. Anything else typed gets a
+ * neutral framing and, in the demo, a generic script the card calls scripted (seen 24 Nov 2026: "expire after 30 days"
+ * played holiday.jpg and Glacier after 90 days, and a Copilot bucket read "Sally will store your holiday photos").
+ */
+export function followsScript(agentId: string, prompt: string): boolean {
+  const p = asWords(prompt);
+  const own = [STORIES[agentId]?.prompt, ...FEATURED_REQUESTS.filter((r) => r.agent === agentId).map((r) => r.prompt)];
+  return !!p && own.some((k) => !!k && asWords(k) === p);
+}
+
+/** The name a request gives what it makes ("a table called orders", "named “orders”"), else undefined. */
+export function nameIn(prompt: string): string | undefined {
+  return /\b(?:called|named)\s+["“'‘]?([a-z0-9][a-z0-9._-]{1,62})/i.exec(prompt)?.[1].replace(/[._-]+$/, '') || undefined;
+}
+
+/** The demo's honest line on a task its script doesn't follow word for word. */
+export const DEMO_SCRIPTED = 'Demo: this is a scripted example, not your exact request. The hosted city does what you type.';
+
+/**
+ * The demo's line on a task card, or undefined: an Ask whose words its script wasn't written for. Not the first steps'
+ * practice task (the tutorial's own script, which says what it plays), a Copilot run (🖥️: its practice-console flow
+ * makes the thing asked for, under the name typed) nor a refused one (its reason says what happened).
+ */
+export function scriptedNote(task: Pick<TaskView, 'taskId' | 'agentId' | 'prompt' | 'status'>, demo: boolean): string | undefined {
+  if (!demo || task.status === 'failed' || isPracticeTask(task.taskId) || task.prompt.startsWith('🖥️')) return undefined;
+  return followsScript(taskAgent(task), task.prompt) ? undefined : DEMO_SCRIPTED;
+}
+
 /** The story of a task (any agent: a hand-written one, else the building's own first lesson). */
-export function taskStory(task: Pick<TaskView, 'agentId' | 'prompt'>): TaskStory {
+export function taskStory(task: Pick<TaskView, 'agentId' | 'prompt'> & { taskId?: string }): TaskStory {
   const agentId = taskAgent(task);
   const p = placeFor(agentId);
   const who = p ? firstName(p.agentName) : 'An agent';
   const place = p?.place ?? serviceById(agentId)?.name ?? 'town';
-  // The hand-written story only for its own task (seen 24 Nov 2026: "delete my bucket" read "Sally will store your
-  // holiday photos", with a storage-classes lesson); any other task gets the building's own words.
-  const story = STORIES[agentId];
-  const def = story && task.prompt.trim().toLowerCase() === story.prompt.toLowerCase() ? story : undefined;
-  const framing = def ? `${who} will ${def.will} in ${place}.` : `${who} will take this on at ${place}.`;
-  const teaches = def?.teaches ?? p?.simple ?? p?.teaches[0] ?? '';
-  return { agentId, who, place, framing, watch: `Watch ${who} walk there.`, teaches, ...(def?.templateId ? { templateId: def.templateId } : {}) };
+  const def = STORIES[agentId];
+  // Its hand-written words only for the request they were written for: "Create a table called orders" isn't Dina's
+  // users table, and a Copilot bucket isn't Sally's holiday photos.
+  // The first steps' practice task plays Sally's own script (holiday.jpg, the warm shelf, the deep freeze), so it's hers too.
+  const scripted = !!def && (isPracticeTask(task.taskId ?? '') || followsScript(agentId, task.prompt));
+  const framing = scripted ? `${who} will ${def.will} in ${place}.` : `${who} will take this on at ${place}.`;
+  // Its lesson too (seen 24 Nov 2026: the Copilot's city-photos bucket taught the holiday photos' storage classes): any
+  // other request gets the building's own first lesson.
+  const teaches = (scripted ? def.teaches : undefined) ?? p?.simple ?? p?.teaches[0] ?? '';
+  // "See it in Deploy" plans the story's own stack, so only for the request it was written for (seen 24 Nov 2026 in review:
+  // "delete my bucket" offered the CloudFront static-site stack).
+  return { agentId, who, place, framing, watch: `Watch ${who} walk there.`, teaches, ...(scripted && def.templateId ? { templateId: def.templateId } : {}) };
 }
 
 /** What a building's agent offers to do for you ("Do it for me"), or undefined when it has no task of its own. */
@@ -170,6 +209,12 @@ export function liveStep(task: Pick<TaskView, 'steps'>) {
   const i = task.steps.findIndex((s) => s.status === 'running');
   const at = i >= 0 ? i : task.steps.map((s) => s.status).lastIndexOf('done');
   return at >= 0 ? { index: at, text: task.steps[at].text, of: task.steps.length } : undefined;
+}
+
+/** The agent's bubble when a task is done: the stars it really paid (the store pays first: src/app/runtime.ts), none said when it paid none. */
+export function doneBubble(task: Pick<TaskView, 'paid'> | undefined): string {
+  const n = (task?.paid ?? []).reduce((sum, x) => sum + x.stars, 0);
+  return n > 0 ? `Done! +${n} ⭐` : 'Done!';
 }
 
 /** "+3 ⭐ S3 Lake, +1 ⭐ IAM Gatehouse", or the friendly daily-cap line when today's paid tasks (here or in all) are used up. */

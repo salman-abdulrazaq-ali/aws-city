@@ -18,6 +18,9 @@ const { setNextRunner } = await import('@/state/next');
 const { QUESTS } = await import('@/world/content');
 const { cardsFor } = await import('@/world/content');
 const { openEverything } = await import('@/ui/useLadder');
+const { GuideCard } = await import('@/ui/FirstSteps');
+/** The first regular quest (QUESTS[0] is the first steps, played with Connie's guide instead of the To-do list). */
+const QUEST1 = QUESTS.find((x) => x.id !== 'first-steps')!;
 
 const REGION = 'us-west-2';
 /** A player who reviewed cards (Learn is open) and put up S3 Lake (its game is today's game goal); no quest finished. */
@@ -127,7 +130,7 @@ describe('Simple mode (the default)', () => {
 
   it('over five rows, the goals left wait behind "+N more", still counted; tapping it shows them', () => {
     // Every area open (Show everything opens them), and a quest under way: more rows than fit.
-    useCity.setState({ progress: player({ quests: { [QUESTS[0].id]: { status: 'active', step: 0, count: 0 } } }) });
+    useCity.setState({ progress: player({ quests: { [QUEST1.id]: { status: 'active', step: 0, count: 0 } } }) });
     act(() => openEverything());
     const { container } = render(<Home openTab={() => {}} />);
     const more = container.querySelector<HTMLButtonElement>('.todo-more')!;
@@ -166,9 +169,23 @@ describe('Simple mode (the default)', () => {
     expect(screen.getByText('Fix something')).toBeTruthy();
   });
 
-  it('a brand-new player sees one task: the quest’s first step', () => {
-    const q = QUESTS[0];
-    useCity.setState({ progress: { version: 2, landmarks: {}, updatedAt: '', quests: { [q.id]: { status: 'active', step: 0, count: 0 } } } });
+  it('a brand-new player is on the first steps: Connie’s guide leads with one button, and the To-do list waits', () => {
+    useCity.setState({ progress: { version: 2, landmarks: {}, updatedAt: '', quests: { 'first-steps': { status: 'active', step: 0, count: 0 } } } });
+    const { container } = render(
+      <>
+        <GuideCard openTab={() => {}} />
+        <Home openTab={() => {}} />
+      </>,
+    );
+    expect(screen.getByRole('region', { name: /First steps, step 1 of 6: Walk to S3 Lake/ })).toBeTruthy();
+    const primary = container.querySelectorAll('.btn.primary');
+    expect(primary).toHaveLength(1);
+    expect(primary[0].textContent).toBe('Walk to S3 Lake');
+    expect(container.querySelector('.todo')).toBeNull();
+  });
+
+  it('a save from before the first steps (the first quest just started) sees one task: its first step', () => {
+    useCity.setState({ progress: { version: 2, landmarks: {}, updatedAt: '', quests: { [QUEST1.id]: { status: 'active', step: 0, count: 0 } } } });
     const { container } = render(<Home openTab={() => {}} />);
     const rows = screen.getAllByRole('listitem');
     expect(rows).toHaveLength(1);

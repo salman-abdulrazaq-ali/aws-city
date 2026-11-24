@@ -152,6 +152,10 @@ code.api {
 .task.folded .task-prompt {
   margin-bottom: 0;
 }
+/* The demo's "scripted example" line sits right under the words it didn't follow. */
+.task-scripted {
+  margin: 0 0 var(--s-3);
+}
 .task-head .btn {
   margin-left: auto;
 }

@@ -7,6 +7,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--s-2);
+  min-height: 24px;
   padding: var(--s-2) var(--s-4);
   font-size: var(--fs-xs);
   font-weight: 800;
@@ -39,12 +40,12 @@
 
 /* ── Region facts: availability and list prices for the Region this city is ── */
 .region-price {
-  margin: 6px 0 10px;
-  padding: 7px 9px;
+  margin: var(--s-3) 0 var(--s-4);
+  padding: var(--s-3) var(--s-4);
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--r-lg);
   background: var(--panel-3);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .region-price.closed {
   border-color: var(--bad-line);
@@ -53,19 +54,19 @@
 }
 .region-price ul,
 .region-facts ul {
-  margin: 4px 0 0;
-  padding-left: 16px;
+  margin: var(--s-2) 0 0;
+  padding-left: var(--s-6);
 }
 .region-price .prices li,
 .region-facts li {
-  margin: 2px 0;
+  margin: var(--s-1) 0;
 }
 .region-price .actions.quiet {
-  margin-top: 6px;
+  margin-top: var(--s-3);
 }
 .region-facts h4 {
-  margin: 12px 0 4px;
-  font-size: 12px;
+  margin: var(--s-5) 0 var(--s-2);
+  font-size: var(--fs-sm);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--ink-soft);
@@ -98,8 +99,17 @@
 .world-intro p {
   flex: 1 1 180px;
   margin: 0;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
   line-height: 1.45;
+}
+/* The side panel: just under the map, in the side column (flat, like its cards), so the glowing dots stay in sight. */
+.world-intro.docked {
+  position: static;
+  flex: none;
+  max-width: none;
+  margin: 0 var(--s-4) var(--s-4);
+  padding: var(--s-4) var(--s-5);
+  box-shadow: none;
 }
 .coach-tip {
   position: fixed;
@@ -183,7 +193,7 @@
   width: 32px;
   height: 32px;
   padding: 0;
-  font-size: 16px;
+  font-size: calc(var(--fs-md) * 16 / 13);
   line-height: 1;
   color: var(--ink-hi);
   background: color-mix(in srgb, var(--bg-deep) 85%, transparent);
@@ -218,8 +228,8 @@
   left: 0;
   bottom: 0;
   z-index: 5;
-  padding: 1px 6px;
-  font-size: 10px;
+  padding: var(--s-1) var(--s-3);
+  font-size: var(--fs-xs);
   line-height: 1.4;
   color: var(--ink-soft);
   background: color-mix(in srgb, var(--bg-deep) 70%, transparent);
@@ -231,7 +241,7 @@
   text-decoration: underline;
 }
 .stage:has(.map-credit) .world-btn {
-  bottom: calc(var(--s-3) + 14px);
+  bottom: calc(var(--s-3) + var(--s-6));
 }
 .menu-credit,
 .menu button.menu-credit {

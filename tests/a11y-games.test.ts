@@ -69,9 +69,9 @@ describe('the sorting office in plain words', () => {
 });
 
 describe('Decorate’s chips are big enough to press', () => {
-  it('its tool and category chips are at least 24×24 px (WCAG 2.5.8)', () => {
+  it('its tool switch and category chips are at least 24×24 px (WCAG 2.5.8)', () => {
     const css = read('src/app/styles/26-build.css');
-    const rule = /\.bd-tools \.chip,\s*\.bd-cats \.chip \{([^}]*)\}/.exec(css)?.[1] ?? '';
+    const rule = /\.bd-tools \.seg button,\s*\.bd-cats \.chip \{([^}]*)\}/.exec(css)?.[1] ?? '';
     expect(Number(/min-height:\s*(\d+)px/.exec(rule)?.[1])).toBeGreaterThanOrEqual(24);
     expect(Number(/min-width:\s*(\d+)px/.exec(rule)?.[1])).toBeGreaterThanOrEqual(24);
   });

@@ -1,7 +1,9 @@
 import Phaser from 'phaser';
 import { createCharacterAnims, preloadIndexes, queueAssets } from '../assets';
 import { crisp, PIXEL_FONT, TEXT_FONT } from '../SpeechBubble';
-import { COLOR, CSS, FONT_SIZE } from '../theme';
+import { COLOR, CSS, FONT_SIZE, TIP_STYLE } from '../theme';
+import { quietCity } from '@/state/firstSteps';
+import { useCity } from '@/state/store';
 
 const TIPS = [
   'Tip: every AWS console page you open builds a landmark.',
@@ -29,8 +31,11 @@ export class BootScene extends Phaser.Scene {
     this.add.rectangle(width / 2, height / 2, BLOCKS * (bw + 2) + 8, 20, COLOR.bgDeep).setStrokeStyle(2, COLOR.line);
     const blocks = Array.from({ length: BLOCKS }, (_, i) => this.add.rectangle(x0 + i * (bw + 2) + 1, height / 2, bw, 12, COLOR.panelHi).setOrigin(0, 0.5));
     crisp(this.add.text(width / 2, height / 2 - 28, 'Building AWS City…', { fontFamily: TEXT_FONT, fontSize: FONT_SIZE.lg, fontStyle: '800', color: CSS.accent })).setOrigin(0.5);
-    const tip = TIPS[Math.floor(Math.random() * TIPS.length)];
-    crisp(this.add.text(width / 2, height / 2 + 28, tip, { fontFamily: TEXT_FONT, fontSize: FONT_SIZE.sm, color: CSS.muted, align: 'center', wordWrap: { width: Math.min(320, width - 40) } })).setOrigin(0.5, 0);
+    // A new player (a first run's map, or the first steps) gets no keyboard tip: "press E" was never explained there.
+    const { prefs, progress } = useCity.getState();
+    const tips = !prefs.region || quietCity(progress, prefs) ? TIPS.filter((t) => !t.includes('press E ')) : TIPS;
+    const tip = tips[Math.floor(Math.random() * tips.length)];
+    crisp(this.add.text(width / 2, height / 2 + 28, tip, { ...TIP_STYLE, fontFamily: TEXT_FONT, align: 'center', wordWrap: { width: Math.min(320, width - 56) } })).setOrigin(0.5, 0);
     this.load.on('progress', (v: number) => blocks.forEach((b, i) => b.setFillStyle(i < Math.round(v * BLOCKS) ? COLOR.accent : COLOR.panelHi)));
     queueAssets(this);
     this.load.once('complete', async () => {

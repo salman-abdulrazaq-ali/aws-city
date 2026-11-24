@@ -7,6 +7,7 @@
 // uses Claude on Bedrock for any page.
 import type { ConsoleStepEvent, PageSnapshot, ServerEvent, SnapshotItem } from './contract';
 import { placeFor } from '@/world/places';
+import { nameIn } from '@/state/watch';
 
 type Step = Omit<ConsoleStepEvent, 'type' | 'taskId' | 'index' | 'agentId'>;
 export type FlowId = 's3' | 'ec2' | 'dynamodb' | 'lambda' | 'rds' | 'cloudfront' | 'sqs' | 'iam';
@@ -103,11 +104,11 @@ const LAMBDA: Flow = {
           ? { action: 'point', target: target(i), say: '“Author from scratch” is already selected.', why: 'Starting from scratch gives you a tiny Hello World handler — the clearest way to see how a function works.', risk: 'safe' }
           : { action: 'click', target: target(i), say: 'Picking “Author from scratch”.', why: 'Starting from scratch gives you a tiny Hello World handler — the clearest way to see how a function works.', risk: 'safe' },
     },
-    { key: 'name', find: (s) => find(s, /^function name/i, 'textbox'), step: (i) => ({ action: 'type', target: target(i), value: 'city-hello', say: 'Naming it city-hello.', why: 'The name becomes part of the function’s ARN, which other services use to invoke it.', risk: 'safe' }) },
+    { key: 'name', find: (s) => find(s, /^function name/i, 'textbox'), step: (i, t) => ({ action: 'type', target: target(i), value: t.name, say: `Naming it ${t.name}.`, why: 'The name becomes part of the function’s ARN, which other services use to invoke it.', risk: 'safe' }) },
     { key: 'runtime', find: (s) => find(s, /^runtime/i, 'combobox'), step: (i) => ({ action: 'select', target: target(i), value: 'Node.js 24.x', say: 'Choosing the Node.js 24.x runtime.', why: 'The runtime is the language environment Lambda starts for your code. Use the newest non-preview version for security patches and speed.', risk: 'safe' }) },
     { key: 'create', find: (s) => find(s, /^create function$/i), step: () => ({ action: 'click', target: { name: 'Create function' }, say: 'Creating the function now.', why: 'Lambda also creates a basic execution role that only lets the function write its logs to CloudWatch.', risk: 'safe' }) },
   ],
-  done: () => ({ action: 'done', say: 'Done! city-hello is live. Press “Test” to run it once.', why: 'Next: add a trigger (API Gateway, S3, EventBridge) so something calls your function.', risk: 'safe' }),
+  done: (t) => ({ action: 'done', say: `Done! ${t.name} is live. Press “Test” to run it once.`, why: 'Next: add a trigger (API Gateway, S3, EventBridge) so something calls your function.', risk: 'safe' }),
 };
 
 const RDS: Flow = {
@@ -270,6 +271,13 @@ const NAMES: Record<FlowId, () => string> = {
   iam: () => `city-lambda-role-${suffix()}`,
 };
 
+/** The name a run gives what it makes: the one typed ("a bucket called city-photos"; a bucket's in lowercase), else a fresh one. */
+export function flowName(flow: FlowId, goal: string): string {
+  const typed = nameIn(goal);
+  if (!typed) return NAMES[flow]();
+  return flow === 's3' ? typed.toLowerCase() : typed;
+}
+
 export class ConsoleMock {
   private tasks = new Map<string, Task>();
   constructor(private emit: (e: ServerEvent) => void) {}
@@ -279,7 +287,7 @@ export class ConsoleMock {
     const removal = isRemovalGoal(goal);
     const flow = removal ? undefined : named;
     const agentId = named ?? serviceId ?? 'concierge';
-    const t: Task = { goal, agentId, flow, index: 0, did: new Set(), misses: 0, name: flow ? NAMES[flow]() : '', removal };
+    const t: Task = { goal, agentId, flow, index: 0, did: new Set(), misses: 0, name: flow ? flowName(flow, goal) : '', removal };
     this.tasks.set(taskId, t);
     const who = placeFor(agentId)?.agentName ?? 'the right agent';
     this.emit({ type: 'agent.message', from: 'concierge', to: 'user', text: `I’ll ask ${who} to do it in your console, step by step.` });

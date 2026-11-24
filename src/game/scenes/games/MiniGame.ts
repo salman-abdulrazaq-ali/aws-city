@@ -20,29 +20,67 @@ import { accuracyGate, gatedStars, gateLine, minAccuracy, PILL, scoreStep, VERDI
 import { endCardKey } from './gameKeys';
 import { endLine, growthSaid, plainName, scoreLine, spoken, startLine } from './say';
 import { fitParent, playColumn } from './column';
+import { COLOR, CSS, GAME_PAL, textPx } from '../../theme';
+import { noteAnswerSpot, sparkSpot, takeAnswerSpot } from './stageFx';
 
 export { FEEDBACK } from './scoring';
 
-export const TXT = (size = 16, color = '#ffffff'): Phaser.Types.GameObjects.Text.TextStyle => ({ fontFamily: TEXT_FONT, fontSize: `${Math.round(size * 0.85)}px`, fontStyle: '800', color });
+/** The player's text size (⋯ → Text size) as a factor: 1, 1.25 or 1.5. */
+const textScale = () => (useCity.getState().prefs.textSize ?? 100) / 100;
 
-/** The panel palette (src/app/app.css tokens), so every game wears the same chrome as the UI. */
-export const PAL = {
-  bg: 0x140d1f,
-  panel: 0x241a37,
-  line: 0x4a3768,
-  black: 0x000000,
-  accent: 0xffb84d,
-  accentInk: '#4a2e07',
-  paper: 0xfffbeb,
-  paperInk: '#1b1200',
-  good: '#6fe3a3',
-  bad: '#ff8a8a',
-  muted: '#b6a7d9',
-} as const;
+/**
+ * A game's text style: `size` is the design size, drawn at 85 % (Nunito sets large), times the player's text size, and
+ * never under 11 px (theme.ts textPx), as in the city. Layouts measure their text, so bigger text takes more room.
+ */
+export const TXT = (size = 16, color: string = CSS.inkHi): Phaser.Types.GameObjects.Text.TextStyle => ({
+  fontFamily: TEXT_FONT,
+  fontSize: `${textPx(size * 0.85, textScale())}px`,
+  fontStyle: '800',
+  color,
+});
+
+/** The desk's palette (src/game/theme.ts GAME_PAL, mirroring src/app/styles/00-base.css), so every game wears the UI's chrome. */
+export const PAL = GAME_PAL;
+
+/** The space between the end card's buttons, px. */
+const BUTTON_GAP = 12;
+
+/**
+ * The end card's buttons, left to right in rows: each as wide as its words, centred, and a row that would be wider than
+ * `maxW` (bigger text in the side panel) wraps. Returns each button's centre x and its row.
+ */
+function buttonRows(widths: number[], maxW: number) {
+  const rows: number[][] = [[]];
+  let used = 0;
+  widths.forEach((w, i) => {
+    const row = rows[rows.length - 1];
+    if (row.length && used + BUTTON_GAP + w > maxW) {
+      rows.push([i]);
+      used = w;
+    } else {
+      used += (row.length ? BUTTON_GAP : 0) + w;
+      row.push(i);
+    }
+  });
+  const at: { x: number; row: number }[] = [];
+  rows.forEach((row, r) => {
+    const total = row.reduce((sum, i) => sum + widths[i], 0) + BUTTON_GAP * (row.length - 1);
+    let x = -total / 2;
+    for (const i of row) {
+      at[i] = { x: Math.round(x + widths[i] / 2), row: r };
+      x += widths[i] + BUTTON_GAP;
+    }
+  });
+  return { at, rows: rows.length };
+}
 
 const BAR_H = 34;
 /** The end card's keys wait this long, so a key still pressed when the round ended doesn't start the next one. */
 const END_KEYS_CALM_MS = 800;
+
+/** A round that didn't count: the end card's first line says what to do next time (the floor and its numbers follow). */
+export const nextTryLine = (short: boolean) =>
+  short ? `Next try: make at least ${RELAXED_MIN_CALLS} calls before Done to score a round` : 'Next try: take your time and make surer calls';
 
 /**
  * Shared chrome for mini-games: a title bar with score and timer chips, a hint strip, a draining timer
@@ -115,7 +153,7 @@ export abstract class MiniGame extends Phaser.Scene {
 
   /** The hint strip's text style: wraps inside the view. */
   private hintStyle() {
-    return { ...TXT(14, PAL.muted), wordWrap: { width: this.scale.width - 24 } };
+    return { ...TXT(14, CSS.inkSoft), wordWrap: { width: this.scale.width - 24 } };
   }
 
   private get how() {
@@ -141,6 +179,9 @@ export abstract class MiniGame extends Phaser.Scene {
     this.endCard = undefined;
     this.endShade = undefined;
     this.verdictText = undefined;
+    this.pressedBy = 'pointer';
+    this.saidAt = undefined;
+    this.sparksQueued = false;
     // The last round's clock is gone with its scene: a round in relaxed play (no clock) must not tick a dead one.
     this.timeText = this.timeBar = this.timerEvt = undefined;
     this.timeLeft = this.duration;
@@ -150,7 +191,7 @@ export abstract class MiniGame extends Phaser.Scene {
       this.hintH = Math.max(22, Math.ceil(probe.height) + 6);
       probe.destroy();
     } else this.hintH = 22;
-    this.cameras.main.setBackgroundColor('#140d1f').setRoundPixels(true);
+    this.cameras.main.setBackgroundColor(CSS.bg).setRoundPixels(true);
     // Screen readers: the canvas is named for the game while it runs (the city's own label comes back after), and the
     // round's goal and keys are spoken first, before the game's own first prompt (src/state/announce.ts).
     const canvas = this.game.canvas as HTMLCanvasElement | undefined;
@@ -158,6 +199,14 @@ export abstract class MiniGame extends Phaser.Scene {
     canvas?.setAttribute('aria-label', `${plainName(this.title)}: mini-game`);
     onSceneEnd(this, () => cityLabel && canvas?.setAttribute('aria-label', cityLabel));
     this.speak(startLine({ title: this.title, keys: this.keysHelp, seconds: this.duration, untimed: !!this.duration && this.untimed }));
+    // How the player answers, before the game's own keys (setup) hear the press: a key's sparks go to its answer, and
+    // a new press forgets the last one's spots.
+    this.input.keyboard?.on('keydown', () => {
+      this.pressedBy = 'key';
+      this.saidAt = undefined;
+      takeAnswerSpot(this);
+    });
+    this.input.on('pointerdown', () => (this.pressedBy = 'pointer'));
     this.input.keyboard?.on('keydown', (e: KeyboardEvent) => {
       if (!this.over || e.repeat || this.time.now < this.endKeysAt || keysBelongToUi(document.activeElement, this.game.canvas)) return;
       const k = endCardKey(e.key, expertOpen(this.serviceId));
@@ -181,8 +230,8 @@ export abstract class MiniGame extends Phaser.Scene {
     const how = this.how;
     this.add.rectangle(0, 0, w, BAR_H, PAL.bg, 0.94).setOrigin(0).setDepth(100);
     this.add.rectangle(0, BAR_H, w, 2, PAL.black).setOrigin(0).setDepth(100);
-    const titled = crisp(this.add.text(12, BAR_H / 2, name, TXT(17, '#ffb84d'))).setOrigin(0, 0.5).setDepth(101);
-    if (expert()) crisp(this.add.text(titled.x + titled.width + 8, BAR_H / 2, '⚡ Expert', { ...TXT(14, PAL.accentInk), backgroundColor: '#ffb84d', padding: { x: 6, y: 2 } })).setOrigin(0, 0.5).setDepth(101);
+    const titled = crisp(this.add.text(12, BAR_H / 2, name, TXT(17, PAL.accentCss))).setOrigin(0, 0.5).setDepth(101);
+    if (expert()) crisp(this.add.text(titled.x + titled.width + 8, BAR_H / 2, '⚡ Expert', { ...TXT(14, PAL.paperInk), backgroundColor: PAL.expertCss, padding: { x: 6, y: 2 } })).setOrigin(0, 0.5).setDepth(101);
     if (how) {
       this.add.rectangle(0, BAR_H + 2, w, this.hintH, PAL.panel, 0.88).setOrigin(0).setDepth(100);
       crisp(this.add.text(12, BAR_H + 2 + this.hintH / 2, how, this.hintStyle())).setOrigin(0, 0.5).setDepth(101);
@@ -208,7 +257,7 @@ export abstract class MiniGame extends Phaser.Scene {
 
   /** A right-aligned stat chip in the title bar. */
   private chip(right: number, text: string) {
-    return crisp(this.add.text(right, BAR_H / 2, text, { ...TXT(16, '#ffffff'), backgroundColor: '#2d2144', padding: { x: 8, y: 3 } }))
+    return crisp(this.add.text(right, BAR_H / 2, text, { ...TXT(16, PAL.ink), backgroundColor: PAL.chipCss, padding: { x: 8, y: 3 } }))
       .setOrigin(1, 0.5)
       .setDepth(101);
   }
@@ -310,11 +359,11 @@ export abstract class MiniGame extends Phaser.Scene {
   private endShade?: Phaser.GameObjects.Rectangle;
 
   override update(_t: number, _dt: number) {
-    this.scoreText?.setText(`★ ${this.score}`).setColor(this.score < 0 ? PAL.bad : '#ffffff');
+    this.scoreText?.setText(`★ ${this.score}`).setColor(this.score < 0 ? PAL.bad : PAL.ink);
     if (this.timeText) {
       const left = Math.max(0, this.timeLeft);
-      this.timeText.setText(`⏱ ${left}`).setColor(left <= 10 ? PAL.bad : '#ffffff');
-      this.timeBar?.setSize(this.scale.width * (left / this.duration), 2).setFillStyle(left <= 10 ? 0xff6b6b : PAL.accent);
+      this.timeText.setText(`⏱ ${left}`).setColor(left <= 10 ? PAL.bad : PAL.ink);
+      this.timeBar?.setSize(this.scale.width * (left / this.duration), 2).setFillStyle(left <= 10 ? COLOR.bad : PAL.accent);
     }
   }
 
@@ -369,31 +418,59 @@ export abstract class MiniGame extends Phaser.Scene {
   /** "×2!" by the score chip when the combo steps up. */
   private comboFloat() {
     const x = (this.scoreText?.x ?? this.scale.width - 40) - (this.scoreText?.width ?? 40) / 2;
-    this.floater(x, BAR_H + 34, `×${comboMultiplier(this.streak)} combo!`, '#ffd166');
+    // By the score, not where the answer went: it isn't a spot for the press's sparks.
+    const said = this.saidAt;
+    this.floater(x, BAR_H + 34, `×${comboMultiplier(this.streak)} combo!`, CSS.gold);
+    this.saidAt = said;
   }
 
-  /** A little burst of sparks where the player pressed (no textures: a few pixel squares, no tweens under reduced motion). */
+  /** The last press: a key (its sparks go to the answer) or the pointer (they burst where it pressed). */
+  private pressedBy: 'key' | 'pointer' = 'pointer';
+  /** Where this press's first floater or verdict went up: near the answer, for a game that frames none. */
+  private saidAt?: { x: number; y: number };
+  private sparksQueued = false;
+
+  /**
+   * Where the answer went, for a game that shows it without stageFx.answerPop (which records its own): a key press's
+   * sparks burst there.
+   */
+  protected answerAt(x: number, y: number) {
+    noteAnswerSpot(this, x, y);
+  }
+
+  /**
+   * A little burst of sparks where the answer went (no textures: a few pixel squares, none under reduced motion). It waits
+   * for the press's handler to end, since a game frames its answer after scoring it; then a click's burst is at the
+   * pointer and a key's at the answer (stageFx.sparkSpot).
+   */
   private sparks() {
-    if (reducedMotion()) return;
-    const p = this.input.activePointer;
-    const x = p.x || this.scale.width / 2;
-    const y = p.y || this.scale.height / 2;
-    const colors = [0xffd166, 0x6fe3a3, 0xffb84d, 0xffffff];
-    for (let i = 0; i < 7; i++) {
-      const a = (i / 7) * Math.PI * 2 + Math.random() * 0.5;
-      const d = 18 + Math.random() * 14;
-      const sq = this.add.rectangle(x, y, 3, 3, colors[i % colors.length]).setDepth(95);
-      this.tweens.add({ targets: sq, x: x + Math.cos(a) * d, y: y + Math.sin(a) * d, alpha: 0, duration: 420, ease: 'Quad.easeOut', onComplete: () => sq.destroy() });
-    }
+    if (reducedMotion() || this.sparksQueued) return;
+    this.sparksQueued = true;
+    queueMicrotask(() => {
+      this.sparksQueued = false;
+      if (!this.sys.isActive()) return;
+      const by = this.pressedBy;
+      const target = by === 'key' ? (takeAnswerSpot(this) ?? this.saidAt) : undefined;
+      const { x, y } = sparkSpot(by, this.input.activePointer, target, this.scale.width, this.scale.height);
+      const colors = [COLOR.gold, COLOR.good, COLOR.accent, COLOR.inkHi];
+      for (let i = 0; i < 7; i++) {
+        const a = (i / 7) * Math.PI * 2 + Math.random() * 0.5;
+        const d = 18 + Math.random() * 14;
+        const sq = this.add.rectangle(x, y, 3, 3, colors[i % colors.length]).setDepth(95);
+        this.tweens.add({ targets: sq, x: x + Math.cos(a) * d, y: y + Math.sin(a) * d, alpha: 0, duration: 420, ease: 'Quad.easeOut', onComplete: () => sq.destroy() });
+      }
+    });
   }
 
   protected floater(x: number, y: number, text: string, color: string) {
     const { width: w } = this.scale;
-    const t = crisp(this.add.text(x, y, text, { ...TXT(16, color), stroke: '#140d1f', strokeThickness: 4, align: 'center', wordWrap: { width: Math.min(w - 24, 360) } })).setOrigin(0.5).setDepth(90);
+    const t = crisp(this.add.text(x, y, text, { ...TXT(16, color), stroke: CSS.bg, strokeThickness: 4, align: 'center', wordWrap: { width: Math.min(w - 24, 360) } })).setOrigin(0.5).setDepth(90);
     // Never cut at an edge: keep the whole floater inside the view.
     t.setX(Math.max(t.width / 2 + 6, Math.min(w - t.width / 2 - 6, x)));
-    if (reducedMotion()) return void this.time.delayedCall(900, () => t.destroy());
-    this.tweens.add({ targets: t, y: y - 30, alpha: 0, duration: 900, ease: 'Stepped', easeParams: [6], onComplete: () => t.destroy() });
+    this.saidAt ??= { x: Math.round(t.x), y: Math.round(y) };
+    if (reducedMotion()) this.time.delayedCall(900, () => t.destroy());
+    else this.tweens.add({ targets: t, y: y - 30, alpha: 0, duration: 900, ease: 'Stepped', easeParams: [6], onComplete: () => t.destroy() });
+    return t;
   }
 
   /** The verdict on screen now (one at a time: a new one replaces it). */
@@ -412,6 +489,7 @@ export abstract class MiniGame extends Phaser.Scene {
       .setDepth(95);
     // Never cut at an edge.
     t.setX(Phaser.Math.Clamp(x, t.width / 2 + 6, w - t.width / 2 - 6));
+    this.saidAt ??= { x: Math.round(t.x), y: Math.round(y) };
     this.verdictText = t;
     // Screen readers hear the verdict too, with the score after it.
     this.scoreSaidWith = true;
@@ -468,7 +546,7 @@ export abstract class MiniGame extends Phaser.Scene {
     const text = (y: number, str: string, size: number, color: string, wrap = true) =>
       crisp(this.add.text(0, y, str, { ...TXT(size, color), align: 'center', ...(wrap ? { wordWrap: { width: cw - 40 } } : {}), lineSpacing: 2 })).setOrigin(0.5, 0);
     let y = 18;
-    const title = text(y, newBest ? '🏆 New best!' : 'Round over', 18, '#92400e', false);
+    const title = text(y, newBest ? '🏆 New best!' : 'Round over', 18, PAL.paperMeta, false);
     items.push(title);
     y += title.height + 8;
     // No best yet and this round didn't reach the floor: say what sets one, never "best 0". Coins as a word: the coin
@@ -476,6 +554,17 @@ export abstract class MiniGame extends Phaser.Scene {
     const bestNow = Math.max(best, gate.ok ? paid : 0);
     const bestText = bestNow > 0 || gate.ok ? `best ${bestNow}` : short ? `${RELAXED_MIN_CALLS} calls to set a best` : `pass at ${gate.need}% to set a best`;
     const capNote = (str: string) => (notes.push(/[.!?]$/.test(str) ? str : `${str}.`), str);
+    if (!gate.ok) {
+      // A round that didn't count leads with what to do next, in ink; the floor and its numbers come second, calm.
+      const next = text(y, capNote(nextTryLine(short)), 16, PAL.paperInk);
+      items.push(next);
+      y += next.height + 4;
+      if (!short) {
+        const why = text(y, capNote(gateLine(gate, this.wrongWord, this.accuracyWord)), 13, PAL.paperMeta);
+        items.push(why);
+        y += why.height + 8;
+      } else y += 4;
+    }
     const score = text(y, `Score ${this.score}   ·   +${xp} ⭐${coins ? `  +${coins} coins` : ''}${weekly ? ' ⚡ weekly' : ''}   ·   ${bestText}`, 16, PAL.paperInk);
     items.push(score);
     y += score.height + 6;
@@ -490,46 +579,47 @@ export abstract class MiniGame extends Phaser.Scene {
             : `Half stars and coins after ${FULL_ROUNDS_A_DAY} rounds a day. Full pay again tomorrow, or beat your best!`,
         ),
         13,
-        '#6b7280',
+        PAL.paperHint,
       );
       items.push(cap);
       y += cap.height + 6;
     }
-    if (!gate.ok) {
-      const why = text(y, capNote(short ? `Make at least ${RELAXED_MIN_CALLS} calls before Done to score a round` : gateLine(gate, this.wrongWord, this.accuracyWord)), 14, '#991b1b');
-      items.push(why);
-      y += why.height + 6;
-    }
     // The building this game grows, and how far (src/state/growth.ts): the reason to play another round.
     const g = growthOf(useCity.getState().progress, this.serviceId, useCity.getState().cityRegion);
-    const grew = text(y, `🏗️ ${growthLine(g)}`, 14, '#374151');
+    const grew = text(y, `🏗️ ${growthLine(g)}`, 14, PAL.paperHint);
     items.push(grew);
     y += grew.height + 8;
     const barW = Math.min(260, cw - 60);
-    items.push(this.add.rectangle(0, y, barW, 8, 0x000000, 0.15), this.add.rectangle(-barW / 2, y, Math.max(4, barW * g.pct), 8, 0x16a34a).setOrigin(0, 0.5));
+    items.push(this.add.rectangle(0, y, barW, 8, PAL.black, 0.15), this.add.rectangle(-barW / 2, y, Math.max(4, barW * g.pct), 8, COLOR.roleOk).setOrigin(0, 0.5));
     y += 14;
-    items.push(this.add.rectangle(0, y, cw - 40, 2, 0x000000, 0.12));
+    items.push(this.add.rectangle(0, y, cw - 40, 2, PAL.black, 0.12));
     y += 10;
     const lessonText = this.lesson();
-    const lesson = crisp(this.add.text(0, y, lessonText, { ...TXT(14, '#374151'), fontStyle: '600', align: 'center', wordWrap: { width: cw - 40 }, lineSpacing: 2 })).setOrigin(0.5, 0);
+    const lesson = crisp(this.add.text(0, y, lessonText, { ...TXT(14, PAL.paperHint), fontStyle: '600', align: 'center', wordWrap: { width: cw - 40 }, lineSpacing: 2 })).setOrigin(0.5, 0);
     items.push(lesson);
     y += lesson.height + 16;
-    const by = y + 14;
-    const ch = by + 30;
     const leave = () => this.leave();
     const buttons: Phaser.GameObjects.Container[] = [];
     // The Expert round opens at building level 3: quicker, harder cards, half as many stars again.
     if (expertOpen(this.serviceId)) {
-      const dx = Math.min(118, (cw - 40) / 3);
-      buttons.push(this.pxButton(-dx, by, '↻ Again', () => (setExpert(false), this.scene.restart())));
-      buttons.push(this.pxButton(0, by, '⚡ Expert', () => (setExpert(true), this.scene.restart()), 0xf472b6, PAL.paperInk));
-      buttons.push(this.pxButton(dx, by, '← City', leave, 0x2d2144, '#ffffff'));
+      buttons.push(this.pxButton(0, 0, '↻ Again', () => (setExpert(false), this.scene.restart())));
+      buttons.push(this.pxButton(0, 0, '⚡ Expert', () => (setExpert(true), this.scene.restart()), PAL.expert, PAL.paperInk));
+      buttons.push(this.pxButton(0, 0, '← City', leave, PAL.chip, PAL.ink));
     } else {
-      buttons.push(this.pxButton(-74, by, '↻ Play again', () => (setExpert(false), this.scene.restart())));
-      buttons.push(this.pxButton(74, by, '← City', leave, 0x2d2144, '#ffffff'));
+      buttons.push(this.pxButton(0, 0, '↻ Play again', () => (setExpert(false), this.scene.restart())));
+      buttons.push(this.pxButton(0, 0, '← City', leave, PAL.chip, PAL.ink));
     }
+    // Laid out by their measured width (the player's text size makes them wider), wrapping inside the card.
+    const bh = Math.max(...buttons.map((b) => b.height));
+    const { at, rows } = buttonRows(
+      buttons.map((b) => b.width),
+      cw - 24,
+    );
+    const by = y + Math.round(bh / 2) - 3;
+    buttons.forEach((b, i) => b.setPosition(at[i].x, by + at[i].row * (bh + 8)));
+    const ch = by + (rows - 1) * (bh + 8) + Math.round(bh / 2) + 13;
     // This week's board for this game (src/ui/Leaderboard.tsx): a small link in the card's corner.
-    const board = crisp(this.add.text(cw / 2 - 14, 14, '🏆 Board', { ...TXT(14, '#92400e'), backgroundColor: '#fde68a', padding: { x: 5, y: 2 } }))
+    const board = crisp(this.add.text(cw / 2 - 14, 14, '🏆 Board', { ...TXT(14, PAL.paperMeta), backgroundColor: PAL.expertCss, padding: { x: 5, y: 2 } }))
       .setOrigin(1, 0)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => bus.emit('openBoard', { board: this.gameId }));

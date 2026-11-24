@@ -12,6 +12,9 @@ import { SERVICES } from '@/world/taxonomy';
 import { ago, incidentsIn, worstByRegion } from '@/world/incidents';
 import { builtCities } from '@/state/cities';
 import { onSceneEnd } from './lifecycle';
+import { COLOR, CSS, LABEL_BG, withAlpha } from '../theme';
+import { setDiver, worldText } from '../worldUi';
+import { regionLines, stormLine, stormLook } from '../firstStepsGame';
 
 /** The same blue the city sits in (palette.ts), so the dive fades from one sea into the other. */
 const SEA = SEA_COLOR;
@@ -22,7 +25,8 @@ const SHORE_SHADE = 0x2c5a3a;
 const FOAM = 0xe8f6ff;
 const GLINT = 0xa9d6f5;
 const HIGHWAY = 0xe6f2ff;
-const INK = 0x0f1114; // theme bgDeep
+/** The dark rim under dots, skylines and link lines: the desk's deepest graphite (theme.ts). */
+const INK = COLOR.bgDeep;
 const DOT = 0xed7100;
 /** Opt-in Regions the account hasn't turned on, and Regions in another partition. */
 const OFF = 0x5d6878;
@@ -30,9 +34,16 @@ const CITY = 0xffd08a;
 /** A city where it's night now: its skyline lit, with a warm glow round it. */
 const CITY_LIT = 0xfff3c4;
 const GLOW = 0xffc861;
-/** v2.6: Regions with an open AWS Health event: red for a disruption, amber for degradation. */
-const INCIDENT = { disruption: 0xe5676b, degradation: 0xe8c15a } as const;
+/** v2.6: Regions with an open AWS Health event: the desk's bad red for a disruption, its warn amber for degradation. */
+const INCIDENT = { disruption: COLOR.bad, degradation: COLOR.warn } as const;
+/** A storm on a first-run map: a small still grey mark, so the suggested Region is the only thing that moves. */
+const STORM_STILL = COLOR.muted;
+/** A data link's colour: the same as its carriers and lines in the city (RegionOverlay's COLORS), so a link reads as one thing on both maps. */
 const LINK: Record<DataLink['kind'], number> = { replication: 0xc925d1, standby: 0x7dd3fc, traffic: 0xffb84d };
+/** Text chips on the map: the desk's graphite (theme.ts), a little more see-through than a sign so the coast shows. */
+const CHIP = withAlpha('bg', 0.8);
+/** The world map's text size: the player's ⋯ → Text size. */
+const textScale = () => (useCity.getState().prefs.textSize ?? 100) / 100;
 /** The sea shimmers at about 6 fps, over at most this many cells near the coast. */
 const SHIMMER_MS = 166;
 const SHIMMER_MAX = 300;
@@ -150,12 +161,12 @@ export class WorldScene extends Phaser.Scene {
     this.armed = undefined;
     this.pulse = this.add.graphics().setDepth(8);
     this.title = crisp(
-      this.add.text(10, 8, 'Choose a Region', { fontFamily: TEXT_FONT, fontSize: '14px', fontStyle: '800', color: '#fff8ee', stroke: '#15171b', strokeThickness: 3 }).setDepth(20).setScrollFactor(0),
+      this.add.text(10, 8, 'Choose a Region', { fontFamily: TEXT_FONT, fontSize: '14px', fontStyle: '800', color: CSS.inkHi, stroke: CSS.bg, strokeThickness: 3 }).setDepth(20).setScrollFactor(0),
     );
     // At the bottom: toasts appear over the top of the stage.
     this.info = crisp(
       this.add
-        .text(10, 0, '', { fontFamily: TEXT_FONT, fontSize: '11px', fontStyle: '700', color: '#e6e2d8', backgroundColor: '#15171bcc', padding: { x: 6, y: 4 }, wordWrap: { width: 360 } })
+        .text(10, 0, '', { fontFamily: TEXT_FONT, fontSize: '11px', fontStyle: '700', color: CSS.ink, backgroundColor: CHIP, padding: { x: 6, y: 4 }, wordWrap: { width: 360 } })
         .setOrigin(0, 1)
         .setDepth(20)
         .setScrollFactor(0),
@@ -163,7 +174,7 @@ export class WorldScene extends Phaser.Scene {
     // "Facts ›": the facts behind the friendly line (also the M key).
     this.moreBtn = crisp(
       this.add
-        .text(0, 0, 'Facts ›', { fontFamily: TEXT_FONT, fontSize: '11px', fontStyle: '800', color: '#ffd08a', backgroundColor: '#15171bcc', padding: { x: 6, y: 4 } })
+        .text(0, 0, 'Facts ›', { fontFamily: TEXT_FONT, fontSize: '11px', fontStyle: '800', color: CSS.accent, backgroundColor: CHIP, padding: { x: 6, y: 4 } })
         .setOrigin(1, 1)
         .setDepth(21)
         .setScrollFactor(0)
@@ -177,8 +188,17 @@ export class WorldScene extends Phaser.Scene {
     // Night moves round the world: re-light the skylines once a minute.
     this.time.addEvent({ delay: 60_000, loop: true, callback: () => this.draw() });
     this.scale.on('resize', this.draw, this);
-    const off = useCity.subscribe((st, prev) => (st.inventory !== prev.inventory || st.bill !== prev.bill || st.prefs.mapDetails !== prev.prefs.mapDetails) && this.draw());
+    const off = useCity.subscribe((st, prev) => (st.inventory !== prev.inventory || st.bill !== prev.bill || st.prefs.mapDetails !== prev.prefs.mapDetails || st.prefs.textSize !== prev.prefs.textSize) && this.draw());
     this.offs.push(off, () => this.scale.off('resize', this.draw, this));
+    // The first run's "Start in <city>" (WorldIntro) dives the same way as a picked dot.
+    this.offs.push(
+      setDiver((code) => {
+        const r = REGIONS.regions.find((x) => x.code === code);
+        if (!r) return false;
+        this.dive(r);
+        return true;
+      }),
+    );
 
     this.input.keyboard?.on('keydown', (e: KeyboardEvent) => {
       if (this.diving) return;
@@ -260,10 +280,16 @@ export class WorldScene extends Phaser.Scene {
 
   private draw() {
     const { width, height } = this.scale;
-    this.cell = Math.max(2, Math.min(Math.floor((width - 12) / M.cols), Math.floor((height - 90) / M.rows)));
-    this.origin = { x: Math.floor((width - M.cols * this.cell) / 2), y: Math.max(30, Math.floor((height - 50 - M.rows * this.cell) / 2) + 22) };
-    this.info.setPosition(10, height - 10).setWordWrapWidth(width - 90);
+    // Text follows ⋯ → Text size (never under 11 px); the map makes room under the title and beside "Facts ›".
+    const size = worldText(textScale());
+    this.title.setFontSize(size.title);
+    this.info.setFontSize(size.body);
+    this.moreBtn.setFontSize(size.body);
+    const top = Math.max(30, Math.ceil(this.title.y + this.title.height + 6));
+    this.cell = Math.max(2, Math.min(Math.floor((width - 12) / M.cols), Math.floor((height - 60 - top) / M.rows)));
+    this.origin = { x: Math.floor((width - M.cols * this.cell) / 2), y: Math.max(top, Math.floor((height - 50 - M.rows * this.cell) / 2) + 22) };
     this.moreBtn.setPosition(width - 10, height - 10);
+    this.info.setPosition(10, height - 10).setWordWrapWidth(Math.max(120, width - 28 - this.moreBtn.width));
     const g = this.drawLand();
     this.drawShimmer();
     for (const t of this.texts) t.destroy();
@@ -301,7 +327,7 @@ export class WorldScene extends Phaser.Scene {
         const label = crisp(
           this.add
             // The city's name (its code and resource count with map details on); nothing on a first look.
-            .text(p.x, p.y + 6, !useCity.getState().prefs.region ? '' : useCity.getState().prefs.mapDetails ? `${r.code}${n ? ` · ${n}` : ''}${r.code === home ? ' ⌂' : ''}` : `${r.city}${r.code === home ? ' ⌂' : ''}`, { fontFamily: TEXT_FONT, fontSize: '9px', fontStyle: '800', color: '#ffd08a', backgroundColor: '#0d0816b3', padding: { x: 2, y: 1 } })
+            .text(p.x, p.y + 6, !useCity.getState().prefs.region ? '' : useCity.getState().prefs.mapDetails ? `${r.code}${n ? ` · ${n}` : ''}${r.code === home ? ' ⌂' : ''}` : `${r.city}${r.code === home ? ' ⌂' : ''}`, { fontFamily: TEXT_FONT, fontSize: `${size.city}px`, fontStyle: '800', color: CSS.goldHi, backgroundColor: LABEL_BG, padding: { x: 3, y: 1 } })
             .setOrigin(0.5, 0)
             .setDepth(10)
             .setVisible(!!useCity.getState().prefs.region),
@@ -314,15 +340,15 @@ export class WorldScene extends Phaser.Scene {
         g.fillStyle(off ? OFF : DOT, 1).fillRect(p.x - 1, p.y - 1, 3, 3);
         // One pip per Availability Zone under the dot (six for N. Virginia).
         const n = regionFacts(r.code)?.azIds.length ?? 0;
-        for (let k = 0; k < n; k++) g.fillStyle(off ? OFF : 0xffd08a, 0.9).fillRect(p.x - n + 2 * k, p.y + 3, 1, 1);
+        for (let k = 0; k < n; k++) g.fillStyle(off ? OFF : CITY, 0.9).fillRect(p.x - n + 2 * k, p.y + 3, 1, 1);
       }
     }
-    this.drawLinks();
+    this.drawLinks(size.link);
     this.describe();
   }
 
   /** Arcs for data moving between Regions, each with a packet travelling along it. */
-  private drawLinks() {
+  private drawLinks(px: number) {
     const st = useCity.getState();
     // A first look is just glowing dots: the account's data links wait until there's a city (or map details are on).
     const shown = !!st.prefs.region || !!st.prefs.mapDetails;
@@ -347,7 +373,7 @@ export class WorldScene extends Phaser.Scene {
       const mid = curve.getPoint(0.5);
       const label = crisp(
         this.add
-          .text(Math.round(mid.x), Math.round(mid.y) - 4, st.prefs.mapDetails ? `${link.label} ${link.twoWay ? '⇄' : '→'}` : link.twoWay ? '⇄' : '→', { fontFamily: TEXT_FONT, fontSize: '10px', fontStyle: '800', color: '#ffffff', backgroundColor: '#140d1fcc', padding: { x: 3, y: 1 } })
+          .text(Math.round(mid.x), Math.round(mid.y) - 4, st.prefs.mapDetails ? `${link.label} ${link.twoWay ? '⇄' : '→'}` : link.twoWay ? '⇄' : '→', { fontFamily: TEXT_FONT, fontSize: `${px}px`, fontStyle: '800', color: CSS.inkHi, backgroundColor: LABEL_BG, padding: { x: 3, y: 1 } })
           .setOrigin(0.5, 1)
           .setDepth(7),
       );
@@ -404,13 +430,20 @@ export class WorldScene extends Phaser.Scene {
       g.fillStyle(CITY, 0.15 + 0.45 * (1 - k));
       frame(g, p.x - rad, p.y - 1 - rad, rad * 2 + 1, rad * 2 + 1);
     });
-    // AWS Health: an affected Region throbs faster, in the incident's colour, with a second ring (no flashing).
+    // AWS Health: an affected Region throbs faster, in the incident's colour, with a second ring (no flashing). On a
+    // first-run map it's a small still grey mark instead: the suggested Region is the one pulse (src/game/firstStepsGame.ts).
     const worst = worstByRegion(useCity.getState().health);
+    const look = stormLook(!useCity.getState().prefs.region);
     for (const [code, sev] of Object.entries(worst)) {
       if (sev === 'informational') continue;
       const reg = REGIONS.regions.find((x) => x.code === code);
       if (!reg) continue;
       const p = this.at(reg);
+      if (look === 'still') {
+        g.fillStyle(STORM_STILL, 0.9);
+        frame(g, p.x - 5, p.y - 6, 11, 11);
+        continue;
+      }
       const k = this.calm ? 0.5 : 0.5 + 0.5 * Math.sin(time / 320);
       for (const [base, a] of [
         [10, 1],
@@ -464,8 +497,12 @@ export class WorldScene extends Phaser.Scene {
     const visit = this.touch ? 'Tap again to visit.' : 'Click to visit.';
     const st = this.status(r.code);
     const hit = incidentsIn(useCity.getState().health, r.code).find((i) => i.region === r.code);
-    const health = hit ? `${hit.severity === 'disruption' ? '⛈️ AWS reports a disruption here' : hit.severity === 'degradation' ? '🌧️ AWS reports trouble here' : 'ℹ️ AWS notice'} · updated ${ago(hit.updated)}` : '';
-    const friendly = [health, friendlyRegionLine(r.code, st === 'not-enabled' ? 'not-enabled' : undefined), visit].filter(Boolean).join('\n');
+    const today = hit ? `${hit.severity === 'disruption' ? '⛈️ AWS reports a disruption here' : hit.severity === 'degradation' ? '🌧️ AWS reports trouble here' : 'ℹ️ AWS notice'} · updated ${ago(hit.updated)}` : '';
+    // A first-run map, for a player with no AWS account: the storm in plain words and what to do (pick another dot), alone.
+    const stormy = !!hit && hit.severity !== 'informational';
+    const linked = useCity.getState().account.linked;
+    const health = stormy ? stormLine(!veteran, linked, today) : today;
+    const friendly = regionLines(stormy, !veteran, linked, [health, friendlyRegionLine(r.code, st === 'not-enabled' ? 'not-enabled' : undefined), visit]).join('\n');
     if (!this.more) return this.info.setText(friendly);
     const cities = this.cities();
     const links = (useCity.getState().inventory?.links ?? []).filter((l) => l.from.region !== l.to.region && (l.from.region === r.code || l.to.region === r.code));
@@ -490,7 +527,9 @@ export class WorldScene extends Phaser.Scene {
 
   /**
    * The dive: the camera pans and zooms into the Region, then fades to the sea's blue, the same blue the city sits in.
-   * The city then arrives from the side the camera came from (takeDiveFrom, CityScene.arrive).
+   * The city then arrives from the side the camera came from (takeDiveFrom, CityScene.arrive). The map's own text (the
+   * title, the Region's line, names and link arrows) steps aside first, so only the land travels: nothing is left
+   * pinned to the glass or blown up six times over the coast.
    */
   private dive(r: Region) {
     if (this.diving) return;
@@ -502,6 +541,8 @@ export class WorldScene extends Phaser.Scene {
     const cam = this.cameras.main;
     const done = () => useCity.getState().enterRegion(r.code);
     if (this.calm) return done();
+    const words = [this.title, this.info, this.moreBtn, ...this.linkLabels, ...this.texts.filter((t) => t instanceof Phaser.GameObjects.Text)];
+    this.tweens.add({ targets: words, alpha: 0, duration: 180, ease: 'Quad.easeOut' });
     cam.pan(p.x, p.y, 550, 'Sine.easeIn');
     cam.zoomTo(6, 650, 'Sine.easeIn');
     this.time.delayedCall(300, () => cam.fadeOut(350, ...SEA_RGB));

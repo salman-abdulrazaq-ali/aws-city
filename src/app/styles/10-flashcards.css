@@ -150,7 +150,7 @@
   }
 }
 .big-emoji {
-  font-size: 40px;
+  font-size: calc(var(--fs-md) * 40 / 13);
   line-height: 1;
 }
 .grades {
@@ -163,6 +163,12 @@
 .outputs a {
   font-size: var(--fs-sm);
   color: var(--info);
+}
+/* The card's "Read more" link stands on its own line, so it gets the 24 px target (SC 2.5.8). */
+a.source {
+  display: inline-block;
+  min-height: 24px;
+  align-content: center;
 }
 
 /* The building a deck grows, under the card (Flashcards.tsx GrowLine): a line and a slim meter that pulses on a reward. */

@@ -8,7 +8,8 @@ import { mayAct, mayChoose } from '@/console/safety';
 import { takeSnapshot } from '@/console/snapshot';
 import { isPracticeUrl, practiceRoute, practiceServiceOf, practiceUrl, PRACTICE_SERVICES } from '@/console/practice';
 import { mountPractice, PRACTICE_NOTE } from '@/console/practicePage';
-import { ConsoleMock, flowFor, isFlow, isRemovalGoal, NO_DELETING } from '@/backend/consoleMock';
+import { ConsoleMock, flowFor, flowName, isFlow, isRemovalGoal, NO_DELETING } from '@/backend/consoleMock';
+import { FIRST_STEPS } from '@/state/firstSteps';
 import type { ConsoleStepEvent, ServerEvent } from '@/backend/contract';
 import { matchText, serviceById } from '@/world/taxonomy';
 
@@ -174,6 +175,18 @@ describe('every scripted Copilot flow completes on the practice console', () => 
       expect(r.said.length).toBeGreaterThanOrEqual(5);
     });
   }
+
+  // Seen 24 Nov 2026: "called orders" made an unnamed (random) one. The quick tour's own sample goal is the first case.
+  it('names what it makes as typed ("called …"; a bucket in lowercase), else a fresh name', async () => {
+    expect(flowName('s3', FIRST_STEPS.tour.consoleGoal)).toBe('city-photos');
+    expect(flowName('s3', 'Create a bucket called Holiday-Pics.')).toBe('holiday-pics');
+    expect(flowName('dynamodb', 'Create a DynamoDB table named “Orders”')).toBe('Orders');
+    expect(flowName('sqs', 'Create an SQS queue')).toMatch(/^city-orders-\w+$/);
+    const r = await play('s3', FIRST_STEPS.tour.consoleGoal);
+    expect(r.created, r.said.join(' → ')).toMatch(/^city-photos \(SSE-S3/);
+    expect(r.done).toMatchObject({ type: 'task.done', ok: true });
+    expect((await play('dynamodb', 'Create a DynamoDB table called orders')).created).toMatch(/^orders \(pk id\)$/);
+  });
 });
 
 describe('the practice Copilot never deletes, and never keeps SSH open as safe (Marcus)', () => {

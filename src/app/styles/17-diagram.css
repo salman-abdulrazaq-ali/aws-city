@@ -5,6 +5,9 @@
 .diagram {
   position: relative;
   width: 100%;
+  /* Never smaller than its natural size (--dw, viewBox units) at the player's text size: the 11-unit spot labels read
+     at --fs-xs or more. A wide diagram scrolls sideways in the 400 px column; the big board draws it larger. */
+  min-width: calc(var(--dw, 360) / 11 * var(--fs-xs));
   container: diagram / inline-size;
   /* faint drafting grid */
   background:
@@ -46,9 +49,15 @@
 .dnode.opt .box-mark {
   fill: var(--muted);
 }
+/* SVG text is in viewBox units (scaled with the drawing): 11 units is 11 px or more on screen (.diagram's min-width). */
 .node-label {
   fill: var(--muted);
-  font: 700 8px var(--font-ui);
+  font: 700 11px var(--font-ui);
+  /* A halo in the drawing's ground colour, so a group's border passing under a two-line label never cuts its words. */
+  paint-order: stroke;
+  stroke: var(--panel-3);
+  stroke-width: 3px;
+  stroke-linejoin: round;
 }
 .dnode.filled .node-label,
 .dnode.actor .node-label {
@@ -89,7 +98,7 @@
 }
 .edge-step text {
   fill: var(--ink-soft);
-  font: 800 8px var(--font-ui);
+  font: 800 9px var(--font-ui);
 }
 .edge-line.lit .edge-step rect {
   fill: currentColor;
@@ -101,13 +110,10 @@
 .edge-label {
   display: none;
   fill: var(--muted);
-  font: 700 7px var(--font-ui);
+  font: 700 8px var(--font-ui);
 }
-@container diagram (min-width: 560px) {
-  .edge-label {
-    display: inline;
-  }
-}
+/* Arrow names stay off the drawing (they cross the spots on a big board too): the step badges carry the order, and the
+   sr-only list under the drawing names every arrow. */
 .packet {
   fill: var(--highlight);
   stroke: currentColor;
@@ -176,13 +182,19 @@
   background: var(--panel);
   box-shadow: 0 -6px 8px -6px var(--shadow);
 }
-.foot-row {
-  display: flex;
-  align-items: center;
-  gap: var(--s-4);
+/* The message on its own line, Check design on its own row under it (never squeezed beside the words). */
+/* In the side column the bar reaches the column's bottom edge (its scroll padding), so no strip of drawing shows under it. */
+.tab-body .arch-foot {
+  bottom: calc(-1 * var(--s-6));
+  padding-bottom: calc(var(--s-3) + var(--s-6));
 }
-.foot-row .btn {
-  flex: none;
+.foot-row {
+  display: grid;
+  gap: var(--s-2);
+}
+.foot-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 /* The side panel (~400 px): the sticky bar stays one short strip, so it never covers the diagram it sits under.
    The message keeps two lines (the full text is still read out by aria-live), and the diagram ends with room for the bar. */
@@ -190,16 +202,12 @@
   .arch-foot {
     padding: var(--s-2) 0;
   }
-  .foot-row {
-    gap: var(--s-2);
-  }
   .diagram-say {
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     line-clamp: 2;
     overflow: hidden;
-    font-size: var(--fs-xs);
   }
   .diagram-scroll {
     padding-bottom: var(--s-3);
@@ -209,9 +217,9 @@
   display: grid;
   gap: var(--s-2);
   padding: var(--s-3) var(--s-4);
-  background: var(--panel-2);
-  border: 1px solid var(--line-strong);
-  border-left: 3px solid var(--good);
+  background: color-mix(in srgb, var(--good) 8%, var(--panel-2));
+  border: 1px solid color-mix(in srgb, var(--good) 55%, var(--line-strong));
+  border-radius: var(--r-md);
   animation: enter var(--dur-2) var(--ease-step);
 }
 .flow-bar .px {
@@ -264,7 +272,7 @@
   background: var(--panel-hi);
   border: 2px solid var(--accent);
   pointer-events: none;
-  box-shadow: 0 4px 0 var(--shadow);
+  box-shadow: var(--shadow-pixel);
 }
 .dnode.fixed .box {
   fill: var(--panel-2);

@@ -221,6 +221,10 @@
 .teach-head b {
   color: var(--ink-hi);
 }
+/* On the accent tint the muted ink falls under 4.5:1 (axe, 24 Nov 2026): the lesson count takes the soft ink. */
+.teach-head .muted {
+  color: var(--ink-soft);
+}
 .teach .meter {
   margin: 0;
 }
@@ -237,6 +241,7 @@
   border: 1px dashed var(--line-strong);
 }
 .chip-link {
+  min-height: 24px; /* a 24 px target (SC 2.5.8): it measured 23 */
   padding: var(--s-1) var(--s-4);
   border: 1px solid var(--info);
   border-radius: var(--r-pill);

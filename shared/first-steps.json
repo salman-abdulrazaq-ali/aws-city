@@ -1,0 +1,168 @@
+{
+  "asOf": "2026-11-24",
+  "quest": "first-steps",
+  "deck": ["s3-01", "s3-04", "s3-05"],
+  "map": {
+    "connie": "AWS is Amazon's cloud: the computers that run much of the internet. Each glowing dot is a Region: a group of AWS buildings full of computers, in one part of the world. Let's build your city in one.",
+    "start": "Start in Oregon",
+    "note": "First steps: about 10 minutes. It's all practice: nothing costs money.",
+    "advanced": "I already know AWS: quick tour",
+    "tab": "🌍 Your first steps start as soon as you pick a place on the map.",
+    "storm": "AWS reports a problem here. Pick another dot to start."
+  },
+  "guide": { "label": "First steps · {n} of 6" },
+  "steps": [
+    {
+      "title": "Walk to S3 Lake",
+      "body": "This is you, Kai, the city's new Mayor. Every building here is one AWS service: a tool you can rent from AWS. First stop: S3 Lake, where files are kept.",
+      "button": "Walk to S3 Lake",
+      "running": "Kai is walking to S3 Lake…",
+      "sally": "Hi, I'm Sally! S3 Lake is Amazon S3: AWS's place to keep files, like your photos.",
+      "done": "Done: you reached S3 Lake."
+    },
+    {
+      "title": "Play S3 Fishing",
+      "body": "Each fish is a file (S3 calls it an object). Hook it, then pick its shelf: hot, warm or cold, by how often it's opened.",
+      "button": "🎣 Play S3 Fishing",
+      "sally": "Sort my fish onto the right shelves and the lake grows!",
+      "end": "Back to the city",
+      "grew": "S3 Lake grew to {level}! Stars ⭐ are what you've learned, and they grow your buildings.",
+      "gained": "+{n} ⭐ for S3 Lake. Stars ⭐ are what you've learned, and they grow your buildings.",
+      "notyet": "Nice fishing! S3 Lake needs {n} more ⭐ to grow. Sally's cards will get it there."
+    },
+    {
+      "title": "Learn 3 of Sally's cards",
+      "body": "Tap a card to flip it, then say how well you knew it. Didn't know? That's fine: it comes back soon, so it sticks.",
+      "button": "Open Sally's cards (Learn tab)",
+      "strip": "First steps 3 of 6 · Learn 3 cards · {k} of 3",
+      "terms": "Words with a dotted line explain themselves. Tap one.",
+      "done": "✓ Step 3 done · Next: Help a citizen",
+      "back": "Back to the city"
+    },
+    {
+      "title": "Help a citizen",
+      "body": "People in your city have questions too. Answer this one: it's about a card you just learned, and remembering it now makes it stick.",
+      "button": "Walk to the citizen",
+      "citizen": "Excuse me, Mayor! Can you help?",
+      "right": "Right! +{n} ⭐ for S3 Lake.",
+      "wrong": "Not quite: it's \"{answer}\". That card will come back soon."
+    },
+    {
+      "title": "Watch Sally work",
+      "body": "Every building has a helper, called an agent, who does that service's job for you. Ask Sally to store your holiday photos, then watch each step.",
+      "button": "Ask Sally: store my photos",
+      "note": "Practice: nothing real is made.",
+      "running": "Sally is working…"
+    },
+    {
+      "title": "Say OK to Sally's plan",
+      "body": "Agents never build anything without your OK. Sally has planned a private bucket for your photos. Look it over, then press Approve & deploy (deploy means build it).",
+      "button": "See Sally's plan (Deploy tab)",
+      "practice": "Practice: nothing real is made, and it costs nothing.",
+      "strip": "First steps 6 of 6 · Say OK to Sally's plan",
+      "approved": "Built, in practice! Your photos have a private home.",
+      "rejected": "No problem: nothing was made. You decide, every time."
+    }
+  ],
+  "task": {
+    "id": "s3-first",
+    "agentId": "s3",
+    "prompt": "Store my holiday photos",
+    "steps": [
+      "Walking to S3 Lake",
+      "Finding a bucket for your photos",
+      "Photos are opened about once a month: the warm shelf",
+      "Putting holiday.jpg in the bucket",
+      "After 90 days, old photos move to the deep freeze"
+    ],
+    "result": "Done! Your photos sit on the warm shelf, and old ones move to the deep freeze by themselves."
+  },
+  "grad": {
+    "title": "First steps done!",
+    "connie": "You did it, Mayor. You grew your first building, and you've seen an agent work for you, only with your OK.",
+    "learned": [
+      "S3 keeps your files in buckets.",
+      "Shelves (storage classes) keep files you rarely open cheap.",
+      "Nothing changes without your OK."
+    ],
+    "region": "Your city is the Oregon Region. AWS writes it us-west-2.",
+    "open": {
+      "jobs": "💼 Jobs: side jobs for the city's businesses",
+      "decorate": "🌳 Decorate: spend your {n} City Coins on your city",
+      "ask": "💬 Ask the city: type what you want in plain words"
+    },
+    "next": "Next: {quest} →",
+    "later": "Look around first"
+  },
+  "coins": { "note": "You've earned {n} City Coins: spend them in 🌳 Decorate. Stars ⭐ are never spent." },
+  "skip": {
+    "link": "Skip the first steps",
+    "title": "Skip the first steps?",
+    "body": "The whole city opens now. You can play the first steps any time from ⋯.",
+    "keep": "Keep going",
+    "go": "Skip the first steps",
+    "tourBody": "The whole city opens now, with a quick tour instead. You can play the first steps any time from ⋯.",
+    "tour": "Skip to the quick tour"
+  },
+  "resume": "Welcome back, Mayor. Next: {step}.",
+  "menu": { "play": "▶ Play the first steps", "replay": "↺ Replay the first steps", "tour": "Show the quick tour" },
+  "hud": { "steps": "First steps {n}/6" },
+  "tour": {
+    "label": "Quick tour · {n} of {of}",
+    "next": "Next",
+    "back": "Back",
+    "end": "End tour",
+    "try": "Try it",
+    "tried": "Sally is on it: watch her in the city, and her steps in the City tab. Practice: nothing real is made.",
+    "consoleTry": "Try it in the practice console",
+    "consoleGoal": "Create a bucket called city-photos",
+    "consoleTried": "The practice console opens in a new tab: watch the Console Copilot fill in the form, then press Create bucket yourself. Nothing there touches AWS.",
+    "done": "Start exploring",
+    "stops": [
+      {
+        "id": "building",
+        "title": "Every building is an AWS service",
+        "body": "Tap one to see what it does, how far it's grown and who works there. Each Region (the 🌍 chip) is its own city.",
+        "siteTitle": "Every lot is an AWS service",
+        "site": "Tap {place} to see what it does and who works there. It grows as you learn; each Region (the 🌍 chip) is its own city."
+      },
+      {
+        "id": "ask",
+        "title": "Ask in plain words",
+        "body": "Type what you want, like \"Store my holiday photos cheaply\", and the right agent walks over and shows you the steps. The demo plays scripted examples; the hosted city does what you type.",
+        "hosted": "Type what you want, like \"Store my holiday photos cheaply\". The right agent walks over and does it while you watch.",
+        "local": "Type what you want, like \"Store my holiday photos cheaply\". The right agent walks over and does it while you watch."
+      },
+      {
+        "id": "deploy",
+        "title": "Real changes wait for your OK",
+        "body": "In the demo, tasks are practice: they show the steps and build nothing. A build in Deploy waits for your Approve. Try one with the practice account: nothing real is made.",
+        "hosted": "Practice tasks like Try it build nothing. Real changes wait for your OK in Deploy: link your own account with a role you install; every write needs your Approve and your authenticator.",
+        "local": "Practice tasks like Try it build nothing. Real changes wait for your OK in Deploy: nothing changes in your AWS account until you approve it."
+      },
+      {
+        "id": "learn",
+        "title": "Learn, then prove it",
+        "body": "Cards come back just before you'd forget. Puzzles and the Drawing board check your designs against the Well-Architected Framework."
+      },
+      {
+        "id": "console",
+        "title": "Beside your console",
+        "body": "Open this panel next to the AWS Console. The Lookout reads the page you're on; the Console Copilot fills in forms and leaves every press that commits to you.",
+        "tab": "The same helpers work in the browser's {surface}, next to the AWS Console: the Lookout reads the page you're on, and the Console Copilot fills in forms.",
+        "demoTab": "In the demo, try it from here: the practice console looks like the AWS Console and nothing in it touches AWS. The Console Copilot fills in the form and leaves the press that commits to you.",
+        "safari": "Safari has no side panel, so the Lookout and the Console Copilot can't sit beside the AWS Console. Ask in plain words here instead."
+      },
+      {
+        "id": "more",
+        "title": "Your account as a map",
+        "body": "⋯ → My AWS, live draws your real resources, costs and traffic once an account is linked. ⋯ also has Simple mode and the first steps.",
+        "linked": "⋯ → My AWS, live draws your linked account's resources, costs and traffic. ⋯ also has Simple mode and the first steps."
+      }
+    ]
+  },
+  "q2": {
+    "title": "The City Brochure Site",
+    "intro": "Your photos have a home. Now let's put the city's brochure online, fast for visitors everywhere."
+  }
+}

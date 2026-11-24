@@ -1094,6 +1094,8 @@ def main():
     builder_art.build(add)
     import combos_art
     combos_art.build(add)
+    import games_art
+    games_art.build(add)
     import seasons_art
     seasons_art.build(add)  # after the props, landscape, streets and build-mode art: it recolours their sprites
     build_landmarks(world)
@@ -1168,6 +1170,8 @@ def preview():
     import combos_art
     import seasons_art
     combos_art.preview(SPRITES, os.path.join(CACHE, "combos-preview.png"))
+    import games_art
+    games_art.preview(SPRITES, os.path.join(CACHE, "games-preview.png"))
     seasons_art.preview(SPRITES, os.path.join(CACHE, "seasons-preview.png"))
     import preview_services
     with open(os.path.join(ROOT, "shared", "world.json")) as f:

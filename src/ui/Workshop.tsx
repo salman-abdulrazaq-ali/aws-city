@@ -153,7 +153,7 @@ function AccountCheck() {
       <CodeChip code={WHICH_ACCOUNT} />
       {/* Asked on 23 Nov 2026: "what is --output text?" */}
       <p className="muted small">
-        It should print <b>{account.accountId}</b> (--output text prints just the 12-digit number, without the JSON around it).
+        It should print <b className="account-number">{account.accountId}</b> (--output text prints just the 12-digit number, without the JSON around it).
       </p>
     </>
   );
@@ -434,11 +434,31 @@ function StepView(props: {
           {typed.map((n) => (
             <label key={n}>
               <span className="label">{n === 'bucket' || n === 'table' || n === 'function' ? `Your ${n} name` : n === 'region' ? 'Your Region code' : `Your ${n}`}</span>
-              <input value={form[n] ?? ''} onChange={(e) => setForm((v) => ({ ...v, [n]: e.target.value }))} spellCheck={false} autoCapitalize="off" placeholder={n === 'region' ? 'us-west-2' : n} />
+              {/* A new name reaches every step at once (seen 24 Nov 2026: after 🎲 the other steps still showed the old
+                  bucket until Check), so it's remembered as it's typed, not only on Check or "I ran it". */}
+              <input
+                value={form[n] ?? ''}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setForm((v) => ({ ...v, [n]: value }));
+                  remember({ names: { [n]: value } });
+                }}
+                spellCheck={false}
+                autoCapitalize="off"
+                placeholder={n === 'region' ? 'us-west-2' : n}
+              />
               {n === 'bucket' && (
                 <span className="workshop-name-help">
                   <span className="muted small">Bucket names are shared by every AWS account in the world: pick one nobody has.</span>
-                  <button type="button" className="btn tiny" onClick={() => setForm((v) => ({ ...v, bucket: freeBucketName(randomHex) }))}>
+                  <button
+                    type="button"
+                    className="btn tiny"
+                    onClick={() => {
+                      const bucket = freeBucketName(randomHex);
+                      setForm((v) => ({ ...v, bucket }));
+                      remember({ names: { bucket } });
+                    }}
+                  >
                     🎲 Suggest a free name
                   </button>
                 </span>

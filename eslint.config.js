@@ -8,7 +8,7 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   // tests/fixtures holds pages and scripts the tests load as-is (a copy of a console page's widgets).
-  { ignores: ['.output/**', '.wxt/**', '.cache/**', 'node_modules/**', 'server/**', 'infra/**', 'parked/**', 'agentic-city/**', 'public/**', 'backend/**', '.claude/**', 'tests/fixtures/**'] },
+  { ignores: ['.output/**', '.wxt/**', '.cache/**', 'node_modules/**', 'server/**', 'infra/**', 'parked/**', 'agentic-city/**', 'public/**', 'backend/**', '.claude/**', 'tests/fixtures/**', '.omc/**', '.github/skills/**', '.impeccable/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

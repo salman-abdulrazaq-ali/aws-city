@@ -12,6 +12,7 @@ import { PLACES } from '@/world/places';
 import { SERVICES } from '@/world/taxonomy';
 import { workshopById } from '@/world/workshops';
 import world from '../shared/world.json' with { type: 'json' };
+import { FIRST_STEPS, FIRST_STEPS_QUEST } from '@/state/firstSteps';
 
 const ids = new Set(SERVICES.map((s) => s.id));
 
@@ -51,8 +52,18 @@ describe('learning content is complete and consistent', () => {
         if ('serviceId' in st) expect(ids.has(st.serviceId), `${q.id}`).toBe(true);
         if (st.kind === 'puzzle') expect(puzzles.has(st.puzzleId), q.id).toBe(true);
         if (st.kind === 'deploy') expect(templates.has(st.templateId), q.id).toBe(true);
+        // The first steps' kinds: a real mini-game of that building, a deck of its own cards.
+        if (st.kind === 'game') expect(PLACES.find((p) => p.serviceId === st.serviceId)?.game, `${q.id}: ${st.gameId}`).toBe(st.gameId);
+        if (st.kind === 'cards' && st.deck) {
+          expect(st.deck.length, q.id).toBeGreaterThanOrEqual(st.count);
+          for (const id of st.deck) expect(CARDS[st.serviceId]?.some((c) => c.id === id), `${q.id}: ${id}`).toBe(true);
+        }
       }
     }
+    // The first steps' copy and deck match the quest (shared/first-steps.json).
+    const fsq = QUESTS.find((q) => q.id === FIRST_STEPS_QUEST)!;
+    expect(FIRST_STEPS.steps).toHaveLength(fsq.steps.length);
+    expect(fsq.steps.find((st) => st.kind === 'cards')).toMatchObject({ deck: FIRST_STEPS.deck });
     // Every template is used: a quest deploys it, or a drawing names it as what it becomes (`templateId`).
     const used = new Set([
       ...QUESTS.flatMap((q) => q.steps.flatMap((s) => (s.kind === 'deploy' ? [s.templateId] : []))),
@@ -304,6 +315,8 @@ describe('plain language', () => {
     // My AWS → How AWS City runs: each part's name and plain line.
     ...CITY_ARCH.components.flatMap((c) => [[`city part ${c.id} name`, c.name], [`city part ${c.id} simple`, c.simple], [`city part ${c.id} optional`, c.optional ?? '']] as [string, string][]),
     ...CITY_ARCH.columns.map((c) => [`city column ${c.id}`, c.label] as [string, string]),
+    // The first steps: every line of their copy deck (shared/first-steps.json).
+    ...strings(FIRST_STEPS).map((t, i) => [`first steps line ${i + 1}`, t] as [string, string]),
   ];
   /** Acronym-like words: AZ, IMDSv2, DLQs, S3. */
   const ACRONYM = /\b[A-Z][A-Z0-9]{1,}[a-z0-9]*\b/g;
@@ -359,6 +372,14 @@ describe('plain language', () => {
       }
   });
 });
+
+/** Every string in a JSON value (the first steps' copy deck), in order. */
+function strings(v: unknown): string[] {
+  if (typeof v === 'string') return [v];
+  if (Array.isArray(v)) return v.flatMap(strings);
+  if (v && typeof v === 'object') return Object.values(v).flatMap(strings);
+  return [];
+}
 
 const linkedNames = (tokens: TermToken[]) => tokens.flatMap((t) => (typeof t === 'string' ? [] : [t.text]));
 

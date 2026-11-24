@@ -54,6 +54,8 @@ await wait(2500);
 // A first run opens on the world map: pick a Region and dive into its city.
 const startView = await city(() => window.awsCity.useCity.getState().view.name);
 if (startView !== 'world') errors.push(`first run should open on the world map, got ${startView}`);
+// Connie's card waits for the world map to be drawn (never over the boot bar): it marks the map as up.
+if (!(await page.locator('.world-intro').waitFor({ timeout: 60_000 }).then(() => true, () => false))) errors.push('first run: Connie’s card never showed (the world map was never drawn)');
 await wait(1500); // the world map fades in from the sea
 await shot('00-world');
 await audit('world map');
@@ -78,6 +80,36 @@ const firstTabs = await page.locator('.tabs button').evaluateAll((bs) => bs.map(
 if (firstTabs.join() !== 'City') errors.push(`first run: tabs should start as City only, got ${firstTabs.join()}`);
 await shot('01-start');
 
+// First steps (src/state/firstSteps.ts, src/ui/FirstSteps.tsx): a new player lands on the guided path: Connie's guide
+// card says the one next thing, the HUD counts "First steps n/6", and the quiet city hides coins, Decorate and the
+// prompt bar until graduation. The rest of the smoke checks every feature, so it skips the path once this is seen.
+await wait(1500);
+const fs0 = await page.evaluate(() => ({
+  active: window.awsCity.useCity.getState().prefs.firstSteps,
+  guide: !!document.querySelector('#city-tabpanel .guide'),
+  button: document.querySelector('#city-tabpanel .guide .btn.primary')?.textContent?.trim() ?? '',
+  hud: document.querySelector('.hud .hud-steps')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+  quiet: [...document.querySelectorAll('.hud .hud-coins, .hud .build-toggle, .composer')].filter((e) => e.offsetParent).length,
+}));
+console.log('first steps (first city):', JSON.stringify(fs0));
+if (fs0.active !== 'beginner') errors.push(`first steps: a new player should be on the path, pref is ${fs0.active}`);
+if (!fs0.guide) errors.push('first steps: no guide card on the City tab');
+if (!/S3 Lake/i.test(fs0.button)) errors.push(`first steps: step 1's button should walk to S3 Lake, says "${fs0.button}"`);
+if (!/1\s*\/\s*6/.test(fs0.hud)) errors.push(`first steps: the HUD should count 1/6, says "${fs0.hud}"`);
+if (fs0.quiet) errors.push(`first steps: ${fs0.quiet} of coins, Decorate or the prompt bar show in the quiet city`);
+await shot('01f-first-steps');
+await audit('first steps guide');
+// A new player isn't flooded: the demo's findings arrive from 3 s on, but stay held while the first steps run (City
+// care opens at graduation, or at once for a player who skips them).
+await wait(12_000);
+const calm = await city(() => ({ findings: Object.keys(window.awsCity.useCity.getState().findings).length, toasts: window.awsCity.useCity.getState().toasts.length }));
+console.log('calm city after 12 s on the first steps:', JSON.stringify(calm));
+if (calm.findings) errors.push(`calm city: ${calm.findings} findings shown during the first steps`);
+if (calm.toasts > 1) errors.push(`calm city: ${calm.toasts} toasts queued in the first seconds`);
+await shot('01c-calm');
+await city(() => window.awsCity.useCity.getState().skipFirstSteps());
+await wait(500);
+
 // Simple mode is the default (src/state/simple.ts): a first city's City tab is one To-do list, and the HUD shows ⭐,
 // coins, "To do", Decorate and ⋯ only. The checks after this look at every feature, so they turn Everything on first.
 const simple0 = await page.evaluate(() => ({
@@ -96,13 +128,6 @@ await shot('01s-simple-first-city');
 await city(() => window.awsCity.useCity.getState().setPref('simple', false));
 await wait(300);
 
-// A new player isn't flooded: the demo's findings arrive from 3 s on, but stay held until city care unlocks.
-await wait(12_000);
-const calm = await city(() => ({ findings: Object.keys(window.awsCity.useCity.getState().findings).length, toasts: window.awsCity.useCity.getState().toasts.length }));
-console.log('calm city after 12 s:', JSON.stringify(calm));
-if (calm.findings) errors.push(`calm city: ${calm.findings} findings shown before care unlocked`);
-if (calm.toasts > 1) errors.push(`calm city: ${calm.toasts} toasts queued in the first seconds`);
-await shot('01c-calm');
 
 // City care: once released (a quest done, 4 landmarks or a linked account), findings drip in; a citizen walks to the first one.
 await city(() => window.awsCity.releaseCare());
@@ -693,7 +718,8 @@ if (await page.locator('.request-card').count()) errors.push('Escape should clos
 // Past Master, crowns come from knowledge (src/state/mastery.ts): every S3 card known for a month, a passed S3 drawing,
 // a finished S3 quest and rounds of fishing make S3 Lake Lv 7, and its card says so.
 const s3Puzzle = JSON.parse(fs.readFileSync('shared/puzzles.json', 'utf8')).puzzles.find((z) => z.required.includes('s3'));
-const s3Quest = JSON.parse(fs.readFileSync('shared/quests.json', 'utf8')).quests.find((q) => q.serviceIds.includes('s3'));
+// The first S3 quest after the first steps (quest 1 is 'first-steps' since 24 Nov 2026).
+const s3Quest = JSON.parse(fs.readFileSync('shared/quests.json', 'utf8')).quests.find((q) => q.id === 'storage-static-site');
 await city(({ cards, puzzle, quest }) => {
   const p = structuredClone(window.awsCity.useCity.getState().progress);
   p.cities = p.cities ?? {};
@@ -715,19 +741,24 @@ if (!/Level 7/.test(crowned ?? '')) errors.push(`crowns: a fully known S3 Lake s
 await shot('51-crowned');
 await city(() => window.awsCity.useCity.getState().select(undefined));
 
-// The first-run tour (skipped under automation; opened here through the store): 3 steps, the last starts the first job.
+// The quick tour (src/ui/Tour.tsx; opened here through the store, as ⋯ → Show the quick tour does): six non-modal stops,
+// Next through them (never Try it here: that plays a practice task), the last says Start exploring; no scrim.
 await city(() => window.awsCity.useCity.getState().setTourOpen(true));
 await wait(700);
 await shot('27-tour-1');
-await page.locator('.tour-card [data-primary]').click();
+if (await page.locator('.tour, [aria-modal="true"].tour-card').count()) errors.push('tour: a full-screen layer or a modal card is back');
+for (let n = 0; n < 4; n++) {
+  await page.locator('.tour-card [data-next]').click();
+  await wait(400);
+}
+await shot('27b-tour-5');
+await page.locator('.tour-card [data-next]').click();
 await wait(400);
-await page.locator('.tour-card [data-primary]').click();
-await wait(500);
-await shot('27b-tour-3');
-const lastTourButton = await page.locator('.tour-card [data-primary]').textContent();
-if (lastTourButton?.trim() !== 'Start my first job') errors.push(`tour: the last step's button reads "${lastTourButton}"`);
-await page.keyboard.press('Escape');
+const lastTourButton = await page.locator('.tour-card [data-next]').textContent();
+if (lastTourButton?.trim() !== 'Start exploring') errors.push(`tour: the last stop's button reads "${lastTourButton}"`);
+await page.locator('.tour-card').press('Escape');
 await wait(300);
+if (await page.locator('.tour-card').count()) errors.push('tour: Escape left the card up');
 
 // ── Simple mode for a seasoned player (src/state/simple.ts): the To-do list, a task ticking off, the day done; then the
 // same list in the 400 px side panel. Everything goes back on after, for the checks that follow. ──
@@ -815,17 +846,17 @@ const simpleGhost = await city(() => window.awsCity.ambient.stats());
 if (simpleGhost?.ghost || simpleGhost?.ghostSprite) errors.push(`simple mode: the map shows the next-level line "${simpleGhost.ghost}"`);
 await city(() => window.awsCity.useCity.getState().select(undefined));
 await wait(300);
-// The tour's second step points at the To-do list in Simple mode.
+// The quick tour in Simple mode: its second stop points at the box (Ask in plain words).
 await page.locator('.back-link').click().catch(() => {});
 await wait(300);
 await city(() => window.awsCity.useCity.getState().setTourOpen(true));
 await wait(700);
-await page.locator('.tour-card [data-primary]').click();
+await page.locator('.tour-card [data-next]').click();
 await wait(500);
 const tour2 = (await page.locator('.tour-card').textContent()) ?? '';
-if (!/Your To-do list/.test(tour2)) errors.push(`simple mode: the tour's second step should show the To-do list, got "${tour2.slice(0, 80)}"`);
+if (!/Ask in plain words/.test(tour2)) errors.push(`simple mode: the tour's second stop should be Ask in plain words, got "${tour2.slice(0, 80)}"`);
 await shot('80e-simple-tour');
-await page.keyboard.press('Escape');
+await page.locator('.tour-card').press('Escape');
 await wait(300);
 const simplePanel = await ctx.newPage();
 simplePanel.on('pageerror', (e) => errors.push(`simple panel pageerror: ${e.message}`));
@@ -1201,7 +1232,8 @@ await panel.screenshot({ path: `${out}/12-lookout.png` });
     const at = Date.now();
     // Up to 3 minutes: Kai's walk follows the game's clock, which runs ~30× slow at CI's 1–2 fps (seen 23 Nov 2026: three
     // stations timed out at 25 s on main and here); a fast machine returns as soon as the job opens.
-    while (Date.now() - at < 180_000 && (await city(() => window.awsCity.useCity.getState().clientTaskOpen)) !== t.id) await wait(250);
+    // 5 minutes: three CI runs on 24 Nov 2026 timed out at 3 on the Vault room's long walk.
+    while (Date.now() - at < 300_000 && (await city(() => window.awsCity.useCity.getState().clientTaskOpen)) !== t.id) await wait(250);
     if ((await city(() => window.awsCity.useCity.getState().clientTaskOpen)) !== t.id) {
       errors.push(`clients: "${t.title}" did not open when Kai reached the ${t.station}`);
       await city((id) => window.awsCity.useCity.getState().openClientTask(id), t.id);

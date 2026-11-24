@@ -34,7 +34,7 @@
   outline-offset: -2px;
 }
 .event-icon {
-  font-size: 20px;
+  font-size: calc(var(--fs-md) * 20 / 13);
 }
 .event-tag {
   flex: none;

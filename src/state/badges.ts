@@ -45,7 +45,8 @@ export const BADGES: Badge[] = [
   { id: 'first-crown', name: 'First Crown', icon: '👑', how: 'Earn a crown on a Master building.', earned: (p) => bestLevel(p) >= 5 },
   { id: 'legend', name: 'Legend', icon: '🌟', how: 'Take a building to Legend, all three crowns.', earned: (p) => bestLevel(p) >= 7 },
   { id: 'first-puzzle', name: 'Architect', icon: '📐', how: 'Pass an architecture drawing.', earned: (p) => Object.values(p.puzzles ?? {}).some((z) => z.best >= PUZZLE_PASS) },
-  { id: 'first-quest', name: 'Questing', icon: '📜', how: 'Finish a quest.', earned: (p) => Object.values(p.quests ?? {}).some((q) => q.status === 'done') },
+  // A skipped first steps (finished at step 0: skipFirstSteps) isn't a quest finished.
+  { id: 'first-quest', name: 'Questing', icon: '📜', how: 'Finish a quest.', earned: (p) => Object.entries(p.quests ?? {}).some(([id, q]) => q.status === 'done' && !(id === 'first-steps' && q.step === 0)) },
   { id: 'first-fix', name: 'Fixer', icon: '🩹', how: 'Fix something in your real account with a citizen.', earned: (p) => Object.keys(p.fixes ?? {}).length > 0 },
   { id: 'first-workshop-step', name: 'Hands On', icon: '⌨️', how: 'Do a workshop step.', earned: (p) => workshops(p).some((w) => Object.keys(w.steps).length > 0) },
   { id: 'real-step', name: 'For Real', icon: '☁️', how: 'Do a workshop step for real in your account.', earned: (p) => workshops(p).some((w) => Object.values(w.steps).includes('real')) },

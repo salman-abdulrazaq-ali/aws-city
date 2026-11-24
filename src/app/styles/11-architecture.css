@@ -4,6 +4,73 @@
   flex-direction: column;
   gap: var(--s-3);
 }
+/* In the column the board reads as one list (its wrappers don't box anything); the big board splits it in two. */
+.arch-builder,
+.arch-side,
+.arch-main {
+  display: contents;
+}
+/* The big board (ArchitectureBoard, the full tab only): the same board over the city, the brief and the cards beside
+   a diagram drawn up to 1.4× its natural size, so its labels and spots are big and the cards are a short drag away. */
+.arch-wide-btn {
+  display: none;
+}
+.app-full .arch-wide-btn {
+  display: inline-flex;
+}
+.arch-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-toast) + 1);
+  background: var(--scrim);
+}
+.arch.wide {
+  position: fixed;
+  z-index: calc(var(--z-toast) + 1);
+  inset: var(--s-6);
+  width: min(1180px, 100% - 2 * var(--s-6));
+  height: fit-content;
+  max-height: calc(100% - 2 * var(--s-6));
+  margin: auto;
+  overflow-y: auto;
+  padding: var(--s-5) var(--s-6) 0;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-float);
+}
+.arch-wide-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+}
+.arch-wide-head h3 {
+  margin: 0;
+  font-size: var(--fs-lg);
+  color: var(--ink-hi);
+}
+.arch.wide .arch-builder {
+  display: grid;
+  grid-template-columns: minmax(240px, 340px) minmax(0, 1fr);
+  gap: var(--s-6);
+  align-items: start;
+}
+.arch.wide .arch-side,
+.arch.wide .arch-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+}
+.arch.wide .arch-side {
+  padding-bottom: var(--s-5);
+}
+.arch.wide .diagram {
+  max-width: calc(var(--dw, 360) / 11 * var(--fs-xs) * 1.4);
+  margin-inline: auto;
+}
 .story {
   color: var(--info-ink);
   margin: var(--s-1) 0;

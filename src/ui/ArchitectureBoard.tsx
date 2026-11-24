@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { effectiveEdges, flowSteps, nextEmptyRequired, pickUp, remainingCards, shortName, slotName, slotsOf, tryPlace, type Placements } from '@/learning/diagram';
 import { scoreDiagram, type PuzzleScore } from '@/learning/scoring';
 import { reducedMotion } from '@/game/motion';
@@ -16,6 +16,7 @@ import { Portrait } from './Portrait';
 import { districtStyle, featuredPuzzle, readPref, shuffle, writePref } from './logic';
 import { Plain, Term } from './Term';
 import { EmptyState } from './EmptyState';
+import { useDialog } from './useDialog';
 import { firstTryToday, puzzleReward, type PuzzleReward } from '@/learning/puzzleRewards';
 import { PUZZLE_PASS } from '@/state/ladder';
 import { deckFor, draftKey, parseDraft, serializeDraft } from '@/learning/puzzleDraft';
@@ -28,6 +29,11 @@ export function ArchitectureBoard() {
   const [id, setId] = useState(featured);
   /** The other puzzles wait behind "More puzzles" (one puzzle at a time for a new player). */
   const [showAll, setShowAll] = useState(false);
+  /** The big board (the full tab): the same board, over the city, with room for the diagram. */
+  const [wide, setWide] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const closeBtn = useRef<HTMLButtonElement>(null);
+  useDialog(wide, box, () => setWide(false), closeBtn);
   // A quest's "Go →" names the puzzle to open.
   useEffect(() => {
     if (focusPuzzle) setId(focusPuzzle);
@@ -38,8 +44,8 @@ export function ArchitectureBoard() {
   const order = [...PUZZLES].sort((a, b) => Number(b.id === featured) - Number(a.id === featured));
   const list = showAll ? order : order.filter((x) => x.id === p.id);
 
-  return (
-    <div className="arch">
+  const brief = (
+    <>
       <select value={p.id} onChange={(e) => setId(e.target.value)} aria-label="Puzzle">
         {list.map((x) => (
           <option key={x.id} value={x.id}>
@@ -65,8 +71,32 @@ export function ArchitectureBoard() {
           </li>
         ))}
       </ul>
-      {p.diagram ? <Builder key={p.id} p={p} /> : <EmptyState title="Still being drawn">This puzzle has no diagram yet.</EmptyState>}
-    </div>
+    </>
+  );
+
+  // The same element either way, so the board keeps its state: in the column, or the big board over the city.
+  return (
+    <>
+      {wide && <div className="arch-scrim" role="presentation" onClick={() => setWide(false)} />}
+      <div ref={box} className={`arch ${wide ? 'wide' : ''}`} {...(wide ? { role: 'dialog', 'aria-modal': true, 'aria-labelledby': 'arch-wide-title' } : {})}>
+        {wide && (
+          <div className="arch-wide-head">
+            <h3 id="arch-wide-title">{p.title}</h3>
+            <button ref={closeBtn} className="btn icon ghost" aria-label="Close the big board" title="Back to the side column (Esc)" onClick={() => setWide(false)}>
+              ✕
+            </button>
+          </div>
+        )}
+        {p.diagram ? (
+          <Builder key={p.id} p={p} side={brief} wide={{ on: wide, toggle: () => setWide((w) => !w) }} />
+        ) : (
+          <>
+            {brief}
+            <EmptyState title="Still being drawn">This puzzle has no diagram yet.</EmptyState>
+          </>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -77,7 +107,7 @@ type Phase = 'build' | 'flow';
  * Clients "Wire it" job (src/learning/jobPuzzle.ts): nothing goes into Progress.puzzles and no puzzle stars are paid;
  * a pass calls `job.onPass` (the job pays once, store.clientTaskDone).
  */
-export function Builder({ p, job }: { p: Puzzle; job?: { onPass: () => void } }) {
+export function Builder({ p, job, side, wide }: { p: Puzzle; job?: { onPass: () => void }; side?: ReactNode; wide?: { on: boolean; toggle: () => void } }) {
   const best = useCity((s) => s.progress.puzzles?.[p.id]?.best ?? 0);
   const recordPuzzle = useCity((s) => s.recordPuzzle);
   const d = p.diagram!;
@@ -263,8 +293,11 @@ export function Builder({ p, job }: { p: Puzzle; job?: { onPass: () => void } })
   /** The one-line takeaway once the flow has played: the simple why, else the first sentence of the full one. */
   const recap = p.simpleWhy ?? `${p.why.split(/(?<=\.)\s/)[0]}`;
 
+  // Two columns on the big board (the brief and the cards beside the design); in the column they read as one.
   return (
-    <>
+    <div className="arch-builder">
+      <div className="arch-side">
+      {side}
       <h4 className="arch-label">Services · drag one onto a spot, or tap a card, then a spot</h4>
       <div className="tray" role="group" aria-label="Service cards">
         {deck
@@ -287,11 +320,18 @@ export function Builder({ p, job }: { p: Puzzle; job?: { onPass: () => void } })
             );
           })}
       </div>
+      </div>
+      <div className="arch-main">
       <div className="arch-row">
         <h4 className="arch-label">
           Your design <span className="muted">· {filledReq}/{required.length} required</span>
         </h4>
         <div className="arch-btns">
+          {wide && !wide.on && (
+            <button className="btn ghost tiny arch-wide-btn" onClick={wide.toggle} title="Open this board bigger, over the city">
+              ⤢ Bigger board
+            </button>
+          )}
           {started && (
             <button className="btn ghost tiny" onClick={startFresh} title="Clear the board and the points mistakes cost">
               ↺ Start fresh
@@ -321,7 +361,7 @@ export function Builder({ p, job }: { p: Puzzle; job?: { onPass: () => void } })
         </div>
       </div>
       <p className="legend">
-        <b>?</b> needed · <b>+</b> bonus · <b>1 2 3</b> data’s path (same number = same time)
+        <b>?</b> a spot your design needs · <b>+</b> a bonus spot · <b>1 2 3</b> the order data moves (the same number: at the same time)
       </p>
       {hintSlot && hintShown && (
         <div className="hint-say">
@@ -379,7 +419,14 @@ export function Builder({ p, job }: { p: Puzzle; job?: { onPass: () => void } })
                   Skip
                 </button>
               )}
-              <button className="btn tiny" onClick={() => bus.emit('showFlow', { serviceIds: p.flow })}>
+              <button
+                className="btn tiny"
+                onClick={() => {
+                  // The big board covers the city: it steps aside so the flow can be seen there.
+                  if (wide?.on) wide.toggle();
+                  bus.emit('showFlow', { serviceIds: p.flow });
+                }}
+              >
                 Show in city
               </button>
             </div>
@@ -389,9 +436,11 @@ export function Builder({ p, job }: { p: Puzzle; job?: { onPass: () => void } })
             <p className="diagram-say" aria-live="polite">
               {say}
             </p>
-            <button className="btn primary" disabled={!Object.keys(placements).length} onClick={check}>
-              ✓ Check design
-            </button>
+            <div className="foot-actions">
+              <button className="btn primary" disabled={!Object.keys(placements).length} onClick={check}>
+                ✓ Check design
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -400,12 +449,13 @@ export function Builder({ p, job }: { p: Puzzle; job?: { onPass: () => void } })
           <ResultPanel puzzle={p} result={result} earned={earned} />
         </div>
       )}
+      </div>
       {ghost && (
         <div className="drag-ghost" style={{ transform: `translate(${ghost.x}px, ${ghost.y}px)` }} aria-hidden="true">
           <AwsIcon serviceId={ghost.svc} size={24} />
           {shortName(ghost.svc)}
         </div>
       )}
-    </>
+    </div>
   );
 }

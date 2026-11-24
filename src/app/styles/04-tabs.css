@@ -66,7 +66,7 @@
   min-width: 16px;
   padding: 1px 4px;
   border-radius: var(--r-pill);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 800;
   line-height: 1.2;
   text-align: center;
@@ -109,9 +109,11 @@
 .tab-body > * {
   animation: enter var(--dur-2) var(--ease-out);
 }
+/* Every entrance that uses this (tabs, the ⋯ menu, sheets and scrims, feed and chat rows) starts already readable:
+   the side panel can draw at 1–2 frames a second, and a first frame at opacity 0 left it blank for seconds. */
 @keyframes enter {
   from {
-    opacity: 0;
+    opacity: 0.6;
     transform: translateY(4px);
   }
 }
@@ -144,7 +146,7 @@
   color: var(--ink-hi);
 }
 .seg-count {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   padding: 0 5px;
   border-radius: var(--r-pill);
   background: var(--accent-soft);

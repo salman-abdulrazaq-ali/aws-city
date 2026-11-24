@@ -3,7 +3,7 @@
 // round below its game's accuracy floor (`minAccuracy` in shared/minigames.json) is no new best and pays fewer stars.
 import json from '../../../../shared/minigames.json' with { type: 'json' };
 import { comboMultiplier } from './combo';
-import { CSS } from '../../theme';
+import { CSS, GAME_PILL } from '../../theme';
 
 const FLOORS = (json as unknown as { minAccuracy?: Record<string, number> }).minAccuracy ?? {};
 
@@ -13,8 +13,11 @@ const FLOORS = (json as unknown as { minAccuracy?: Record<string, number> }).min
  */
 export const FEEDBACK = { right: CSS.goodInk, wrong: CSS.badInk, note: CSS.infoInk, gold: CSS.goldHi } as const;
 
-/** The dark pill behind an answer's verdict (MiniGame.verdict, as in the Dance Hall): FEEDBACK text on it reads at 4.5:1 or better. */
-export const PILL = '#140d1ff2';
+/**
+ * The dark pill behind an answer's verdict (MiniGame.verdict, as in the Dance Hall): the desk's graphite (theme.ts
+ * GAME_PILL), so FEEDBACK text on it reads at 4.5:1 or better.
+ */
+export const PILL = GAME_PILL;
 /** How long a verdict stays up, ms: long enough to read a reason. */
 export const VERDICT_MS = 1500;
 

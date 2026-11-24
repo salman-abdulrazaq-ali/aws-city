@@ -5,6 +5,9 @@ import { crisp } from '../../SpeechBubble';
 import { useCity } from '@/state/store';
 import { DNS_QUESTIONS, type DnsQuestion } from '@/world/minigames';
 import { dealRound } from '../../pace';
+import { COLOR } from '../../theme';
+import { PILL } from './scoring';
+import { answerPop, playScale, pressLook } from './stageFx';
 
 type Q = DnsQuestion;
 
@@ -21,8 +24,10 @@ export class DanceGame extends MiniGame {
   private deck: Q[] = [];
   private ui: Phaser.GameObjects.GameObject[] = [];
   private dancers: Phaser.GameObjects.Sprite[] = [];
-  /** The hall's top and height (setup). */
-  private stage = { y0: 0, h: 0 };
+  /** The hall's top and height, and the dancers' whole-number scale (setup). */
+  private stage = { y0: 0, h: 0, k: 1 };
+  /** This question's answer buttons, in key order (1–4). */
+  private optBtns: Phaser.GameObjects.Container[] = [];
 
   constructor() {
     super('game:route53', 'route53', 'route53', '💃 Route 53 Dance Hall — every dancer asks a DNS question: call the answer (1–4)');
@@ -40,9 +45,13 @@ export class DanceGame extends MiniGame {
     const stageH = Math.min(h - this.top, 600);
     const col = this.column(stageH);
     const y0 = col.y;
-    this.stage = { y0, h: stageH };
+    // The dancers at a whole-number scale (stageFx.playScale): 1× in the side panel, 2× when the tab has room (the
+    // pixel art drops pixels at 1.5×).
+    const k = playScale(col.w, stageH, 380, 300);
+    this.stage = { y0, h: stageH, k };
     const floorY = y0 + stageH * 0.52;
     const g = this.add.graphics();
+    // The disco floor is scene art in Route 53's district violet (Networking), not the retired chrome purple.
     for (let y = 0; y < 8; y++)
       for (let x = 0; x < 16; x++) g.fillStyle((x + y) % 2 ? 0x4c1d95 : 0x6d28d9, 1).fillRect((x * w) / 16, floorY + (y * (h - floorY)) / 8, w / 16 + 1, (h - floorY) / 8 + 1);
     g.fillStyle(0x1e1b4b, 1).fillRect(0, 0, w, floorY);
@@ -55,7 +64,7 @@ export class DanceGame extends MiniGame {
       g.fillStyle(c, 0.07).fillTriangle(ballX, ballY, ballX + dx - 60, beamY, ballX + dx + 60, beamY);
     });
     g.fillStyle(0x000000, 1).fillRect(ballX - 1, 0, 2, ballY - 10);
-    for (let y = -2; y <= 2; y++) for (let x = -2; x <= 2; x++) if (x * x + y * y <= 5) g.fillStyle((x + y) % 2 ? 0xe2e8f0 : 0x94a3b8, 1).fillRect(ballX + x * 4 - 2, ballY + y * 4 - 2, 4, 4);
+    for (let y = -2; y <= 2; y++) for (let x = -2; x <= 2; x++) if (x * x + y * y <= 5) g.fillStyle((x + y) % 2 ? COLOR.inkHi : COLOR.muted, 1).fillRect(ballX + x * 4 - 2, ballY + y * 4 - 2, 4, 4);
     for (let i = 0; i < 14; i++) this.add.rectangle((i * 131) % w, this.top + ((i * 71) % Math.max(1, floorY - this.top - 10)), 3, 3, [0xf472b6, 0xfde047, 0x60a5fa][i % 3]);
     // A different crowd every round, not the same eight dancers in the same order.
     const ids = Phaser.Utils.Array.Shuffle(citizenIds());
@@ -63,14 +72,18 @@ export class DanceGame extends MiniGame {
     this.add.sprite(w / 2, y0 + stageH * 0.6, 'char:route53', 0).setOrigin(PIVOT.x / FRAME_W, PIVOT.y / FRAME_H).setScale(2).play('route53:dance:SE');
     for (let i = 0; i < 8; i++) {
       // The dancers' row is no wider than the play column (MiniGame.column), so a wide tab keeps them together.
-      const s = this.add.sprite(col.x + 40 + ((col.w - 80) * i) / 7, beamY, `char:${ids[i % ids.length]}`, 0).setOrigin(PIVOT.x / FRAME_W, PIVOT.y / FRAME_H).setScale(1.5);
+      const s = this.add.sprite(col.x + 40 + ((col.w - 80) * i) / 7, beamY, `char:${ids[i % ids.length]}`, 0).setOrigin(PIVOT.x / FRAME_W, PIVOT.y / FRAME_H).setScale(k);
       s.play(`${ids[i % ids.length]}:idle:SE`).setData('y', beamY);
       this.dancers.push(s);
     }
     // 1-4 answer from the keyboard, like the sorting office and rush hour.
-    this.onKeys((k) => {
-      const o = this.asking?.opts[Number(k) - 1];
-      if (this.asking && o) this.answer(this.asking.q, o);
+    this.onKeys((key) => {
+      const i = Number(key) - 1;
+      const o = this.asking?.opts[i];
+      if (!this.asking || !o) return;
+      // The key shows on its button, as a click would (stageFx.pressLook).
+      pressLook(this, this.optBtns[i]);
+      this.answer(this.asking.q, o);
     });
     this.ask();
   }
@@ -81,6 +94,7 @@ export class DanceGame extends MiniGame {
   private ask() {
     for (const o of this.ui) o.destroy();
     this.ui = [];
+    this.optBtns = [];
     if (this.round >= this.deck.length) return this.finish();
     const q = this.deck[this.round];
     const { width: w } = this.scale;
@@ -97,7 +111,7 @@ export class DanceGame extends MiniGame {
     this.ui.push(
       this.add.rectangle(w / 2, cy + ch / 2 + 4, cw, ch, PAL.black).setDepth(50),
       this.add.rectangle(w / 2, cy + ch / 2, cw, ch, PAL.paper).setStrokeStyle(3, PAL.black).setDepth(50),
-      crisp(this.add.text(w / 2, cy + 8, `Dancer ${this.round + 1}/${this.deck.length} asks`, TXT(14, '#92400e'))).setOrigin(0.5, 0).setDepth(51),
+      crisp(this.add.text(w / 2, cy + 8, `Dancer ${this.round + 1}/${this.deck.length} asks`, TXT(14, PAL.paperMeta))).setOrigin(0.5, 0).setDepth(51),
       text,
     );
     const opts = Phaser.Utils.Array.Shuffle([...q.options]);
@@ -112,7 +126,10 @@ export class DanceGame extends MiniGame {
       const col = i % cols;
       const row = Math.floor(i / cols);
       const x = w / 2 + (col - (cols - 1) / 2) * step;
-      this.ui.push(this.pxButton(x, cy + ch + 26 + row * 40, `${i + 1} ${o}`, () => this.answer(q, o), 0x8c4fff, '#ffffff'));
+      // Four equal answers: graphite chips, so the amber stays the one primary (the desk's secondary buttons).
+      const btn = this.pxButton(x, cy + ch + 26 + row * 40, `${i + 1} ${o}`, () => this.answer(q, o), PAL.chip, PAL.ink);
+      this.optBtns.push(btn);
+      this.ui.push(btn);
     });
     // The last reason, still up, moves below this question's buttons if they reach it.
     const bottom = cy + ch + 26 + (Math.ceil(opts.length / cols) - 1) * 40 + 24;
@@ -122,7 +139,7 @@ export class DanceGame extends MiniGame {
   /** A dancer steps forward (and waves) to ask, or back into the row. */
   private step(d: Phaser.GameObjects.Sprite, forward: boolean) {
     const id = (d.texture.key as string).replace('char:', '');
-    d.setY((d.getData('y') as number) - (forward ? 12 : 0)).setDepth(forward ? 2 : 1);
+    d.setY((d.getData('y') as number) - (forward ? 12 * this.stage.k : 0)).setDepth(forward ? 2 : 1);
     d.play(`${id}:${forward ? 'wave' : 'idle'}:SE`);
   }
 
@@ -131,6 +148,7 @@ export class DanceGame extends MiniGame {
 
   private answer(q: Q, o: string) {
     if (this.asking?.q !== q) return;
+    const opts = this.asking.opts;
     this.asking = undefined;
     const { width: w } = this.scale;
     const ok = o === q.answer;
@@ -140,6 +158,7 @@ export class DanceGame extends MiniGame {
     const id = (d.texture.key as string).replace('char:', '');
     d.play(`${id}:${ok ? 'dance' : 'laugh'}:SE`);
     for (const x of this.ui) (x as Phaser.GameObjects.Container).disableInteractive?.();
+    this.markAnswer(q, opts, o, ok);
     this.reason?.destroy();
     this.speak(`${ok ? 'Right!' : `Wrong: it’s ${q.answer}.`} ${q.why}`);
     const reason = (this.reason =
@@ -148,7 +167,7 @@ export class DanceGame extends MiniGame {
           ...TXT(16, ok ? FEEDBACK.right : FEEDBACK.wrong),
           align: 'center',
           wordWrap: { width: Math.min(w - 40, 560) },
-          backgroundColor: '#140d1fe6',
+          backgroundColor: PILL,
           padding: { x: 10, y: 6 },
         }),
       )
@@ -158,6 +177,20 @@ export class DanceGame extends MiniGame {
     // The next dancer asks soon; the reason stays up long enough to read (longer reasons longer), or until the next answer.
     this.time.delayedCall(pace(NEXT_MS), () => this.ask());
     this.time.delayedCall(Math.min(6000, 2500 + q.why.length * 30), () => reason.destroy());
+  }
+
+  /**
+   * The answer shows on the buttons, where a key press has no pointer: a frame round the one chosen (stageFx.answerPop:
+   * green with sparks when right, red when not), and a wrong call turns the right answer's button green.
+   */
+  private markAnswer(q: Q, opts: string[], chosen: string, ok: boolean) {
+    const btn = this.optBtns[opts.indexOf(chosen)];
+    if (btn) answerPop(this, btn.x, btn.y + 1, btn.width, btn.height, ok, 151);
+    if (ok) return;
+    const right = this.optBtns[opts.indexOf(q.answer)];
+    const [, face, label] = (right?.list ?? []) as unknown as [unknown, Phaser.GameObjects.Rectangle?, Phaser.GameObjects.Text?];
+    face?.setFillStyle(COLOR.good);
+    label?.setColor(PAL.paperInk);
   }
 
   protected lesson() {

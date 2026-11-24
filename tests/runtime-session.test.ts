@@ -106,6 +106,21 @@ describe('runtime sessions', () => {
     expect(['lambda', 's3'].every((id) => landmarkOf(fake.puts[0]!, id))).toBe(true);
   });
 
+  // Review, 24 Nov 2026: quest 2 was re-cut; the local copy moved to the new numbering, then the server's old-numbered
+  // copy merged in and its higher step (old 4 = the Route 53 cards) became new 4 (the puzzle), skipping a step.
+  it('a server copy from before quest 2’s re-cut is renumbered before it merges, so no step is skipped', async () => {
+    const { QUEST_CUT } = await import('@/state/store');
+    const at = (step: number): Progress => ({ ...progress({ s3: { discovered: true, xp: 10 } }, '2026-11-20T00:00:00Z'), quests: { [QUEST_CUT.questId]: { status: 'active', step } } });
+    fake.remote = at(4);
+    const { useCity } = await boot();
+    useCity.getState().loadProgress(at(4));
+    fake.status('connected');
+    await settle();
+    const quests = useCity.getState().progress.quests!;
+    expect(quests[QUEST_CUT.questId]).toMatchObject({ status: 'active', step: QUEST_CUT.map[4] });
+    expect(quests[QUEST_CUT.marker]).toBeTruthy();
+  });
+
   it('a refused save shows "Not saved" until a save goes through; the next player never inherits it', async () => {
     const { useCity } = await boot();
     fake.status('connected');

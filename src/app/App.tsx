@@ -1,9 +1,9 @@
 import { ClientsBoard } from '@/ui/clients/ClientsPanel';
 import { ClientDone, ClientTask } from '@/ui/clients/ClientTask';
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type UIEvent } from 'react';
 import { REGIONS } from '@/world/culture';
 import { bus } from '@/state/bus';
-import { openFindings, useCity } from '@/state/store';
+import { openFindings, SETTLE, settledTo, useCity } from '@/state/store';
 import { ChatPanel } from '@/ui/ChatPanel';
 import { Hud, SyncNote } from '@/ui/Hud';
 import { Workshop } from '@/ui/Workshop';
@@ -35,7 +35,9 @@ import { runPlan, type OpenTab as GoTo } from '@/ui/QuestLog';
 import { Home, taskMovedOn } from '@/ui/Home';
 import { Navigator } from '@/ui/Navigator';
 import { Icon, type IconName } from '@/ui/icons';
-import { CoachTips, Tour } from '@/ui/Tour';
+import { CoachTips, Tour, useFirstRunTour } from '@/ui/Tour';
+import { FirstStepsMoments, GuideCard, GuideStrip, useFirstSteps, useQuiet } from '@/ui/FirstSteps';
+import { FIRST_STEPS_QUEST } from '@/state/firstSteps';
 import { WorldIntro } from '@/ui/WorldIntro';
 import { useCanConnect, useLadder } from '@/ui/useLadder';
 import { FindingCard } from '@/ui/FindingCard';
@@ -44,7 +46,7 @@ import { SoundCaptions } from '@/ui/SoundCaptions';
 import { BuildDrawer } from '@/ui/BuildDrawer';
 import { useKeepFocus } from '@/ui/useDialog';
 import { cardWaitsForKai } from '@/state/walk';
-import { citySummary, isTourDone, newlyUnlocked, nextTabIndex, readPref, readSet, TAB_KEY, UNLOCK_TOASTS_KEY, unlockText, writePref, writeSet } from '@/ui/logic';
+import { citySummary, newlyUnlocked, nextTabIndex, readPref, readSet, TAB_KEY, UNLOCK_TOASTS_KEY, unlockText, writePref, writeSet } from '@/ui/logic';
 import { GameCanvas } from './GameCanvas';
 import type { Layout } from './runtime';
 
@@ -63,8 +65,8 @@ const TABS: [Tab, IconName, string][] = [
 
 const labelOf = (t: Tab) => TABS.find(([id]) => id === t)![2];
 
-/** After the city has arrived, the first-run tour waits this long at most for the `arrived` moment. */
-const TOUR_FALLBACK_MS = 900;
+/** The side panel's map at its smallest (styles/01-layout.css): it shrinks there while the tab below is scrolled. */
+const STAGE_FLOOR = 150;
 
 const savedTab = (): Tab => {
   const t = readPref(TAB_KEY);
@@ -76,7 +78,8 @@ export function App({ layout }: { layout: Layout }) {
   // Build mode in the side panel takes the panel's whole height for the city and its drawer (styles/26-build.css).
   const building = useCity((s) => !!s.build);
   const celebrating = useCity((s) => !!s.celebration);
-  const setTourOpen = useCity((s) => s.setTourOpen);
+  // After graduation's card, AWS news waits its turn (store SETTLE): the coins note and Connie's word come first.
+  const newsTurn = useCity((s) => settledTo(s, SETTLE.banner));
   const stage = useCity((s) => s.prefs.stage);
   const setPref = useCity((s) => s.setPref);
   const cityRegion = useCity((s) => s.cityRegion);
@@ -102,6 +105,8 @@ export function App({ layout }: { layout: Layout }) {
   const [jobsAt, setJobsAt] = useState('');
   const [learn, setLearn] = useState<'cards' | 'build' | 'sandbox'>('cards');
   const [place, setPlace] = useState(false);
+  /** Where the side panel's tab was scrolled down (view and tab): there the map steps back to its floor so the reading gets the room. */
+  const [readingAt, setReadingAt] = useState<string>();
   const [deployBadge, setDeployBadge] = useState(false);
   const [homeBadge, setHomeBadge] = useState(false);
   const due = useCity((s) => badgeCount(s.progress));
@@ -119,13 +124,29 @@ export function App({ layout }: { layout: Layout }) {
   // hosted player with no account linked yet (Deploy is where it connects).
   const linkingNow = useCity((s) => linking(s.account));
   const canConnect = useCanConnect();
-  const simpleCtx = { steps: steps.split(','), linked, deployWaiting, linking: linkingNow, canConnect };
+  // The first steps (src/state/firstSteps.ts): the quiet city hides what the path doesn't teach yet, in either mode.
+  const path = useFirstSteps();
+  const quiet = useQuiet();
+  const simpleCtx = { steps: steps.split(','), linked, deployWaiting, linking: linkingNow, canConnect, ...quiet };
   const deployShown = shows('deployTab', prefs, simpleCtx);
   /** The tabs this player has earned and this mode shows (a new one gets the unlock toast). */
   const earned = useMemo(() => new Set([...l.tabs].filter((t) => t !== 'deploy' || deployShown)), [l.tabs, deployShown]);
   // A saved tab that isn't earned (another player's, before the ladder, or hidden in Simple) shows City.
   const shownTab: Tab = earned.has(tab) || visiting ? tab : 'home';
   const tabs = TABS.filter(([t]) => earned.has(t) || t === shownTab);
+  // Only in the view and tab where it was scrolled.
+  const readingKey = `${view.name}:${shownTab}`;
+  const reading = layout === 'panel' && readingAt === readingKey;
+  /**
+   * Panel only: scrolled down far enough (and with enough below that the map's room is read, not just a jump back),
+   * the map shrinks to its floor; back at the top, it grows again.
+   */
+  const onBodyScroll = (e: UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (reading) return void (el.scrollTop <= 2 && setReadingAt(undefined));
+    const map = el.closest('.app')?.querySelector('.stage')?.getBoundingClientRect().height ?? 0;
+    if (el.scrollTop > 32 && el.scrollHeight - el.clientHeight > map - STAGE_FLOOR + 64) setReadingAt(readingKey);
+  };
   /** Tabs that just unlocked: a dot until they're opened. */
   const [fresh, setFresh] = useState<ReadonlySet<Tab>>(new Set());
   const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
@@ -146,13 +167,38 @@ export function App({ layout }: { layout: Layout }) {
     writePref(TAB_KEY, t);
     if (t === 'deploy') setDeployBadge(false);
     if (t === 'home') setHomeBadge(false);
-    // Every tab starts at its top, never half-scrolled.
+    // Every tab starts at its top, never half-scrolled (and the map comes back to its size).
     body.current?.scrollTo({ top: 0 });
+    setReadingAt(undefined);
   };
 
+
+  useEffect(
+    () =>
+      useCity.subscribe((s, p) => {
+        // Another view (an HQ's chat, a game, the world map) gives the map its size back.
+        if (s.view.name !== p.view.name) setReadingAt(undefined);
+        // Decorate clears the picked building: the side column goes back to the shift, never a "Pick a place" card
+        // waiting for one (during or after decorating).
+        if (s.build && !p.build) setPlace(false);
+      }),
+    [],
+  );
   // A building tapped (in the city or a list): its card opens in the City tab, in place of the shift. A "Walk to" opens
   // it when Kai gets there (src/state/walk.ts), not at the press.
   useEffect(() => bus.on('select', ({ id }) => !cardWaitsForKai(id) && setTab('info')), []);
+  // The card going away (its back link, another tab, a question asked, Decorate) puts the building down too: the map's
+  // highlight and next-level ghost follow `selected` (seen 24 Nov 2026: DynamoDB's ghost and "Next: Novice…" stayed on
+  // the map minutes after its card closed).
+  const cardShown = shownTab === 'home' && place;
+  const cardWas = useRef(cardShown);
+  useEffect(() => {
+    const was = cardWas.current;
+    cardWas.current = cardShown;
+    if (!was || cardShown) return;
+    setPlace(false);
+    if (useCity.getState().selected) useCity.getState().select(undefined);
+  }, [cardShown]);
   // A button that went away with its row, tab or card leaves focus on the new panel's heading, never on <body>.
   const side = useRef<HTMLElement>(null);
   useKeepFocus(side, () => body.current);
@@ -212,23 +258,8 @@ export function App({ layout }: { layout: Layout }) {
       }),
     [],
   );
-  // First run: the coach-mark tour, once the city has arrived (not on the world map, and not under automation, so
-  // scripted smoke runs aren't blocked; they open it with awsCity.useCity.getState().setTourOpen(true)).
-  useEffect(() => {
-    if (view.name !== 'city' || isTourDone() || navigator.webdriver) return;
-    let timer: ReturnType<typeof setTimeout> | undefined = undefined;
-    const open = () => {
-      clearTimeout(timer);
-      off();
-      if (!isTourDone() && useCity.getState().view.name === 'city') setTourOpen(true);
-    };
-    const off = bus.on('arrived', open);
-    timer = setTimeout(open, TOUR_FALLBACK_MS);
-    return () => {
-      clearTimeout(timer);
-      off();
-    };
-  }, [view.name, setTourOpen]);
+  // First run: the coach-mark tour, once the city has arrived; never for a player on, past or back from the first steps.
+  useFirstRunTour();
 
   // A tab that newly appears: one toast (once per browser) and a dot until it's opened.
   const prevTabs = useRef<ReadonlySet<Tab> | undefined>(undefined);
@@ -245,6 +276,8 @@ export function App({ layout }: { layout: Layout }) {
     if (!added.length) return;
     writeSet(UNLOCK_TOASTS_KEY, [...shown, ...added]);
     setFresh((f) => new Set([...f, ...added]));
+    // Graduation's card names what opened: the tabs get their dot, never a toast on top of it.
+    if (useCity.getState().celebration === FIRST_STEPS_QUEST) return;
     useCity.getState().toast('🔓', unlockText(added.map(labelOf)));
   }, [earned]);
 
@@ -259,18 +292,23 @@ export function App({ layout }: { layout: Layout }) {
 
   const badge = (t: Tab) => (t === 'deploy' && deployBadge) || (t === 'home' && homeBadge) || fresh.has(t);
   return (
-    <div className={`app app-${layout} stage-${stage} view-${view.name}${building ? ' building' : ''}`}>
+    <div
+      className={`app app-${layout} stage-${stage} view-${view.name}${building ? ' building' : ''}${reading ? ' reading' : ''}`}
+      // The panel's rows slid (reading, a bigger or smaller map): the city redraws at its new size now, not at Phaser's
+      // next half-second size check, so no black band shows under it.
+      onTransitionEnd={(e) => e.target === e.currentTarget && e.propertyName === 'grid-template-rows' && window.dispatchEvent(new Event('resize'))}
+    >
       <Hud layout={layout} />
       <div className="stage">
         <GameCanvas />
         {/* Not while a quest's celebration card is up: the first quest opens AWS news, and it arrives after the card. */}
-        {l.news && shows('news', prefs) && !celebrating && (view.name === 'city' || view.name === 'world') && <NewsTicker />}
+        {l.news && shows('news', prefs) && !celebrating && newsTurn && (view.name === 'city' || view.name === 'world') && <NewsTicker layout={layout} />}
         <Toasts />
         <CityAnnouncer />
         <SoundCaptions />
         <CarrierCard />
-        <RequestCard />
-        <WorldIntro />
+        {/* The panel's map is short: Connie's card stands just under it (in the side column), never over the dots. */}
+        {layout === 'full' && <WorldIntro />}
         <Minimap layout={layout} />
         <MapCredit />
         {view.name === 'city' && <BuildDrawer />}
@@ -293,6 +331,7 @@ export function App({ layout }: { layout: Layout }) {
       </div>
       <aside className="side" ref={side}>
         <SyncNote />
+        {layout === 'panel' && <WorldIntro docked />}
         {view.name === 'interior' && view.districtId !== 'spheres' ? (
           <ChatPanel districtId={view.districtId} />
         ) : (
@@ -330,13 +369,16 @@ export function App({ layout }: { layout: Layout }) {
                 </button>
               ))}
             </div>
-            <div ref={body} className="tab-body" role="tabpanel" id="city-tabpanel" aria-labelledby={`tab-${shownTab}`} tabIndex={0}>
+            <div ref={body} className="tab-body" role="tabpanel" id="city-tabpanel" aria-labelledby={`tab-${shownTab}`} tabIndex={0} onScroll={layout === 'panel' ? onBodyScroll : undefined}>
               <ErrorBoundary what="This tab" resetKey={shownTab}>
+              {/* The first steps: Connie's guide stands above whatever the City tab shows, a building's card included. */}
+              {shownTab === 'home' && <GuideCard openTab={setTab} />}
+              {(shownTab === 'learn' || shownTab === 'deploy') && <GuideStrip tab={shownTab} openTab={setTab} />}
               {shownTab === 'home' &&
                 (place ? (
                   <>
                     <button className="btn ghost tiny back-link" onClick={() => setPlace(false)}>
-                      <Icon name="back" size={10} /> {simple ? 'To do' : 'Today’s shift'}
+                      <Icon name="back" size={10} /> {path.active ? 'Back' : simple ? 'To do' : 'Today’s shift'}
                     </button>
                     <LandmarkCard openTab={setTab} layout={layout} />
                   </>
@@ -368,12 +410,22 @@ export function App({ layout }: { layout: Layout }) {
               {shownTab === 'deploy' && <DeployPanel />}
               </ErrorBoundary>
             </div>
-            <PromptBar layout={layout} />
+            {/* The Copilot's switch stands on the City tab (and wherever a console page or the Copilot is on). Both wait
+                while the first steps run (introduced at graduation as "Ask the city"). */}
+            {/* Not on a first run's world map either: no city yet, and the box and its console switch say nothing there. */}
+            {/* The side panel's quick tour docks here, above the box, in the column's flow (src/ui/Tour.tsx): the body above
+                shrinks, so the card covers nothing. */}
+            {layout === 'panel' && <div id="tour-dock" className="tour-dock" />}
+            {shows('promptBar', prefs, quiet) && !(view.name === 'world' && !prefs.region) && <PromptBar layout={layout} consoleHere={shownTab === 'home'} />}
             <ErrorBoundary what="This card">
               <FindingCard openTab={setTab} />
             </ErrorBoundary>
           </>
         )}
+        {/* A citizen's question is a bottom sheet over the side column, every answer in view (never squeezed into the
+            panel's short map). */}
+        <RequestCard />
+        <FirstStepsMoments />
       </aside>
       <ErrorBoundary what="This card">
         <IncidentCard openTab={setTab} />

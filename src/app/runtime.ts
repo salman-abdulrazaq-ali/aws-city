@@ -5,8 +5,10 @@ import { browser } from 'wxt/browser';
 import { fromWebPage } from './sender';
 import { createBackend, type AgentBackend } from '@/backend';
 import type { ConsoleStepEvent, PageSnapshot, ResourceRemove } from '@/backend/contract';
-import { agentName, emptyProgress, errorText } from '@/state/store';
+import { agentName, emptyProgress, errorText, migrateQuestCut } from '@/state/store';
 import { uid } from '@/backend/AgentBackend';
+import { PRACTICE_TASK_PREFIX } from '@/backend/practiceTasks';
+import { FIRST_STEPS } from '@/state/firstSteps';
 import type { Progress } from '@/backend/contract';
 import { captureVisibleTab, hasCapturePermission, requestCapturePermission } from '@/capture/screenshot';
 import { bus } from '@/state/bus';
@@ -110,12 +112,16 @@ export function startRuntime(l: Layout) {
 // ── Progress: local cache (chrome.storage.local) + backend (source of truth when available) ──
 
 /** Adds another copy's progress to ours; true if that changed anything. */
-const absorb = (other: Progress) => {
+const absorb = (incoming: Progress) => {
+  // Quest 2's re-cut (migrateQuestCut): a copy saved in the old numbering (the server's, another surface's, a parked one)
+  // moves to the new one before the merge; merged as it was, its higher old step skipped a step (review, 24 Nov 2026).
+  const other = migrateQuestCut(incoming);
   const mine = store().progress;
   if (sameProgress(mine, other)) return false;
   const merged = mergeProgress(mine, other);
-  // If ours added something the other copy lacked, the merge is new: date it now so the server (newest wins) keeps it.
-  store().loadProgress(sameProgress(other, mine) ? merged : { ...merged, updatedAt: new Date().toISOString() });
+  // If ours added something the other copy lacked (or it was renumbered), the merge is new: date it now so the server
+  // (newest wins) keeps it.
+  store().loadProgress(other === incoming && sameProgress(other, mine) ? merged : { ...merged, updatedAt: new Date().toISOString() });
   return true;
 };
 
@@ -147,7 +153,7 @@ const owner = () => (pulled ? (backend?.playerId?.() ?? '') : storedOwner);
 /** Keeps a copy for `player` only (merged with one already parked for them; a different player's is replaced). */
 async function park(player: string, progress: Progress) {
   const parked = (await browser.storage.local.get(PARKED_PROGRESS_KEY))[PARKED_PROGRESS_KEY] as ParkedProgress | undefined;
-  const merged = parked?.player === player && parked.progress?.version === 1 ? mergeProgress(parked.progress, progress) : progress;
+  const merged = parked?.player === player && parked.progress?.version === 1 ? mergeProgress(migrateQuestCut(parked.progress), migrateQuestCut(progress)) : progress;
   await browser.storage.local.set({ [PARKED_PROGRESS_KEY]: { player, progress: merged } satisfies ParkedProgress });
 }
 
@@ -536,6 +542,18 @@ export function submitPrompt(prompt: string) {
   backend.send({ action: 'task.submit', taskId, prompt: text, context: { ...pageContext(), screenshotKey: lastScreenshotKey } });
 }
 
+/**
+ * The first steps' "Watch Sally work" (or any practice script): a task card, then the script plays inside the backend
+ * (src/backend/practiceTasks.ts). Nothing is sent, no model is called and nothing touches AWS, in every build, a linked
+ * account included. Returns the task id (its TaskCard), or undefined before the backend is up.
+ */
+export function startPracticeTask(scriptId = FIRST_STEPS.task.id) {
+  if (!backend) return undefined;
+  const taskId = `${PRACTICE_TASK_PREFIX}${uid().slice(0, 8)}`;
+  store().addTask(taskId, FIRST_STEPS.task.prompt);
+  return backend.practiceTask(scriptId, taskId);
+}
+
 /** Ask a district's agent; `shown` is what the chat shows as the player's words (the framing stays out of it). */
 export function askDistrict(districtId: string, question: string, shown = question) {
   const q = question.trim();
@@ -726,7 +744,7 @@ export async function downloadMyData() {
     a.download = exportFileName();
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    store().toast('🧾', `Your data is saved as ${a.download}.`);
+    store().toast('🧾', `Your data is saved as ${a.download}.`, 'info', undefined, undefined, { prompted: true });
   } catch (e) {
     // Players get a sentence, never the raw request error ("Players see no internal errors"); the console keeps the detail.
     console.warn('download my data failed', e);
@@ -751,7 +769,7 @@ export async function deleteAccount() {
   try {
     signingOut = true;
     await b.deleteAccount();
-    store().toast('🧾', 'Your AWS City account and progress were deleted. Delete the AWSCity stack in CloudFormation to remove the role.');
+    store().toast('🧾', 'Your AWS City account and progress were deleted. Delete the AWSCity stack in CloudFormation to remove the role.', 'info', undefined, undefined, { prompted: true });
   } catch (e) {
     console.warn('delete account failed', e);
     store().log({ kind: 'system', text: '⚠️ Couldn’t delete your account just now. Check your connection and try again.' });
@@ -860,7 +878,7 @@ export async function confirmMfaSetup(code: string) {
     const next = afterMfa(refused, store().backendStatus === 'signed-out', out?.signInTwice);
     mfaRefused = undefined;
     store().setMfaRequired(false);
-    store().toast('🔐', next.message);
+    store().toast('🔐', next.message, 'info', undefined, undefined, { prompted: true });
     if (next.resend?.action === 'account.link') linkAccount(next.resend.region, { allowFixes: next.resend.allowFixes, allowCleanup: next.resend.allowCleanup });
     else if (next.resend?.action === 'account.verify') verifyAccount(next.resend.roleArn, { updated: next.resend.updated });
     return true;
@@ -1016,7 +1034,7 @@ export function fixFinding(findingId: string) {
   if (!f || !backend) return;
   const gate = fixGate(store().progress, f);
   if (!gate.ok) {
-    store().toast('🎓', gate.reason);
+    store().toast('🎓', gate.reason, 'info', undefined, undefined, { prompted: true });
     return;
   }
   const requestId = uid();

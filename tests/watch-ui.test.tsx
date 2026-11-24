@@ -74,6 +74,15 @@ describe('Watch it done', () => {
     off();
   });
 
+  // Seen 24 Nov 2026: "Done · 1 steps".
+  it('counts its steps in words that fit: 1 step, 2 steps', () => {
+    const t = (n: number) => ({ taskId: `s${n}`, prompt: 'Store my holiday photos cheaply', agentId: 's3', status: 'done' as const, steps: Array.from({ length: n }, (_, k) => ({ text: `Step ${k}`, status: 'done' as const })) });
+    const { rerender, container } = render(<TaskCard task={t(1)} />);
+    expect(container.textContent).toMatch(/· 1 step(?!s)/);
+    rerender(<TaskCard task={t(2)} />);
+    expect(container.textContent).toMatch(/· 2 steps/);
+  });
+
   it('when the day’s paid tasks at a building are used up, it says so kindly', () => {
     for (let i = 0; i < 4; i++) {
       act(() => useCity.getState().addTask(`c${i}`, 'Store my holiday photos cheaply'));
@@ -106,6 +115,37 @@ describe('Watch it done', () => {
     send({ type: 'task.done', taskId: 't10', ok: false, result: 'The city only builds small servers.', xp: [] });
     render(<TaskCard task={useCity.getState().tasks.t10} openTab={openTab} />);
     expect(screen.queryByRole('button', { name: /Turn it on/ })).toBeNull();
+  });
+
+  // Seen 24 Nov 2026: in Simple mode's quiet card the refusal had no button ("turn it on, then ask again").
+  it('a quiet card (Simple mode) still offers Turn it on and Try again for a switch refusal, and nothing else', () => {
+    const openTab = vi.fn();
+    act(() => useCity.getState().addTask('t11', 'delete my bucket test-demo-salman-8'));
+    send({ type: 'task.done', taskId: 't11', ok: false, result: '"test-demo-salman-8" wasn’t built by the city, so the agents can look at it but not change it. To let them, turn on “Let the city change things you made” in Deploy → Your AWS account.', xp: [] });
+    const { unmount } = render(<TaskCard task={useCity.getState().tasks.t11} openTab={openTab} quiet />);
+    expect(screen.getByRole('button', { name: /↻ Try again/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Turn it on (Deploy) →' }));
+    expect(openTab).toHaveBeenCalledWith('deploy');
+    unmount();
+    act(() => useCity.getState().addTask('t12', 'Launch a server called big m5.large'));
+    send({ type: 'task.done', taskId: 't12', ok: false, result: 'The city only builds small servers.', xp: [] });
+    render(<TaskCard task={useCity.getState().tasks.t12} openTab={openTab} quiet />);
+    expect(screen.queryByRole('button', { name: /Turn it on/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
+  });
+
+  // Seen 24 Nov 2026: typed words got holiday photos and Glacier after 90 days, with nothing said.
+  it('in the demo, says when its script didn’t follow the words typed (never for its own words, never hosted)', () => {
+    act(() => useCity.getState().addTask('t3', 'Store my photos and expire them after 30 days'));
+    act(() => useCity.getState().addTask('t4', 'Store my holiday photos cheaply'));
+    const { container, rerender } = render(<TaskCard task={useCity.getState().tasks.t3} />);
+    expect(container.querySelector('.task-scripted')?.textContent).toMatch(/^Demo: this is a scripted example, not your exact request\. The hosted city does what you type\.$/);
+    expect(container.querySelector('.watch-framing')?.textContent).toBe('Sally will take this on at S3 Lake. Watch Sally walk there.');
+    rerender(<TaskCard task={useCity.getState().tasks.t4} />);
+    expect(container.querySelector('.task-scripted')).toBeNull();
+    act(() => useCity.setState({ backendKind: 'server' }));
+    rerender(<TaskCard task={useCity.getState().tasks.t3} />);
+    expect(container.querySelector('.task-scripted')).toBeNull();
   });
 
   it('an agent offers a job as a little story, and Watch it done sends it', () => {

@@ -66,3 +66,17 @@ describe('deploy templates', () => {
     expect([...ids].filter((id) => !used.has(id))).toEqual([]);
   });
 });
+
+describe('the first steps’ plan (photo-bucket)', () => {
+  it('is one private bucket, practice in every build', () => {
+    const t = TEMPLATES.find((x) => x.id === 'photo-bucket')!;
+    expect(t.resources).toEqual([{ logicalId: 'PhotoBucket', type: 'AWS::S3::Bucket' }]);
+    expect(t.practice).toBe(true);
+    expect(t.costNote).toMatch(/^Practice: nothing real is made/);
+    const body = yaml('photo-bucket');
+    expect(body).toContain('VersioningConfiguration:');
+    expect(body).toContain('SSEAlgorithm: AES256');
+    // The only practice-only template: everything else is the server's to build (or the practice fallback).
+    expect(TEMPLATES.filter((x) => x.practice).map((x) => x.id)).toEqual(['photo-bucket']);
+  });
+});

@@ -1,30 +1,64 @@
 import Phaser from 'phaser';
-import { FEEDBACK, MiniGame, pace, TXT } from './MiniGame';
+import { FEEDBACK, MiniGame, pace, PAL, TXT } from './MiniGame';
 import { POINTS } from './scoring';
 import { freeLane } from './lanes';
+import { act, cast, districtColor, fitScale, landmarkFrame, person, prop } from './cast';
+import { hasSprite } from '../../assets';
 import { reducedMotion } from '../../motion';
 import { crisp } from '../../SpeechBubble';
+import { COLOR, CSS, LABEL_BG } from '../../theme';
 import { useCity } from '@/state/store';
 import { REDTEAM, tierFor, type Flaw, type RedTeamRequest } from '@/world/minigames';
 
+/** The play group's natural width at 1×, px: your app (its landmark, `APP_W`) and a range long enough to read a line on. */
+const NATURAL_W = 380;
+/** Your app's end of the range at 1×, px (the Security Agent landmark is 100 wide). */
+const APP_W = 100;
+/** A crowd citizen's head, px above the feet at 1× (36×54 frame, feet at 50). */
+const HEAD = 50;
+/** Each lane's booth near the far end, numbered (game:redteam:lane1..5, art/tiles/games_art.py), 36 px wide at 1×. */
+const BOOTH_W = 36;
 /**
- * Red Team Range (AWS Security Agent): a penetration test of *your own* app. Requests from your app's log slide across
- * the range; flag the ones that show a security flaw (another customer's invoice, a token in the URL, a query that
- * breaks out of its quotes) before they reach the end, and let the fine ones pass. Each flag names the flaw; the end
- * card says how to fix the ones you found. The city never sends traffic anywhere: it's all on the screen. Every request
- * looks alike until it's read, and a false flag costs more than a real one pays, so flagging everything doesn't win.
+ * Each lane's line of requesters waiting behind its booth (the next in line steps through it onto the range), this many
+ * people this far apart at 1×; the line takes QUEUE_W at the range's far end, the first in line clear of the booth.
+ */
+const QUEUE = 2;
+const QUEUE_STEP = 14;
+const QUEUE_W = 12 + (QUEUE - 1) * QUEUE_STEP + 10;
+/** A request steps onto the range this far left of its booth, at 1×. */
+const DOOR_GAP = 12;
+
+/** A person's character sheet, from their sprite. */
+const sheetOf = (who: Phaser.GameObjects.Sprite) => who.texture.key.replace('char:', '');
+
+/**
+ * Red Team Range (AWS Security Agent): a penetration test of *your own* app. Requests from your app's log walk up the
+ * range's five lanes, each person holding their log line; flag the ones that show a security flaw (another customer's
+ * invoice, a token in the URL, a query that breaks out of its quotes) before they reach the app, and let the fine ones
+ * pass. Each flag names the flaw; the end card says how to fix the ones you found. The city never sends traffic
+ * anywhere: it's all on the screen. Every request looks alike until it's read (the same paper tag, a random citizen),
+ * and a false flag costs more than a real one pays, so flagging everything doesn't win.
  */
 export class RedTeamGame extends MiniGame {
   private pool: RedTeamRequest[] = [];
   private found: Partial<Record<Flaw, number>> = {};
-  private live: Phaser.GameObjects.Text[] = [];
+  private live: Phaser.GameObjects.Container[] = [];
   /** Which lanes hold a live request (one each, src/game/scenes/games/lanes.ts). */
   private busy: boolean[] = [];
   private dealt = 0;
   private laneTop = 0;
   private laneH = 0;
-  /** The range's left (the app) and right edges. */
-  private range = { x: 0, r: 0 };
+  /** The play group's whole-number scale (src/game/scenes/games/cast.ts fitScale): 2× in the tab, 1× in the 400 px panel. */
+  private s = 1;
+  /** This round's requesters (crowd-size citizen sheets), dealt in turn (`line`) to the lines at the booths. */
+  private crowd: string[] = [];
+  private line = 0;
+  /** Each lane's line at its booth, the first in line first. */
+  private queues: Phaser.GameObjects.Sprite[][] = [];
+  /** The range's left edge (your app's end), its right edge, your app's width, and where a request steps on (its booth's door). */
+  private range = { x: 0, r: 0, app: 0, door: 0 };
+  /** The widest a log line's tag may be before it shrinks, then wraps. */
+  private chipRoom = 0;
 
   constructor() {
     super('game:redteam', 'redteam', 'securityagent', '🎯 Red Team Range — read each request: click (or Space) the ones with a flaw; let fine ones pass');
@@ -35,31 +69,99 @@ export class RedTeamGame extends MiniGame {
     this.busy = [false, false, false, false, false];
     this.found = {};
     this.dealt = 0;
+    this.crowd = cast(16);
+    this.line = 0;
+    this.queues = [];
     this.onKeys((k) => (k === ' ' || k.startsWith('Arrow')) && this.flagNearest());
     const { width: w, height: h } = this.scale;
     const cw = Math.min(w, 760);
-    const legend = crisp(this.add.text(w / 2, 0, '🚩 a flaw: click it (Space: the one nearest the app)   ✅ fine: let it pass', { ...TXT(14, '#cbd5e1'), backgroundColor: '#140d1fcc', padding: { x: 6, y: 2 }, align: 'center', wordWrap: { width: cw - 24 } }))
+    const legend = crisp(this.add.text(w / 2, 0, '🚩 a flaw: click it (Space: the one nearest the app)   ✅ fine: let it pass', { ...TXT(14, CSS.ink), backgroundColor: LABEL_BG, padding: { x: 6, y: 2 }, align: 'center', wordWrap: { width: cw - 24 } }))
       .setOrigin(0.5, 0)
       .setDepth(5);
-    // Five lanes, each tall enough for a wrapped line but no taller (a tall tab doesn't stretch them), in a centred
-    // column (MiniGame.column) with the legend right under them.
-    // The strip above the lanes (34 px) holds "your app" and the verdicts, so a verdict never covers a request.
-    this.laneH = Phaser.Math.Clamp(Math.floor((h - this.top - 34 - 12 - legend.height) / 5), 18, 58);
-    const col = this.column(34 + this.laneH * 5 + 12 + legend.height);
-    this.range = { x: col.x, r: col.r };
-    this.laneTop = col.y + 34;
-    const { laneTop: y0, laneH: lh } = this;
-    legend.setY(y0 + lh * 5 + 10);
-    const g = this.add.graphics();
-    // A test range at dusk: lanes of log lines run right to left into the app.
-    g.fillStyle(0x161021, 1).fillRect(0, this.top, w, h - this.top);
-    for (let i = 0; i < 5; i++) g.fillStyle(i % 2 ? 0x1d1530 : 0x221938, 1).fillRect(col.x, y0 + i * lh, col.w, lh);
-    g.fillStyle(0xdd344c, 1).fillRect(col.x, y0, 70, lh * 5);
-    for (let y = y0 + 6; y < y0 + lh * 5 - 4; y += 16) g.fillStyle(0xb02a3d, 1).fillRect(col.x + 6, y, 58, 3);
-    crisp(this.add.text(col.x + 35, y0 - 12, 'your app', { ...TXT(14, '#fde2e6'), backgroundColor: '#140d1fcc', padding: { x: 5, y: 1 } })).setOrigin(0.5);
     const plays = useCity.getState().progress.games?.redteam?.plays ?? 0;
     this.pool = REDTEAM.requests.filter((r) => r.tier <= tierFor(plays));
+    // The strip above the lanes holds "your app" and the verdicts (as tall as a verdict), so a verdict never covers a request.
+    const probe = this.add.text(0, 0, '✓ Ag', { ...TXT(16), padding: { x: 10, y: 5 } });
+    const strip = Math.max(34, Math.ceil(probe.height) + 6);
+    probe.destroy();
+    // Five lanes, each tall enough for a person with their log line (wrapped on a narrow panel) over their head and no
+    // taller (a tall tab doesn't stretch them), in a centred column (MiniGame.column) with the legend right under them.
+    // The play group's scale is the biggest whole number at which the lanes fit the room.
+    const room = this.column();
+    const free = room.h - strip - 12 - legend.height;
+    let s = fitScale(room.w, NATURAL_W, 2);
+    let laneMin = this.laneFor(s, room.w);
+    while (s > 1 && laneMin * 5 > free) laneMin = this.laneFor(--s, room.w);
+    this.s = s;
+    // Sized to what stands in them: a tall view's spare room goes round the range, never into empty floor.
+    this.laneH = laneMin;
+    const col = this.column(strip + this.laneH * 5 + 12 + legend.height);
+    const appW = APP_W * s;
+    this.range = { x: col.x, r: col.r, app: appW, door: col.r - (QUEUE_W + BOOTH_W + DOOR_GAP) * s };
+    this.laneTop = col.y + strip;
+    const { laneTop: y0, laneH: lh } = this;
+    const appX = col.x + appW;
+    legend.setY(y0 + lh * 5 + 10);
+    const g = this.add.graphics();
+    // A test range: five lanes of people from your app's log walk right to left into the app.
+    g.fillStyle(COLOR.bg, 1).fillRect(0, this.top, w, h - this.top);
+    for (let i = 0; i < 5; i++) {
+      const floor = y0 + (i + 1) * lh;
+      g.fillStyle(i % 2 ? COLOR.panel : COLOR.panelHi, 1).fillRect(appX, y0 + i * lh, col.r - appX, lh);
+      // the lane's divider, and distance marks along it
+      g.fillStyle(COLOR.bgDeep, 1).fillRect(appX, floor - 2, col.r - appX, 2);
+      for (let x = appX + 60 * s; x < col.r - 8; x += 60 * s) g.fillStyle(COLOR.muted, 0.35).fillRect(x, floor - 2 - 4 * s, 2, 4 * s);
+    }
+    // your app's end of the range in the security district's colour, and the range's accent strip where the lanes end
+    const accent = districtColor('securityagent');
+    g.fillStyle(accent, 0.12).fillRect(col.x, y0, appW, lh * 5);
+    g.fillStyle(accent, 1).fillRect(appX - 2 * s, y0, 4 * s, lh * 5);
+    g.fillStyle(PAL.black, 1).fillRect(appX + 2 * s, y0, 1, lh * 5);
+    // your app: Security Agent's own landmark at its level in this city (the security HQ when the atlas has none)
+    prop(this, landmarkFrame('securityagent') ?? 'hq:security', col.x + appW / 2, y0 + lh * 5 - 2 * s, s)
+      .setOrigin(0.5, 1)
+      .setDepth(8);
+    crisp(this.add.text(col.x + appW / 2, y0 - 4, 'your app', { ...TXT(14, CSS.inkHi), backgroundColor: LABEL_BG, padding: { x: 5, y: 1 } }))
+      .setOrigin(0.5, 1)
+      .setDepth(15);
+    // Each lane ends in its numbered booth, where the requests step out (behind everyone on the range), and behind it a
+    // short line of requesters from your app's log, facing the range: the first in line is the lane's next request.
+    for (let i = 0; i < 5; i++) {
+      if (hasSprite(`game:redteam:lane${i + 1}`)) prop(this, `game:redteam:lane${i + 1}`, col.r - (QUEUE_W + BOOTH_W / 2) * s, y0 + (i + 1) * lh - 2, s).setDepth(19);
+      const feet = y0 + (i + 1) * lh - 4 * s;
+      this.queues[i] = Array.from({ length: QUEUE }, (_, k) => person(this, this.nextInLine(), col.r - (QUEUE_W - 12 - k * QUEUE_STEP) * s, feet, s, 'idle', 'SW').setDepth(19.5));
+    }
+    // Security Agent at the head of the range by its scanning console, on the first lane's floor (clear of your app's
+    // building, which grows up from the bottom); at the foot of the range when the atlas has no console.
+    if (hasSprite('game:redteam:scanner')) {
+      prop(this, 'game:redteam:scanner', appX - 22 * s, y0 + lh - 2 * s, s).setDepth(25);
+      person(this, 'securityagent', appX - 58 * s, y0 + lh - 2 * s, s, 'scan', 'SE').setDepth(26);
+    } else person(this, 'securityagent', appX - 14 * s, y0 + lh * 5 - 4 * s, s, 'scan', 'SE').setDepth(26);
     this.scheduleSpawn();
+  }
+
+  /** A lane's height at scale `s`: a person, the tallest log line in this round's pool over their head, and a little air. */
+  private laneFor(s: number, width: number) {
+    this.chipRoom = width - APP_W * s - 4 * s - 8;
+    const lines = [...new Set(this.pool.map((r) => r.line))];
+    const tallest = lines.reduce((most, line) => {
+      const t = this.logChip(line);
+      const th = t.height;
+      t.destroy();
+      return Math.max(most, th);
+    }, 0);
+    return HEAD * s + tallest + 4 * s + 10;
+  }
+
+  /**
+   * A request's log line on a paper tag (monospace: it's a log line), the same for every request. It spawns fully
+   * inside the view: a smaller font on a narrow panel (TXT's, never under 11 px), then wrapping if it's still too wide.
+   */
+  private logChip(line: string) {
+    const t = crisp(this.add.text(0, 0, line, { ...TXT(14, CSS.paperInk), fontFamily: 'monospace', backgroundColor: CSS.paper, padding: { x: 5, y: 2 } }));
+    if (t.width > this.chipRoom) t.setFontSize(TXT(12).fontSize ?? '11px');
+    if (t.width > this.chipRoom) t.setWordWrapWidth(this.chipRoom - 10, true);
+    return t;
   }
 
   private scheduleSpawn(ms = pace(Math.max(1100, 1900 - this.dealt * 40))) {
@@ -74,42 +176,58 @@ export class RedTeamGame extends MiniGame {
 
   /** Space or an arrow key: flag the request nearest the app, as a click would. */
   private flagNearest() {
-    const t = this.live.reduce<Phaser.GameObjects.Text | undefined>((a, b) => (!a || b.x < a.x ? b : a), undefined);
+    const t = this.live.reduce<Phaser.GameObjects.Container | undefined>((a, b) => (!a || b.x < a.x ? b : a), undefined);
     t?.emit('pointerdown');
+  }
+
+  /** The next requester for a line at a booth. */
+  private nextInLine() {
+    return this.crowd[this.line++ % this.crowd.length];
   }
 
   /** A new request in a free lane; false when every lane is busy. */
   private spawn() {
-    const { x: x0, r: x1 } = this.range;
+    const { x: x0, r: x1, app, door } = this.range;
+    const s = this.s;
     const lane = freeLane(this.busy);
     if (lane < 0) return false;
     const r = this.pool[Math.floor(Math.random() * this.pool.length)];
     this.dealt++;
     this.busy[lane] = true;
-    const y = this.laneTop + (lane + 0.5) * this.laneH;
-    const t = crisp(this.add.text(0, y, r.line, { ...TXT(14, '#e2e8f0'), fontFamily: 'monospace', backgroundColor: '#0f172ae6', padding: { x: 5, y: 2 } })).setOrigin(0, 0.5);
-    // Spawn fully inside the view: a smaller font on a narrow panel, then wrapping if it's still too wide.
-    const room = x1 - x0 - 84;
-    if (t.width > room) t.setFontSize(10);
-    if (t.width > room) t.setWordWrapWidth(room);
-    t.setX(Math.max(x0 + 74, x1 - t.width - 6)).setInteractive({ useHandCursor: true });
+    // The first in this lane's line steps through the booth; the line moves up and someone new joins it (a change of
+    // sheet in place: nothing moves under reduced motion).
+    const queue = this.queues[lane] ?? [];
+    const sheet = queue[0] ? sheetOf(queue[0]) : this.nextInLine();
+    queue.forEach((q, k) => act(q.setTexture(`char:${queue[k + 1] ? sheetOf(queue[k + 1]) : this.nextInLine()}`, 0), 'idle', 'SW'));
+    // Feet on the lane's floor; the person's log line over their head, its left edge just behind them.
+    const y = this.laneTop + (lane + 1) * this.laneH - 4 * s;
+    const who = person(this, sheet, 0, 0, s, 'walk', 'SW');
+    const t = this.logChip(r.line).setPosition(-10 * s, -HEAD * s - 4).setOrigin(0, 1);
+    const c = this.add.container(0, y, [who, t]).setDepth(20 + lane);
+    // Arrives at your app: the tag stops just past the range's accent strip. It steps on left of its booth, or further
+    // left when its log line needs the room.
+    const end = x0 + app + 14 * s;
+    c.setX(Math.max(end, Math.min(door, x1 - 6 - t.width + 10 * s)));
+    // The person and their tag are one target: a press on either flags the request.
+    const targets = [who, t];
+    for (const o of targets) o.setInteractive({ useHandCursor: true }).on('pointerdown', () => c.emit('pointerdown'));
     if (!reducedMotion()) {
-      t.setAlpha(0);
-      this.tweens.add({ targets: t, alpha: 1, duration: 200 });
+      c.setAlpha(0);
+      this.tweens.add({ targets: c, alpha: 1, duration: 200 });
     }
-    this.live.push(t);
+    this.live.push(c);
     // Each request is said as it comes in (the lanes are only drawn): Space flags the one nearest your app.
     this.speak(`Request: ${r.line}`, true);
-    t.once('destroy', () => {
-      this.live = this.live.filter((x) => x !== t);
+    c.once('destroy', () => {
+      this.live = this.live.filter((x) => x !== c);
       this.busy[lane] = false;
     });
     const tw = this.tweens.add({
-      targets: t,
-      x: x0 + 74,
+      targets: c,
+      x: end,
       duration: pace(7_500 + Math.random() * 1_500),
       onComplete: () => {
-        if (this.over) return t.destroy();
+        if (this.over) return c.destroy();
         if (r.flaw) {
           this.wrong();
           this.addScore(POINTS.redteam.missed, 'soft');
@@ -119,12 +237,15 @@ export class RedTeamGame extends MiniGame {
           this.hit();
           this.addScore(POINTS.redteam.passed, 'none');
         }
-        t.destroy();
+        c.destroy();
       },
     });
-    t.on('pointerdown', () => {
-      if (this.over) return;
+    c.on('pointerdown', () => {
+      if (this.over || !this.live.includes(c)) return;
       tw.stop();
+      // Flagged: off the range now, so neither Space nor a click can flag it twice while it's led away.
+      this.live = this.live.filter((x) => x !== c);
+      targets.forEach((o) => o.disableInteractive());
       if (r.flaw) {
         this.hit();
         this.addScore(POINTS.redteam.flag);
@@ -135,16 +256,31 @@ export class RedTeamGame extends MiniGame {
         this.addScore(POINTS.redteam.falseFlag);
         this.say('✗ That one was fine', FEEDBACK.wrong);
       }
-      t.destroy();
+      this.leadOff(c, who);
     });
     return true;
   }
 
+  /**
+   * Flagged: a red flag pops on the person and they're led back off the range. Under reduced motion nothing moves: the
+   * flag shows a moment, then they're gone.
+   */
+  private leadOff(c: Phaser.GameObjects.Container, who: Phaser.GameObjects.Sprite) {
+    const s = this.s;
+    const flag = crisp(this.add.text(0, -HEAD * s * 0.5, '🚩 flagged', { ...TXT(13, CSS.paperInk), backgroundColor: CSS.bad, padding: { x: 4, y: 1 } })).setOrigin(0.5);
+    c.add(flag);
+    if (reducedMotion()) return void this.time.delayedCall(500, () => c.destroy());
+    flag.setScale(0.4);
+    this.tweens.add({ targets: flag, scale: 1, duration: 160, ease: 'Back.easeOut' });
+    act(who, 'walk', 'SE');
+    this.tweens.add({ targets: c, x: c.x + 90 * s, alpha: 0, delay: 300, duration: 600, onComplete: () => c.destroy() });
+  }
+
   /** A verdict in the strip above the lanes, never on top of a request. */
   private say(text: string, color: string) {
-    const { x: x0, r: x1 } = this.range;
+    const { x: x0, r: x1, app } = this.range;
     // Right of the "your app" tag, which shares the strip.
-    this.verdict((x0 + 80 + x1) / 2, this.laneTop - 2, text, color, 1);
+    this.verdict((x0 + app + x1) / 2, this.laneTop - 2, text, color, 1);
   }
 
   protected lesson() {

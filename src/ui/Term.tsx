@@ -191,6 +191,9 @@ export const Plain = ({ text, still, except }: { text: string; still?: boolean; 
   <Term text={text} entries={except ? termsWithout(except) : ALL_TERMS} still={still} />
 );
 
+/** Whether `text` shows a dotted, tappable term as <Plain> draws it (`except` as there). */
+export const hasTerm = (text: string, except?: string) => splitTerms(text, except ? termsWithout(except) : ALL_TERMS).some((t) => typeof t !== 'string');
+
 /** Technical extras (prices, role cards, CloudFormation types) folded away for whoever wants them. */
 export function ForLearners({ children, className = '' }: { children: ReactNode; className?: string }) {
   // Builders (⋯ → I already build on AWS) see the deeper text first; it still folds away.

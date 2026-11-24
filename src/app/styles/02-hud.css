@@ -13,7 +13,7 @@
 }
 .logo b {
   font-family: var(--font-pixel);
-  font-size: 10px; /* the pixel font only stays crisp on its 8px grid */
+  font-size: var(--fs-pixel); /* the pixel font's own token: it stays on its grid (11 → 15 px) as the text grows */
   color: var(--ink-hi);
   letter-spacing: 0.5px;
 }
@@ -258,10 +258,40 @@
 .progress-readout .hud-coins b {
   color: var(--accent);
 }
+/* City Lights is a button (it opens My City): a 24 px target, and its words ("3 windows lit") where there's room. */
+.hud .progress-readout .hud-lights {
+  min-height: 24px;
+  padding-inline: var(--s-1);
+}
+@media (max-width: 480px) {
+  .hud-lights-word {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
 @media (max-width: 420px) {
   .progress-readout .hud-streak {
     display: none;
   }
+}
+/* The side panel's city keeps Decorate's word (an emoji alone hides what it does). The room comes from the wordmark:
+   the browser's own panel header already names AWS City, so in the city the HUD starts with the numbers. Bigger text
+   (⋯ → Text size) needs that room again, so Decorate goes back to its icon there (its name is still "Decorate"). */
+.app-panel .hud:has(.build-toggle) .logo {
+  display: none;
+}
+.app-panel .hud:has(.build-toggle) .progress-readout {
+  margin-right: auto;
+}
+.app-panel .hud .build-toggle .build-word {
+  display: inline;
+}
+:root[data-text] .app-panel .hud .build-toggle .build-word {
+  display: none;
 }
 
 /* The one-time note under the coin counter (CoinsTip in src/ui/Hud.tsx). */
@@ -293,7 +323,7 @@
 
 /* "🚦 Rush hour" (RushChip in src/ui/Hud.tsx): a quiet amber chip while the city's rush hour runs. */
 .hud-rush {
-  padding: 1px var(--s-2);
+  padding: var(--s-1) var(--s-2);
   border: 1px solid var(--warn);
   border-radius: 999px;
   color: var(--warn);
@@ -312,4 +342,19 @@
 }
 .hud-tip .btn {
   pointer-events: auto;
+}
+/* On a short map (the side panel's, the narrow tab's) the note is one line in the news ticker's place at the map's
+   top-left, about the ticker's height, and the ticker steps aside while it shows (CoinsTip, NewsTicker): never two rows
+   over a ~250 px map. It keeps the point and drops the rest; "Got it" stays a 24 px target. */
+.hud-tip-line {
+  gap: var(--s-3);
+  padding: var(--s-1) var(--s-1) var(--s-1) var(--s-4);
+  border-radius: var(--r-md);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+.hud-tip-line .tip-more {
+  display: none;
+}
+.hud-tip-line .btn.tiny {
+  min-height: 24px;
 }

@@ -2,8 +2,8 @@ import Phaser from 'phaser';
 import type { AwsNewsItem, Progress, ServerEvent } from '@/backend/contract';
 import { bus } from '@/state/bus';
 import { announce, stepLine } from '@/state/announce';
-import { agentName, isDiscovered, openFindings, severityRank, taskRunning, tierOf, useCity, type Inventory } from '@/state/store';
-import { bubbleText, failedBubble } from '@/state/watch';
+import { agentName, isChatter, isDiscovered, openFindings, severityRank, taskRunning, tierOf, useCity, type Inventory } from '@/state/store';
+import { bubbleText, doneBubble, failedBubble } from '@/state/watch';
 import { dueFor } from '@/state/srs';
 import { citizenLevel, levelName } from '@/state/citizens';
 import { CITIZENS, citizenById } from '@/world/citizens';
@@ -46,7 +46,8 @@ import { keysBelongToUi } from '../keys';
 import { reducedMotion } from '../motion';
 import { crisp, TEXT_FONT } from '../SpeechBubble';
 import { mayAutoPan } from '../calm';
-import { buildingFocusY, frameTarget } from '../camera';
+import { Stillness, STILL_TIME } from '../stillness';
+import { buildingFocusY, frameTarget, zoomOnResize } from '../camera';
 import { Landscape } from '../Landscape';
 import { Culler, setCityPerf } from '../cull';
 import { Park } from '../Park';
@@ -64,7 +65,10 @@ import { Weather, type Storm } from '../Weather';
 import { Ambient } from '../Ambient';
 import { SEA_CSS, SEA_RGB } from '../palette';
 import { takeDiveFrom } from '../worldmap';
-import { keepTextInView, nonOverlapping, type Pt } from '../labels';
+import { keepTags, keepTextInView, signCap, signRank, type Box, type MapTag, type Pt } from '../labels';
+import { CROWN_DROP_MS, FLIGHT, flightPlan, PUSH_TOTAL_MS, riseMs, tierUpTimeline } from '../cityView';
+import { readyToUpgrade } from '@/state/next';
+import { coins } from '@/state/wallet';
 import { COLOR, CSS, FONT_SIZE, LABEL_BG, labelStyle, withAlpha } from '../theme';
 import { Resources } from '../Resources';
 import { TierProps } from '../TierProps';
@@ -73,7 +77,7 @@ import { onSceneEnd } from './lifecycle';
 import { BuildLayer, buildProbe } from '../BuildLayer';
 import { freeTiles, nearestTile, snapTile } from '@/world/decorate';
 import { isRushNow, setRushHour } from '../rush';
-import { readPref, writePref } from '@/ui/logic';
+import { readPref, TIP_COINS_KEY, writePref } from '@/ui/logic';
 
 import { groundFor, itemOfKind, tilesFor, whyNot, type Ground } from '@/state/buildmode';
 import type { CityState } from '@/state/store';
@@ -84,12 +88,14 @@ import { dayKey as juiceDay } from '@/state/progress';
 import { beam, pushIn, windowSpots, type WindowHost } from '../juice';
 import { MAX_ZOOM } from '../camera';
 import { setSeason, addSprite } from '../assets';
-import { SpeechBubble } from '../SpeechBubble';
+import { BUBBLE_HOLD_MAX_MS, setBubbleRules, SpeechBubble } from '../SpeechBubble';
 import { seasonFor, seasonParam, SEASON_TINT, type Season } from '@/world/seasons';
 import type { Combo } from '@/world/combos';
 import { SCALERS, SURGE_MS, SURGE_WORKERS, type CourierLeg } from '@/world/couriers';
 import { nextLevelPreview } from '@/world/preview';
 import { shows } from '@/state/simple';
+import { FIRST_STEPS_QUEST, firstStep, quietCity } from '@/state/firstSteps';
+import { followsKai, SAY_GIVE_UP_MS, SAY_RETRY_MS, sayReadMs } from '../firstStepsGame';
 
 /**
  * The season to draw: the `?season=winter` dev param (not in store builds: seasonParam), else prefs.season (testing),
@@ -119,6 +125,10 @@ const GHOST_GAP = 8;
 const COURIER_HINT_KEY = 'awscity.courierHint';
 const COURIER_TAP_KEY = 'awscity.courierTap';
 
+/** The first steps' graduation: how long after it the city looks for a tier-up before its camera visit, and how long it counts as one moment (ms). */
+const GRADUATION_BEAT_MS = 600;
+const GRADUATION_GAP_MS = 5_000;
+
 /** The Lookout's corner of the Town Square. */
 const lookoutHome = (square: Rect): Rect => ({ x: square.x + 8, y: square.y + 1, w: 4, h: 4 });
 /** "? 2 more" signs (account resources with no landmark): above the props and landmarks, so a lamp or a tower never hides one. */
@@ -134,6 +144,8 @@ type KeyName = keyof typeof KEYS | 'E' | 'OPEN_BRACKET' | 'CLOSED_BRACKET' | 'PL
 const ZOOMS = [1, 2, 3, 4];
 /** Agents at least this far apart (tiles) send a courier for a call; nearer, the packet says it all. */
 const COURIER_MIN_TILES = 8;
+/** How often the one overlap pass over every tag runs while the view stands still (walkers move under it). */
+const TAG_PASS_MS = 200;
 
 /** Height of the status ticker over the stage, plus a gap (app.css .ticker). */
 const TICKER_PX = 34;
@@ -166,6 +178,13 @@ export class CityScene extends Phaser.Scene {
   private workersAt = -Infinity;
   /** The six Well-Architected citizens, and the issue markers over landmarks with open findings. */
   private patrols?: Patrols;
+  /**
+   * Reduced motion for the landmark agents and the patrols, as Citizens/Workers/Visitors have (src/game/stillness.ts):
+   * idle ones stand where they are, still tappable, and still walk where they're sent (a task, a finding, a new
+   * building's first walk). Nothing to park when it turns on: a stroll under way is a few tiles and ends by itself, and
+   * stopping a walk to work would lose the "agent animation = real AWS activity" signal.
+   */
+  private stillness = new Stillness();
   private markers?: IssueMarkers;
   /** "?" signs for account resources the city has no landmark for, by district (or 'square'). */
   private unknownSigns = new Map<string, Phaser.GameObjects.Text>();
@@ -248,6 +267,17 @@ export class CityScene extends Phaser.Scene {
   private gateSign?: Phaser.GameObjects.Text;
   private gateAnchor?: Pt;
   private gateHover = false;
+  /** When the overlap pass over every tag last ran (placeSigns). */
+  private tagsAt = -Infinity;
+  /** An upgrade's push-in: the zoom it rests at and when it ends. Meanwhile the label budget goes by the resting zoom. */
+  private pushRest?: number;
+  private pushUntil = 0;
+  /** The zoom the night lift was last set for (Landmark.setNight). */
+  private liftZoom = -1;
+  /** The player zoomed (+/−, the wheel) since the city last showed: a resized map keeps their zoom (onResize). */
+  private playerZoomed = false;
+  /** The buildings one action from their next level (src/state/next.ts), for the signs' order: worked out per progress. */
+  private readyFor?: { progress: Progress; region: string; ids: Set<string> };
 
   /** This city's street plan (src/world/plan.ts): a Region with another plan restarts the scene (enterRegion). */
   private plan: CityPlan = cityPlanFor(useCity.getState().cityRegion);
@@ -277,6 +307,7 @@ export class CityScene extends Phaser.Scene {
     this.landscape = new Landscape(this, this.culler, this.plan);
     this.landscape.setTint(SEASON_TINT[this.season]);
     this.info = new SpeechBubble(this, 260).setDepth(INFO_BUBBLE_DEPTH);
+    this.bubbleRules(surfaceFor(this.scale.width));
     this.buildLayer = new BuildLayer(this, this.culler);
     buildProbe.spots = (kind, n) => this.buildSpots(kind, n);
     buildProbe.count = () => this.buildLayer?.count() ?? 0;
@@ -339,6 +370,7 @@ export class CityScene extends Phaser.Scene {
     this.packets = new Packets(this, CITY_ISO, this.plan.size, (x, y) => this.map.isRoadTile(x, y) || this.map.isSidewalk(x, y), this.plan);
     this.day1Open = this.computeDay1();
     this.details = useCity.getState().prefs?.mapDetails === true;
+    this.quiet = quietCity(useCity.getState().progress, useCity.getState().prefs);
     this.syncWorld(useCity.getState().progress);
     // Combos already standing when the city opens aren't news; ones the Codex doesn't have yet are found now.
     this.combosReady = true;
@@ -410,7 +442,12 @@ export class CityScene extends Phaser.Scene {
     );
     this.syncVisitors();
     this.citizens.ensure(this.citizenTarget());
-    this.requests = new Requests(this, () => this.citizens?.list ?? [], () => this.player);
+    // The first steps' planted citizen stands on a street by its building, and the camera goes with Kai to them.
+    this.requests = new Requests(this, () => this.citizens?.list ?? [], () => this.player, {
+      streets: sidewalks,
+      spot: (id) => this.plan.landmarkLayout(id)?.workSpot,
+      followKai: () => this.mayAutoPan() && this.follow(this.player),
+    });
     // Six golden tokens hidden on the streets: they glint when Kai is near; stepping on one picks it up.
     // One celebration at a time: a find right after a tier-up waits for the tier-up's bubble to go. The bubble is short
     // and gold; the certification on the token goes to the feed (and My City), not into the bubble.
@@ -480,12 +517,14 @@ export class CityScene extends Phaser.Scene {
       onLearnSeen: (at) => this.courierHint(at),
       onSurface: (s) => {
         this.weather?.setSurface(s);
+        this.bubbleRules(s);
         this.citizens?.trim(this.citizenTarget());
         this.citizens?.ensure(this.citizenTarget());
       },
     });
     // The account's data links drive as data carriers on the same roads as the traffic.
     this.region.dispatch = (kind, from, to, cargo) => this.ambient?.dispatchData(kind, from, to, cargo) ?? false;
+    this.region.setQuiet(this.quiet);
     this.enterRegion(useCity.getState().cityRegion);
     this.syncInventory(useCity.getState().inventory);
     this.syncDetails();
@@ -509,9 +548,11 @@ export class CityScene extends Phaser.Scene {
     // player's text size (⋯ → Text size).
     const ui = (useCity.getState().prefs.textSize ?? 100) / 100 / cam.zoom;
     const levels = useCity.getState().agentLevels;
+    // Under reduced motion idle agents get the still clock (they never start a stroll); a walk they're given goes on.
+    const wander = this.stillness.check(time, () => {}) ? STILL_TIME : time;
     for (const [id, a] of this.agents) {
       a.speedBoost = 1 + 0.15 * ((levels[id] ?? 1) - 1);
-      a.update(time, dt);
+      a.update(wander, dt);
       a.setUiScale(ui);
     }
     this.handleKeys();
@@ -533,7 +574,7 @@ export class CityScene extends Phaser.Scene {
       const target = this.citizenTarget();
       if ((this.citizens?.list.length ?? 0) > target) this.citizens?.trim(target);
     }
-    this.patrols?.update(time, dt);
+    this.patrols?.update(wander, dt);
     if (ui !== this.lastUi) {
       this.lastUi = ui;
       for (const l of this.landmarks.values()) l.setUiScale(ui);
@@ -555,8 +596,9 @@ export class CityScene extends Phaser.Scene {
       this.syncLabels();
     }
     // The AWS status ticker (src/ui/NewsTicker.tsx) covers the top ~34 px of the stage while it has something to say.
+    // Measured, not inferred: with ⋯ → Show everything the ticker shows before the news rung opens (`newsHeard`).
     const st = useCity.getState();
-    const inset = (st.health?.incidents.length || st.news?.items.length) && this.newsHeard() ? TICKER_PX : 0;
+    const inset = this.tickerInset();
     this.keepLabelsInView(cam.worldView, ui, inset);
     setBubbleTopInset(this, inset);
     if (time - this.ladderAt > LADDER_POLL_MS) {
@@ -581,9 +623,10 @@ export class CityScene extends Phaser.Scene {
       this.airport?.setNight(n);
       this.clients?.setNight(n);
       this.tierProps?.setNight(n);
-      for (const l of this.landmarks.values()) l.setNight(n);
+      for (const l of this.landmarks.values()) l.setNight(n, cam.zoom);
       this.map.setNight(n);
-    }
+    } else if (Math.abs(cam.zoom - this.liftZoom) > 0.01) for (const l of this.landmarks.values()) l.setNight(n, cam.zoom);
+    this.liftZoom = cam.zoom;
     this.ambient?.setNight(n);
     this.ambient?.update(time, dt);
     this.weather?.update(dt);
@@ -801,15 +844,15 @@ export class CityScene extends Phaser.Scene {
   private syncPlotSigns(p: Progress) {
     // One short line; pointing at a locked sign shows how to open it, tapping it opens that Place card.
     const want = new Map<string, { rect: Rect; text: string; more?: string; first?: string }>();
-    for (const d of DISTRICTS) {
+    for (const d of this.quiet ? [] : DISTRICTS) {
       const plot = this.plan.districts[d.id];
       if (!plot || this.districtUnlocked(p, d.id)) continue;
       const svcs = servicesIn(d.id);
       const names = svcs.slice(0, 3).map((s) => s.name.replace(/^(Amazon|AWS) /, '')).join(' · ');
       want.set(d.id, { rect: plot.bbox, text: `🔒 ${d.name}`, more: `🔒 ${d.name}\nOpen ${names}… in the console`, first: svcs[0]?.id });
     }
-    FUTURE_PLOTS.forEach((f, i) => want.set(f.id, { rect: f.rect, text: `🚧 ${FUTURE_LABELS[i]}` }));
-    if (!this.day1Open) want.set('day1', { rect: this.plan.day1, text: '🔒 Day 1 Quarter', more: '🔒 Day 1 Quarter\nFinish your first quest to open it' });
+    if (!this.quiet) FUTURE_PLOTS.forEach((f, i) => want.set(f.id, { rect: f.rect, text: `🚧 ${FUTURE_LABELS[i]}` }));
+    if (!this.day1Open && !this.quiet) want.set('day1', { rect: this.plan.day1, text: '🔒 Day 1 Quarter', more: '🔒 Day 1 Quarter\nFinish your first quest to open it' });
     for (const [id, sign] of this.plotSigns) if (!want.has(id)) sign.destroy(), this.plotSigns.delete(id);
     for (const [id, w] of want) {
       if (this.plotSigns.has(id)) continue;
@@ -939,9 +982,11 @@ export class CityScene extends Phaser.Scene {
       this.buildLayer?.hideGhost();
       this.buildLayer?.showFree(undefined);
       if (prev.build?.moving) this.syncBuild(s.progress);
+      if (prev.build) this.syncLabels();
       return;
     }
     if (!prev.build) {
+      this.syncLabels();
       // Building starts on the free ground nearest Kai (the Town Square's lawn, or a lot): never over water. Close
       // enough to see a bench (zoom 2 at least), the drawer under it.
       const me = this.player.tile;
@@ -1057,10 +1102,29 @@ export class CityScene extends Phaser.Scene {
   private setupCamera() {
     const cam = this.cameras.main;
     this.setCameraBounds();
-    // The whole core at the best whole-number zoom, or the Town Square at zoom 1 (the side panel).
+    // The map's starting zoom (bigger on a big map), on the whole core when it fits, else on the Town Square.
     const f = frameTarget(this.scale.width, this.scale.height, this.plan);
     cam.setZoom(f.zoom);
     cam.centerOn(f.x, f.y);
+    this.playerZoomed = false;
+    this.scale.on(Phaser.Scale.Events.RESIZE, this.onResize, this);
+    this.offs.push(() => this.scale.off(Phaser.Scale.Events.RESIZE, this.onResize, this));
+  }
+
+  /**
+   * The map was resized (the window). In the tab, at any width, the view keeps its centre (Phaser keeps its top-left,
+   * so a wider window showed more sea on the right and below), and its zoom follows the map's size until the player
+   * zooms (zoomOnResize); not while decorating, during an upgrade's push-in or the arrival's zoom. The side panel's map
+   * grows and shrinks as the player reads: it keeps its top-left and zoom, as before.
+   */
+  private onResize(size: Phaser.Structs.Size, _base: Phaser.Structs.Size, _display: Phaser.Structs.Size, prevW: number, prevH: number) {
+    if (!this.sys.isActive() || this.game.canvas.closest('.app-panel') || (size.width === prevW && size.height === prevH)) return;
+    const cam = this.cameras.main;
+    cam.scrollX += Math.round((prevW - size.width) / 2);
+    cam.scrollY += Math.round((prevH - size.height) / 2);
+    if (useCity.getState().build || this.time.now < this.pushUntil || cam.zoomEffect.isRunning) return;
+    const z = zoomOnResize(size.width, size.height, this.plan, cam.zoom, this.playerZoomed);
+    if (z !== cam.zoom) cam.setZoom(z);
   }
 
   /** The player is steering: automatic camera moves wait (src/game/calm.ts). */
@@ -1139,10 +1203,28 @@ export class CityScene extends Phaser.Scene {
     const cam = this.cameras.main;
     const nearest = ZOOMS.reduce((a, b) => (Math.abs(b - cam.zoom) < Math.abs(a - cam.zoom) ? b : a));
     const to = ZOOMS[Phaser.Math.Clamp(ZOOMS.indexOf(nearest) + by, 0, ZOOMS.length - 1)];
+    this.pushUntil = 0;
+    this.playerZoomed = true;
     if (to !== nearest) cam.zoomTo(to, 150);
   }
 
   /** The next (or previous) building in reading order, back to front then left to right: show it, select it, say it. */
+  private tickerAt = -Infinity;
+  private tickerPx = 0;
+  /**
+   * How far down the canvas the AWS status ticker reaches (CSS px; 0 while it isn't shown), measured twice a second at
+   * most (seen 24 Nov 2026: Sally's bubble clipped under it in the panel, where Show everything shows the ticker before
+   * the news rung opens, so the old guess said there was none). At least TICKER_PX while it shows.
+   */
+  private tickerInset(): number {
+    if (this.time.now - this.tickerAt < 500) return this.tickerPx;
+    this.tickerAt = this.time.now;
+    const t = document.querySelector('.stage .ticker')?.getBoundingClientRect();
+    const c = this.game.canvas.getBoundingClientRect();
+    this.tickerPx = t && t.height > 0 ? Math.max(TICKER_PX, Math.ceil(t.bottom - c.top) + 4) : 0;
+    return this.tickerPx;
+  }
+
   private stepBuilding(by: 1 | -1) {
     // Buildings only: the Leadership Principle and mechanism plaques (and other unsigned sites) are skipped, or 11 of
     // them stood between the player and S3 Lake.
@@ -1155,7 +1237,9 @@ export class CityScene extends Phaser.Scene {
     const id = order[at < 0 ? (by > 0 ? 0 : order.length - 1) : (at + by + order.length) % order.length];
     this.flyTo(id);
     this.highlight(id);
-    useCity.getState().select(id);
+    // Picked like a tap: its card opens, and closing it puts the building down, its next-level ghost and line too (seen
+    // 24 Nov 2026: a `]` pick opened no card, so nothing ever cleared its ghost).
+    this.select(id);
     // Its sign's name, never the raw id; quick presses replace the line still waiting, so the newest is always heard.
     announce(stepLine(id, this.landmarks.get(id)?.spec.label, order.indexOf(id) + 1, order.length), { replace: true });
   }
@@ -1285,64 +1369,154 @@ export class CityScene extends Phaser.Scene {
     }
   }
 
-  private flyTo(id: string) {
+  /**
+   * The camera goes to (x, y), world px: a pan timed by its distance that slows into the arrival, a short sea-blue fade
+   * for a jump further than 1.5 views, a cut under reduced motion (src/game/cityView.ts flightPlan). Returns the ms
+   * until it's there.
+   */
+  private glide(x: number, y: number): number {
+    const cam = this.cameras.main;
+    cam.stopFollow();
+    this.following = undefined;
+    const f = flightPlan(x - cam.midPoint.x, y - cam.midPoint.y, cam.zoom, cam.width, cam.height, reducedMotion());
+    if (f.kind === 'pan') {
+      cam.pan(x, y, f.ms, FLIGHT.ease, true);
+      return f.ms;
+    }
+    // A flight still under way would carry the camera off again.
+    cam.panEffect.reset();
+    if (f.kind === 'cut') cam.centerOn(x, y);
+    else {
+      cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+        cam.centerOn(x, y);
+        cam.fadeIn(FLIGHT.fadeInMs, ...SEA_RGB);
+      });
+      cam.fadeOut(FLIGHT.fadeOutMs, ...SEA_RGB);
+    }
+    return f.ms;
+  }
+
+  /** The camera goes to a building, a district, a site or Kai (glide); returns the ms until it's there (0: no flight). */
+  private flyTo(id: string): number {
     // Watch it done (src/ui/ActivityFeed.tsx TaskCard's Watch): the camera follows that agent until the player moves it.
     if (id.startsWith('agent:')) {
       const a = this.agents.get(id.slice(6));
       if (a) this.follow(a);
-      return;
+      return 0;
     }
     // The park and the airport (terrain sites outside the gate): Places' "Outside the gate" rows fly there.
     const client = id.startsWith('client:') ? this.clientSites.find((x) => x.clientId === id.slice(7))?.rect : undefined;
     const site = client ?? (id === 'park' ? this.landscape?.terrain?.park : id === 'airport' ? this.landscape?.terrain?.airport : undefined);
     if (site) {
       const c = toScreen(CITY_ISO, site.x + site.w / 2, site.y + site.h / 2);
-      const cam = this.cameras.main;
-      cam.stopFollow();
-      this.following = undefined;
-      if (reducedMotion()) cam.centerOn(c.x, c.y);
-      else cam.pan(c.x, c.y, 700, 'Sine.easeInOut');
-      return;
+      return this.glide(c.x, c.y);
     }
     if (id === 'signature') {
       // The Region's own landmark by the highway (terrain.ts): the city's postcard view.
       const sig = this.landscape?.terrain?.props.find((p) => p.role === 'signature');
-      if (!sig) return;
+      if (!sig) return 0;
       const c = toScreen(CITY_ISO, sig.x + 0.5, sig.y + 0.5);
-      const cam = this.cameras.main;
-      cam.stopFollow();
-      this.following = undefined;
-      if (reducedMotion()) cam.centerOn(c.x, c.y - 40);
-      else cam.pan(c.x, c.y - 40, 700, 'Sine.easeInOut');
-      return;
+      return this.glide(c.x, c.y - 40);
     }
-    if (id === 'player') {
-      // Kai, for the tour's "this is you": centre on Kai without following (the player may walk off).
-      const cam = this.cameras.main;
-      cam.stopFollow();
-      this.following = undefined;
-      const { x, y } = this.player.sprite;
-      if (reducedMotion()) cam.centerOn(x, y - 30);
-      else cam.pan(x, y - 30, 700, 'Sine.easeInOut');
-      return;
-    }
+    // Kai, for the tour's "this is you": centre on Kai without following (the player may walk off).
+    if (id === 'player') return this.glide(this.player.sprite.x, this.player.sprite.y - 30);
     const l = this.plan.landmarkLayout(id);
     const rect = l?.footprint ?? this.plan.districts[id as DistrictId]?.bbox;
-    if (!rect) return;
+    if (!rect) return 0;
     const c = toScreen(CITY_ISO, rect.x + (rect.w - 1) / 2, rect.y + (rect.h - 1) / 2);
-    const cam = this.cameras.main;
-    cam.stopFollow();
-    this.following = undefined;
     // A Master's knowledge tower and its crowns stay in frame (src/game/camera.ts buildingFocusY).
     const top = this.landmarks.get(id)?.topY;
-    const y = top === undefined ? c.y - 30 : buildingFocusY(c.y, top, cam.height, cam.zoom);
-    if (reducedMotion()) cam.centerOn(c.x, y);
-    else cam.pan(c.x, y, 700, 'Sine.easeInOut');
+    const cam = this.cameras.main;
+    return this.glide(c.x, top === undefined ? c.y - 30 : buildingFocusY(c.y, top, cam.height, cam.zoom));
+  }
+
+  /** A landmark's lot (world px) while nothing stands on it yet: the diamond of its footprint (the quick tour rings it). */
+  private lotBounds(id: string): { x: number; y: number; width: number; height: number } | undefined {
+    const f = this.plan.landmarkLayout(id)?.footprint;
+    if (!f) return undefined;
+    // The diamond's four corners: top (x, y), right (x + w, y), bottom (x + w, y + h), left (x, y + h), tile edges.
+    const top = toScreen(CITY_ISO, f.x - 0.5, f.y - 0.5);
+    const right = toScreen(CITY_ISO, f.x + f.w - 0.5, f.y - 0.5);
+    const bottom = toScreen(CITY_ISO, f.x + f.w - 0.5, f.y + f.h - 0.5);
+    const left = toScreen(CITY_ISO, f.x - 0.5, f.y + f.h - 0.5);
+    return { x: left.x, y: top.y, width: right.x - left.x, height: bottom.y - top.y };
   }
 
   private follow(a: Agent) {
     this.following = a;
     this.cameras.main.startFollow(a.sprite, true, 0.08, 0.08);
+  }
+
+  /** The building Kai is walking to on the first steps (src/game/firstStepsGame.ts followsKai): the camera is with him. */
+  private kaiWalk?: string;
+
+  /**
+   * The first steps' walk (DESIGN §6.2): the camera follows Kai at the resting zoom while he walks, then settles on the
+   * building; the visit counts when he's there. Reduced motion: a cut at the start and at the arrival.
+   */
+  private walkWithKai(id: string) {
+    const l = this.plan.landmarkLayout(id)!;
+    const cam = this.cameras.main;
+    this.kaiWalk = id;
+    this.select(id);
+    click();
+    // A flight still under way would carry the camera off again.
+    cam.panEffect.reset();
+    this.following = this.player;
+    const lerp = reducedMotion() ? 1 : 0.08;
+    cam.startFollow(this.player.sprite, true, lerp, lerp);
+    this.player.goTo(l.workSpot, () => {
+      if (this.kaiWalk === id) this.kaiWalk = undefined;
+      // Still with him (the player didn't take the camera): it settles on the building.
+      if (this.following === this.player) this.flyTo(id);
+      useCity.getState().arrive(id);
+    });
+  }
+
+  /** Lines waiting to be said to the player (bus `say`), by agent, and when each agent's last one has been read (game time). */
+  private sayLines = new Map<string, { text: string; tone?: 'info' | 'good'; at: number }[]>();
+  private sayRead = new Map<string, number>();
+
+  /** The agent's next `say` line, once they stand in the city and their last line has been read (firstStepsGame.ts). */
+  private nextSay(agentId: string): void {
+    const q = this.sayLines.get(agentId);
+    const line = q?.[0];
+    if (!q || !line) return;
+    if (!this.sys.isActive()) return void this.sayLines.delete(agentId);
+    const a = this.agents.get(agentId);
+    const wait = (this.sayRead.get(agentId) ?? -Infinity) - this.time.now;
+    // A celebration card up (graduation's included): the line waits for it, and is read out when it shows.
+    if (!a || wait > 0 || useCity.getState().celebration) {
+      // Not here yet (a building put up a moment ago spawns its agent on the next sync): try again, but not for ever.
+      if (!a && Date.now() - line.at > SAY_GIVE_UP_MS) {
+        q.shift();
+        return this.nextSay(agentId);
+      }
+      this.time.delayedCall(Math.max(wait, SAY_RETRY_MS), () => this.nextSay(agentId));
+      return;
+    }
+    q.shift();
+    if (a.say(line.text, { caption: 'to you', tone: line.tone === 'good' ? 'done' : 'speech' })) {
+      this.sayRead.set(agentId, this.time.now + sayReadMs(line.text));
+      this.cheering = a;
+      announce(`${a.shortName} says: ${line.text}`);
+    }
+    if (q.length) this.nextSay(agentId);
+  }
+
+  /** When the first steps' graduation last played here (game time): one moment however many times it's sent. */
+  private graduatedAt = -Infinity;
+  private onGraduated() {
+    if (!this.sys.isActive() || this.time.now - this.graduatedAt < GRADUATION_GAP_MS) return;
+    this.graduatedAt = this.time.now;
+    if (reducedMotion()) return;
+    // The quest's stars land a moment after (store.questEvent's addXp): a tier-up they cause is the moment there.
+    this.time.delayedCall(GRADUATION_BEAT_MS, () => {
+      if (!this.sys.isActive() || reducedMotion() || !this.mayAutoPan()) return;
+      const id = questById(FIRST_STEPS_QUEST)?.serviceIds[0] ?? 's3';
+      if (!this.landmarks.has(id) || this.time.now - (this.tierUpAt.get(id) ?? -Infinity) < GRADUATION_GAP_MS) return;
+      this.time.delayedCall(this.flyTo(id), () => this.sys.isActive() && this.pushInNow());
+    });
   }
 
   private highlight(id?: string) {
@@ -1417,6 +1591,7 @@ export class CityScene extends Phaser.Scene {
           this.syncLabels();
         }
         if (s.inventory !== prev.inventory) this.syncInventory(s.inventory);
+        if (s.progress !== prev.progress || s.prefs !== prev.prefs) this.syncQuiet();
         if (s.prefs !== prev.prefs || s.account !== prev.account || s.deploys !== prev.deploys) {
           this.syncDetails();
           if (this.computeDay1() !== this.day1Open) this.syncWorld(s.progress);
@@ -1490,16 +1665,22 @@ export class CityScene extends Phaser.Scene {
         this.following = undefined;
         cam.centerOn(x, y);
       }),
-      bus.on('locateKai', ({ reply }) => {
-        // Kai's sprite bounds, camera → canvas → page (the canvas renders at CSS pixels).
+      bus.on('locate', ({ id, reply }) => {
+        // Kai's (or a landmark's) sprite bounds, camera → canvas → page (the canvas renders at CSS pixels).
+        if (!this.sys.isActive()) return reply(undefined);
         const cam = this.cameras.main;
-        const b = this.player?.sprite.getBounds();
+        const b = id === 'player' ? this.player?.sprite.getBounds() : (this.landmarks.get(id)?.img.getBounds() ?? this.lotBounds(id));
         const canvas = this.game.canvas.getBoundingClientRect();
-        if (!b || !this.sys.isActive()) return reply(undefined);
+        if (!b) return reply(undefined);
         const left = canvas.left + (b.x - cam.worldView.x) * cam.zoom;
         const top = canvas.top + (b.y - cam.worldView.y) * cam.zoom;
         const r = { top, left, width: b.width * cam.zoom, height: b.height * cam.zoom };
-        const inView = r.left + r.width > canvas.left && r.left < canvas.right && r.top + r.height > canvas.top && r.top < canvas.bottom;
+        // Only the canvas the stage shows counts: the panel's map shrinks (330 → 200 px) before Phaser resizes the
+        // canvas, and a building in the clipped part would be "found" over the tabs below (seen 24 Nov 2026).
+        const seen = this.game.canvas.closest?.('.stage')?.getBoundingClientRect() ?? canvas;
+        const [l, t] = [Math.max(canvas.left, seen.left), Math.max(canvas.top, seen.top)];
+        const [rt, bt] = [Math.min(canvas.right, seen.right), Math.min(canvas.bottom, seen.bottom)];
+        const inView = r.left + r.width > l && r.left < rt && r.top + r.height > t && r.top < bt;
         reply(inView ? r : undefined);
       }),
       bus.on('discovered', ({ serviceId, quiet }) => this.onDiscovered(serviceId, quiet)),
@@ -1507,9 +1688,25 @@ export class CityScene extends Phaser.Scene {
       bus.on('walkTo', ({ id, accept }) => {
         if (!this.sys.isActive() || !this.plan.landmarkLayout(id)) return;
         accept();
+        // The first steps' walk: the camera walks with Kai, then settles on the building (not a jump ahead).
+        const st = useCity.getState();
+        if (followsKai(firstStep(st.progress, st.prefs), id) && !st.build) return this.walkWithKai(id);
         this.flyTo(id);
         this.onLandmarkClick(id);
       }),
+      // A landmark's agent says a line to the player (the first steps: Sally's greeting, her plan's outcome). Never a
+      // model call; one bubble at a time (the panel's solo rule, and no cheer over it); read out too. Each agent's lines
+      // come in order, each read before the next (her introduction before her fishing line).
+      bus.on('say', ({ agentId, text, tone }) => {
+        if (!text || !this.sys.isActive()) return;
+        const q = this.sayLines.get(agentId) ?? [];
+        q.push({ text, tone, at: Date.now() });
+        this.sayLines.set(agentId, q);
+        if (q.length === 1) this.nextSay(agentId);
+      }),
+      // The first steps are done: Celebrate's card is the moment; the city adds a gentle camera visit to the building
+      // they grew, unless its tier-up (which flies there itself) is playing. Once; nothing under reduced motion.
+      bus.on('graduated', () => this.onGraduated()),
       bus.on('questDone', ({ questId }) => this.onQuestDone(questId)),
       // A quest step done: its building bumps and a ✓ floats up (the store's toast says which step).
       bus.on('questStep', ({ serviceId }) => {
@@ -1527,24 +1724,25 @@ export class CityScene extends Phaser.Scene {
         if (!this.sys.isActive() || !site || !tile) return;
         accept();
         const c = toScreen(CITY_ISO, tile.x, tile.y);
-        const cam = this.cameras.main;
-        cam.stopFollow();
-        this.following = undefined;
-        if (reducedMotion()) cam.centerOn(c.x, c.y - 30);
-        else cam.pan(c.x, c.y - 30, 700, 'Sine.easeInOut');
+        const ms = this.glide(c.x, c.y - 30);
         const inCore = site.where === 'hood';
         const to = inCore ? tile : this.plan.gate;
         if (this.world.walkable(to.x, to.y) || inCore) this.player.goTo(to, arrived);
-        else this.time.delayedCall(700, arrived);
+        else this.time.delayedCall(Math.max(700, ms), arrived);
       }),
-      // A business finished a level: its site grows (the next sprite, a bump and confetti) and the camera looks.
+      // A business finished a level: the camera goes there (like a tier-up), then its site grows (the next sprite, a bump
+      // and confetti) once it's in view. Before, the camera stayed put and the bump played wherever the site was.
       bus.on('clientLevelUp', ({ clientId }) => {
         if (!this.sys.isActive()) return;
-        this.syncPark();
-        this.clients?.grow(clientId);
-        // The airport hub's building is the airport: a jet flies in to open its new level.
-        if (clientId === 'airport') this.airport?.land();
-        this.play('levelup');
+        const ms = this.mayAutoPan() ? this.flyTo(`client:${clientId}`) : 0;
+        this.time.delayedCall(ms, () => {
+          if (!this.sys.isActive()) return;
+          this.syncPark();
+          this.clients?.grow(clientId);
+          // The airport hub's building is the airport: a jet flies in to open its new level.
+          if (clientId === 'airport') this.airport?.land();
+          this.play('levelup');
+        });
       }),
       // A finished workshop: the camera goes to the building and its plaque drops in (asleep: when the player is back).
       bus.on('workshopDone', ({ serviceId }) => {
@@ -1625,6 +1823,8 @@ export class CityScene extends Phaser.Scene {
     this.keys = {};
     this.citizens = this.patrols = this.markers = this.cheering = this.following = undefined;
     this.hoveredId = this.hoveredSign = this.focusedId = this.hint = this.hintTarget = this.hintLandmark = undefined;
+    this.kaiWalk = undefined;
+    this.graduatedAt = -Infinity;
     this.gateSign = this.gateAnchor = undefined;
     this.gateHover = this.dragging = false;
     this.lastNight = -1;
@@ -1729,6 +1929,22 @@ export class CityScene extends Phaser.Scene {
     this.gateAnchor = { x: sign.x, y: sign.y };
   }
 
+  /** The first steps' quiet city (src/state/firstSteps.ts): its canvas labels wait for graduation. */
+  private quiet = false;
+  /**
+   * While quiet, no 🔒 district or Day 1 signs, zone letters or "×3" badges: none of them is explained on the path
+   * (seen 24 Nov 2026: "🔒 Database Row", "Zone B" and "×3" before the first cast). They come back at graduation.
+   */
+  private syncQuiet() {
+    const s = useCity.getState();
+    const quiet = quietCity(s.progress, s.prefs);
+    if (quiet === this.quiet) return;
+    this.quiet = quiet;
+    this.region?.setQuiet(quiet);
+    this.syncPlotSigns(s.progress);
+    this.syncInventory(s.inventory);
+  }
+
   /** The "Show the map details" setting (prefs.mapDetails, in the ⋯ menu): technical labels on or off. */
   private syncDetails() {
     this.details = useCity.getState().prefs?.mapDetails === true;
@@ -1743,30 +1959,107 @@ export class CityScene extends Phaser.Scene {
    * the most urgent one's "!" tag (the rest from zoom 2, or on the building the player is looking at).
    * From zoom 2 (or hovered): landmark names, and the Well-Architected citizens' first names (their pillar on hover).
    * With map details on: AZ IDs and counts, the network label, link notes, distance signs (RegionOverlay, Landscape)
-   * and the "? N more" signs (else on hover of their district). Signs that would overlap give way, most important first,
-   * and the "E · Visit X" hint stands in for its landmark's sign.
+   * and the "? N more" signs (else on hover of their district). Signs that would overlap once slid into view give way
+   * (placeSigns: the picked building, then the nearest the middle), the "E · Visit X" hint stands in for its landmark's
+   * sign, and while decorating no building names show.
    */
   private syncLabels() {
-    const zoom = this.cameras.main.zoom;
+    const zoom = this.labelZoom();
     const all = zoom >= 2;
+    // While decorating, the map is the player's canvas: no building names, walkers' tags or "? N more" (the locked
+    // districts' signs stay: nothing can be built there).
+    const building = !!useCity.getState().build;
     const selected = useCity.getState().selected;
     const must = (id: string) => id === selected || id === this.focusedId || id === this.hoveredId;
-    const want = [...this.landmarks].filter(([id]) => id !== this.hintLandmark && (all || must(id)));
-    for (const [id, lm] of this.landmarks) lm.showSign(want.some(([w]) => w === id));
-    if (want.length > 1) {
-      // Most important first: selected / focused / hovered, then the highest tier, then the nearest the front.
-      const order = [...want].sort(([a, la], [b, lb]) => Number(must(b)) - Number(must(a)) || lb.spec.tier - la.spec.tier || lb.img.y - la.img.y);
-      const keep = nonOverlapping(order, ([, lm]) => lm.signBounds(), 2 / zoom);
-      for (const item of want) if (!keep.has(item)) item[1].showSign(false);
-    }
-    this.patrols?.setTagsShown(all);
+    const want = building ? [] : [...this.landmarks.keys()].filter((id) => id !== this.hintLandmark && (all || must(id)));
+    this.labelWant.landmarks = new Set(want);
+    this.patrols?.setTagsShown(all && !building);
     this.markers?.setTagsShown(all, must);
-    this.resources?.setMoreShown(all || this.details);
+    this.resources?.setMoreShown((all || this.details) && !building);
     const gate = this.plan.globalLandmarks.some((l) => this.landmarks.has(l.id) && must(l.id));
-    this.gateSign?.setVisible(all || gate || this.gateHover);
+    this.labelWant.gate = !building && (all || gate || this.gateHover);
     // "? N more": only where the player is looking (their district hovered), or with map details on.
     const looking = this.hoveredId ? this.districtOf(this.hoveredId) : undefined;
-    for (const [where, sign] of this.unknownSigns) sign.setVisible(this.details || where === looking || where === this.hoveredSign);
+    this.labelWant.unknown = new Set(building ? [] : [...this.unknownSigns.keys()].filter((where) => this.details || where === looking || where === this.hoveredSign));
+    // Shown at once; where each one stands, and which give way, is the next frame's (placeSigns). Only the picked one's
+    // sign says its level ("· Lv 3"): at rest a sign is its name.
+    for (const [id, lm] of this.landmarks) {
+      lm.showSign(this.labelWant.landmarks.has(id));
+      lm.setDetailed(must(id));
+    }
+    this.gateSign?.setVisible(this.labelWant.gate);
+    for (const [where, sign] of this.unknownSigns) sign.setVisible(this.labelWant.unknown.has(where));
+    this.labelKey = '';
+  }
+
+  /**
+   * The zoom the label budget goes by: the resting one while an upgrade's push-in runs, so every name, level and due
+   * count doesn't pop on at the push and off again on the way back, mid-celebration.
+   */
+  private labelZoom() {
+    return this.pushRest !== undefined && this.time.now < this.pushUntil ? this.pushRest : this.cameras.main.zoom;
+  }
+
+  /** Buildings one action from their next level (src/state/next.ts readyToUpgrade): their signs come first. */
+  private readyIds() {
+    const s = useCity.getState();
+    if (this.readyFor?.progress !== s.progress || this.readyFor.region !== s.cityRegion) {
+      this.readyFor = { progress: s.progress, region: s.cityRegion, ids: new Set(readyToUpgrade(s.progress, s.cityRegion, SERVICES.length).map((r) => r.serviceId)) };
+    }
+    return this.readyFor.ids;
+  }
+
+  /** What the label budget shows (syncLabels); placeSigns hides the ones that would overlap once slid into view. */
+  private labelWant = { landmarks: new Set<string>(), unknown: new Set<string>(), gate: false };
+  /** The view (and budget) the signs were last placed for: placed again only when either changes. */
+  private labelKey = '';
+
+  /**
+   * Slides every sign the budget shows into view, then runs the one overlap pass over every tag on the map (src/game/
+   * labels.ts keepTags), in order: Kai's tag, the "E · …" hint, the signs, working agents' tags, then citizens'. Signs go
+   * the picked building (selected, focused, hovered) first, then one standing in view, one ready to upgrade, the nearest
+   * Kai; a view holds signCap building signs at zoom 2+ (a grown city drew ~25 and Kai got lost). A sign pulled in from
+   * a building off-screen never sits on one standing on its own building. Landmark names, the gate, the locked districts
+   * and "? N more"; walkers' tags give way to all of them.
+   */
+  private placeSigns(view: Phaser.Geom.Rectangle, ui: number, inset: number) {
+    this.tagsAt = this.time.now;
+    const selected = useCity.getState().selected;
+    const must = (id: string) => id === selected || id === this.focusedId || id === this.hoveredId;
+    const ready = this.readyIds();
+    const kai = this.player.sprite;
+    const toKai = (p: Pt) => Math.hypot(p.x - kai.x, p.y - kai.y);
+    const none = () => undefined;
+    const tags: MapTag<{ show: () => void; hide: () => void }>[] = [];
+    const sign = (picked: boolean, at: Pt, box: Box | undefined, hide: () => void, capped = false, up = false) =>
+      tags.push({ kind: 'sign', must: picked, capped, rank: signRank({ inView: view.contains(at.x, at.y), ready: up, toKai: toKai(at) }), box, item: { show: none, hide } });
+    for (const [id, lm] of this.landmarks) {
+      const on = this.labelWant.landmarks.has(id);
+      lm.showSign(on);
+      if (!on) continue;
+      lm.keepInView(view, inset);
+      // The sign with the service's icon over it and the "×N" badge beside it: all of it takes room.
+      sign(must(id), { x: lm.img.x, y: lm.img.y }, lm.labelBounds(), () => lm.showSign(false), true, ready.has(id));
+    }
+    const text = (t: Phaser.GameObjects.Text, at: Pt | undefined, on: boolean, picked = false) => {
+      t.setVisible(on);
+      if (!on || !at) return;
+      keepTextInView(t, at, view, ui, inset);
+      sign(picked, at, t.getBounds(), () => t.setVisible(false));
+    };
+    if (this.gateSign) text(this.gateSign, this.gateAnchor, this.labelWant.gate, this.gateHover);
+    for (const t of this.plotSigns.values()) text(t, this.signAnchors.get(t), true);
+    for (const [where, t] of this.unknownSigns) text(t, this.signAnchors.get(t), this.labelWant.unknown.has(where), where === this.hoveredSign);
+    // Kai's tag and the hint stand where they are; walkers' tags (working agents, then citizens) give way to everything.
+    tags.push({ kind: 'kai', box: this.player.tagBox(), item: { show: none, hide: none } });
+    if (this.hint?.visible) tags.push({ kind: 'hint', box: this.hint.getBounds(), item: { show: none, hide: none } });
+    const walkers = [...this.agents.values(), ...CITIZENS.map((c) => this.patrols?.agent(c.id)), ...(this.workers?.list ?? []), ...(this.citizens?.list ?? []), ...(this.visitors?.list ?? [])];
+    for (const a of walkers) {
+      if (!a) continue;
+      tags.push({ kind: a.isWorking ? 'working' : 'citizen', must: a.tagHovered, rank: [toKai(a.sprite)], box: a.tagBox(), item: { show: () => a.muteTag(false), hide: () => a.muteTag(true) } });
+    }
+    const keep = keepTags(tags, signCap(this.labelZoom(), this.scale.width, this.scale.height), 2 / this.cameras.main.zoom);
+    for (const t of tags) (keep.has(t.item) ? t.item.show : t.item.hide)();
   }
 
   /** The plot a landmark stands in, as the "? N more" signs key it: a district id, or 'square' for the Town Square. */
@@ -1780,13 +2073,29 @@ export class CityScene extends Phaser.Scene {
   private keepLabelsInView(view: Phaser.Geom.Rectangle, ui: number, inset: number) {
     this.region?.keepInView(view, inset);
     this.landscape?.keepInView(view, inset);
-    for (const lm of this.landmarks.values()) lm.keepInView(view, inset);
     this.drill?.keepInView(view, inset);
+    // The view moved or the budget changed: place the signs again and let the overlapping ones give way. Walkers move
+    // under a still view, so the pass also runs every TAG_PASS_MS.
+    const key = `${Math.round(view.x)},${Math.round(view.y)},${Math.round(view.width)},${Math.round(view.height)},${inset},${ui}`;
+    if (key !== this.labelKey || this.time.now - this.tagsAt >= TAG_PASS_MS) {
+      this.labelKey = key;
+      return this.placeSigns(view, ui, inset);
+    }
+    // Still: the shown ones keep in view (a sign's text can grow on hover, a bounce ends).
+    for (const lm of this.landmarks.values()) lm.keepInView(view, inset);
     if (this.gateSign && this.gateAnchor) keepTextInView(this.gateSign, this.gateAnchor, view, ui, inset);
     for (const t of [...this.plotSigns.values(), ...this.unknownSigns.values()]) {
       const a = this.signAnchors.get(t);
       if (a) keepTextInView(t, a, view, ui, inset);
     }
+  }
+
+  /**
+   * How bubbles share the map on this surface (src/game/SpeechBubble.ts): the side panel's ~290 px map holds one at a
+   * time and none for long; the tab's wide map lets several stand, a little longer.
+   */
+  private bubbleRules(surface: 'panel' | 'tab') {
+    setBubbleRules(this, { solo: surface === 'panel', maxHoldMs: BUBBLE_HOLD_MAX_MS[surface] });
   }
 
   /** A level-up bubble, unless another one is still up (that one goes to the feed only): never a flood of six. */
@@ -1837,7 +2146,7 @@ export class CityScene extends Phaser.Scene {
     const counts: Record<string, number> = home ? (inv?.counts ?? {}) : {};
     if (!home) for (const it of inv?.items ?? []) if (it.region === region) counts[it.serviceId ?? 'other'] = (counts[it.serviceId ?? 'other'] ?? 0) + 1;
     // A count beside each landmark the account has something in (none: no badge).
-    for (const [id, lm] of this.landmarks) if (serviceById(id)) lm.setBadge(counts[id] ?? 0);
+    for (const [id, lm] of this.landmarks) if (serviceById(id)) lm.setBadge(this.quiet ? 0 : (counts[id] ?? 0));
     this.region?.setRegion(region, accountZones(inv, region));
     this.region?.setLinks(inv?.links);
     this.syncFlow();
@@ -1932,10 +2241,11 @@ export class CityScene extends Phaser.Scene {
         if (!from) return;
         const to = e.to === 'user' ? 'you' : agentName(e.to);
         // The bubble gets one short line; the panel keeps the full text and its caveats.
-        // Agents talking among themselves with no task of yours running are ambient: a bubble only with chatter on.
-        const ambient = e.to !== 'user' && !taskRunning(useCity.getState());
+        // Agents talking among themselves about anything but your task are ambient: a bubble only with chatter on (never
+        // on the first steps: src/game/Agent.ts).
+        const ambient = isChatter(useCity.getState(), e.from, e.to);
         // Only a line to the player blips: agents talking among themselves are seen, not heard.
-        from.say(firstLine(e.text), { caption: `→ ${to}`, priority: ambient ? 'ambient' : 'normal', silent: e.to !== 'user' });
+        from.say(firstLine(e.text), { caption: `to ${to}`, priority: ambient ? 'ambient' : 'normal', silent: e.to !== 'user' });
         const a = this.agentTile(e.from);
         const b = this.agentTile(e.to);
         // A bright packet is a real message (work); chatter gets none (the dim baseline packets are the ambience).
@@ -1966,9 +2276,10 @@ export class CityScene extends Phaser.Scene {
         const a = t && this.agents.get(t.agentId);
         this.tasks.delete(e.taskId);
         if (!a) return;
-        const xp = e.xp.reduce((n, x) => n + x.amount, 0);
-        // A task that didn't work says why (the server's result), not only "That didn't work…".
-        a.say(e.ok ? `Done! ${stars(xp)}` : failedBubble(e.result), { tone: e.ok ? 'done' : 'alert', caption: 'Task complete' });
+        // A task that didn't work says why (the server's result), not only "That didn't work…". One that did names the
+        // stars the store really paid (it handles task.done first): none past the daily cap (seen 24 Nov 2026: the
+        // Copilot's "Done! +20 ⭐" while nothing was paid).
+        a.say(e.ok ? doneBubble(useCity.getState().tasks[e.taskId]) : failedBubble(e.result), { tone: e.ok ? 'done' : 'alert', caption: 'Task complete' });
         a.pin(false);
         if (e.ok) {
           a.emote('jump', 1000);
@@ -2059,6 +2370,11 @@ export class CityScene extends Phaser.Scene {
   private onDiscovered(serviceId: string, quiet = false) {
     // Quiet: its agent is already standing at work (the landmark sync spawned it there).
     if (quiet) return;
+    // The first steps' walk there: the camera stays with Kai and the agent waits at work to greet him (bus say).
+    if (this.kaiWalk === serviceId) {
+      this.highlight(serviceId);
+      return this.play('discover');
+    }
     if (this.mayAutoPan()) this.flyTo(serviceId);
     this.highlight(serviceId);
     this.play('discover');
@@ -2196,35 +2512,49 @@ export class CityScene extends Phaser.Scene {
   private pendingTierUps = new Map<string, number>();
 
   /**
-   * A building's tier-up: its knowledge tower rises floor by floor (art/tiles/growth_art.py), then it bounces, confetti,
-   * a banner, a fanfare, its agent cheers; the camera goes to see it.
+   * A building's tier-up, as one moment in order (src/game/cityView.ts tierUpTimeline): the camera flies there while the
+   * new building waits on its ground floor, its knowledge tower rises floor by floor (art/tiles/growth_art.py) or a crown
+   * drops onto it, then one burst with the banner, the fanfare and the agent's cheer, then the push-in. Reduced motion:
+   * a cut, and the banner and cheer at once, still.
    */
   private celebrateTier(serviceId: string, tier: number, fly: boolean) {
-    // A cargo jet brings the new floors in (the airport is out by the gate, so the camera stays on the building).
+    // A cargo jet brings the new floors in (the airport is out by the gate: it takes its own time to land).
     this.airport?.land();
-    if (fly && this.mayAutoPan() && this.landmarks.has(serviceId)) this.flyTo(serviceId);
+    const flight = fly && this.mayAutoPan() && this.landmarks.has(serviceId) ? this.flyTo(serviceId) : 0;
     const lm = this.landmarks.get(serviceId);
-    if (tier > 4) {
-      // A crown past Master: it drops onto the tower, the same one moment (no toast).
-      const name = buildingLevelName(tier, TIER_NAMES);
-      lm?.crownDrop();
-      lm?.celebrate();
+    const crown = tier > 4;
+    const name = crown ? buildingLevelName(tier, TIER_NAMES) : TIER_NAMES[tier];
+    const t = tierUpTimeline(flight, crown ? (lm ? CROWN_DROP_MS : 0) : riseMs(lm?.img.height ?? 0), reducedMotion());
+    if (crown) this.time.delayedCall(t.rise, () => this.landmarks.get(serviceId)?.crownDrop());
+    else lm?.rise(undefined, t.rise);
+    this.time.delayedCall(t.payoff, () => {
+      // The cheer starts now: a golden token found meanwhile, or a "+N ⭐" here, waits behind it (TIER_BUBBLE_MS).
+      this.tierUpAt.set(serviceId, this.time.now);
+      if (!reducedMotion()) this.landmarks.get(serviceId)?.celebrate();
       this.burst(serviceId);
-      this.floatText(serviceId, `👑 ${name}!`, true);
+      this.floatText(serviceId, crown ? `👑 ${name}!` : `⭐ ${name}!`, true);
       this.play('levelup');
       const a = this.agents.get(serviceId);
-      if (this.cheer(a, `A ${name} crown! You really know this. 👑`, { tone: 'done' })) a?.emote('jump', 1200);
-      return;
-    }
-    this.burst(serviceId);
-    lm?.rise(() => {
-      lm.celebrate();
-      this.burst(serviceId);
+      if (this.cheer(a, crown ? `A ${name} crown! You really know this. 👑` : `We just reached ${name}! ⭐`, { tone: 'done' })) a?.emote('jump', 1200);
     });
-    this.floatText(serviceId, `⭐ ${TIER_NAMES[tier]}!`, true);
-    this.play('levelup');
-    const a = this.agents.get(serviceId);
-    if (this.cheer(a, `We just reached ${TIER_NAMES[tier]}! ⭐`, { tone: 'done' })) a?.emote('jump', 1200);
+    // The push-in only frames the building: none when the camera stayed elsewhere (the player was steering it).
+    if (t.push !== undefined)
+      this.time.delayedCall(t.push, () => {
+        const c = this.anchorFor(serviceId);
+        if (c && this.cameras.main.worldView.contains(c.x, c.y)) this.pushInNow();
+      });
+  }
+
+  /** An upgrade's push-in (src/game/juice.ts): one at a time; the labels go by the resting zoom until it's back. */
+  private pushInNow() {
+    const cam = this.cameras.main;
+    if (!this.sys.isActive() || this.time.now < this.pushUntil) return;
+    const rest = cam.zoom;
+    if (!pushIn(this, cam, MAX_ZOOM, reducedMotion())) return;
+    this.pushRest = rest;
+    this.pushUntil = this.time.now + PUSH_TOTAL_MS;
+    this.syncLabels();
+    this.time.delayedCall(PUSH_TOTAL_MS, () => this.sys.isActive() && this.syncLabels());
   }
 
   /** Back in the city: the tier-ups earned away from it, one at a time (the camera visits the first). */
@@ -2269,6 +2599,7 @@ export class CityScene extends Phaser.Scene {
     };
     const from = takeDiveFrom(useCity.getState().cityRegion);
     const f = frameTarget(this.scale.width, this.scale.height, this.plan);
+    this.playerZoomed = false;
     if (reducedMotion()) {
       cam.setZoom(f.zoom);
       cam.centerOn(f.x, f.y);
@@ -2348,8 +2679,16 @@ export class CityScene extends Phaser.Scene {
   private courierHint(at: { x: number; y: number }) {
     // Simple mode keeps the city quiet: the hint waits (unshown) for Everything.
     if (readPref(COURIER_HINT_KEY) || useCity.getState().build || !this.sys.isActive() || !shows('courierHint', useCity.getState().prefs)) return;
+    // One thing over the map at a time: while a toast or the coins note shows, the tip waits for the next courier seen.
+    if (this.overlayUp()) return;
     writePref(COURIER_HINT_KEY, '1');
     this.showInfo(at.x, at.y - 30, 'A learning courier', 'See the car with a glowing parcel? Tap it to learn how two of your buildings talk to each other.', 'Tip');
+  }
+
+  /** A toast or the HUD's one-time coins note (src/ui/Hud.tsx CoinsTip: unseen, coins earned) is over the map now. */
+  private overlayUp() {
+    const s = useCity.getState();
+    return s.toasts.some((t) => !t.leaving) || (readPref(TIP_COINS_KEY) !== '1' && coins(s.progress) > 0);
   }
 
   /**
@@ -2581,11 +2920,6 @@ export class CityScene extends Phaser.Scene {
         if (!c || !this.landmarks.has(serviceId)) return;
         const v = this.cameras.main.worldView;
         beam(this, { x: v.centerX, y: v.bottom }, { x: c.x, y: c.y - 24 }, COLOR.gold, reducedMotion());
-      }),
-      // An upgrade: once the camera has flown to the building, it pushes in a step and back.
-      bus.on('tierUp', () => {
-        if (!this.sys.isActive()) return;
-        this.time.delayedCall(1_100, () => this.sys.isActive() && pushIn(this, this.cameras.main, MAX_ZOOM, reducedMotion()));
       }),
       // Tonight's window just lit: show it at once.
       bus.on('windowLit', () => this.time.delayedCall(0, refresh)),

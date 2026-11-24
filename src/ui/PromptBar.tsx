@@ -11,13 +11,16 @@ import { AiNote } from "./AiNote";
 import { ConsoleAccountWarning } from "./ConsoleAccountWarning";
 import { feel } from "./feedback";
 import { Icon } from "./icons";
-import { offlineReason } from "./logic";
+import { offlineReason, TIP_ASK_KEY, TIP_COPILOT_KEY, writePref } from "./logic";
 
 /**
  * The composer: one row that never crowds the panel. In the side panel, the "Do it in my console" switch above it
- * turns the prompt into the Console Copilot (the agent works in your open AWS console tab).
+ * turns the prompt into the Console Copilot (the agent works in your open AWS console tab). The switch stands where it's
+ * useful (`consoleHere`: the City tab), and wherever the page beside is an AWS console or the Copilot is on. The AI note
+ * folds into the composer: it shows while the box has focus or words in it (styles/08-chat.css), and the box always
+ * names it (aria-describedby), so a screen reader hears it too.
  */
-export function PromptBar({ layout }: { layout: Layout }) {
+export function PromptBar({ layout, consoleHere = true }: { layout: Layout; consoleHere?: boolean }) {
   const [text, setText] = useState("");
   const [inConsole, setInConsole] = useState(false);
   /** Counts sends; the Send icon re-mounts on each one so its little hop replays. */
@@ -32,17 +35,20 @@ export function PromptBar({ layout }: { layout: Layout }) {
   const send = () => {
     if (!text.trim() || offline) return;
     feel.send();
+    // What the coach tips explain is done now: never a tip for it afterwards (src/ui/Tour.tsx CoachTips).
+    writePref(inConsole ? TIP_COPILOT_KEY : TIP_ASK_KEY, "1");
     if (inConsole) void startConsoleCopilot(text);
     else submitPrompt(text);
     setText("");
     setSent((n) => n + 1);
   };
+  const showSwitch = layout === "panel" && (consoleHere || onConsole || inConsole || copilotOn);
   const consoleTip = onConsole
     ? "An agent clicks through your open AWS console tab and explains each step. It asks before changing anything."
     : "An agent clicks through your AWS console tab and explains each step. Open a console tab first.";
   return (
-    <>
-      {layout === "panel" && (
+    <div className="prompt-bar">
+      {showSwitch && (
         // A real switch: a name you can read, its state for screen readers, Space/Enter from the keyboard (a button).
         <button
           type="button"
@@ -50,7 +56,15 @@ export function PromptBar({ layout }: { layout: Layout }) {
           aria-checked={inConsole}
           className={`btn tiny ghost console-btn ${inConsole ? "on" : ""}`}
           title={consoleTip}
-          onClick={() => (feel.tap(), setInConsole((v) => !v))}
+          // A press keeps the focus where it was (seen 24 Nov 2026: pressing the words didn't flip it). Taking the
+          // focus put it inside the bar, which unfolds the AI note above the box and lifts the bar's top edge: the
+          // switch moved up from under the pointer between press and release, so the click never landed on it.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            feel.tap();
+            if (!inConsole) writePref(TIP_COPILOT_KEY, "1");
+            setInConsole((v) => !v);
+          }}
         >
           <Icon name="console" size={10} />
           <span>Do it in my console</span>
@@ -66,6 +80,7 @@ export function PromptBar({ layout }: { layout: Layout }) {
       )}
       {offline && <p className="composer-note">{offline}</p>}
       <ConsoleAccountWarning />
+      {/* Above the box, so showing it never moves the box under the pointer. */}
       <AiNote id={noteId} />
       <form
         className={`composer ${inConsole ? "console-mode" : ""}`}
@@ -120,6 +135,6 @@ export function PromptBar({ layout }: { layout: Layout }) {
           </span>
         </button>
       </form>
-    </>
+    </div>
   );
 }

@@ -2,7 +2,7 @@
 // season road, the Service Codex (with combos) and City Hall, as My City sections, plus the crate and the gentle return
 // note on Home. Everything here is earned and cosmetic: no coins or stars inside a crate, nothing to buy, nothing that
 // decays. The rules live in src/state (lights, drops, season, codex, cityhall, welcome); these only show them.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useCity } from '@/state/store';
 import { dayKey } from '@/state/progress';
 import { lightsLine, lightsOf, lightsView, windowStates, FREEZE_EVERY, MAX_FREEZES } from '@/state/lights';
@@ -162,33 +162,27 @@ const still = () => !!globalThis.matchMedia?.('(prefers-reduced-motion: reduce)'
 /**
  * Home, once the shift is done: a free thank-you crate a day with a decoration or a window colour. It says plainly that
  * it's free and what could be inside (the real chances for what's left), shakes for a second, then pops open in the
- * colour of what came out.
+ * colour of what came out. The card keeps its size the whole way (closed → shaking → opened): only the crate moves, the
+ * button says "Opening…" in place, and the reveal swaps the words inside the same box, so nothing below it jumps.
  */
 export function SupplyDrop({ shiftDone, overtime = false }: { shiftDone: boolean; overtime?: boolean }) {
   const name = overtime ? 'Overtime crate' : 'Daily Supply Drop';
   const progress = useCity((s) => s.progress);
   const [got, setGot] = useState<{ item?: Cosmetic; spare?: boolean }>();
-  const [shaking, setShaking] = useState<{ item?: Cosmetic; spare?: boolean }>();
+  /** Opening: what came out, and the chances the closed card showed (the crate's contents change once it's opened). */
+  const [shaking, setShaking] = useState<{ item?: Cosmetic; spare?: boolean; odds: string }>();
+  /** The closed card's height, px, held through the shake and the reveal. */
+  const [hold, setHold] = useState<number>();
+  const box = useRef<HTMLElement>(null);
   const today = dayKey();
   useEffect(() => {
     if (!shaking) return;
     const t = setTimeout(() => (setGot(shaking), setShaking(undefined)), CRATE_SHAKE_MS);
     return () => clearTimeout(t);
   }, [shaking]);
-  if (shaking)
-    return (
-      <section className="supply-drop shaking" aria-label={name} aria-busy="true">
-        <span className="crate" aria-hidden="true">
-          🎁
-        </span>
-        <span>
-          <b>Opening…</b>
-        </span>
-      </section>
-    );
   if (got)
     return (
-      <section className={`supply-drop opened rarity-${got.item?.rarity ?? 'none'}`} role="status" aria-label={name}>
+      <section className={`supply-drop opened rarity-${got.item?.rarity ?? 'none'}`} role="status" aria-label={name} style={hold ? { minHeight: hold } : undefined}>
         <span className="crate" aria-hidden="true">
           {got.item?.icon ?? '🎊'}
         </span>
@@ -215,27 +209,30 @@ export function SupplyDrop({ shiftDone, overtime = false }: { shiftDone: boolean
         </span>
       </section>
     );
-  if (!(overtime ? overtimeReady(progress, today, shiftDone) : dropReady(progress, today, shiftDone))) return null;
+  if (!shaking && !(overtime ? overtimeReady(progress, today, shiftDone) : dropReady(progress, today, shiftDone))) return null;
+  const odds = shaking ? shaking.odds : oddsNow(progress);
   return (
-    <section className="supply-drop" aria-label={name}>
+    <section ref={box} className={`supply-drop${shaking ? ' shaking' : ''}`} aria-label={name} aria-busy={shaking ? true : undefined}>
       <span className="crate" aria-hidden="true">
         🎁
       </span>
       <span>
         <b>{name}</b>
         <small className="muted">A free thank-you for your {overtime ? 'overtime' : 'shift'}: one decoration or window colour. Free, nothing to buy.</small>
-        <small className="muted">What could be inside: {oddsNow(progress) || 'a spare decoration'}.</small>
+        <small className="muted">What could be inside: {odds || 'a spare decoration'}.</small>
       </span>
       <button
         className="btn tiny crate-open"
+        disabled={!!shaking}
         onClick={() => {
           feel.win();
+          setHold(box.current?.getBoundingClientRect().height || undefined);
           const r = useCity.getState().openDrop(overtime ? { overtime: true } : undefined);
           if (still() || !r) setGot(r ?? {});
-          else setShaking(r);
+          else setShaking({ ...r, odds });
         }}
       >
-        Open the crate
+        {shaking ? 'Opening…' : 'Open the crate'}
       </button>
     </section>
   );

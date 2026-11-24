@@ -4,7 +4,8 @@ import { CLEANUP_SWITCH } from '@/state/account';
 import { bus } from '@/state/bus';
 import { nextAction } from '@/state/next';
 import { agentName, useCity, type FeedItem, type TaskView } from '@/state/store';
-import { agentOffer, liveStep, paidLine, taskPhase, taskStory, thinkingLine, watchLine } from '@/state/watch';
+import { agentOffer, liveStep, paidLine, scriptedNote, taskPhase, taskStory, thinkingLine, watchLine } from '@/state/watch';
+import { quietCity } from '@/state/firstSteps';
 import { placeFor } from '@/world/places';
 import { openAccountCard } from './Account';
 import { feel } from './feedback';
@@ -56,22 +57,26 @@ export function TaskCard({ task, openTab, quiet = false }: { task: TaskView; ope
   const calls = task.calls ?? [];
   // Honest labels: the demo backend only pretends to call AWS.
   const demo = useCity((s) => s.backendKind === 'mock');
+  const scripted = scriptedNote(task, demo);
   const linked = useCity((s) => s.account.linked);
   const offline = useCity((s) => offlineReason(s.backendKind, s.backendStatus));
   const progress = useCity((s) => s.progress);
   const cityRegion = useCity((s) => s.cityRegion);
   const clientFocus = useCity((s) => s.clientFocus);
+  // The first steps: no follow-ups (no next step, no "See it in Deploy"): Connie's guide holds the next step.
+  const onPath = useCity((s) => quietCity(s.progress, s.prefs));
   // The agent's model call is running (a small CPU model can take most of a minute): the card says so.
   const thinking = useCity((s) => (finished ? undefined : thinkingLine(s.agents[who], story.who)));
   // A change this task asked for, waiting for the player's OK in Deploy (the card says so and takes them there).
   const waiting = useCity((s) => Object.values(s.deploys).find((d) => d.taskId === task.taskId && d.status === 'preview'));
   // The one next step (src/state/next.ts), read once the task is done.
-  const next = useMemo(() => (phase === 'result' && !quiet ? nextAction({ progress, cityRegion, clientFocus }) : undefined), [phase, quiet, progress, cityRegion, clientFocus]);
+  const next = useMemo(() => (phase === 'result' && !quiet && !onPath ? nextAction({ progress, cityRegion, clientFocus }) : undefined), [phase, quiet, onPath, progress, cityRegion, clientFocus]);
   const now = liveStep(task);
   const showSteps = task.steps.length > 0 && (finished ? details : !watching || details);
   const hasDetails = calls.length > 0 || task.steps.length > 0;
   // A capped repeat still pays a few City Coins: say so, so watching again isn't dead time.
-  const paid = [paidLine(task), task.coins ? `+${task.coins} City Coins for watching` : undefined].filter(Boolean).join(' · ') || undefined;
+  // City Coins wait while the first steps run (the quiet city hides them), so no coin line either.
+  const paid = [paidLine(task), task.coins && !onPath ? `+${task.coins} City Coins for watching` : undefined].filter(Boolean).join(' · ') || undefined;
   const watch = () => {
     feel.tap();
     setWatching(true);
@@ -97,7 +102,7 @@ export function TaskCard({ task, openTab, quiet = false }: { task: TaskView; ope
           <span className={`task-state ${task.status}`}>
             {task.status === 'routing' || task.status === 'running' ? <span className="spinner" aria-hidden="true" /> : null}
             {TASK_LABEL[task.status]}
-            {task.steps.length > 0 ? ` · ${task.status === 'running' ? `${done}/` : ''}${task.steps.length} steps` : ''}
+            {task.steps.length > 0 ? ` · ${task.status === 'running' ? `${done}/` : ''}${task.steps.length} ${task.steps.length === 1 ? 'step' : 'steps'}` : ''}
           </span>
         </div>
         {!finished && (
@@ -112,6 +117,8 @@ export function TaskCard({ task, openTab, quiet = false }: { task: TaskView; ope
         )}
       </div>
       <div className="task-prompt">“{task.prompt}”</div>
+      {/* The demo's script didn't follow these words: it says so (seen 24 Nov 2026: "expire after 30 days" played 90). */}
+      {scripted && <p className="muted small task-scripted">{scripted}</p>}
       {phase === 'framing' && (
         <p className="watch-framing">
           <Plain text={story.framing} /> {watchLine(task, story.who)}
@@ -153,7 +160,7 @@ export function TaskCard({ task, openTab, quiet = false }: { task: TaskView; ope
           )}
           {paid && <p className={`watch-paid ${task.capped ? 'capped' : ''}`}>{paid}</p>}
           <div className="actions">
-            {demo && story.templateId && (
+            {demo && story.templateId && !onPath && (
               <button className={`btn tiny ${quiet ? '' : 'primary'}`} disabled={!!offline || deploy === 'asked'} title={offline ?? 'Plan the real thing in the practice account: you see every change and approve it'} onClick={seeInDeploy}>
                 {deploy === 'asked' ? '✓ Preview on its way in Deploy' : '🏗️ See it in Deploy'}
               </button>
@@ -170,9 +177,10 @@ export function TaskCard({ task, openTab, quiet = false }: { task: TaskView; ope
       {phase === 'failed' && (
         <div className="task-result">
           {task.result && <Plain text={task.result} />}
-          {!quiet && (
+          {/* Refused because the switch is off (asked for on 23 Nov 2026): one press to where it's turned on, in Simple
+              mode's quiet card too (seen 24 Nov 2026: "this should show a button: turn it on, then ask again"). */}
+          {(!quiet || task.result?.includes(CLEANUP_SWITCH)) && (
             <div className="actions">
-              {/* Refused because the switch is off (asked for on 23 Nov 2026): one press to where it's turned on. */}
               {task.result?.includes(CLEANUP_SWITCH) && (
                 <button className="btn tiny primary" onClick={() => (feel.tap(), openAccountCard(openTab))}>
                   Turn it on (Deploy) →

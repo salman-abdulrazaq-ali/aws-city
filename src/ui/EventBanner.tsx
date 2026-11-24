@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { openEvent } from '@/app/runtime';
 import { bannerEvent, boardEvents, eventNow, LIVE_EVENTS, phaseLine, type PhasedEvent } from '@/world/liveEvents';
+import { FIRST_STEPS_QUEST } from '@/state/firstSteps';
+import { SETTLE, settledTo, useCity } from '@/state/store';
 import { feel } from './feedback';
 
 /** The events change by the day: a minute's clock is plenty (and it pauses with the page). */
@@ -26,8 +28,11 @@ const ICON: Record<PhasedEvent['event']['kind'], string> = { reinvent: '🎪', s
 export function EventBanner() {
   const now = useEventClock();
   const [open, setOpen] = useState(false);
+  // After the first steps it waits its turn: behind graduation's card, then a beat after the coins note and Connie's
+  // word (store SETTLE), never all at once.
+  const waits = useCity((s) => s.celebration === FIRST_STEPS_QUEST || !settledTo(s, SETTLE.banner));
   const pick = bannerEvent(LIVE_EVENTS, now);
-  if (!pick) return null;
+  if (!pick || waits) return null;
   const board = boardEvents(LIVE_EVENTS, now);
   const live = pick.phase.kind === 'live';
   return (

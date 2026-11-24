@@ -12,7 +12,7 @@ import { ringOf } from '@/world/terrain';
 import { samplePlans } from './support/plans';
 
 const { isOsmUrl, OSM_COPYRIGHT_URL, openOsmCopyright } = await import('@/app/runtime');
-const { isMinimapKey, MapCredit, minimapShown, OsmCredit } = await import('@/ui/Minimap');
+const { isMinimapKey, MapCredit, MINI_ROOM, Minimap, minimapShown, OsmCredit } = await import('@/ui/Minimap');
 const { useCity } = await import('@/state/store');
 
 afterEach(() => cleanup());
@@ -76,6 +76,41 @@ describe('the minimap', () => {
     expect(minimapShown(undefined, 'panel')).toBe(false);
     expect(minimapShown(true, 'panel')).toBe(true);
     expect(minimapShown(false, 'full')).toBe(false);
+  });
+
+  it('waits behind its button on a tab’s map too small for it, until the player chooses', () => {
+    // The adapt pass (23 Nov 2026) measured these maps: the 168×92 box covered up to half a narrow one.
+    for (const [w, h] of [[422, 732], [562, 632], [582, 395], [1502, 380]]) expect(minimapShown(undefined, 'full', { w, h }), `${w}×${h}`).toBe(false);
+    for (const [w, h] of [[661, 700], [862, 654], [1502, 1014]]) expect(minimapShown(undefined, 'full', { w, h }), `${w}×${h}`).toBe(true);
+    expect([MINI_ROOM.w, MINI_ROOM.h]).toEqual([600, 400]);
+    // The player's choice wins at any size, and a map not laid out yet (0×0) keeps the tab's default.
+    expect(minimapShown(true, 'full', { w: 422, h: 732 })).toBe(true);
+    expect(minimapShown(false, 'full', { w: 1502, h: 1014 })).toBe(false);
+    expect(minimapShown(undefined, 'full', { w: 0, h: 0 })).toBe(true);
+    expect(minimapShown(undefined, 'panel', { w: 1502, h: 1014 })).toBe(false);
+  });
+
+  it('reads the map’s size from the stage it stands on: a narrow tab shows the 🗺 button, and M brings the box', () => {
+    const size = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('stage') ? 422 : 0;
+    });
+    const tall = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('stage') ? 732 : 0;
+    });
+    const prefs = useCity.getState().prefs;
+    useCity.setState({ view: { name: 'city' }, prefs: { ...prefs, minimap: undefined } });
+    render(
+      <div className="stage">
+        <Minimap layout="full" />
+      </div>,
+    );
+    expect(screen.getByRole('button', { name: 'Show the minimap (M)' }).getAttribute('aria-pressed')).toBe('false');
+    fireEvent.keyDown(window, { key: 'm' });
+    expect(useCity.getState().prefs.minimap).toBe(true);
+    expect(screen.getByRole('button', { name: 'Hide the minimap (M)' }).getAttribute('aria-pressed')).toBe('true');
+    size.mockRestore();
+    tall.mockRestore();
+    useCity.setState({ prefs });
   });
 
   it('M toggles it, but not while typing or with a modifier', () => {

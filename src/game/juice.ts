@@ -5,6 +5,7 @@
 // pass `still`), and sounds go through src/game/audio.ts, so mute and captions hold. The pure parts are tested
 // (tests/juice.test.ts); the scene parts take the scene as an argument and keep nothing.
 import type Phaser from 'phaser';
+import { COLOR } from './theme';
 
 // ── A run of right answers: the chime climbs a pentatonic step each time ──
 
@@ -89,24 +90,80 @@ export function windowSpots(hosts: readonly WindowHost[], n: number): { x: numbe
 
 // ── Scene helpers ──
 
-/** A beam of light from `from` into `to` (world px), fading in half a second. Nothing under reduced motion. */
+/** The answer beam's whole run, ms: the light travels into the building, then the building pulses. */
+export const BEAM_MS = 600;
+/** The share of BEAM_MS the light takes to land (a decelerating arrival); the pulse takes the rest. */
+export const BEAM_LAND = 0.4;
+/** The beam's widths, world px (whole numbers, so whole screen pixels at the city's integer zoom). */
+export const BEAM_CORE = 3;
+export const BEAM_HALO = 7;
+/** The landing pulse: a tile-shaped (2:1) ring growing from PULSE_FROM to PULSE_TO px each side, whole px. */
+export const PULSE_FROM = 6;
+export const PULSE_TO = 26;
+
+const easeOut = (x: number) => 1 - (1 - x) ** 3;
+const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+
+/**
+ * The beam at `t` (0 to 1 of BEAM_MS): its head and tail as fractions of the way from the card to the building (the head
+ * lands at BEAM_LAND, decelerating; the tail follows and catches up), the core's and the halo's alpha, and once the light
+ * has landed the pulse ring's half-width (whole px, growing) and alpha. Everything is gone at t = 1.
+ */
+export function beamAt(t: number) {
+  const head = easeOut(clamp01(t / BEAM_LAND));
+  const tail = easeOut(clamp01((t - 0.15) / 0.65));
+  const fade = t <= BEAM_LAND ? 1 : clamp01(1 - (t - BEAM_LAND) / (1 - BEAM_LAND));
+  const p = t < BEAM_LAND ? undefined : clamp01((t - BEAM_LAND) / (1 - BEAM_LAND));
+  return {
+    head,
+    tail: Math.min(tail, head),
+    core: fade,
+    halo: 0.4 * fade,
+    pulse: p === undefined ? undefined : { r: Math.round(PULSE_FROM + (PULSE_TO - PULSE_FROM) * easeOut(p)), alpha: 1 - p },
+  };
+}
+
+/**
+ * A right answer's beam of light from `from` (the card, at the bottom of the view) into `to` (its building), world px: a
+ * 3 px core in the theme's gold with a 1 px pale-gold glint and one soft halo step around it, then a tile-shaped pulse on
+ * the building where it lands. Integer pixels throughout; nothing under reduced motion (the card says it already).
+ */
 export function beam(scene: Phaser.Scene, from: { x: number; y: number }, to: { x: number; y: number }, color: number, still: boolean) {
   if (still) return;
-  const g = scene.add.graphics().setDepth(70_003).setBlendMode('ADD');
-  const draw = (k: number) => {
-    g.clear();
-    // The head runs ahead; the tail follows, so it reads as light travelling into the building.
-    const head = Math.min(1, k * 1.6);
-    const tail = Math.max(0, k * 1.6 - 0.6);
-    const at = (t: number) => ({ x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t });
-    const a = at(tail);
-    const b = at(head);
-    g.lineStyle(7, color, 0.25 * (1 - k)).lineBetween(a.x, a.y, b.x, b.y);
-    g.lineStyle(3, color, 0.9 * (1 - k * 0.6)).lineBetween(a.x, a.y, b.x, b.y);
-    if (head >= 1) g.fillStyle(color, 0.6 * (1 - k)).fillCircle(to.x, to.y, 10 * (1 - k) + 4);
+  const g = scene.add.graphics().setDepth(70_003);
+  const end = { x: Math.round(to.x), y: Math.round(to.y) };
+  const at = (k: number) => ({ x: Math.round(from.x + (end.x - from.x) * k), y: Math.round(from.y + (end.y - from.y) * k) });
+  /** A tile-shaped (2:1) diamond round where the light lands, `r` px to each side. */
+  const diamond = (r: number) => {
+    const h = Math.round(r / 2);
+    g.beginPath();
+    g.moveTo(end.x - r, end.y);
+    g.lineTo(end.x, end.y - h);
+    g.lineTo(end.x + r, end.y);
+    g.lineTo(end.x, end.y + h);
+    g.closePath();
   };
-  const o = { k: 0 };
-  scene.tweens.add({ targets: o, k: 1, duration: 650, ease: 'Sine.easeOut', onUpdate: () => draw(o.k), onComplete: () => g.destroy() });
+  const draw = (t: number) => {
+    const s = beamAt(t);
+    g.clear();
+    if (s.head > s.tail) {
+      const a = at(s.tail);
+      const b = at(s.head);
+      g.lineStyle(BEAM_HALO, color, s.halo).lineBetween(a.x, a.y, b.x, b.y);
+      g.lineStyle(BEAM_CORE, color, s.core).lineBetween(a.x, a.y, b.x, b.y);
+      g.lineStyle(1, COLOR.goldHi, s.core).lineBetween(a.x, a.y, b.x, b.y);
+    }
+    if (!s.pulse) return;
+    // Where the light lands: a bright spot that fades, and a ring the shape of a tile spreading over the building.
+    g.fillStyle(COLOR.goldHi, s.pulse.alpha);
+    diamond(4);
+    g.fillPath();
+    g.lineStyle(2, color, s.pulse.alpha);
+    diamond(s.pulse.r);
+    g.strokePath();
+  };
+  const o = { t: 0 };
+  scene.tweens.add({ targets: o, t: 1, duration: BEAM_MS, ease: 'Linear', onUpdate: () => draw(o.t), onComplete: () => g.destroy() });
 }
 
 /**

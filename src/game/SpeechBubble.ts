@@ -24,6 +24,28 @@ export interface SayOptions {
 /** The UI's bubble tones (src/game/theme.ts mirrors src/app/styles/00-base.css). */
 const TONES = BUBBLE_TONES;
 
+/** The longest a bubble stays up after its text is typed, in the full tab and in the ~400 px side panel's small map. */
+export const BUBBLE_HOLD_MAX_MS = { tab: 8000, panel: 5000 } as const;
+
+/** How long a line stays up once typed: its own hold (else one that grows with its length), never past `max`. */
+export const bubbleHold = (length: number, holdMs: number | undefined, max: number) => Math.min(holdMs ?? 3000 + length * 50, max);
+
+/**
+ * How a scene's bubbles share the map (CityScene sets it for its surface): `solo` keeps one bubble up at a time (a new
+ * line takes the floor and the one before steps down: the panel's map is ~290 px tall), `maxHoldMs` caps every hold.
+ */
+interface BubbleRules {
+  solo: boolean;
+  maxHoldMs: number;
+}
+const RULES = new WeakMap<Phaser.Scene, BubbleRules>();
+const BUBBLES = new WeakMap<Phaser.Scene, Set<SpeechBubble>>();
+
+/** Sets how this scene's bubbles share the map (src/game/scenes/CityScene.ts, by surface). */
+export function setBubbleRules(scene: Phaser.Scene, rules: BubbleRules) {
+  RULES.set(scene, rules);
+}
+
 /**
  * Crisp text in a pixel-art world: Phaser's pixelArt mode samples every texture with NEAREST, which
  * makes text jaggy when zoomed. Text textures switch to LINEAR and render at devicePixelRatio, and the
@@ -64,11 +86,14 @@ export class SpeechBubble extends Phaser.GameObjects.Container {
     this.add([this.bg, this.cap, this.label]);
     this.setVisible(false);
     scene.add.existing(this);
+    if (!BUBBLES.has(scene)) BUBBLES.set(scene, new Set());
+    BUBBLES.get(scene)!.add(this);
   }
 
   override destroy(fromScene?: boolean) {
     this.typer?.remove();
     this.hideTimer?.remove();
+    if (this.scene) BUBBLES.get(this.scene)?.delete(this);
     super.destroy(fromScene);
   }
 
@@ -93,12 +118,16 @@ export class SpeechBubble extends Phaser.GameObjects.Container {
       this.label.setText('');
       this.typer = this.scene.time.addEvent({ delay: 16, repeat: text.length - 1, callback: () => this.label.setText(text.slice(0, ++n)) });
     }
-    const hold = opts.holdMs ?? 3000 + text.length * 50;
+    const rules = RULES.get(this.scene);
+    const hold = bubbleHold(text.length, opts.holdMs, rules?.maxHoldMs ?? BUBBLE_HOLD_MAX_MS.tab);
     this.hideTimer = this.scene.time.delayedCall((typewriter ? text.length * 16 : 0) + hold, () => this.hide());
+    // One bubble at a time where the map is small: the line before steps down for this one.
+    if (rules?.solo) for (const b of BUBBLES.get(this.scene) ?? []) if (b !== this && b.showing) b.hide(true);
   }
 
   hide(fast = false) {
     this.hideTimer?.remove();
+    this.typer?.remove();
     // Already destroyed (its agent moved out, or the scene shut down): nothing to fade.
     if (!this.scene) return;
     this.scene.tweens.add({ targets: this, alpha: 0, duration: fast ? 150 : 300, onComplete: () => this.setVisible(false) });
