@@ -1,7 +1,7 @@
 # The city's AI on AWS without Bedrock: an open model served by Ollama on Fargate (Graviton, CPU only).
 # Built in AWS CodeBuild during the deploy (lib/service-stack.ts, @cdklabs/deploy-time-build), natively on ARM64.
 # Ollama 0.40.14 (released 2026-11-03), the arm64 image pinned by digest.
-FROM ollama/ollama:0.40.14@sha256:a2be4eed855ab2df84585f25e608fa68088988d2470c14dc736166b4770946c5
+FROM ollama/ollama:0.40.16@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592
 
 # The base image's Ubuntu packages get their security updates at build time (Inspector, 21 Nov 2026: glibc, pcre2, perl,
 # apt and ca-certificates had fixes the 0.40.14 image predates). apt checks every package against Ubuntu's keys. The
