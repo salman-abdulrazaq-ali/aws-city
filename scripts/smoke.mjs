@@ -1232,7 +1232,8 @@ await panel.screenshot({ path: `${out}/12-lookout.png` });
     const at = Date.now();
     // Up to 3 minutes: Kai's walk follows the game's clock, which runs ~30× slow at CI's 1–2 fps (seen 23 Nov 2026: three
     // stations timed out at 25 s on main and here); a fast machine returns as soon as the job opens.
-    while (Date.now() - at < 180_000 && (await city(() => window.awsCity.useCity.getState().clientTaskOpen)) !== t.id) await wait(250);
+    // 5 minutes: three CI runs on 24 Nov 2026 timed out at 3 on the Vault room's long walk.
+    while (Date.now() - at < 300_000 && (await city(() => window.awsCity.useCity.getState().clientTaskOpen)) !== t.id) await wait(250);
     if ((await city(() => window.awsCity.useCity.getState().clientTaskOpen)) !== t.id) {
       errors.push(`clients: "${t.title}" did not open when Kai reached the ${t.station}`);
       await city((id) => window.awsCity.useCity.getState().openClientTask(id), t.id);
