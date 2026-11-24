@@ -7,6 +7,7 @@ import type { Progress } from '@/backend/contract';
 import { questById, type QuestStep } from '@/world/content';
 import { SERVICES } from '@/world/taxonomy';
 import { landmarkOf } from './cities';
+import { firstSteps, type FirstSteps } from './firstSteps';
 
 /** The panel's tab ids (App.tsx TABS): City (id 'home': today's shift and the places), Learn, Jobs, Deploy. */
 export type Tab = 'home' | 'learn' | 'jobs' | 'deploy';
@@ -32,6 +33,11 @@ export interface LadderInput {
   canConnect?: boolean;
   /** Areas the player opened anyway (persisted by the UI as `awscity.opened`). */
   opened: ReadonlySet<string>;
+  /**
+   * Where the player is on the first steps (src/state/firstSteps.ts, with this device's prefs: a skip or a replay).
+   * Absent: read from Progress alone.
+   */
+  firstSteps?: Pick<FirstSteps, 'active' | 'step' | 'graduated'>;
 }
 
 export interface Ladder {
@@ -80,30 +86,56 @@ const counts = (p: Progress) => ({
   puzzlesPassed: Object.values(p.puzzles ?? {}).filter((x) => x.best >= PUZZLE_PASS).length,
 });
 
+/** The first steps' cards step and deploy step (quest first-steps, shared/quests.json): Learn and Deploy open there. */
+const FS_CARDS_STEP = 2;
+const FS_DEPLOY_STEP = 5;
+
+/**
+ * On the first steps (the quiet city), only what the path needs is open, whatever the save holds or the player opened
+ * before (a replay): Learn from the cards step, Deploy on the plan's step. Everything comes back as it was after.
+ */
+const quietRules = (step: number) =>
+  ({
+    learn: step >= FS_CARDS_STEP,
+    learnBuild: false,
+    map: false,
+    worldList: false,
+    day1: true,
+    deploy: step >= FS_DEPLOY_STEP,
+    care: false,
+    news: false,
+    clients: false,
+  }) satisfies Record<Exclude<Area, 'home'>, boolean>;
+
 /** Each area's rule (the plan's A3 table). The City tab is always open. */
 const rules = (i: LadderInput) => {
   const c = counts(i.progress);
+  // Past the first steps: done or skipped, or (a save from before them) a quest finished. It's what "a quest done" was.
+  const graduated = (i.firstSteps ?? firstSteps(i.progress)).graduated;
   const steps = activeSteps(i.progress);
   const stepIs = (kind: QuestStep['kind']) => steps.some((s) => s.kind === kind);
   const learnBuild = stepIs('puzzle') || c.puzzlesPassed > 0 || i.opened.has('learnBuild');
   return {
-    learn: stepIs('cards') || c.cardsReviewed > 0 || c.questsDone > 0 || learnBuild,
+    learn: stepIs('cards') || c.cardsReviewed > 0 || graduated || learnBuild,
     learnBuild,
     map: c.discovered >= PLACES_AT,
     worldList: c.discovered >= PLACES_AT,
     // The Day 1 Quarter (Amazon culture) is open from the start: it's part of the welcome, not a reward.
     day1: true,
-    deploy: stepIs('deploy') || c.questsDone >= 1 || i.linked || i.hasDeploys || !!i.linking || !!i.canConnect,
-    care: c.questsDone >= 1 || c.discovered >= CARE_AT || i.linked,
-    news: newsOpen(i.progress, i.linked),
-    // City Clients' side jobs open after the first quest has taught the basics (a job uses buildings you've put up).
-    clients: c.questsDone >= 1,
+    deploy: stepIs('deploy') || graduated || i.linked || i.hasDeploys || !!i.linking || !!i.canConnect,
+    care: graduated || c.discovered >= CARE_AT || i.linked,
+    news: graduated || newsOpen(i.progress, i.linked),
+    // City Clients' side jobs open after the first steps (or the first quest) have taught the basics.
+    clients: graduated,
   } satisfies Record<Exclude<Area, 'home'>, boolean>;
 };
 
 export function ladder(i: LadderInput): Ladder {
-  const r = rules(i);
-  const open = (a: Area) => r[a as keyof typeof r] || i.opened.has(a);
+  const fs = i.firstSteps ?? firstSteps(i.progress);
+  const quiet = fs.active;
+  const r = quiet ? quietRules(fs.step) : rules({ ...i, firstSteps: fs });
+  // The quiet city ignores what was opened before (a replay's "Show everything"): it comes back after graduation.
+  const open = (a: Area) => r[a as keyof typeof r] || (!quiet && i.opened.has(a));
   const tabs = new Set<Tab>(['home']);
   if (open('learn') || open('learnBuild')) tabs.add('learn');
   if (open('clients')) tabs.add('jobs');

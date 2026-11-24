@@ -103,6 +103,13 @@ interface BusEvents {
   windowLit: void;
   /** The tour asks where Kai stands on the page (CSS pixels); the city answers through `reply` (undefined: not shown). */
   locateKai: { reply: (r: { top: number; left: number; width: number; height: number } | undefined) => void };
+  // ── The first steps (src/state/firstSteps.ts) ──
+  /** A landmark's agent says one short line in the city (a bubble, to the player; announced). Never a model call. */
+  say: { agentId: string; text: string; tone?: 'info' | 'good' };
+  /** Put a citizen with this question by Kai now (the first steps' planted citizen): src/state/requests.ts requestFor. */
+  requestNow: { serviceId: string; cardId?: string };
+  /** The first steps are done (or a replay of them): the city's moment (tier-up, camera). The card is Celebrate's. */
+  graduated: void;
 }
 
 type Handler<K extends keyof BusEvents> = (payload: BusEvents[K]) => void;

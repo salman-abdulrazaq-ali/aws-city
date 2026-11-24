@@ -119,10 +119,18 @@ export interface Diagram {
 
 export type QuestStep =
   | { kind: 'visit'; serviceId: string; text: string }
-  | { kind: 'cards'; serviceId: string; count: number; text: string }
+  /** `deck`: only these cards count (the first steps' tutorial deck); absent = any of the service's cards. */
+  | { kind: 'cards'; serviceId: string; count: number; text: string; deck?: string[] }
   | { kind: 'puzzle'; puzzleId: string; text: string }
   | { kind: 'ask'; prompt: string; text: string }
-  | { kind: 'deploy'; templateId: string; text: string }
+  /** `decide`: a Reject finishes the step too (the first steps teach "you decide", not "press Approve"). */
+  | { kind: 'deploy'; templateId: string; text: string; decide?: boolean }
+  /** Finish a round of this mini-game (store.recordGame), whatever the score. */
+  | { kind: 'game'; gameId: string; serviceId: string; text: string }
+  /** Answer a citizen's question (bus citizenRequestDone answered). */
+  | { kind: 'request'; serviceId: string; text: string }
+  /** Watch this service's agent finish a task (task.done ok): the first steps' local practice task. */
+  | { kind: 'watch'; serviceId: string; text: string }
   /** A scenario question: which service fits, which is cheaper, what's wrong here. One option is right; each says why. */
   | { kind: 'choose'; id: string; text: string; question: string; options: ChoiceOption[] }
   /** Do a step of a hands-on workshop (shared/workshops.json), in practice or for real (store.workshopStep). */
@@ -156,6 +164,8 @@ export interface DeployTemplate {
   resources: { logicalId: string; type: string }[];
   outputs: string[];
   costNote: string;
+  /** Always a practice build, in every backend: never planned, approved or built in AWS (the first steps' photo-bucket). */
+  practice?: boolean;
 }
 
 export const CARDS: Record<string, Flashcard[]> = (cardsJson as { cards: Record<string, Flashcard[]> }).cards;

@@ -11,6 +11,8 @@ import { cardPlace, placeFor } from '@/world/places';
 import { QUESTS } from '@/world/content';
 import { checkExplain, checkKeywords, EXPLAIN_MARK, explainFeedback, explainService } from '@/state/explain';
 import { ALL_TASKS } from '@/world/clients';
+import { isPracticeTemplate, playPracticeTask } from './practiceTasks';
+import { PRACTICE_PREFIX } from './ServerBackend';
 
 /**
  * In-browser fake of the AWS City server. Emits exactly the events the real one will (contract v2),
@@ -566,7 +568,7 @@ export class MockBackend implements AgentBackend {
       case 'resource.remove':
         return void this.previewRemoval(cmd);
       case 'quest.start':
-        return this.emit({ type: 'agent.message', from: 'concierge', to: 'user', text: 'Quest accepted! Follow the steps in your quest log.' });
+        return this.emit({ type: 'agent.message', from: 'concierge', to: 'user', text: 'Quest accepted! Each step is on your City tab.' });
       case 'deploy.plan':
         return void this.planDeploy(cmd);
       case 'deploy.approve':
@@ -696,9 +698,32 @@ export class MockBackend implements AgentBackend {
     };
   }
 
+  /** A practice task (src/backend/practiceTasks.ts), played like the server's: locally, never a model call. */
+  practiceTask(scriptId: string, taskId?: string) {
+    return playPracticeTask(scriptId, (e) => this.emit(e), { taskId, speed: this.speed });
+  }
+
   private async planDeploy({ requestId, templateId, taskId }: DeployPlan) {
     const t = templatesJson.templates.find((x) => x.id === templateId);
     if (!t) return this.emit({ type: 'error', requestId, message: `Unknown template ${templateId}` });
+    // A practice-only template (the first steps' photo-bucket): the same practice build as ServerBackend's, so every
+    // build shows the same card (its practice- id: "Practice", no Tear down) and pays no deploy stars.
+    if (isPracticeTemplate(templateId)) {
+      const deployId = `${PRACTICE_PREFIX}${Date.now().toString(36)}`;
+      this.deploys.set(deployId, templateId);
+      await this.sleep(400);
+      return this.emit({
+        type: 'deploy.preview',
+        requestId,
+        deployId,
+        ...(taskId ? { taskId } : {}),
+        templateId,
+        stackName: `${t.title} (practice)`,
+        region: 'practice',
+        changes: t.resources.map((r) => ({ action: 'Add' as const, logicalId: r.logicalId, resourceType: r.type })),
+        costNote: t.costNote,
+      });
+    }
     const deployId = `d-${Date.now().toString(36)}`;
     await this.work('builder', 'cloudformation', `CreateChangeSet aws-city-${templateId}`, 2000);
     this.deploys.set(deployId, templateId);
@@ -721,6 +746,10 @@ export class MockBackend implements AgentBackend {
     const t = templatesJson.templates.find((x) => x.id === templateId);
     if (!t) return this.emit({ type: 'deploy.status', deployId, status: 'failed', message: 'Unknown deployment' });
     this.emit({ type: 'deploy.status', deployId, status: 'creating' });
+    if (isPracticeTemplate(t.id)) {
+      this.deploys.delete(deployId);
+      return this.emit({ type: 'deploy.status', deployId, status: 'complete', message: `${t.title}: practice build done. Nothing was made.` });
+    }
     for (const r of t.resources) {
       const svc = r.type.split('::')[1].toLowerCase();
       const agent = t.serviceIds.find((id) => svc.includes(id) || (id === 'apigateway' && svc.startsWith('apigateway'))) ?? 'builder';

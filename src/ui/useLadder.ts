@@ -6,6 +6,7 @@ import { canSetUpMfa, releaseCare } from '@/app/runtime';
 import { ALL_AREAS, ladder, lockedAreas, type Area, type Ladder, type LadderInput } from '@/state/ladder';
 import { useCity } from '@/state/store';
 import { linking } from '@/state/account';
+import { firstSteps } from '@/state/firstSteps';
 import { OPENED_KEY, readPref, writePref } from './logic';
 
 const listeners = new Set<() => void>();
@@ -68,9 +69,13 @@ export function useLadderInput(): LadderInput {
   const linkingNow = useCity((s) => linking(s.account));
   const canConnect = useCanConnect();
   const opened = useOpened();
+  // The first steps with this device's prefs (a skip, a replay): the ladder goes quiet on the path.
+  const pathPref = useCity((s) => s.prefs.firstSteps);
+  const replay = useCity((s) => s.prefs.firstStepsReplay);
+  const builder = useCity((s) => s.prefs.builder);
   return useMemo(
-    () => ({ progress, linked, hasDeploys, linking: linkingNow, canConnect, opened }),
-    [progress, linked, hasDeploys, linkingNow, canConnect, opened],
+    () => ({ progress, linked, hasDeploys, linking: linkingNow, canConnect, opened, firstSteps: firstSteps(progress, { firstSteps: pathPref, firstStepsReplay: replay, builder }) }),
+    [progress, linked, hasDeploys, linkingNow, canConnect, opened, pathPref, replay, builder],
   );
 }
 

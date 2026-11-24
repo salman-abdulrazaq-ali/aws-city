@@ -41,7 +41,34 @@ export type Feature =
   // tabs and panels that Simple shows only when they're needed
   | 'care'
   | 'deployTab'
-  | 'drawingBoard';
+  | 'drawingBoard'
+  // shown in both modes, but they wait in the quiet city (the first steps: src/state/firstSteps.ts quietContext)
+  | 'coins'
+  | 'decorate'
+  | 'promptBar'
+  | 'copilotSwitch'
+  | 'eventBanner'
+  | 'comingUp'
+  | 'connect'
+  | 'accountCard'
+  | 'tokens'
+  | 'citizenRequests'
+  | 'coachTips';
+
+/** Shown in Simple and Everything alike, except in the quiet city. */
+const OUTSIDE_THE_PATH: ReadonlySet<Feature> = new Set([
+  'coins',
+  'decorate',
+  'promptBar',
+  'copilotSwitch',
+  'eventBanner',
+  'comingUp',
+  'connect',
+  'accountCard',
+  'tokens',
+  'citizenRequests',
+  'coachTips',
+]);
 
 /** What a surface knows that can bring a hidden part back in Simple (the part is needed now). */
 export interface SimpleContext {
@@ -57,10 +84,18 @@ export interface SimpleContext {
   linking?: boolean;
   /** A hosted player with no AWS account linked yet: Deploy is where it connects. */
   canConnect?: boolean;
+  /**
+   * The quiet city: the player is on the first steps (src/state/firstSteps.ts quietContext, which also puts the step's
+   * kind in `steps`). Everything waits but the path itself: Deploy only on its plan's step.
+   */
+  quiet?: boolean;
 }
 
 /** Whether `feature` shows for these prefs (and, in Simple, whether it's needed now). */
 export function shows(feature: Feature, prefs: { simple?: boolean } | undefined, ctx: SimpleContext = {}): boolean {
+  // The quiet city, in either mode: the guide card leads, and only the Deploy tab comes, for the plan's step.
+  if (ctx.quiet) return feature === 'deployTab' && !!ctx.steps?.includes('deploy');
+  if (OUTSIDE_THE_PATH.has(feature)) return true;
   if (!isSimple(prefs)) return feature !== 'todo';
   switch (feature) {
     case 'todo':

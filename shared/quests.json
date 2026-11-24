@@ -2,6 +2,22 @@
   "asOf": "2026-10-18",
   "quests": [
     {
+      "id": "first-steps",
+      "title": "First steps",
+      "districtId": "storage",
+      "serviceIds": ["s3"],
+      "intro": "Grow your first building, see an agent work for you, and say OK to its plan. About 10 minutes, all practice.",
+      "rewardXp": 40,
+      "steps": [
+        { "kind": "visit", "serviceId": "s3", "text": "Walk to S3 Lake" },
+        { "kind": "game", "gameId": "fishing", "serviceId": "s3", "text": "Play S3 Fishing" },
+        { "kind": "cards", "serviceId": "s3", "count": 3, "deck": ["s3-01", "s3-04", "s3-05"], "text": "Learn 3 of Sally's cards" },
+        { "kind": "request", "serviceId": "s3", "text": "Help a citizen" },
+        { "kind": "watch", "serviceId": "s3", "text": "Watch Sally work" },
+        { "kind": "deploy", "templateId": "photo-bucket", "decide": true, "text": "Say OK to Sally's plan" }
+      ]
+    },
+    {
       "id": "storage-static-site",
       "title": "Your First Bucket",
       "districtId": "storage",
@@ -11,11 +27,11 @@
       "steps": [
         { "kind": "visit", "serviceId": "s3", "text": "Walk to S3 Lake and talk to Sally" },
         { "kind": "cards", "serviceId": "s3", "count": 5, "text": "Learn 5 S3 cards, like buckets, durability and storage classes" },
-        { "kind": "workshop", "workshopId": "s3-first-bucket", "text": "Hands on: make your first bucket in the S3 workshop (practice is free)" },
         { "kind": "cards", "serviceId": "cloudfront", "count": 3, "text": "Learn 3 CloudFront cards about keeping copies near people (edge caching)" },
         { "kind": "cards", "serviceId": "route53", "count": 2, "text": "Learn 2 Route 53 cards about how a web address finds your site" },
         { "kind": "puzzle", "puzzleId": "static-site", "text": "Design the City Brochure Site with S3, CloudFront and Route 53" },
-        { "kind": "deploy", "templateId": "static-site", "text": "Build it (practice is free): a private S3 bucket served by CloudFront" }
+        { "kind": "deploy", "templateId": "static-site", "text": "Build it (practice is free): a private S3 bucket served by CloudFront" },
+        { "kind": "workshop", "workshopId": "s3-first-bucket", "text": "Hands on: type it yourself in the practice terminal (the S3 workshop, free)" }
       ]
     },
     {

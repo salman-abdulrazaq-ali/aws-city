@@ -1,0 +1,111 @@
+{
+  "asOf": "2026-11-24",
+  "quest": "first-steps",
+  "deck": ["s3-01", "s3-04", "s3-05"],
+  "map": {
+    "connie": "AWS is Amazon's cloud: the computers that run much of the internet. Each glowing dot is a Region: a group of AWS buildings full of computers, in one part of the world. Let's build your city in one.",
+    "start": "Start in Oregon",
+    "note": "First steps: about 10 minutes. It's all practice: nothing costs money.",
+    "advanced": "I already know AWS: quick tour",
+    "tab": "🌍 Your first steps start as soon as you pick a place on the map.",
+    "storm": "AWS reports a problem here. Pick another dot to start."
+  },
+  "guide": { "label": "First steps · {n} of 6" },
+  "steps": [
+    {
+      "title": "Walk to S3 Lake",
+      "body": "This is you, Kai, the city's new Mayor. Every building here is one AWS service: a tool you can rent from AWS. First stop: S3 Lake, where files are kept.",
+      "button": "Walk to S3 Lake",
+      "running": "Kai is walking to S3 Lake…",
+      "sally": "Hi, I'm Sally! S3 Lake is Amazon S3: AWS's place to keep files, like your photos.",
+      "done": "Done: you reached S3 Lake."
+    },
+    {
+      "title": "Play S3 Fishing",
+      "body": "Each fish is a file (S3 calls it an object). Hook it, then pick its shelf: hot, warm or cold, by how often it's opened.",
+      "button": "🎣 Play S3 Fishing",
+      "sally": "Sort my fish onto the right shelves and the lake grows!",
+      "end": "Back to the city",
+      "grew": "S3 Lake grew to Novice! Stars ⭐ are what you've learned, and they grow your buildings.",
+      "notyet": "Nice fishing! S3 Lake needs {n} more ⭐ to grow. Sally's cards will get it there."
+    },
+    {
+      "title": "Learn 3 of Sally's cards",
+      "body": "Tap a card to flip it, then say how well you knew it. Didn't know? That's fine: it comes back soon, so it sticks.",
+      "button": "Open Sally's cards (Learn tab)",
+      "strip": "First steps 3 of 6 · Learn 3 cards · {k} of 3",
+      "terms": "Words with a dotted line explain themselves. Tap one.",
+      "done": "✓ Step 3 done · Next: Help a citizen",
+      "back": "Back to the city"
+    },
+    {
+      "title": "Help a citizen",
+      "body": "People in your city have questions too. Answer this one: it's about a card you just learned, and remembering it now makes it stick.",
+      "button": "Walk to the citizen",
+      "citizen": "Excuse me, Mayor! Can you help?",
+      "right": "Right! +2 ⭐ for S3 Lake.",
+      "wrong": "Not quite: it's \"{answer}\". That card will come back soon."
+    },
+    {
+      "title": "Watch Sally work",
+      "body": "Every building has a helper, called an agent, who does that service's job for you. Ask Sally to store your holiday photos, then watch each step.",
+      "button": "Ask Sally: store my photos",
+      "note": "Practice: nothing real is made.",
+      "running": "Sally is working…"
+    },
+    {
+      "title": "Say OK to Sally's plan",
+      "body": "Agents never build anything without your OK. Sally has planned a private bucket for your photos. Look it over, then press Approve & deploy (deploy means build it).",
+      "button": "See Sally's plan (Deploy tab)",
+      "practice": "Practice: nothing real is made, and it costs nothing.",
+      "strip": "First steps 6 of 6 · Say OK to Sally's plan",
+      "approved": "Built, in practice! Your photos have a private home.",
+      "rejected": "No problem: nothing was made. You decide, every time."
+    }
+  ],
+  "task": {
+    "id": "s3-first",
+    "agentId": "s3",
+    "prompt": "Store my holiday photos",
+    "steps": [
+      "Walking to S3 Lake",
+      "Finding a bucket for your photos",
+      "Photos are opened about once a month: the warm shelf",
+      "Putting holiday.jpg in the bucket",
+      "After 90 days, old photos move to the deep freeze"
+    ],
+    "result": "Done! Your photos sit on the warm shelf, and old ones move to the deep freeze by themselves."
+  },
+  "grad": {
+    "title": "First steps done!",
+    "connie": "You did it, Mayor. You grew your first building, and you've seen an agent work for you, only with your OK.",
+    "learned": [
+      "S3 keeps your files in buckets.",
+      "Shelves (storage classes) keep files you rarely open cheap.",
+      "Nothing changes without your OK."
+    ],
+    "region": "Your city is the Oregon Region. AWS writes it us-west-2.",
+    "open": {
+      "jobs": "💼 Jobs: side jobs for the city's businesses",
+      "decorate": "🌳 Decorate: spend your {n} City Coins on your city",
+      "ask": "💬 Ask the city: type what you want in plain words"
+    },
+    "next": "Next: Your First Bucket →",
+    "later": "Look around first"
+  },
+  "coins": { "note": "You've earned {n} City Coins: spend them in 🌳 Decorate. Stars ⭐ are never spent." },
+  "skip": {
+    "link": "Skip the first steps",
+    "title": "Skip the first steps?",
+    "body": "The whole city opens now. You can play the first steps any time from ⋯.",
+    "keep": "Keep going",
+    "go": "Skip the first steps"
+  },
+  "resume": "Welcome back, Mayor. Next: {step}.",
+  "menu": { "play": "▶ Play the first steps", "replay": "↺ Replay the first steps", "tour": "Show the quick tour" },
+  "hud": { "steps": "First steps {n}/6" },
+  "q2": {
+    "title": "Your First Bucket",
+    "intro": "Your photos have a home. Now let's put the city's brochure online, fast for visitors everywhere."
+  }
+}

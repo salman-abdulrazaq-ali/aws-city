@@ -664,6 +664,16 @@
       ],
       "outputs": ["GraphQLUrl", "UserPoolId", "BoardApiKey"],
       "costNote": "Pennies for one sports day: AppSync bills per query, update and real-time minute, DynamoDB per request. Delete the stack when you finish."
+    },
+    {
+      "id": "photo-bucket",
+      "title": "A private bucket for your photos",
+      "serviceIds": ["s3"],
+      "summary": "One S3 bucket that keeps your holiday photos private: public access blocked, every file encrypted, and old versions kept if one is overwritten.",
+      "resources": [{ "logicalId": "PhotoBucket", "type": "AWS::S3::Bucket" }],
+      "outputs": ["BucketName"],
+      "costNote": "Practice: nothing real is made, and it costs nothing.",
+      "practice": true
     }
   ]
 }

@@ -13,6 +13,7 @@ import { countDaily, takeDaily, usedToday } from '@/learning/dailyLedger';
 import { isoWeekUtc } from './events';
 import { firstRemembered, REMEMBERED_STARS } from './mastery';
 import { ACTION_BLUEPRINT, GUARDED_EQUIV, isPracticeDeploy } from '@/backend/ServerBackend';
+import { isPracticeTask } from '@/backend/practiceTasks';
 import { serviceById } from '@/world/taxonomy';
 import { REGIONS } from '@/world/culture';
 import { citizenById, PILLAR_LABEL } from '@/world/citizens';
@@ -38,6 +39,7 @@ import { openDrop as openDropPure } from './drops';
 import { findCombo } from './codex';
 import { RARITY_NAME, type Cosmetic } from './cosmetics';
 import { comboById } from '@/world/combos';
+import { FIRST_STEPS, FIRST_STEPS_OF, FIRST_STEPS_QUEST, quietCity, startsFirstSteps, type FirstStepsPref, type ReplayState } from './firstSteps';
 
 /** v2.11: sandbox designs kept in Progress (the server accepts at most 20). */
 export const MAX_DESIGNS = 20;
@@ -330,6 +332,10 @@ export interface Prefs {
   /** v2.15: the gentle return note on Home (one positive line a day). Opt-in: off unless turned on in My City. */
   returnNote?: boolean;  /** Simple mode (src/state/simple.ts): a plain To-do list, the extras hidden. Absent = on (the default); ⋯ → Show everything turns it off. */
   simple?: boolean;
+  /** The first steps (src/state/firstSteps.ts): chosen on the world map ('beginner'), skipped, or replayed from ⋯. */
+  firstSteps?: FirstStepsPref;
+  /** A replay's place on the path (this device only; the synced quest can't go back once done). */
+  firstStepsReplay?: ReplayState;
 }
 export interface WorkshopMemory {
   names: Record<string, string>;
@@ -350,6 +356,13 @@ export const cleanWorkshopMemory = (v: unknown): Record<string, WorkshopMemory> 
     out[id] = { names: n, history: h };
   }
   return Object.keys(out).length ? out : undefined;
+};
+/** A replay's place, cleaned (it comes from storage): a whole step 0..5 and a small card count. */
+const cleanReplay = (v: unknown): ReplayState | undefined => {
+  if (!v || typeof v !== 'object') return undefined;
+  const { step, count } = v as { step?: unknown; count?: unknown };
+  if (typeof step !== 'number' || !Number.isInteger(step) || step < 0 || step >= FIRST_STEPS_OF) return undefined;
+  return { step, ...(typeof count === 'number' && Number.isInteger(count) && count > 0 && count < 100 ? { count } : {}) };
 };
 const PREFS_KEY = 'aws-city-prefs';
 const loadPrefs = (): Prefs => {
@@ -376,6 +389,8 @@ const loadPrefs = (): Prefs => {
         ...(typeof v.glow === 'string' && /^glow-[a-z]{2,20}$/.test(v.glow) ? { glow: v.glow } : {}),
         ...(v.returnNote === true ? { returnNote: true } : {}),
         ...(v.simple === false ? { simple: false } : {}),
+        ...(v.firstSteps === 'beginner' || v.firstSteps === 'skipped' || v.firstSteps === 'replay' ? { firstSteps: v.firstSteps } : {}),
+        ...(cleanReplay(v.firstStepsReplay) ? { firstStepsReplay: cleanReplay(v.firstStepsReplay) } : {}),
       };
   } catch {
     /* defaults */
@@ -643,8 +658,20 @@ export interface CityState {
    */
   recordGame(game: GameId | 'launch', score: number, opts?: { timed?: boolean }): number;
   startQuest(questId: string): void;
-  /** Advance any active quest whose current step matches. */
+  /** Advance any active quest whose current step matches (and a replay of the first steps, src/state/firstSteps.ts). */
   questEvent(match: (step: QuestStep) => boolean, countable?: boolean): void;
+  /**
+   * The first steps (src/state/firstSteps.ts): start the path (quest first-steps) when the player chose it on the world
+   * map (prefs.firstSteps 'beginner') and isn't a legacy save. enterRegion calls it; safe to call again.
+   */
+  startFirstSteps(): void;
+  /** Skip the path (prefs 'skipped'): a path under way ends finished and unpaid, so nothing offers it again. */
+  skipFirstSteps(): void;
+  /**
+   * ⋯ → Play the first steps: anyone (a legacy or hosted player too) runs the path from step 0 on this device (prefs
+   * 'replay'). The city is quiet until it ends; its end graduates as usual, and the quest's stars are paid only once ever.
+   */
+  playFirstSteps(): void;
   /** What the player learned today (device-local; the streak itself is in Progress). */
   today?: DayLog;
   /** A learning action (a card reviewed, a puzzle passed, a fix approved): counts toward today and the streak. */
@@ -1199,7 +1226,8 @@ export const useCity = create<CityState>()((set, get) => ({
     // Saved before v2.7: its Region landmarks belong to the city the player was building.
     const cities = migrateCities(loaded, get().cityRegion);
     // v2.14: decorations bought with stars come back as City Coins, once (src/state/wallet.ts migrateWallet).
-    const migrated = migrateWallet(cities);
+    // Quest 2 was re-cut (its workshop moved last): a save from before moves to the same step in the new order.
+    const migrated = migrateQuestCut(migrateWallet(cities));
     const p = migrated === cities ? cities : { ...migrated, updatedAt: new Date().toISOString() };
     set({
       progress: p,
@@ -1320,8 +1348,12 @@ export const useCity = create<CityState>()((set, get) => ({
         const capped = e.xp.length > 0 && !paid.length;
         const coins = capped && e.ok && takeDaily('watch', WATCH_PAID_A_DAY) ? get().earnCoins(COIN_PAY.watch, 'watch it done') : 0;
         if (done) set({ tasks: { ...get().tasks, [e.taskId]: { ...done, paid, ...(capped ? { capped: true } : {}), ...(coins ? { coins } : {}) } } });
-        // An answered request ticks an "ask" step; a deploy finishing (same event, its deployId) doesn't.
-        if (e.ok && !s.deploys[e.taskId]) get().questEvent((st) => st.kind === 'ask');
+        // An answered request ticks an "ask" step; a deploy finishing (same event, its deployId) doesn't, nor a practice
+        // task (src/backend/practiceTasks.ts: played locally, nobody was asked anything).
+        if (e.ok && !s.deploys[e.taskId] && !isPracticeTask(e.taskId)) get().questEvent((st) => st.kind === 'ask');
+        // Watch it done: a task its agent finished ticks a watch step for that building (the first steps' practice task).
+        const worker = t?.agentId ?? e.xp[0]?.serviceId;
+        if (e.ok && !s.deploys[e.taskId] && worker) get().questEvent((st) => st.kind === 'watch' && st.serviceId === worker);
         break;
       }
       case 'page.classified':
@@ -1473,7 +1505,9 @@ export const useCity = create<CityState>()((set, get) => ({
           if (e.status === 'failed') s.toast('⚠️', e.message ?? 'That change didn’t go through. Nothing changed.', 'error');
         } else if (e.status === 'complete') {
           const before = get().celebration;
-          if (d) get().questEvent((st) => st.kind === 'deploy' && (st.templateId === d.templateId || GUARDED_EQUIV[st.templateId] === ACTION_BLUEPRINT[d.templateId]));
+          // The template itself, or (the local server's guarded builds) its equivalent; never two templates that both have none.
+          if (d) get().questEvent((st) => st.kind === 'deploy' && (st.templateId === d.templateId || (GUARDED_EQUIV[st.templateId] !== undefined && GUARDED_EQUIV[st.templateId] === ACTION_BLUEPRINT[d.templateId])));
+          if (d?.templateId === FIRST_STEPS_TEMPLATE) bus.emit('say', { agentId: 's3', text: FIRST_STEPS.steps[5].approved ?? '', tone: 'good' });
           // The deploy finished a quest: its celebration card is the moment (no toast on top); the feed has the line.
           if (get().celebration === before)
             s.toast(
@@ -1486,6 +1520,10 @@ export const useCity = create<CityState>()((set, get) => ({
                   ? doneLine(d, s.backendKind === 'mock')
                   : 'Your stack is built!',
             );
+        } else if (e.status === 'rejected' && d) {
+          // "You decide": a Reject finishes a step that says so (the first steps' plan), like an Approve.
+          get().questEvent((st) => st.kind === 'deploy' && !!st.decide && st.templateId === d.templateId);
+          if (d.templateId === FIRST_STEPS_TEMPLATE) bus.emit('say', { agentId: 's3', text: FIRST_STEPS.steps[5].rejected ?? '', tone: 'info' });
         }
         break;
       }
@@ -1601,6 +1639,9 @@ export const useCity = create<CityState>()((set, get) => ({
     get().log({ kind: 'system', text: 'Signed out. Sign in to pick up where you left off.' });
   },
   toast: (icon, text, kind = 'info', merge, building, opts) => {
+    // The quiet city (src/state/firstSteps.ts): on the first steps, info toasts are dropped (never held: they'd flood
+    // at graduation, whose card says what opened). Errors still show.
+    if (kind !== 'error' && quietCity(get().progress, get().prefs)) return;
     const show = get().showToast;
     const visible = () => get().toasts.filter((t) => !t.leaving);
     if (kind === 'error') {
@@ -1685,6 +1726,8 @@ export const useCity = create<CityState>()((set, get) => ({
     const first = !!get().prefs.region && code !== get().cityRegion && !builtCities(get().progress)[code];
     get().setPref('region', code);
     set({ cityRegion: code, view: { name: 'city' } });
+    // The first steps start on arriving in a city, when the player chose them (src/state/firstSteps.ts).
+    get().startFirstSteps();
     nextToast(get);
     // Like real AWS, a new Region is empty: say so once, kindly, so an empty city doesn't look like lost progress.
     // Another city's welcome (still up, or waiting) goes: it would greet you in the wrong place.
@@ -1746,7 +1789,8 @@ export const useCity = create<CityState>()((set, get) => ({
     get().noteLearning('cards');
     // Every graded card counts toward a cards step: Again is still a card looked at (only grading Good counted, so a
     // quest could stall on a deck the player was still learning).
-    get().questEvent((st) => st.kind === 'cards' && st.serviceId === serviceId, true);
+    // A step with a deck (the first steps' tutorial deck) counts only its own cards.
+    get().questEvent((st) => st.kind === 'cards' && st.serviceId === serviceId && (!st.deck || st.deck.includes(cardId)), true);
     return { stars, remembered };
   },
 
@@ -1774,6 +1818,8 @@ export const useCity = create<CityState>()((set, get) => ({
       if (g.bestWeek !== week || (g.bestTimed ?? 0) < score) Object.assign(next, { bestTimed: g.bestWeek === week ? Math.max(g.bestTimed ?? 0, score) : score, bestWeek: week });
     }
     set({ progress: { ...progress, games: { ...progress.games, [game]: next }, updatedAt: new Date().toISOString() } });
+    // A game step (the first steps' fishing) counts any finished round, whatever it scored.
+    get().questEvent((st) => st.kind === 'game' && st.gameId === game);
     if (score <= 0) return 0;
     // The scene counted this round (countRound) before recording it: full coins for the first rounds or a new best,
     // half for the next few, then none (src/state/wallet.ts roundCoins).
@@ -1871,7 +1917,9 @@ export const useCity = create<CityState>()((set, get) => ({
     // Under way already, or finished: a finished quest never starts over (its steps and its finish paid once).
     const status = progress.quests?.[questId]?.status;
     if (!q || status === 'active' || status === 'done') return;
-    set({ progress: { ...progress, quests: { ...progress.quests, [questId]: { status: 'active', step: 0, count: 0 } }, updatedAt: new Date().toISOString() } });
+    // A quest re-cut since saves were made marks this save as the new order when it starts (migrateQuestCut).
+    const cut: NonNullable<Progress['quests']> = questId === QUEST_CUT.questId ? { [QUEST_CUT.marker]: { status: 'active', step: 0 } } : {};
+    set({ progress: { ...progress, quests: { ...progress.quests, [questId]: { status: 'active', step: 0, count: 0 }, ...cut }, updatedAt: new Date().toISOString() } });
     get().log({ kind: 'system', text: `📜 ${q.title}: ${q.intro}` });
     // Already standing at the first step's landmark (console page or selected place): that visit counts now.
     const { focus, selected } = get();
@@ -1881,10 +1929,14 @@ export const useCity = create<CityState>()((set, get) => ({
 
   questEvent: (match, countable) => {
     const { progress } = get();
+    // A replay of the first steps runs from prefs (replayEvent, below); the synced quest waits meanwhile.
+    const replaying = get().prefs.firstSteps === 'replay';
     const quests = { ...progress.quests };
     let changed = false;
+    let graduatedNow = false;
     for (const [id, st] of Object.entries(quests)) {
       if (st.status !== 'active') continue;
+      if (replaying && id === FIRST_STEPS_QUEST) continue;
       const q = questById(id);
       const step = q?.steps[st.step];
       if (!q || !step || !match(step)) continue;
@@ -1902,6 +1954,7 @@ export const useCity = create<CityState>()((set, get) => ({
         bus.emit('questDone', { questId: id });
         const share = Math.ceil(q.rewardXp / q.serviceIds.length);
         setTimeout(() => q.serviceIds.forEach((sid) => get().addXp(sid, share)), 0);
+        if (id === FIRST_STEPS_QUEST) graduatedNow = true;
       } else {
         quests[id] = { status: 'active', step: next, count: 0 };
         get().log({ kind: 'system', text: `📜 ${q.title} — next: ${q.steps[next].text}` });
@@ -1909,9 +1962,32 @@ export const useCity = create<CityState>()((set, get) => ({
         // First in line: a walk that also discovers the building (its toast, a greeting) never buries it.
         get().toast('✓', `Step ${next} of ${q.steps.length} done: ${step.text}`, 'info', undefined, undefined, { first: true });
         bus.emit('questStep', { questId: id, step: st.step, serviceId: stepService(id, step) });
+        if (id === FIRST_STEPS_QUEST) firstStepMoment(step);
       }
     }
     if (changed) set({ progress: { ...get().progress, quests, updatedAt: new Date().toISOString() } });
+    // Graduation: the city's moment (CityScene), after the save says so (firstSteps() reads graduated).
+    if (graduatedNow) bus.emit('graduated');
+    if (replaying) replayEvent(get, set, match, countable);
+  },
+
+  startFirstSteps: () => {
+    const { progress, prefs } = get();
+    if (startsFirstSteps(progress, prefs)) get().startQuest(FIRST_STEPS_QUEST);
+  },
+  skipFirstSteps: () => {
+    get().setPref('firstStepsReplay', undefined);
+    get().setPref('firstSteps', 'skipped');
+    // A path under way ends finished (unpaid), so no surface or device offers it again; a replay leaves the quest as it was.
+    const p = get().progress;
+    const q = p.quests?.[FIRST_STEPS_QUEST];
+    if (q && q.status !== 'done') set({ progress: { ...p, quests: { ...p.quests, [FIRST_STEPS_QUEST]: { status: 'done', step: FIRST_STEPS_OF } }, updatedAt: new Date().toISOString() } });
+  },
+  playFirstSteps: () => {
+    get().setPref('firstStepsReplay', { step: 0 });
+    get().setPref('firstSteps', 'replay');
+    const q = questById(FIRST_STEPS_QUEST);
+    if (q) get().log({ kind: 'system', text: `📜 ${q.title}: ${q.intro}` });
   },
 }));
 
@@ -1921,6 +1997,64 @@ function markChat(get: () => CityState, districtId: string, id: string, note: { 
   const list = chats[districtId];
   if (!list?.some((m) => m.id === id)) return;
   useCity.setState({ chats: { ...chats, [districtId]: list.map((m) => (m.id === id ? { ...m, ...note } : m)) } });
+}
+
+/** The first steps' plan (the deploy step's practice template): Sally says how it went. */
+const FIRST_STEPS_TEMPLATE = 'photo-bucket';
+
+/** A step of the first steps done: Sally greets the player on arrival (the guide card and announce are the UI's). */
+function firstStepMoment(step: QuestStep) {
+  if (step.kind === 'visit') bus.emit('say', { agentId: step.serviceId, text: FIRST_STEPS.steps[0].sally ?? '', tone: 'good' });
+}
+
+/**
+ * A replay of the first steps (prefs.firstStepsReplay): the same steps and moments as the path, kept on this device. Its
+ * end is graduation: the card, the city's moment, the quest marked done; its stars are paid only if it was never done.
+ */
+function replayEvent(get: () => CityState, set: (p: Partial<CityState>) => void, match: (step: QuestStep) => boolean, countable?: boolean) {
+  const s = get();
+  const q = questById(FIRST_STEPS_QUEST);
+  const r = s.prefs.firstStepsReplay ?? { step: 0 };
+  const step = q?.steps[r.step];
+  if (!q || !step || !match(step)) return;
+  if (countable && step.kind === 'cards' && (r.count ?? 0) + 1 < step.count) return s.setPref('firstStepsReplay', { step: r.step, count: (r.count ?? 0) + 1 });
+  if (r.step + 1 < q.steps.length) {
+    s.setPref('firstStepsReplay', { step: r.step + 1 });
+    s.log({ kind: 'system', text: `📜 ${q.title} — next: ${q.steps[r.step + 1].text}` });
+    bus.emit('questStep', { questId: FIRST_STEPS_QUEST, step: r.step, serviceId: stepService(FIRST_STEPS_QUEST, step) });
+    firstStepMoment(step);
+    return;
+  }
+  const was = s.progress.quests?.[FIRST_STEPS_QUEST]?.status;
+  s.setPref('firstStepsReplay', undefined);
+  s.setPref('firstSteps', undefined);
+  const p = get().progress;
+  if (was !== 'done') set({ progress: { ...p, quests: { ...p.quests, [FIRST_STEPS_QUEST]: { status: 'done', step: q.steps.length } }, updatedAt: new Date().toISOString() } });
+  set({ celebration: FIRST_STEPS_QUEST });
+  s.log({ kind: 'system', text: `🏆 ${q.title} done${was === 'done' ? ' again' : `! +${q.rewardXp} ⭐`}` });
+  bus.emit('questDone', { questId: FIRST_STEPS_QUEST });
+  // Never paid twice: a replay of a finished path pays no quest stars (ordinary activity pay still follows the daily ledger).
+  if (was !== 'done') {
+    const share = Math.ceil(q.rewardXp / q.serviceIds.length);
+    setTimeout(() => q.serviceIds.forEach((sid) => get().addXp(sid, share)), 0);
+  }
+  bus.emit('graduated');
+}
+
+/**
+ * Quest 2 ("Your First Bucket") was re-cut on 24 Nov 2026: its S3 workshop moved from the third step to the last, so the
+ * first command line comes after the drawing and the build. A save from before moves to the same step in the new order
+ * (one on the workshop goes on to the CloudFront cards; the workshop waits at the end). The marker (an entry no quest
+ * has) says a save is in the new order: written here and when the quest starts, so the move runs once, on any device.
+ */
+export const QUEST_CUT = { questId: 'storage-static-site', marker: 'cut:storage-static-site:workshop-last', map: [0, 1, 2, 2, 3, 4, 5] } as const;
+export function migrateQuestCut(p: Progress): Progress {
+  const st = p.quests?.[QUEST_CUT.questId];
+  if (!st || st.status === 'done' || p.quests?.[QUEST_CUT.marker]) return p;
+  const step = QUEST_CUT.map[st.step] ?? st.step;
+  // The workshop's own place (old step 2) is a new step for them: its count starts at 0. Every other step is the same one.
+  const count = st.step === 2 ? 0 : (st.count ?? 0);
+  return { ...p, quests: { ...p.quests, [QUEST_CUT.questId]: { status: 'active', step, count }, [QUEST_CUT.marker]: { status: 'active', step: 0 } } };
 }
 
 /** A linked account the server reads (the demo's practice account is pretend, so its findings still drip). */
@@ -1972,4 +2106,9 @@ function flushHeld() {
 // Toasts that came while the page was hidden show once the player is back (toastsHeld waits for it).
 globalThis.document?.addEventListener('visibilitychange', () => {
   if (!pageHidden()) nextToast(useCity.getState);
+});
+
+// A citizen's question answered (src/ui/RequestCard.tsx): a quest's "request" step counts (the first steps' citizen).
+bus.on('citizenRequestDone', (e) => {
+  if (e.answered) useCity.getState().questEvent((st) => st.kind === 'request');
 });

@@ -16,6 +16,7 @@ import { currentStreak, type OvertimeGoal } from './progress';
 import { isDiscovered } from './selectors';
 import { dueFor } from './srs';
 import { coinsToday } from './wallet';
+import { FIRST_STEPS_QUEST } from './firstSteps';
 
 export type AfterQuests =
   | { kind: 'workshop'; id: string; text: string }
@@ -75,6 +76,12 @@ export function stepButton(step: QuestStep): string {
       return 'Start in the console';
     case 'design':
       return 'Draw it (Learn)';
+    case 'game':
+      return 'Play the game';
+    case 'request':
+      return 'Help a citizen';
+    case 'watch':
+      return 'Watch it done';
   }
 }
 
@@ -99,6 +106,12 @@ export function stepAction(step: QuestStep, count = 0): string {
       return 'Start in the console';
     case 'design':
       return 'Draw a design';
+    case 'game':
+      return `Play ${place(step.serviceId)}'s game`;
+    case 'request':
+      return 'Help a citizen';
+    case 'watch':
+      return `Watch ${placeFor(step.serviceId)?.agentName.split(' the ')[0] ?? 'the agent'} work`;
   }
 }
 
@@ -224,7 +237,10 @@ export function planNext(i: NextInput): NextPlan {
   const p = i.progress;
   const region = i.cityRegion;
   const quests = p.quests ?? {};
+  // The first steps are led by their guide card (src/state/firstSteps.ts), never offered here: not as a step, and not
+  // as a new quest (a legacy save or a graduate never gets them; quest 2 is the first offer after them).
   for (const q of QUESTS) {
+    if (q.id === FIRST_STEPS_QUEST) continue;
     const st = quests[q.id];
     const step = st?.status === 'active' ? q.steps[st.step] : undefined;
     if (step) return { kind: 'step', label: stepAction(step, st!.count ?? 0), where: stepWhere(step), questId: q.id, step, serviceId: stepService(q.id, step) };
@@ -235,7 +251,7 @@ export function planNext(i: NextInput): NextPlan {
     const count = Math.min(due.count, REVIEW_MAX);
     return { kind: 'review', label: `Review ${plural(count, 'card')}`, where: 'Learn', serviceId: due.serviceId, count };
   }
-  const fresh = QUESTS.find((q) => !quests[q.id]);
+  const fresh = QUESTS.find((q) => q.id !== FIRST_STEPS_QUEST && !quests[q.id]);
   if (fresh) return { kind: 'quest', label: `Start: ${fresh.title}`, questId: fresh.id };
   const ready = readyToUpgrade(p, region, 1, i.now)[0];
   if (ready) return { kind: 'upgrade', label: upgradeLabel(ready), where: 'Learn', serviceId: ready.serviceId, reviews: ready.reviews };
