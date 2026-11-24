@@ -169,18 +169,23 @@ describe('for real', () => {
     expect(within(choice).getByRole('button', { name: '💻 My own terminal' }).getAttribute('aria-pressed')).toBe('true');
     const setup = screen.getByRole('group', { name: 'Set up your terminal once' });
     expect(setup.textContent).toMatch(/AWSCity-8585 \(0474-6343-8585\)/);
+    // The Region to type is the city's (seen 24 Nov 2026: us-east-1 was picked for an Oregon city), and no placeholder
+    // export is ever offered (it was pasted with <your profile> in it).
+    expect(setup.textContent).toMatch(/When it asks for a Region, type us-west-2/);
     expect([...setup.querySelectorAll('.workshop-cmd')].map((c) => c.textContent)).toEqual([
       'aws --version',
       'aws login',
-      'export AWS_PROFILE=<your profile>',
+      'aws configure set region us-west-2',
       'aws sts get-caller-identity --query Account --output text',
     ]);
+    expect(setup.textContent).toMatch(/run as you \(your own sign-in\), not as AWS City’s role/);
     expect(within(setup).getByRole('button', { name: 'Install the AWS CLI ↗' })).toBeTruthy();
     // The profile typed once (the switch card shares it) makes the export ready to paste.
-    fireEvent.change(within(setup).getByLabelText('Your AWS CLI profile'), { target: { value: 'city-047' } });
+    fireEvent.change(within(setup).getByLabelText('Using a named profile? (optional)'), { target: { value: 'city-047' } });
     expect(useCity.getState().prefs.awsProfile).toBe('city-047');
     expect(within(setup).getByText('export AWS_PROFILE=city-047')).toBeTruthy();
-    fireEvent.change(within(setup).getByLabelText('Your AWS CLI profile'), { target: { value: '' } });
+    fireEvent.change(within(setup).getByLabelText('Using a named profile? (optional)'), { target: { value: '' } });
+    expect(within(setup).queryByText(/export AWS_PROFILE/)).toBeNull();
     expect(screen.queryByRole('button', { name: /Open CloudShell/ })).toBeNull();
     // And back.
     fireEvent.click(within(choice).getByRole('button', { name: '☁️ CloudShell' }));
