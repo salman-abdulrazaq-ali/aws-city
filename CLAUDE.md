@@ -376,9 +376,11 @@ When a change touches a decision, update its entry and run its Proof.
   The city can't turn it on: the setup link asks for `param_AllowCleanup=true` only when ticked, and the record's
   `cleanup` is the link's `linkCleanup`, recorded at verify when the stack was installed or updated from that link (like
   `roleVersion`; `server/src/accounts/link.ts`), so the card's Turn on/off is a stack update plus "I've updated the
-  stack" (`CleanupSwitch`, `src/ui/Account.tsx`; `confirmRoleUpdate({ allowCleanup })`), quickest as one command for
-  CloudShell or a terminal (`cleanupCommand`, `src/state/account.ts`: `update-stack` keeping every value the installed
-  role has, then `wait stack-update-complete`; the console steps fold under it), and a request refused because it's off
+  stack" (`CleanupSwitch`, `src/ui/Account.tsx`; `confirmRoleUpdate({ allowCleanup })`), as three numbered steps
+  (open Terminal or CloudShell in the linked account, with the player's AWS CLI profile `prefs.awsProfile`, shared with
+  the workshop's terminal box; paste one command; then "I've updated the stack"): `cleanupCommand`, `src/state/account.ts`,
+  `update-stack` keeping every value the installed role has, then `wait stack-update-complete`, both with `--profile`
+  when given (seen 24 Nov 2026: NoCredentials in a terminal without an export); the console steps fold under it, and a request refused because it's off
   offers "Turn it on (Deploy) →" on its task card (seen 23 Nov 2026: the console steps confused, no way from the refusal). Policy (`checkAction`'s
   `cleanup`, `server/src/agents/policy.ts`) lets the player's servers and buckets through only then (a bucket only in the
   home Region), naming the switch when it's off; ActionService reads the world's `cleanup` at each write; the gate widens
@@ -416,8 +418,13 @@ When a change touches a decision, update its entry and run its Proof.
   "Get a new setup link". The linked card names the Region, says whether small fixes are on (and how to turn them on),
   offers "Update your AWS City role (vN → vM)" when `roleVersion < latestRoleVersion` (steps, the template address, the
   ConnectsPlayer name to type, which comes with a fresh setup link, and the stacks page), "Use another Region or account"
-  and "Disconnect" (asked first, its words in `--ink-soft`, ≥ 4.5:1 on the red tint; hosted and the demo, never the local server; afterwards it says how to delete the AWSCity
-  stack in that Region). "Check again" (hosted, under "Turn small fixes on") is `account.recheck` (`recheckAccount`): the
+  and "Disconnect" (asked first, its words in `--ink-soft`, ≥ 4.5:1 on the red tint; hosted and the demo, never the local server; afterwards it says the AWSCity
+  stack in that Region stays, still trusting the old link: Disconnect forgets the ExternalId and the stack's name is
+  taken, so step 2 always starts with a choice: 🆕 Create it (first time) or 🔁 I already have an AWSCity stack here
+  (one command, `reconnectCommand` in `src/state/account.ts`: `update-stack` on the link's template with its ExternalId,
+  ConnectsPlayer and the boxes ticked, then wait; `ReconnectStack`, `src/ui/DeployPanel.tsx`); after a Disconnect here it
+  starts on Reconnect, and Create reads "Delete it and start fresh" with the delete-first note; step 3 says it links the
+  role (asked for on 24 Nov 2026: the reconnect, folded away, was missed). "Check again" (hosted, under "Turn small fixes on") is `account.recheck` (`recheckAccount`): the
   role is asked again whether it allows fixes, read-only. The role update ends with "I've updated the stack"
   (`confirmRoleUpdate`: a fresh link, then `account.verify {updated: true}`), and its card says the city goes by the version
   installed from its link (it can't read the stack). The local server shows the restart hint instead of the CloudFormation
@@ -1229,9 +1236,11 @@ When a change touches a decision, update its entry and run its Proof.
   `prefs.consoleRole`, default OrganizationAccountAccessRole). The linked account is named as the console names it after
   Switch role, then its number (`accountTitle`: "AWSCity-8585 (0474-6343-8585)", the link's `displayName` is
   `accountName`; asked on 23 Nov 2026); seen 23 Nov 2026: a console bucket and a CloudShell one went
-  to the city's own account. A workshop for real says which account CloudShell must run in, where a failed check
-  looked, and what to do when a new account's CloudShell is still being verified (up to 2 days: the same commands in
-  your own terminal; seen 23 Nov 2026). Proof: `npx vitest run tests/console-account.test.ts tests/deploy-account.test.tsx tests/workshop-ui.test.tsx`,
+  to the city's own account. A workshop for real asks where the commands run (`ShellChoice`, `src/ui/Workshop.tsx`;
+  `prefs.workshopShell`): CloudShell (which account it must run in, and when a new account's CloudShell is still being
+  verified, up to 2 days, "Use my own terminal instead" and Ask AWS Support), or the player's own terminal (a set-up-once
+  box: `aws --version` or Install the AWS CLI, `aws login`, `export AWS_PROFILE=…`, then `aws sts get-caller-identity`
+  printing the linked account; no Open CloudShell), and where a failed check looked (seen 23 Nov 2026). Proof: `npx vitest run tests/console-account.test.ts tests/deploy-account.test.tsx tests/workshop-ui.test.tsx`,
   `npx vitest run tests/runtime-session.test.ts -t "console’s account"`.
   Proof: `npx vitest run tests/taxonomy.test.ts tests/deploy-account.test.tsx`, `npx vitest run tests/runtime-session.test.ts -t "Open the console"`.
 - **State vs moments.** Persistent state goes in the zustand store (`src/state/store.ts`); one-off

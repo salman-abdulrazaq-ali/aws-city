@@ -78,7 +78,19 @@ describe('the Deploy tab’s account cards', () => {
     // The quickest way first: one command for CloudShell or a terminal (the console steps fold under it).
     expect(within(card).getByText(/update-stack --region us-west-2 --stack-name AWSCity --use-previous-template/).textContent).toContain('AllowCleanup,ParameterValue=true');
     expect(within(card).getByRole('button', { name: 'Copy the command' })).toBeTruthy();
-    const steps = within(card).getByRole('list', { name: /Turn on/ });
+    // Three numbered steps, as the chat said them (24 Nov 2026), then the console steps folded under them.
+    const three = within(card).getByRole('list', { name: 'Turn on “Let the city change things you made”' });
+    expect([...three.querySelectorAll(':scope > li')].map((li) => li.textContent?.slice(0, 40))).toEqual([
+      expect.stringMatching(/^Open Terminal \(or CloudShell\) signed in/),
+      expect.stringMatching(/^Paste this and press Enter/),
+      expect.stringMatching(/^When the prompt comes back with no error/),
+    ]);
+    // The profile goes into the command, so a pasted command works without an export first.
+    fireEvent.change(within(card).getByLabelText('Your AWS CLI profile'), { target: { value: 'city-047' } });
+    expect(within(card).getByText(/update-stack/).textContent).toContain('--stack-name AWSCity --profile city-047 --use-previous-template');
+    expect(within(card).getByText(/update-stack/).textContent).toContain('wait stack-update-complete --region us-west-2 --stack-name AWSCity --profile city-047');
+    fireEvent.change(within(card).getByLabelText('Your AWS CLI profile'), { target: { value: '' } });
+    const steps = within(card).getByRole('list', { name: /Turn on in the CloudFormation console/ });
     expect(steps.textContent).toMatch(/set AllowCleanup to true/);
     expect(steps.textContent).toMatch(/Use existing template/);
     fireEvent.click(within(card).getByRole('button', { name: 'I’ve updated the stack' }));
@@ -93,7 +105,7 @@ describe('the Deploy tab’s account cards', () => {
     expect(on.textContent).toMatch(/type its name or ID, then your MFA code and Approve/);
     expect(on.textContent).toMatch(/never read/);
     fireEvent.click(within(on).getByRole('button', { name: 'Turn off' }));
-    expect(within(on).getByRole('list', { name: /Turn off/ }).textContent).toMatch(/set AllowCleanup to false/);
+    expect(within(on).getByRole('list', { name: /Turn off in the CloudFormation console/ }).textContent).toMatch(/set AllowCleanup to false/);
     fireEvent.click(within(on).getByRole('button', { name: 'I’ve updated the stack' }));
     expect(rt.confirmRoleUpdate).toHaveBeenCalledWith({ allowCleanup: false });
   });
@@ -103,7 +115,23 @@ describe('the Deploy tab’s account cards', () => {
     render(<DeployPanel />);
     const card = screen.getByRole('region', { name: /Let the city change things you made/ });
     fireEvent.click(within(card).getByRole('button', { name: 'Turn on' }));
-    expect(within(card).getByRole('list', { name: /Turn on/ }).textContent).toMatch(/Replace existing template.*v6\.yaml/);
+    expect(within(card).getByRole('list', { name: /Turn on in the CloudFormation console/ }).textContent).toMatch(/Replace existing template.*v6\.yaml/);
+  });
+
+  // Seen 24 Nov 2026: a role linked before versions were recorded showed only the console steps.
+  it('a role of unknown version gets "Get the command": a fresh link names the stack, then the one command uses the v6 template', () => {
+    useCity.setState({ account: { linked: true, accountId: '047463438585', region: 'us-west-2', latestRoleVersion: 6, templateUrl: 'https://t.example/player-role/v6.yaml' } });
+    const { rerender } = render(<DeployPanel />);
+    let card = screen.getByRole('region', { name: /Let the city change things you made/ });
+    fireEvent.click(within(card).getByRole('button', { name: 'Turn on' }));
+    fireEvent.click(within(card).getByRole('button', { name: 'Get the command' }));
+    expect(rt.linkAccount).toHaveBeenLastCalledWith('us-west-2', { allowCleanup: true });
+    act(() => useCity.getState().patchAccount({ linkUrl: 'https://us-west-2.console.aws.amazon.com/cloudformation/home#/stacks/quickcreate?param_ConnectsPlayer=Player%20u1' }));
+    rerender(<DeployPanel />);
+    card = screen.getByRole('region', { name: /Let the city change things you made/ });
+    const cmd = within(card).getByText(/update-stack --region us-west-2 --stack-name AWSCity --template-url https:\/\/t.example\/player-role\/v6.yaml/).textContent!;
+    expect(cmd).toContain('"ParameterKey=ConnectsPlayer,ParameterValue=Player u1"');
+    expect(cmd).toContain('ParameterKey=AllowCleanup,ParameterValue=true');
   });
 
   it('the link step asks for it with its own box, off by default', () => {
@@ -256,9 +284,46 @@ describe('a linked account (v2.19)', () => {
     useCity.setState({ account: { linked: false, stackLeft: 'eu-west-1' } });
     const { container } = render(<DeployPanel />);
     // Plain words: glossary terms inside it are their own buttons, so the note is read as a whole.
-    expect(container.querySelector('.stack-left')!.textContent).toMatch(/Disconnected\. To remove AWS City's role too, delete the AWSCity stack in CloudFormation \(Europe \(Ireland\)\)/);
+    // Seen 24 Nov 2026: reconnecting needs the old stack gone first (it trusts the old link), and the card says so.
+    expect(container.querySelector('.stack-left')!.textContent).toMatch(/Disconnected\. Your AWSCity stack in Europe \(Ireland\) stays in your account, still trusting the old link\. To connect again: reconnect it in step 2 \(one command\), or delete it and start fresh\./);
     fireEvent.click(screen.getByRole('button', { name: 'Open the AWSCity stack ↗' }));
     expect(rt.openUrl).toHaveBeenCalledWith(stacksUrl('eu-west-1'));
+  });
+
+  // Asked for on 24 Nov 2026: after a Disconnect, reconnect the stack you have (one command) or delete it and start fresh.
+  const LINK = `https://us-west-2.console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/quickcreate?templateURL=${encodeURIComponent('https://t.s3.eu-west-2.amazonaws.com/player-role/v6.yaml')}&stackName=AWSCity&param_ExternalId=abcdefghijklmnop1234&param_ConnectsPlayer=Player%20u1&param_AllowCleanup=true`;
+  it('linking again after a Disconnect: Reconnect the stack you have (one command, then Done) or Delete it and start fresh', () => {
+    useCity.setState({ prefs: { ...useCity.getState().prefs, awsProfile: 'city-047' }, account: { linked: false, stackLeft: 'us-west-2', wantsLink: true, linkRegion: 'us-west-2', linkUrl: LINK, externalId: 'abcdefghijklmnop1234', allowCleanup: true } });
+    render(<DeployPanel />);
+    const choice = screen.getByRole('group', { name: 'Your AWSCity stack in US West (Oregon)' });
+    expect(within(choice).getByRole('button', { name: '🔁 Reconnect the stack you have' }).getAttribute('aria-pressed')).toBe('true');
+    const steps = screen.getByRole('list', { name: 'Reconnect the AWSCity stack you have' });
+    const cmd = within(steps).getByText(/update-stack/).textContent!;
+    expect(cmd).toBe(
+      'aws cloudformation update-stack --region us-west-2 --stack-name AWSCity --profile city-047 --template-url https://t.s3.eu-west-2.amazonaws.com/player-role/v6.yaml --capabilities CAPABILITY_NAMED_IAM --parameters ParameterKey=ExternalId,ParameterValue=abcdefghijklmnop1234 "ParameterKey=ConnectsPlayer,ParameterValue=Player u1" ParameterKey=AllowFixes,ParameterValue=false ParameterKey=AllowCleanup,ParameterValue=true && aws cloudformation wait stack-update-complete --region us-west-2 --stack-name AWSCity --profile city-047',
+    );
+    // Start fresh: delete it first, then the usual create.
+    fireEvent.click(within(choice).getByRole('button', { name: '🧹 Delete it and start fresh' }));
+    expect(screen.getByRole('note').textContent).toMatch(/^Delete the old AWSCity stack in US West \(Oregon\) first \(Delete, then wait for DELETE_COMPLETE\)/);
+    expect(screen.getByRole('button', { name: 'Open CloudFormation ↗' })).toBeTruthy();
+    // Back to Reconnect: Done moves on to the account number (step 3).
+    fireEvent.click(within(choice).getByRole('button', { name: '🔁 Reconnect the stack you have' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Done: it’s updated' }));
+    expect(screen.queryByRole('list', { name: 'Reconnect the AWSCity stack you have' })).toBeNull();
+  });
+
+  it('without a Disconnect here, step 2 still asks: Create it (first time) by default, or I already have one (reconnect)', () => {
+    useCity.setState({ account: { linked: false, wantsLink: true, linkRegion: 'us-west-2', linkUrl: LINK, externalId: 'abcdefghijklmnop1234' } });
+    render(<DeployPanel />);
+    const choice = screen.getByRole('group', { name: 'Your AWSCity stack in US West (Oregon)' });
+    expect(within(choice).getByRole('button', { name: '🆕 Create it (first time)' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Open CloudFormation ↗' })).toBeTruthy();
+    expect(screen.queryByRole('list', { name: 'Reconnect the AWSCity stack you have' })).toBeNull();
+    fireEvent.click(within(choice).getByRole('button', { name: '🔁 I already have an AWSCity stack here' }));
+    expect(within(screen.getByRole('list', { name: 'Reconnect the AWSCity stack you have' })).getByText(/update-stack/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Open CloudFormation ↗' })).toBeNull();
+    // Step 3 says it's where the role is linked.
+    expect(screen.getByText('Tell us your account number (12 digits): this links the role')).toBeTruthy();
   });
 
   it('the local server has no Disconnect (it reads the developer’s own account)', () => {

@@ -157,6 +157,35 @@ export const CLEANUP_SWITCH = 'Let the city change things you made';
 export const CLEANUP_OFF = 'Off: the agents look at everything in your account, but change only what the city built.';
 export const cleanupOn = (region: string) =>
   `On: the agents may also stop, start or remove servers, and remove empty buckets, that you made in ${region}. Each removal asks you to type its name or ID, then your MFA code and Approve. Files in your buckets are never read.`;
+/**
+ * Reconnect the AWSCity stack the player already has to a new setup link, in one command (asked for on 24 Nov 2026:
+ * "reconnect, or delete and connect new"). Disconnect forgets the link's ExternalId, so the old stack trusts the old
+ * one: this points it at the new link's (ExternalId and ConnectsPlayer), on the link's template, with the boxes ticked
+ * for it (AllowFixes, AllowCleanup), so it works whatever version the old stack was; then waits. No command when any
+ * part isn't what the city made (a Region code, the link's ExternalId, its https template on AWS, the label).
+ */
+export function reconnectCommand(
+  a: Pick<AccountLike, 'linkUrl' | 'templateUrl'> & { externalId?: string; linkRegion?: string; region?: string; allowFixes?: boolean; allowCleanup?: boolean },
+  profile?: string,
+): string | undefined {
+  const region = a.linkRegion ?? a.region;
+  const template = templateLink({ linkUrl: a.linkUrl, templateUrl: undefined }) ?? templateLink({ linkUrl: undefined, templateUrl: a.templateUrl });
+  const label = connectsPlayer(a.linkUrl);
+  if (!region || !/^[a-z]{2}(-[a-z]+)+-\d$/.test(region)) return undefined;
+  if (!a.externalId || !/^[A-Za-z0-9_-]{16,128}$/.test(a.externalId)) return undefined;
+  if (!template || /\s|"|'/.test(template)) return undefined;
+  if (!label || !/^[A-Za-z0-9 ._@*-]{1,64}$/.test(label)) return undefined;
+  const as = profile && /^[A-Za-z0-9_.+-]{1,64}$/.test(profile) ? ` --profile ${profile}` : '';
+  const where = `--region ${region} --stack-name AWSCity${as}`;
+  const params = [
+    `ParameterKey=ExternalId,ParameterValue=${a.externalId}`,
+    `"ParameterKey=ConnectsPlayer,ParameterValue=${label}"`,
+    `ParameterKey=AllowFixes,ParameterValue=${a.allowFixes === true}`,
+    `ParameterKey=AllowCleanup,ParameterValue=${a.allowCleanup === true}`,
+  ];
+  return `aws cloudformation update-stack ${where} --template-url ${template} --capabilities CAPABILITY_NAMED_IAM --parameters ${params.join(' ')} && aws cloudformation wait stack-update-complete ${where}`;
+}
+
 /** Changing the switch is a stack update (AllowCleanup), with a newer template first when the role is older than v6. */
 export const cleanupSteps = (on: boolean, newTemplate?: string) => [
   'In CloudFormation, open the AWSCity stack.',
@@ -175,7 +204,7 @@ export const CLEANUP_ROLE_VERSION = 6;
  * gets the newer template, and one older than v5 the ConnectsPlayer name, without which there's no command (the
  * console steps stay). Unknown version: nothing is assumed.
  */
-export function cleanupCommand(a: { region?: string; roleVersion?: number; templateUrl?: string; fixes?: boolean }, on: boolean, label?: string): string | undefined {
+export function cleanupCommand(a: { region?: string; roleVersion?: number; templateUrl?: string; fixes?: boolean }, on: boolean, label?: string, profile?: string): string | undefined {
   if (!a.region || !/^[a-z]{2}(-[a-z]+)+-\d$/.test(a.region)) return undefined;
   const v = a.roleVersion ?? 0;
   if (v < CLEANUP_ROLE_VERSION && !a.templateUrl) return undefined;
@@ -187,7 +216,10 @@ export function cleanupCommand(a: { region?: string; roleVersion?: number; templ
     `ParameterKey=AllowCleanup,ParameterValue=${on}`,
   ];
   const template = v >= CLEANUP_ROLE_VERSION ? '--use-previous-template' : `--template-url ${a.templateUrl}`;
-  const where = `--region ${a.region} --stack-name AWSCity`;
+  // A terminal's profile goes in both commands, so a pasted command works without an export first (seen 24 Nov 2026:
+  // NoCredentials). Anything that isn't a plain profile name is left out.
+  const as = profile && /^[A-Za-z0-9_.+-]{1,64}$/.test(profile) ? ` --profile ${profile}` : '';
+  const where = `--region ${a.region} --stack-name AWSCity${as}`;
   return `aws cloudformation update-stack ${where} ${template} --capabilities CAPABILITY_NAMED_IAM --parameters ${params.join(' ')} && aws cloudformation wait stack-update-complete ${where}`;
 }
 

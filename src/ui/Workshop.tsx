@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { askDistrict, openCloudShell, openPractice, openUrl, openWorkshopSource, startConsoleCopilot, verifyWorkshopStep } from '@/app/runtime';
+import { askDistrict, openCloudShell, openDocs, openPractice, openUrl, openWorkshopSource, startConsoleCopilot, verifyWorkshopStep } from '@/app/runtime';
 import type { Progress } from '@/backend/contract';
 import { redact } from '@/console/risk';
 import { explainError, type TerminalError } from '@/learning/terminal';
@@ -8,7 +8,7 @@ import { accountLabel, accountTitle, regionName } from '@/state/account';
 import { bus } from '@/state/bus';
 import { growthLine, growthOf } from '@/state/growth';
 import { levelOf } from '@/state/mastery';
-import { useCity } from '@/state/store';
+import { AWS_PROFILE_NAME, useCity } from '@/state/store';
 import { questById } from '@/world/content';
 import { placeFor } from '@/world/places';
 import { serviceById } from '@/world/taxonomy';
@@ -96,7 +96,7 @@ function ModeIntro({ mode, demo, names }: { mode: Mode; demo: boolean; names: Re
     );
   return (
     <p className="muted small workshop-intro" role="note">
-      ☁️ Run each command in AWS CloudShell, then let the city check your account (read-only).{same} Region:{' '}
+      ☁️ Run each command in AWS CloudShell or your own terminal, then let the city check your account (read-only).{same} Region:{' '}
       {account.region ? (
         <>
           {regionName(account.region)} <span className="muted">({account.region})</span>
@@ -118,25 +118,91 @@ function ModeIntro({ mode, demo, names }: { mode: Mode; demo: boolean; names: Re
 /** AWS Support's "Account and billing" case, which is free on every plan: where a new account's verification is asked about. */
 const AWS_SUPPORT_CASE = 'https://support.console.aws.amazon.com/support/home#/case/create?issueType=customer-service';
 
+/** AWS's guide to installing the AWS CLI v2 (docs.aws.amazon.com: openDocs). */
+const CLI_INSTALL = 'https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html';
+const WHICH_ACCOUNT = 'aws sts get-caller-identity --query Account --output text';
+const setShell = (terminal: boolean) => useCity.getState().setPref('workshopShell', terminal ? 'terminal' : undefined);
+
+/**
+ * Where the commands run, for real: AWS CloudShell, or the player's own terminal with the AWS CLI (seen 23 Nov 2026: a new
+ * account's CloudShell said "account verification is in progress" for up to 2 days, so the player went to their terminal
+ * and added --profile to every pasted command by hand). Remembered (prefs.workshopShell).
+ */
+function ShellChoice() {
+  const terminal = useCity((s) => s.prefs.workshopShell === 'terminal');
+  return (
+    <div className="seg workshop-shell" role="group" aria-label="Where will you run the commands?">
+      <button aria-pressed={!terminal} onClick={() => (feel.tap(), setShell(false))}>
+        ☁️ CloudShell
+      </button>
+      <button aria-pressed={terminal} onClick={() => (feel.tap(), setShell(true))}>
+        💻 My own terminal
+      </button>
+    </div>
+  );
+}
+
 function AccountCheck() {
   const account = useCity((s) => s.account);
+  const terminal = useCity((s) => s.prefs.workshopShell === 'terminal');
+  // The same profile as the switch's command (prefs.awsProfile): filled in, the export is ready to paste.
+  const profile = useCity((s) => s.prefs.awsProfile);
   if (!account.linked || !account.accountId) return null;
+  const which = (
+    <>
+      <CodeChip code={WHICH_ACCOUNT} />
+      {/* Asked on 23 Nov 2026: "what is --output text?" */}
+      <p className="muted small">
+        It should print <b>{account.accountId}</b> (--output text prints just the 12-digit number, without the JSON around it).
+      </p>
+    </>
+  );
+  if (terminal)
+    return (
+      <div className="workshop-account workshop-terminal" role="group" aria-label="Set up your terminal once">
+        <p className="muted small">
+          <b>Set up your terminal once</b>, for account <b>{accountTitle(account.accountId)}</b> (the one the city checks):
+        </p>
+        <ol className="account-steps">
+          <li>
+            Have the AWS CLI v2? <CodeChip code="aws --version" /> No?{' '}
+            <button type="button" className="btn tiny" onClick={() => openDocs(CLI_INSTALL)}>
+              Install the AWS CLI ↗
+            </button>
+          </li>
+          <li>
+            Sign in to that account (<CodeChip code="aws login" /> or your usual profile), then use it for every command:{' '}
+            <label className="row aws-profile">
+              <span className="label">Your AWS CLI profile</span>
+              <input
+                value={profile ?? ''}
+                placeholder="e.g. city-047"
+                onChange={(e) => useCity.getState().setPref('awsProfile', AWS_PROFILE_NAME.test(e.target.value.trim()) ? e.target.value.trim() : undefined)}
+                spellCheck={false}
+                autoCapitalize="off"
+              />
+            </label>
+            <CodeChip code={`export AWS_PROFILE=${profile ?? '<your profile>'}`} />
+          </li>
+          <li>Check you’re in the right account: {which}</li>
+        </ol>
+        <p className="muted small">Then paste each step’s command as it is, and press Check my account.</p>
+        <ConsoleAccountWarning />
+      </div>
+    );
   return (
     <div className="workshop-account">
       <p className="muted small">
         CloudShell must run in account <b>{accountTitle(account.accountId)}</b> (the one the city checks). To see which account a shell is in:
       </p>
-      <CodeChip code="aws sts get-caller-identity --query Account --output text" />
-      {/* Asked on 23 Nov 2026: "what is --output text?" */}
-      <p className="muted small">It prints just the 12-digit account number (--output text drops the JSON around it).</p>
-      {/* Seen 23 Nov 2026: CloudShell was blocked, and every pasted command needed --profile added by hand. */}
-      <p className="muted small">
-        In your own terminal instead? Run <code>export AWS_PROFILE=&lt;your profile&gt;</code> once, then paste each command as it is.
-      </p>
+      {which}
       <ConsoleAccountWarning />
       {/* Seen 23 Nov 2026: a new account's CloudShell said "account verification is in progress" (up to 2 days). */}
       <p className="muted small workshop-no-cloudshell">
-        CloudShell says “account verification is in progress”? New AWS accounts wait up to 2 days for it. Run the same commands in your own terminal with the AWS CLI, signed in to that account. Waiting longer?{' '}
+        CloudShell says “account verification is in progress”? A new AWS account waits up to 2 days for it: run the same commands in your own terminal.{' '}
+        <button type="button" className="btn tiny" onClick={() => (feel.tap(), setShell(true))}>
+          Use my own terminal instead
+        </button>{' '}
         <button type="button" className="btn tiny" onClick={() => openUrl(AWS_SUPPORT_CASE)}>
           Ask AWS Support ↗
         </button>
@@ -213,11 +279,12 @@ function WorkshopBody({ w }: { w: WorkshopDef }) {
       <div className="seg" role="group" aria-label="Where to run the commands">
         {(['practice', 'real'] as const).map((m) => (
           <button key={m} aria-pressed={mode === m} onClick={() => (feel.tap(), setMode(m))}>
-            {m === 'practice' ? '🧪 Practice terminal' : demo ? '☁️ Practice account (demo)' : '☁️ For real in CloudShell'}
+            {m === 'practice' ? '🧪 Practice terminal' : demo ? '☁️ Practice account (demo)' : '☁️ For real (CloudShell or your terminal)'}
           </button>
         ))}
       </div>
       <ModeIntro mode={mode} demo={demo} names={names} />
+      {mode === 'real' && !demo && <ShellChoice />}
       {mode === 'real' && !demo && <AccountCheck />}
       <ol className="workshop-steps">
         {w.steps.map((s, i) => (
@@ -288,6 +355,8 @@ function StepView(props: {
   };
   // The demo has no real AWS: "for real" there runs in the practice terminal and pays practice (store: honestMode).
   const realHere = mode === 'real' && !demo;
+  // The player runs the commands in their own terminal: no Open CloudShell (ShellChoice).
+  const terminal = useCity((st) => st.prefs.workshopShell === 'terminal');
   const worth = stepReward(progress.workshops?.[w.id], step.id, realHere ? 'real' : 'practice');
   const answered = check && !check.pending;
   useEffect(() => {
@@ -428,9 +497,11 @@ function StepView(props: {
       )}
       {realHere && (
         <div className="workshop-real">
-          <button className="btn" onClick={() => (feel.tap(), openCloudShell())}>
-            Open CloudShell ↗
-          </button>
+          {!terminal && (
+            <button className="btn" onClick={() => (feel.tap(), openCloudShell())}>
+              Open CloudShell ↗
+            </button>
+          )}
           {isChecked(step) ? (
             <form
               className="workshop-check"
@@ -458,7 +529,7 @@ function StepView(props: {
                 <p className="muted small">
                   The city looked in account {accountLabel(linkedAccount)}
                   {linkedRegion ? `, ${regionName(linkedRegion)}` : ''}. Ran it there? <code>aws sts get-caller-identity --query Account --output text</code> in
-                  CloudShell should print {linkedAccount}; if not, switch role into that account first.
+                  your shell should print {linkedAccount}; if not, {terminal ? 'sign in to that account (or export its AWS_PROFILE)' : 'switch role into that account'} first.
                 </p>
               )}
             </form>

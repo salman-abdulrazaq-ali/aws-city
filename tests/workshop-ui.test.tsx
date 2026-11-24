@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Workshops that feel like a game: Tab and Hint in the practice terminal (a hint costs a star), names that carry over to
 // CloudShell's check, stars and the next step inside the dialog, the demo never "for real", and the finished card.
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/ui/Portrait', () => ({ Portrait: () => <span data-testid="portrait" /> }));
@@ -121,7 +121,7 @@ describe('for real', () => {
     useCity.getState().rememberWorkshop(ID, { names: { table: 'shop' } });
     open();
     render(<Workshop />);
-    fireEvent.click(screen.getByRole('button', { name: /For real in CloudShell/ }));
+    fireEvent.click(screen.getByRole('button', { name: /For real \(CloudShell or your terminal\)/ }));
     expect(screen.getByRole('note').textContent).toMatch(/Use the same names: table shop\. Region: Europe \(London\) \(eu-west-2\)/);
     fireEvent.click(screen.getByRole('button', { name: /Create the table/ }));
     // One box for the name: it fills the command and the account check (never asked twice).
@@ -143,22 +143,55 @@ describe('for real', () => {
     useCity.setState({ backendKind: 'server', account: { linked: true, accountId: '047463438585', region: 'us-west-2' }, consoleAccount: '422929814205' });
     act(() => useCity.getState().openWorkshop('s3-first-bucket'));
     render(<Workshop />);
-    fireEvent.click(screen.getByRole('button', { name: /For real in CloudShell/ }));
+    fireEvent.click(screen.getByRole('button', { name: /For real \(CloudShell or your terminal\)/ }));
     expect(screen.getByText(/CloudShell must run in account/).textContent).toMatch(/AWSCity-8585 \(0474-6343-8585\)/);
     // Seen 23 Nov 2026: a new account's CloudShell waits for verification; the terminal is the way round it.
     expect(screen.getByText(/account verification is in progress/).textContent).toMatch(/your own terminal/);
     expect(screen.getByRole('button', { name: 'Ask AWS Support ↗' })).toBeTruthy();
-    expect(screen.getByText(/--output text drops the JSON/)).toBeTruthy();
-    expect(screen.getByText(/In your own terminal instead\?/).textContent).toMatch(/export AWS_PROFILE=<your profile>/);
+    expect(screen.getByText(/--output text prints just the 12-digit number/).textContent).toMatch(/047463438585/);
     expect([...document.querySelectorAll('.workshop-account .workshop-cmd')].map((c) => c.textContent)).toEqual(['aws sts get-caller-identity --query Account --output text']);
     expect(screen.getByRole('alert').textContent).toMatch(/signed in to account 4229-2981-4205/);
+  });
+
+  // Seen 23 Nov 2026: CloudShell was blocked on a new account; the player ran the workshop in their own terminal.
+  it('for real, the player picks CloudShell or their own terminal; the terminal gets a set-up-once box and no Open CloudShell', () => {
+    useCity.setState({ backendKind: 'server', account: { linked: true, accountId: '047463438585', region: 'us-west-2' }, consoleAccount: undefined });
+    useCity.getState().setPref('workshopShell', undefined);
+    act(() => useCity.getState().openWorkshop('s3-first-bucket'));
+    render(<Workshop />);
+    fireEvent.click(screen.getByRole('button', { name: /For real \(CloudShell or your terminal\)/ }));
+    const choice = screen.getByRole('group', { name: 'Where will you run the commands?' });
+    expect(within(choice).getByRole('button', { name: '☁️ CloudShell' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getAllByRole('button', { name: /Open CloudShell/ }).length).toBeGreaterThan(0);
+    // Blocked CloudShell: one press to the terminal path.
+    fireEvent.click(screen.getByRole('button', { name: 'Use my own terminal instead' }));
+    expect(useCity.getState().prefs.workshopShell).toBe('terminal');
+    expect(within(choice).getByRole('button', { name: '💻 My own terminal' }).getAttribute('aria-pressed')).toBe('true');
+    const setup = screen.getByRole('group', { name: 'Set up your terminal once' });
+    expect(setup.textContent).toMatch(/AWSCity-8585 \(0474-6343-8585\)/);
+    expect([...setup.querySelectorAll('.workshop-cmd')].map((c) => c.textContent)).toEqual([
+      'aws --version',
+      'aws login',
+      'export AWS_PROFILE=<your profile>',
+      'aws sts get-caller-identity --query Account --output text',
+    ]);
+    expect(within(setup).getByRole('button', { name: 'Install the AWS CLI ↗' })).toBeTruthy();
+    // The profile typed once (the switch card shares it) makes the export ready to paste.
+    fireEvent.change(within(setup).getByLabelText('Your AWS CLI profile'), { target: { value: 'city-047' } });
+    expect(useCity.getState().prefs.awsProfile).toBe('city-047');
+    expect(within(setup).getByText('export AWS_PROFILE=city-047')).toBeTruthy();
+    fireEvent.change(within(setup).getByLabelText('Your AWS CLI profile'), { target: { value: '' } });
+    expect(screen.queryByRole('button', { name: /Open CloudShell/ })).toBeNull();
+    // And back.
+    fireEvent.click(within(choice).getByRole('button', { name: '☁️ CloudShell' }));
+    expect(useCity.getState().prefs.workshopShell).toBeUndefined();
   });
 
   it('S3 in Oregon with no names typed: a name box, Copy waits for it, and the command keeps LocationConstraint', () => {
     useCity.setState({ backendKind: 'server', account: { linked: true, region: 'us-west-2' } });
     act(() => useCity.getState().openWorkshop('s3-first-bucket'));
     render(<Workshop />);
-    fireEvent.click(screen.getByRole('button', { name: /For real in CloudShell/ }));
+    fireEvent.click(screen.getByRole('button', { name: /For real \(CloudShell or your terminal\)/ }));
     const copy = screen.getByRole('button', { name: 'Copy' }) as HTMLButtonElement;
     expect(copy.disabled).toBe(true);
     expect(screen.getByText(/in the boxes above, then copy it/)).toBeTruthy();
@@ -175,7 +208,7 @@ describe('for real', () => {
     useCity.setState({ backendKind: 'server', account: { linked: false } });
     act(() => useCity.getState().openWorkshop('s3-first-bucket'));
     render(<Workshop />);
-    fireEvent.click(screen.getByRole('button', { name: /For real in CloudShell/ }));
+    fireEvent.click(screen.getByRole('button', { name: /For real \(CloudShell or your terminal\)/ }));
     const copy = screen.getByRole('button', { name: 'Copy' }) as HTMLButtonElement;
     fireEvent.change(screen.getByRole('textbox', { name: /Your bucket name/ }), { target: { value: 'aws-city-047463438585-ws-1' } });
     expect(copy.disabled).toBe(true);
@@ -190,7 +223,7 @@ describe('for real', () => {
     useCity.getState().rememberWorkshop('s3-first-bucket', { names: { bucket: 'city-workshop-1a2b3c4d' } });
     act(() => useCity.getState().openWorkshop('s3-first-bucket'));
     render(<Workshop />);
-    fireEvent.click(screen.getByRole('button', { name: /For real in CloudShell/ }));
+    fireEvent.click(screen.getByRole('button', { name: /For real \(CloudShell or your terminal\)/ }));
     fireEvent.click(screen.getByRole('button', { name: /Upload a file/ }));
     expect(document.querySelector('.workshop-cmd')?.textContent).toBe(
       'echo "Hello from AWS City" > sample.txt && aws s3api put-object --bucket city-workshop-1a2b3c4d --key sample.txt --body sample.txt',
@@ -202,7 +235,7 @@ describe('for real', () => {
     useCity.setState({ backendKind: 'server', account: { linked: true, region: 'us-west-2' } });
     act(() => useCity.getState().openWorkshop('s3-first-bucket'));
     render(<Workshop />);
-    fireEvent.click(screen.getByRole('button', { name: /For real in CloudShell/ }));
+    fireEvent.click(screen.getByRole('button', { name: /For real \(CloudShell or your terminal\)/ }));
     const box = screen.getByRole('textbox', { name: /Your bucket name/ }) as HTMLInputElement;
     const copy = screen.getByRole('button', { name: 'Copy' }) as HTMLButtonElement;
     fireEvent.change(box, { target: { value: 'Test_Demo' } });
