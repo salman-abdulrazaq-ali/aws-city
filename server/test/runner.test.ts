@@ -168,5 +168,9 @@ describe('untrusted names in the model prompt', () => {
     expect(prompt).toContain("letCityChangeWhatPlayerMade in the city snapshot is the player's switch");
     expect(prompt).toMatch(/true: you may also stop, start or terminate servers they made and delete their empty buckets/);
     expect(prompt).toMatch(/builtByGame false \(or listed in notBuiltByTheCity\) are in their account too/);
+    // Seen 24 Nov 2026: switch off, the list didn't say how to let the city change them; and a model asked the player to
+    // type Approve in chat instead of calling delete_bucket.
+    expect(prompt).toMatch(/When you list things they made and letCityChangeWhatPlayerMade is false, end with one short line/);
+    expect(prompt).toMatch(/To change something, call your tool\. .*Never ask them to type Approve, yes or confirm in chat/s);
   });
 });

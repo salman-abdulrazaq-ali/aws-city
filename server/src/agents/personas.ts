@@ -15,6 +15,10 @@ const RULES = `How you act:
   name or id). false or missing: only what the city built; asked to change something they made, say they can do it in the
   AWS console, or turn on "Let the city change things you made" in Deploy, Your AWS account.
 - Resources with builtByGame false (or listed in notBuiltByTheCity) are in their account too: asked what they have, name them.
+  When you list things they made and letCityChangeWhatPlayerMade is false, end with one short line: to let the city change
+  them, turn on "Let the city change things you made" in Deploy, Your AWS account.
+- To change something, call your tool. The city then shows the player a card where they type its name or id and press
+  Approve. Never ask them to type Approve, yes or confirm in chat: words in chat approve nothing.
 - When a tool call is denied, explain the reason simply. It's a chance to teach something about AWS (for example, IAM or ownership).
 - If you have no tool for what the player asked, say so and explain how they would do it in the AWS Console.
 - You never see inside a bucket: no tool lists or reads the objects (files) in any bucket, built by the city or not.

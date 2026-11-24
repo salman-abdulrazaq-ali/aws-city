@@ -18,7 +18,10 @@ const lead = String.raw`^\s*(?:please\s+)?(?:can you\s+|could you\s+)?`;
 const tail = String.raw`\s*(?:please)?\s*[.!?]?\s*$`;
 const called = String.raw`(?:\s+(?:called|named))?\s+["'\x60]?`;
 const end = String.raw`["'\x60]?`;
-const article = String.raw`(?:me\s+)?(?:a|an|the|new|a new)?\s*`;
+const article = String.raw`(?:me\s+)?(?:a|an|the|new|a new|my)?\s*`;
+// "the", "my" or "this" before what's removed or switched (seen 24 Nov 2026: "delete my bucket bucket x" went to the AI,
+// which asked the player to type Approve in chat instead of showing the card).
+const which = String.raw`(?:(?:the|my|this)\s+)?`;
 
 const PATTERNS: { re: RegExp; name: ActionName; input: (m: RegExpMatchArray) => Record<string, unknown> }[] = [
   {
@@ -27,7 +30,7 @@ const PATTERNS: { re: RegExp; name: ActionName; input: (m: RegExpMatchArray) => 
     input: (m) => ({ suffix: m[1]!.toLowerCase() }),
   },
   {
-    re: new RegExp(`${lead}(?:delete|remove|demolish)\\s+(?:the\\s+)?(?:s3\\s+)?bucket${called}([A-Za-z0-9._-]{3,63})${end}${tail}`, 'i'),
+    re: new RegExp(`${lead}(?:delete|remove|demolish)\\s+${which}(?:s3\\s+)?bucket(?:\\s+bucket)?${called}([A-Za-z0-9._-]{3,63})${end}${tail}`, 'i'),
     name: 'delete_bucket',
     input: (m) => ({ name: m[1]!.toLowerCase() }),
   },
@@ -37,7 +40,7 @@ const PATTERNS: { re: RegExp; name: ActionName; input: (m: RegExpMatchArray) => 
     input: (m) => ({ name: withPrefix(m[1]!) }),
   },
   {
-    re: new RegExp(`${lead}(?:delete|remove|demolish)\\s+(?:the\\s+)?(?:dynamodb\\s+)?table${called}([A-Za-z0-9._-]{1,60})${end}${tail}`, 'i'),
+    re: new RegExp(`${lead}(?:delete|remove|demolish)\\s+${which}(?:dynamodb\\s+)?table(?:\\s+table)?${called}([A-Za-z0-9._-]{1,60})${end}${tail}`, 'i'),
     name: 'delete_table',
     input: (m) => ({ name: withPrefix(m[1]!) }),
   },
@@ -48,7 +51,7 @@ const PATTERNS: { re: RegExp; name: ActionName; input: (m: RegExpMatchArray) => 
     input: (m) => ({ name: m[1]!, ...(m[2] ? { instanceType: m[2].toLowerCase() } : {}) }),
   },
   ...(['stop', 'start', 'terminate'] as const).map((verb) => ({
-    re: new RegExp(`${lead}${verb}\\s+(?:the\\s+)?(?:ec2\\s+)?(?:server|instance|house)?\\s*(i-[0-9a-f]{8,17})${tail}`, 'i'),
+    re: new RegExp(`${lead}${verb}\\s+${which}(?:ec2\\s+)?(?:server|instance|house)?\\s*(i-[0-9a-f]{8,17})${tail}`, 'i'),
     name: `${verb}_instance` as ActionName,
     input: (m: RegExpMatchArray) => ({ instanceId: m[1]!.toLowerCase() }),
   })),
