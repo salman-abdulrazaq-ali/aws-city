@@ -716,6 +716,34 @@ When a change touches a decision, update its entry and run its Proof.
   board; Jobs is City Clients (the order board, then every business; `openClients(id)` routes there); Deploy is the old
   Build tab. HUD Build is "Decorate". Proof: `npx vitest run tests/ladder.test.ts tests/ui.test.tsx`, `npm run smoke`
   (checks the tab titles).
+- **First steps: a beginner's guided path, then graduation** (quest `first-steps`, first in `shared/quests.json`; its
+  words in `shared/first-steps.json`; pure rules in `src/state/firstSteps.ts`; Connie's guide card `src/ui/FirstSteps.tsx`;
+  the canvas's rules `src/game/firstStepsGame.ts`). The world map's Start (or any dot) chooses it (`prefs.firstSteps`
+  'beginner'); "I already know AWS" skips it ('skipped', Everything on); a save with another quest under way or done, or
+  `builder`, is never put on it. Six steps, each with one amber button on the guide card (the HUD says "First steps
+  n/6"): walk to S3 Lake (Sally introduces herself first: an agent's `say` lines queue, each read before the next,
+  `sayReadMs`), play S3 Fishing (its bins are shelves; the ✓ line names the level reached or the stars paid, never a level
+  that didn't come, `pathGrowth`), learn 3 of Sally's cards (`TUTORIAL_DECK`; Learn keeps that view until the player
+  leaves), help a planted citizen, watch Sally's practice task, say OK (or no) to her practice plan. **The quiet city**
+  while on it (`quietCity`; `quietContext` spread into `shows()`): info toasts are dropped (errors show); coins, Decorate,
+  the prompt bar and its Copilot switch, the event banner, "Coming up next", the connect rows, golden tokens, random
+  citizens' questions, coach tips and agents' chatter (whatever ⋯ says, `isChatter`) wait, and so do the canvas's 🔒
+  district signs, zone letters and "×N" badges; the ladder opens Learn from the cards step and Deploy for the plan. **Graduation**
+  (`Celebrate`'s variant: what was learned, the Region's code, what opened; Next names the quest Home will offer,
+  `questOffer`) opens what a first quest used to (`graduated`), and its after-moments come one at a time (store
+  `SETTLE`: the coins note with the total, Connie's word on the next quest, the banner and news, then waiting toasts one
+  by one and coach tips; the Ask tip on the first focus in the box, the Copilot tip on a later one, both graphite).
+  Quest 2, "The City Brochure Site" (id `storage-static-site`), then starts at its CloudFront cards (`afterFirstSteps`:
+  its walk and S3 cards are what the path did). **Replay:** ⋯ → Play / Replay the first steps runs the path again for
+  anyone, hosted and legacy players included, from `prefs.firstStepsReplay` (the synced quest can't go back: merges keep
+  it done), pays the quest's stars only once, and ends with the pref 'beginner', never cleared, so the old first-run tour
+  can't open over graduation's card (`useFirstRunTour` marks it done once a path is chosen; under `navigator.webdriver` it
+  never opens, which is why only a unit test sees this). **Safety:** the practice task and the photo-bucket plan are
+  played and decided on the device in every build (`src/backend/practiceTasks.ts`, `ServerBackend.planPractice` /
+  `answerPractice`): no model call, no AWS call, no socket send, no MFA step-up, a hosted player with a real account linked
+  included. Proof: `npx vitest run tests/practice-task.test.ts tests/first-steps.test.ts tests/first-steps-ui.test.tsx
+  tests/first-steps-game.test.ts tests/moments.test.ts`, `npm run smoke` (a new player lands on the guide card, 1/6, in a
+  quiet city).
 - **New players climb an unlock ladder, and unlocks are earned.** `src/state/ladder.ts` (pure) opens tabs and panels as
   progress grows. Going somewhere (a button that names a tab, a building tap) shows that tab while the player is there but
   never opens it for good; only ⋯ → Show everything does (`opened`; it also turns Simple mode off). Findings are held until city care unlocks (a linked account sees them at once),
@@ -723,7 +751,8 @@ When a change touches a decision, update its entry and run its Proof.
   previous generation, gp2) waits until a quest is finished and comes last. A finding with no automatic fix has "Got it"
   (`ackFinding`: resolved, remembered on the device until the player signs out, like held findings), so it never holds a place for good; the demo never sends a finding in
   `Progress.fixes` open again (`MockBackend.putProgress`). AWS news (the ticker and incident toasts) is a rung too:
-  it opens after the first quest, and the demo's practice drill waits for it (`MockBackend.putProgress`); storms still show.
+  it opens at graduation (`graduated`, `src/state/firstSteps.ts`: the first steps done or skipped, or a legacy save's
+  quest finished), and the demo's practice drill waits for it (`MockBackend.putProgress`); storms still show.
   There's no "Open anyway" list: the shift's "Coming up next" names the next unlock and how to earn it. Deploy also shows
   while a real account is being linked (`linking` in `src/state/account.ts`: a setup link is out, the server asked for an
   authenticator first, or the link broke), so its steps never vanish mid-link, and for a hosted player who can link one
@@ -748,7 +777,7 @@ When a change touches a decision, update its entry and run its Proof.
   stands above the list only while no "Connect your AWS account" row is in sight (so it comes back once the day is done
   or the row is under "+N more"), and with Everything on only when the shift's `ConnectLine` offers nothing
   (`useConnectOffer`, `src/ui/Home.tsx`); Learn hides the Drawing board (a design step shows it); City care waits for a
-  finished quest; My City is buildings, stars and coins. Hidden, never deleted: badges, combos, coins, the season road and
+  finished quest (the first steps count, done or skipped); My City is buildings, stars and coins. Hidden, never deleted: badges, combos, coins, the season road and
   the shift keep recording, and ⋯ → Show everything / Keep it simple switches back and forth with nothing lost, and ⋯ → I already build on AWS turns Everything on, as the world intro's button does. The tour's
   second step points at the list. Proof: `npx vitest run tests/simple.test.ts tests/simple-ui.test.tsx tests/session.test.ts tests/account-ui.test.tsx tests/connect-card.test.tsx tests/a11y-focus.test.tsx`, `npm run smoke`
   (runs Simple first: `01s-simple-first-city`, `80-simple-home`, `80b-simple-task-ticked`, `80c-simple-day-done`,
@@ -799,7 +828,8 @@ When a change touches a decision, update its entry and run its Proof.
   it rises floor by floor (or its crown drops), then one payoff (one burst, the banner, the fanfare, the cheer), then the
   push-in 250 ms later, only if the building is in view; under reduced motion a cut and the payoff at once, still. A
   finished quest opens the celebration card (`src/ui/Celebrate.tsx`, no toast). While that card or a mini-game is up, info toasts (badges, AWS
-  status, a drill) wait and come one by one after it closes (`toastsHeld` in `src/state/store.ts`; errors still show), the
+  status, a drill) wait and come one by one after it closes (`toastsHeld` in `src/state/store.ts`; errors still show; after
+  graduation's card they wait for its after-moments too, `settle`), the
   ticker hides during the card, and the card's backdrop stops the presses Phaser hears on the window (`useShieldGame`).
   AWS status leads with plain words (`plainIncidentLead`: "Practice storm: nothing is wrong with your city"). A golden
   token's bubble is short and gold ("✨ Golden token! 1 of 6 · +5 points", no exam code) and waits for a tier-up's cheer;
@@ -1144,7 +1174,7 @@ When a change touches a decision, update its entry and run its Proof.
   `Progress.puzzles`), the practice terminal, a choose card, the practice console's Copilot, a settings checklist,
   Explain it back (`checkKeywords`), or one of 7 station panels (`src/learning/stations/`: sort, match, route, rotate,
   scale, spot, order; pure reducers, buttons for keyboard and pointer, Games without a clock drops the timer). The ladder
-  opens Clients after the first quest; a job whose services aren't put up here says "Put up <X> first" and how (its
+  opens Clients at graduation (the first steps done or skipped); a job whose services aren't put up here says "Put up <X> first" and how (its
   Show me flies there; learning one of its cards puts it up) and never blocks the rest of the level. One station job is a
   `starter` (stadium "Sort the fans' requests"): open from day one in every city, with nothing put up (`missingFor`,
   `STARTER_TASKS`; doing it puts its buildings up). A job pays its services once ever (`completeTask`, `Progress.clients`
