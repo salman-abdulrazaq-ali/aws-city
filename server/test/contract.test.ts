@@ -188,6 +188,8 @@ describe('server speaks the frontend contract', () => {
     const system = JSON.stringify(calls.at(-1)?.system ?? '');
     expect(system).toContain("This chat can't change AWS");
     expect(system).toContain('The city only changes what it built');
+    // 24 Nov 2026: with the switch on, chat still said "turn it on"; the answer now depends on the snapshot's flag.
+    expect(system).toContain('If letCityChangeWhatPlayerMade is true, the city can do it');
   });
 });
 

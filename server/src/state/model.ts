@@ -46,6 +46,12 @@ export interface WorldSnapshot {
   roleRefused?: true;
   /** v2.17: those refusals looked like our side (aws.ts's breaker: many players at once), so they don't count toward BROKEN_AFTER. */
   refusedOurSide?: true;
+  /**
+   * Hosted, in the agents' copy only (tenants.ts): the player's "Let the city change things you made" switch, so a model
+   * knows whether it may offer to change a server or empty bucket they made (24 Nov 2026: on, Sally still said no).
+   * The policy reads the switch itself (checkAction's `cleanup`); this only tells the model.
+   */
+  cleanup?: boolean;
 }
 
 export type AwsEvent =

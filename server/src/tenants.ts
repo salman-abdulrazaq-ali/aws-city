@@ -379,6 +379,12 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         },
       });
       const snapshot = async () => poller.current() ?? poller.refresh();
+      // What the agents and the orchestrator read: the snapshot plus the player's switch (read at each turn, so turning it
+      // on or off is known at once). Hosted only: locally there's no switch.
+      const agentSnapshot = async (): Promise<WorldSnapshot> => {
+        const s = await snapshot();
+        return deps.linker ? { ...s, cleanup: self?.cleanup === true } : s;
+      };
       // Every AWS change asked for, done or refused: who (hashed), the Region, the action and its outcome. Like the gate's
       // lines, the target is a hash and the account id is never written (resource names carry it). Kept 30 days.
       const audit: Audit = (e) => log.info('aws change', { who: who(sub), region: aws.region, ...e });
@@ -395,7 +401,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         // Read at each write, so turning it on or off (verify, the minute's re-read) takes effect at once. Local: no switch.
         cleanup: () => (deps.linker ? self?.cleanup === true : undefined),
       });
-      const runnerDeps = { llm, actions, snapshot, knowledge: deps.knowledge };
+      const runnerDeps = { llm, actions, snapshot: agentSnapshot, knowledge: deps.knowledge };
       const strands = createStrandsRunner(runnerDeps);
       const runner = routedRunner(createAgentRunner(runnerDeps), strands, deps.config.agentEngine === 'strands');
       care = createCityCare({
@@ -440,7 +446,7 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
         bill,
         flow,
         inventoryTimer,
-        orchestrator: createOrchestrator({ llm, runner, snapshot, uploads: deps.uploads, owner: sub, walkMs: deps.walkMs, knowledge: deps.knowledge, actions, retired: retired.signal }),
+        orchestrator: createOrchestrator({ llm, runner, snapshot: agentSnapshot, uploads: deps.uploads, owner: sub, walkMs: deps.walkMs, knowledge: deps.knowledge, actions, retired: retired.signal }),
         snapshot,
         linked: true,
         region: aws.region,

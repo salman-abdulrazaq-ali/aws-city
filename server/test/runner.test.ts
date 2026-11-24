@@ -150,4 +150,23 @@ describe('untrusted names in the model prompt', () => {
       { id: 'testawscity047463438585console1', kind: 'bucket', name: 'testawscity047463438585console1', state: expect.any(String) },
     ]);
   });
+
+  // Seen 24 Nov 2026: the switch was on, but the prompt only said "unless the player turned it on", so Sally said no.
+  it('the model reads the player’s switch (hosted): true or false, a boolean only, and absent locally', async () => {
+    const { snapshotForModel, snapshotSummary } = await import('../src/agents/runner.js');
+    const { agentSystemPrompt } = await import('../src/agents/personas.js');
+    const { snapshot, bucket } = await import('./fixtures.js');
+    const s = snapshot([{ ...bucket('my-console-bucket'), managedByGame: false }]);
+    for (const render of [snapshotForModel, snapshotSummary]) {
+      expect(JSON.parse(render({ ...s, cleanup: true })).letCityChangeWhatPlayerMade).toBe(true);
+      expect(JSON.parse(render({ ...s, cleanup: false })).letCityChangeWhatPlayerMade).toBe(false);
+      expect(JSON.parse(render(s))).not.toHaveProperty('letCityChangeWhatPlayerMade');
+      // Anything but true reads as off.
+      expect(JSON.parse(render({ ...s, cleanup: 'yes' as unknown as boolean })).letCityChangeWhatPlayerMade).toBe(false);
+    }
+    const prompt = agentSystemPrompt('s3');
+    expect(prompt).toContain("letCityChangeWhatPlayerMade in the city snapshot is the player's switch");
+    expect(prompt).toMatch(/true: you may also stop, start or terminate servers they made and delete their empty buckets/);
+    expect(prompt).toMatch(/builtByGame false \(or listed in notBuiltByTheCity\) are in their account too/);
+  });
 });

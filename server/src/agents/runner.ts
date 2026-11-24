@@ -76,6 +76,11 @@ export const SUMMARY_MAX_BUILT = 20;
 export const SUMMARY_MAX_OTHER_SERVERS = 10;
 /** On their way out, so not worth naming: a terminated server (DescribeInstances keeps it an hour), a table being deleted. */
 const LEAVING = new Set(['terminated', 'shutting-down', 'DELETING']);
+/**
+ * The player's "Let the city change things you made" switch, when the snapshot carries it (hosted): without it a model
+ * only read "unless the player turned it on" and said no with the switch on (24 Nov 2026). A boolean, so it can't carry text.
+ */
+const switchFor = (s: WorldSnapshot) => (s.cleanup !== undefined ? { letCityChangeWhatPlayerMade: s.cleanup === true } : {});
 const NAMED_KINDS = new Set(['instance', 'bucket', 'table']);
 export const snapshotSummary = (s: WorldSnapshot) => {
   const built = s.resources.filter((r) => r.managedByGame);
@@ -87,6 +92,7 @@ export const snapshotSummary = (s: WorldSnapshot) => {
   return escapeTags(
     JSON.stringify({
       region: s.region,
+      ...switchFor(s),
       builtByTheCity: built.slice(0, SUMMARY_MAX_BUILT).map((r) => ({ id: clip(r.id, 64), kind: r.kind, name: clip(r.name, 40), state: r.state })),
       ...(built.length > SUMMARY_MAX_BUILT ? { moreBuilt: built.length - SUMMARY_MAX_BUILT } : {}),
       ...(madeElsewhere.length
@@ -105,6 +111,7 @@ export const snapshotForModel = (s: WorldSnapshot) => {
   const render = (n: number) =>
     escapeTags(JSON.stringify({
       region: s.region,
+      ...switchFor(s),
       credentials: s.credentials,
       services: s.services,
       resources: all.slice(0, n).map((r) => ({
