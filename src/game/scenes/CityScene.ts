@@ -1411,6 +1411,18 @@ export class CityScene extends Phaser.Scene {
     return this.glide(c.x, top === undefined ? c.y - 30 : buildingFocusY(c.y, top, cam.height, cam.zoom));
   }
 
+  /** A landmark's lot (world px) while nothing stands on it yet: the diamond of its footprint (the quick tour rings it). */
+  private lotBounds(id: string): { x: number; y: number; width: number; height: number } | undefined {
+    const f = this.plan.landmarkLayout(id)?.footprint;
+    if (!f) return undefined;
+    // The diamond's four corners: top (x, y), right (x + w, y), bottom (x + w, y + h), left (x, y + h), tile edges.
+    const top = toScreen(CITY_ISO, f.x - 0.5, f.y - 0.5);
+    const right = toScreen(CITY_ISO, f.x + f.w - 0.5, f.y - 0.5);
+    const bottom = toScreen(CITY_ISO, f.x + f.w - 0.5, f.y + f.h - 0.5);
+    const left = toScreen(CITY_ISO, f.x - 0.5, f.y + f.h - 0.5);
+    return { x: left.x, y: top.y, width: right.x - left.x, height: bottom.y - top.y };
+  }
+
   private follow(a: Agent) {
     this.following = a;
     this.cameras.main.startFollow(a.sprite, true, 0.08, 0.08);
@@ -1454,7 +1466,8 @@ export class CityScene extends Phaser.Scene {
     if (!this.sys.isActive()) return void this.sayLines.delete(agentId);
     const a = this.agents.get(agentId);
     const wait = (this.sayRead.get(agentId) ?? -Infinity) - this.time.now;
-    if (!a || wait > 0) {
+    // A celebration card up (graduation's included): the line waits for it, and is read out when it shows.
+    if (!a || wait > 0 || useCity.getState().celebration) {
       // Not here yet (a building put up a moment ago spawns its agent on the next sync): try again, but not for ever.
       if (!a && Date.now() - line.at > SAY_GIVE_UP_MS) {
         q.shift();
@@ -1633,12 +1646,13 @@ export class CityScene extends Phaser.Scene {
         this.following = undefined;
         cam.centerOn(x, y);
       }),
-      bus.on('locateKai', ({ reply }) => {
-        // Kai's sprite bounds, camera → canvas → page (the canvas renders at CSS pixels).
+      bus.on('locate', ({ id, reply }) => {
+        // Kai's (or a landmark's) sprite bounds, camera → canvas → page (the canvas renders at CSS pixels).
+        if (!this.sys.isActive()) return reply(undefined);
         const cam = this.cameras.main;
-        const b = this.player?.sprite.getBounds();
+        const b = id === 'player' ? this.player?.sprite.getBounds() : (this.landmarks.get(id)?.img.getBounds() ?? this.lotBounds(id));
         const canvas = this.game.canvas.getBoundingClientRect();
-        if (!b || !this.sys.isActive()) return reply(undefined);
+        if (!b) return reply(undefined);
         const left = canvas.left + (b.x - cam.worldView.x) * cam.zoom;
         const top = canvas.top + (b.y - cam.worldView.y) * cam.zoom;
         const r = { top, left, width: b.width * cam.zoom, height: b.height * cam.zoom };

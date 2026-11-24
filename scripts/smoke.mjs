@@ -741,19 +741,24 @@ if (!/Level 7/.test(crowned ?? '')) errors.push(`crowns: a fully known S3 Lake s
 await shot('51-crowned');
 await city(() => window.awsCity.useCity.getState().select(undefined));
 
-// The first-run tour (skipped under automation; opened here through the store): 3 steps, the last starts the first job.
+// The quick tour (src/ui/Tour.tsx; opened here through the store, as ⋯ → Show the quick tour does): six non-modal stops,
+// Next through them (never Try it here: that plays a practice task), the last says Start exploring; no scrim.
 await city(() => window.awsCity.useCity.getState().setTourOpen(true));
 await wait(700);
 await shot('27-tour-1');
-await page.locator('.tour-card [data-primary]').click();
+if (await page.locator('.tour, [aria-modal="true"].tour-card').count()) errors.push('tour: a full-screen layer or a modal card is back');
+for (let n = 0; n < 4; n++) {
+  await page.locator('.tour-card [data-next]').click();
+  await wait(400);
+}
+await shot('27b-tour-5');
+await page.locator('.tour-card [data-next]').click();
 await wait(400);
-await page.locator('.tour-card [data-primary]').click();
-await wait(500);
-await shot('27b-tour-3');
-const lastTourButton = await page.locator('.tour-card [data-primary]').textContent();
-if (lastTourButton?.trim() !== 'Start my first job') errors.push(`tour: the last step's button reads "${lastTourButton}"`);
-await page.keyboard.press('Escape');
+const lastTourButton = await page.locator('.tour-card [data-next]').textContent();
+if (lastTourButton?.trim() !== 'Start exploring') errors.push(`tour: the last stop's button reads "${lastTourButton}"`);
+await page.locator('.tour-card').press('Escape');
 await wait(300);
+if (await page.locator('.tour-card').count()) errors.push('tour: Escape left the card up');
 
 // ── Simple mode for a seasoned player (src/state/simple.ts): the To-do list, a task ticking off, the day done; then the
 // same list in the 400 px side panel. Everything goes back on after, for the checks that follow. ──
@@ -841,17 +846,17 @@ const simpleGhost = await city(() => window.awsCity.ambient.stats());
 if (simpleGhost?.ghost || simpleGhost?.ghostSprite) errors.push(`simple mode: the map shows the next-level line "${simpleGhost.ghost}"`);
 await city(() => window.awsCity.useCity.getState().select(undefined));
 await wait(300);
-// The tour's second step points at the To-do list in Simple mode.
+// The quick tour in Simple mode: its second stop points at the box (Ask in plain words).
 await page.locator('.back-link').click().catch(() => {});
 await wait(300);
 await city(() => window.awsCity.useCity.getState().setTourOpen(true));
 await wait(700);
-await page.locator('.tour-card [data-primary]').click();
+await page.locator('.tour-card [data-next]').click();
 await wait(500);
 const tour2 = (await page.locator('.tour-card').textContent()) ?? '';
-if (!/Your To-do list/.test(tour2)) errors.push(`simple mode: the tour's second step should show the To-do list, got "${tour2.slice(0, 80)}"`);
+if (!/Ask in plain words/.test(tour2)) errors.push(`simple mode: the tour's second stop should be Ask in plain words, got "${tour2.slice(0, 80)}"`);
 await shot('80e-simple-tour');
-await page.keyboard.press('Escape');
+await page.locator('.tour-card').press('Escape');
 await wait(300);
 const simplePanel = await ctx.newPage();
 simplePanel.on('pageerror', (e) => errors.push(`simple panel pageerror: ${e.message}`));

@@ -6,6 +6,7 @@ import { FIRST_STEPS } from '@/state/firstSteps';
 import { Portrait } from './Portrait';
 import { Plain } from './Term';
 import { openEverything } from './useLadder';
+import { startQuickTourAfterDive } from './Tour';
 
 /** The City tab's panel (App.tsx), where the To-do list or the shift opens. */
 const CITY_PANEL_ID = 'city-tabpanel';
@@ -24,7 +25,8 @@ const CITY_PANEL_ID = 'city-tabpanel';
  *
  * The choice (DESIGN-tutorial §3): beginners are the default. The card showing chooses the first steps
  * (`prefs.firstSteps = 'beginner'`), so "Start in Oregon" and a dot picked on the map both start them on arrival; "I
- * already know AWS" opens the whole city instead (the old "I already build on AWS") and skips them. A pref already set
+ * already know AWS" opens the whole city instead (the old "I already build on AWS"), skips them and starts the quick
+ * tour after the dive (src/ui/Tour.tsx). A pref already set
  * (the smoke's opt-out, 'skipped') is kept.
  */
 export function WorldIntro({ docked = false }: { docked?: boolean }) {
@@ -100,6 +102,8 @@ export function WorldIntro({ docked = false }: { docked?: boolean }) {
           openEverything();
           useCity.getState().skipFirstSteps();
           dive();
+          // The quick tour (DESIGN-tutorial §5) once the city has arrived: six coach marks, never over the map.
+          startQuickTourAfterDive();
         }}
       >
         {FIRST_STEPS.map.advanced}

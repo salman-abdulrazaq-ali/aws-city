@@ -1,101 +1,145 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { startQuest as notifyQuest, type Layout } from '@/app/runtime';
-import { SURFACE, SURFACE_NAME } from '@/app/surface';
+import { startPracticeTask, type Layout } from '@/app/runtime';
+import { SURFACE, SURFACE_NAME, type Surface } from '@/app/surface';
+import { announce } from '@/state/announce';
 import { bus } from '@/state/bus';
 import { useCity } from '@/state/store';
-import { QUESTS } from '@/world/content';
-import { feel } from './feedback';
+import { FIRST_STEPS, fill } from '@/state/firstSteps';
 import { isTourDone, markTourDone, readPref, TIP_ASK_KEY, TIP_COPILOT_KEY, writePref } from './logic';
 import { Portrait } from './Portrait';
-import { walkTo } from '@/state/walk';
-import { isSimple, shows } from '@/state/simple';
-import { FIRST_STEPS_QUEST } from '@/state/firstSteps';
+import { shows } from '@/state/simple';
 import { useFirstSteps, useQuiet } from './FirstSteps';
 
-interface Step {
+// ── The quick tour (DESIGN-tutorial §5): six coach marks over the real UI for players who already know AWS ──
+
+/** Which build the tour talks to: the demo (practice account), the hosted city (your own linked account) or a local server. */
+export type TourBuild = 'demo' | 'hosted' | 'local';
+
+export interface TourStop {
+  id: string;
   title: string;
   body: string;
-  /** CSS selectors tried in order (`@kai`: Kai on the map); the first visible match is highlighted. None = centred card. */
+  /**
+   * Where the card points, tried in order; the first one on screen is ringed. A CSS selector, or `@<id>`: Kai (`@player`)
+   * or a landmark (`@s3`) on the map, asked of the city (bus `locate`). None found: the card stands at the bottom.
+   */
   targets: string[];
+  /** Stop 2's "Try it": Sally's practice task (local in every build, never a model or AWS). */
+  tryIt?: boolean;
 }
 
-/** Three steps, then the first job: Kai, where the next job always is (Connie points, Kai walks), and what a building does. */
-const EVERYTHING_STEPS: Step[] = [
-  {
-    title: 'Welcome! This is you, Kai',
-    body: 'AWS is a giant set of computers anyone can rent over the internet. This city is made of its tools. Walk with the arrow keys or a click.',
-    targets: ['@kai', '.stage'],
-  },
-  {
-    title: 'Connie points the way',
-    body: 'Today’s shift waits in the City tab. Its big button says exactly what happens next, like “Walk to S3 Lake”. Press it and Kai walks there.',
-    targets: ['.next'],
-  },
-  {
-    title: 'Tap any building',
-    body: 'Each building is one AWS tool with a helper inside. Tap one to say hi and see what it does.',
-    targets: ['.stage'],
-  },
-];
+/** ⋯, the HUD's menu button. */
+export const MORE_BUTTON = '.more > [aria-haspopup="menu"]';
 
-/** Simple mode (the default, src/state/simple.ts): step 2 points at the To-do list instead of the shift's big button. */
-const SIMPLE_STEPS: Step[] = EVERYTHING_STEPS.map((s, i) =>
-  i === 1
-    ? {
-        title: 'Your To-do list',
-        body: 'Your To-do list waits in the City tab. Each task has one button that says exactly what happens, like “Walk to S3 Lake”. Tick them all off, then come back tomorrow.',
-        targets: ['.todo', '.next'],
-      }
-    : s,
-);
-const tourSteps = (simple: boolean) => (simple ? SIMPLE_STEPS : EVERYTHING_STEPS);
+/** What each stop points at, by layout (the copy is data: shared/first-steps.json `tour`). */
+const TARGETS: Record<string, (layout: Layout, building: string) => string[]> = {
+  building: (_, building) => [`@${building}`, '.stage'],
+  ask: () => ['.composer', '.prompt-bar'],
+  deploy: () => ['#tab-deploy', '.tabs'],
+  learn: () => ['#tab-learn', '.tabs'],
+  // The panel's Copilot switch stands above the box on the City tab; the tab has none (the helpers need the panel): ⋯.
+  console: (layout) => (layout === 'panel' ? ['.console-btn', '.composer', MORE_BUTTON] : [MORE_BUTTON]),
+  more: () => [MORE_BUTTON],
+};
 
 /**
- * The tour's first job: the first regular quest. The first steps (quest 1) are chosen on the world map and played
- * with Connie's guide, never started from here, so a player who has a save from before them is never put in them.
+ * The six stops for this surface and build: a stop's body is its build's or layout's own where the copy has one. Stop 1
+ * points at `building` (tourBuilding: S3 Lake, or a building already up when S3 Lake isn't).
  */
-const firstJob = () => QUESTS.find((q) => q.id !== FIRST_STEPS_QUEST);
+export function quickTourStops(layout: Layout, build: TourBuild, surface: Surface = SURFACE, building = 's3'): TourStop[] {
+  return FIRST_STEPS.tour.stops.map((c) => {
+    let body = c.body;
+    if (build === 'hosted' && c.hosted) body = c.hosted;
+    if (build === 'local' && c.local) body = c.local;
+    if (layout === 'full' && c.tab) body = surface === 'tab' && c.safari ? c.safari : fill(c.tab, { surface: SURFACE_NAME[surface] });
+    return { id: c.id, title: c.title, body, targets: TARGETS[c.id]?.(layout, building) ?? [], tryIt: c.id === 'ask' };
+  });
+}
 
-/** Where the first job starts: the first quest's current step, when it points at a landmark. */
-function firstJobTarget(): string | undefined {
-  const first = firstJob();
-  const st = first && useCity.getState().progress.quests?.[first.id];
-  const step = first && st?.status === 'active' ? first.steps[st.step] : undefined;
-  return step && (step.kind === 'visit' || step.kind === 'cards') ? step.serviceId : undefined;
+/**
+ * Stop 1's building: S3 Lake when it's up in this city, else the first building that is (a player who skipped the first
+ * steps may have none yet: then S3 Lake's lot, which the city rings all the same).
+ */
+export function tourBuilding(landmarks: Record<string, { discovered?: boolean }> | undefined): string {
+  const up = Object.entries(landmarks ?? {}).filter(([, l]) => l.discovered).map(([id]) => id);
+  return up.includes('s3') || !up.length ? 's3' : up[0];
 }
 
 type Rect = { top: number; left: number; width: number; height: number };
 
-/** Kai's box on the page, asked of the city (synchronous: the scene replies inside emit). */
-function kaiRect(): Rect | undefined {
-  let found: Rect | undefined;
-  bus.emit('locateKai', { reply: (r) => (found = r) });
-  // The ring takes in Kai's "Kai (you)" tag under the feet too, so the card below never covers it.
-  return found && { top: found.top - 6, left: found.left - 14, width: found.width + 28, height: found.height + 26 };
-}
-
+/** A target's box on the page, a little bigger (the ring stands just outside it); undefined when it isn't on screen. */
 function findTarget(selectors: string[]): Rect | undefined {
   for (const sel of selectors) {
-    if (sel === '@kai') {
-      const r = kaiRect();
-      if (r) return r;
-      continue;
+    let r: Rect | undefined;
+    if (sel.startsWith('@')) bus.emit('locate', { id: sel.slice(1), reply: (found) => (r = found) });
+    else {
+      const b = document.querySelector(sel)?.getBoundingClientRect();
+      if (b && b.width > 0 && b.height > 0) r = b;
     }
-    const el = document.querySelector(sel);
-    const r = el?.getBoundingClientRect();
-    if (r && r.width > 0 && r.height > 0) return { top: r.top - 4, left: r.left - 4, width: r.width + 8, height: r.height + 8 };
+    if (r) return { top: r.top - 4, left: r.left - 4, width: r.width + 8, height: r.height + 8 };
   }
   return undefined;
 }
 
-/** After the city has arrived, the first-run tour waits this long at most for the `arrived` moment. */
+const MARGIN = 12;
+const GAP = 10;
+
+/**
+ * Where the coach card stands: below its target, else above, else to the right, else to the left, always on screen and
+ * never over the target. Only when no side has room does it take the roomier side's edge. No target: the bottom middle.
+ * Pure (tests/quick-tour.test.tsx checks it).
+ */
+export function placeCard(t: Rect | undefined, card: { w: number; h: number }, view: { w: number; h: number }): { top: number; left: number } {
+  const x = (v: number) => Math.max(MARGIN, Math.min(v, view.w - card.w - MARGIN));
+  const y = (v: number) => Math.max(MARGIN, Math.min(v, view.h - card.h - MARGIN));
+  if (!t) return { top: y(view.h - card.h - MARGIN), left: x((view.w - card.w) / 2) };
+  const cx = x(t.left + t.width / 2 - card.w / 2);
+  const cy = y(t.top + t.height / 2 - card.h / 2);
+  const below = t.top + t.height + GAP;
+  const above = t.top - GAP - card.h;
+  const right = t.left + t.width + GAP;
+  const left = t.left - GAP - card.w;
+  if (below + card.h <= view.h - MARGIN) return { top: below, left: cx };
+  if (above >= MARGIN) return { top: above, left: cx };
+  if (right + card.w <= view.w - MARGIN) return { top: cy, left: right };
+  if (left >= MARGIN) return { top: cy, left };
+  return t.top > view.h - (t.top + t.height) ? { top: MARGIN, left: cx } : { top: y(below), left: cx };
+}
+
+/** After the city has arrived, the tour waits this long at most for the `arrived` moment. */
 export const TOUR_FALLBACK_MS = 900;
 
 /**
- * The first-run tour opens once the city has arrived (not on the world map, and not under automation, so scripted smoke
- * runs aren't blocked; they open it with awsCity.useCity.getState().setTourOpen(true)). Never for a player who chose the
- * first steps, is on them, is past them or is back from a replay: the guide card taught the city, so their tour is marked
- * done (seen 24 Nov 2026: a replay's end cleared its pref and the old tour opened over graduation's card).
+ * "I already know AWS" on the world map (src/ui/WorldIntro.tsx) and a first run's "Skip to the quick tour": the quick
+ * tour opens once the city is up and has arrived (or TOUR_FALLBACK_MS after it's up), so the dive comes first. A choice
+ * the player made, so it opens under automation too (the first-run tour below doesn't).
+ */
+export function startQuickTourAfterDive() {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let offArrived = () => {};
+  const open = () => {
+    clearTimeout(timer);
+    offArrived();
+    if (useCity.getState().view.name === 'city') useCity.getState().setTourOpen(true);
+  };
+  const arm = () => {
+    offArrived = bus.on('arrived', open);
+    timer = setTimeout(open, TOUR_FALLBACK_MS);
+  };
+  if (useCity.getState().view.name === 'city') return arm();
+  const offView = useCity.subscribe((s) => {
+    if (s.view.name !== 'city') return;
+    offView();
+    arm();
+  });
+}
+
+/**
+ * The first-run tour opens once the city has arrived, for a player who never chose (a save from before the first steps)
+ * and never saw a tour: the quick tour. Not on the world map, and not under automation, so scripted smoke runs aren't
+ * blocked (they open it with awsCity.useCity.getState().setTourOpen(true)). Never for a player who chose the first steps
+ * or the quick tour, is on them, is past them or is back from a replay: their tour is marked done (seen 24 Nov 2026: a
+ * replay's end cleared its pref and the old tour opened over graduation's card).
  */
 export function useFirstRunTour() {
   const city = useCity((s) => s.view.name === 'city');
@@ -123,137 +167,150 @@ export function useFirstRunTour() {
   }, [city, setOpen, path]);
 }
 
-/** Three-step coach-mark tour. Esc skips, Enter goes next, Tab stays inside the card. */
+/**
+ * The coach engine: one card at a time over the real UI, never modal. No scrim and nothing over the map (the ring takes no
+ * presses), so the player can tap a building or type in the box mid-tour. The card is a non-modal dialog: Enter goes
+ * next, Escape ends, Tab leaves it. It stands beside its target, never over it, follows it as the layout or the camera
+ * moves, and steps aside while the city sleeps (a game, an HQ, the world map) or a celebration card is up. Each stop is
+ * read out (announce).
+ */
 export function Tour({ layout }: { layout: Layout }) {
   const open = useCity((s) => s.tourOpen);
   const setOpen = useCity((s) => s.setTourOpen);
+  const build = useCity((s): TourBuild => (s.backendKind === 'mock' ? 'demo' : s.hosted ? 'hosted' : 'local'));
+  const shown = useCity((s) => s.view.name === 'city' && !s.celebration);
+  const building = useCity((s) => tourBuilding(s.progress.cities?.[s.cityRegion]?.landmarks));
   const [i, setI] = useState(0);
+  const [tried, setTried] = useState(false);
   const [rect, setRect] = useState<Rect>();
+  const [pos, setPos] = useState<{ top: number; left: number }>();
   const card = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(null);
-  const simple = useCity((s) => isSimple(s.prefs));
-  const list = tourSteps(simple);
-  const step = list[Math.min(i, list.length - 1)];
-  const last = i === list.length - 1;
+  const stops = quickTourStops(layout, build, SURFACE, building);
+  const stop = stops[Math.min(i, stops.length - 1)];
+  const last = i === stops.length - 1;
+  const live = open && shown;
 
-  const close = useCallback(
-    (finished: boolean) => {
-      markTourDone();
-      setOpen(false);
-      setI(0);
-      if (finished) {
-        feel.questStart();
-        const first = firstJob();
-        const quests = useCity.getState().progress.quests;
-        if (first && !quests?.[first.id]) {
-          useCity.getState().startQuest(first.id);
-          notifyQuest(first.id);
-        }
-        // Straight to the first job's landmark: one place built, one toast, no tour of the whole city.
-        const target = firstJobTarget();
-        bus.emit('flyTo', { id: target ?? 'plaza' });
-        // Kai walks there: the first visit step counts when he arrives (src/state/walk.ts walkTo)
-        if (target) walkTo(target);
-      }
-      if (opener.current instanceof HTMLElement) opener.current.focus();
-    },
-    [setOpen],
-  );
+  const end = useCallback(() => {
+    const inCard = !!card.current?.contains(document.activeElement);
+    markTourDone();
+    setOpen(false);
+    setI(0);
+    setTried(false);
+    if (!inCard) return;
+    const back = opener.current instanceof HTMLElement && opener.current.isConnected ? opener.current : document.getElementById('city-tabpanel');
+    back?.focus({ preventScroll: true });
+  }, [setOpen]);
 
   useEffect(() => {
-    if (!open) return;
-    opener.current = document.activeElement;
-    // Step 1 is Kai: centre the camera on Kai, so the ring and the card can point at Kai.
-    bus.emit('flyTo', { id: 'player' });
+    if (open) opener.current = document.activeElement;
   }, [open]);
 
+  // The building stop: the camera goes there (and rings it); again if the city's own arrival moved it meanwhile (seen
+  // 24 Nov 2026 in the panel, right after the dive), but only in the stop's first seconds, never against the player.
+  const flyId = stop.id === 'building' ? building : undefined;
+  useEffect(() => {
+    if (!live || !flyId) return;
+    const fly = () => bus.emit('flyTo', { id: flyId });
+    const again = () => !findTarget([`@${flyId}`]) && fly();
+    fly();
+    const timers = [setTimeout(again, 1200), setTimeout(again, 2600)];
+    return () => timers.forEach(clearTimeout);
+  }, [live, flyId]);
+
+  // Each stop is read out, and the keys come to its primary unless the player is busy elsewhere (it isn't modal).
+  useEffect(() => {
+    if (!live) return;
+    announce(`Quick tour, ${i + 1} of ${stops.length}: ${stop.title}. ${stop.body}`, { replace: true });
+    const a = document.activeElement;
+    const free = !a || a === document.body || a === opener.current || !!card.current?.contains(a);
+    if (free) card.current?.querySelector<HTMLButtonElement>('[data-primary]')?.focus({ preventScroll: true });
+  }, [live, i, stops.length, stop.title, stop.body]);
+
+  // Follow the target: the layout settles, the camera pans, the panel's rows slide.
+  const targetKey = stop.targets.join('|');
   useLayoutEffect(() => {
-    if (!open) return;
-    const targets = list[i]?.targets ?? [];
-    const place = () =>
-      setRect((prev) => {
-        const r = findTarget(targets);
-        return prev && r && prev.top === r.top && prev.left === r.left && prev.width === r.width && prev.height === r.height ? prev : r;
-      });
+    if (!live) return;
+    const targets = targetKey.split('|');
+    const place = () => {
+      const r = findTarget(targets);
+      const box = card.current;
+      const p = placeCard(r, { w: box?.offsetWidth || 320, h: box?.offsetHeight || 200 }, { w: window.innerWidth, h: window.innerHeight });
+      setRect((prev) => (prev && r && prev.top === r.top && prev.left === r.left && prev.width === r.width && prev.height === r.height ? prev : r));
+      setPos((prev) => (prev && prev.top === p.top && prev.left === p.left ? prev : p));
+    };
     place();
     window.addEventListener('resize', place);
-    const t = setTimeout(place, 250); // layout settles after fonts / the game canvas
-    const t2 = setTimeout(place, 800); // and the camera's 700 ms pan onto Kai
+    const timer = setInterval(place, 400);
     return () => {
       window.removeEventListener('resize', place);
-      clearTimeout(t);
-      clearTimeout(t2);
+      clearInterval(timer);
     };
-  }, [open, i, layout, list]);
+  }, [live, targetKey, tried, i]);
 
-  // Focus the primary button on each step so Enter advances.
-  useEffect(() => {
-    if (open) card.current?.querySelector<HTMLButtonElement>('[data-primary]')?.focus();
-  }, [open, i]);
+  if (!live) return null;
 
-  if (!open) return null;
-
-  const next = () => (last ? close(true) : setI(i + 1));
+  const next = () => (last ? end() : setI(i + 1));
+  const tryIt = () => {
+    if (tried) return;
+    setTried(true);
+    startPracticeTask();
+    // Try it goes from the card: the keys move to Next, the new amber button (never to <body>).
+    requestAnimationFrame(() => card.current?.querySelector<HTMLButtonElement>('[data-next]')?.focus({ preventScroll: true }));
+    bus.emit('flyTo', { id: `agent:${FIRST_STEPS.task.agentId}` });
+  };
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Escape') {
       e.preventDefault();
-      close(false);
+      e.stopPropagation();
+      end();
     } else if (e.key === 'Enter' && !(e.target instanceof HTMLButtonElement)) {
       e.preventDefault();
       next();
-    } else if (e.key === 'ArrowRight' && !last) {
-      setI(i + 1);
-    } else if (e.key === 'ArrowLeft' && i > 0) {
-      setI(i - 1);
-    } else if (e.key === 'Tab') {
-      const f = [...(card.current?.querySelectorAll<HTMLElement>('button') ?? [])];
-      if (!f.length) return;
-      const at = f.indexOf(document.activeElement as HTMLElement);
-      const to = e.shiftKey ? (at <= 0 ? f.length - 1 : at - 1) : at === f.length - 1 ? 0 : at + 1;
-      e.preventDefault();
-      f[to].focus();
     }
   };
-
-  // Put the card below the highlight if there's room, else above; centred when there's no target.
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-  const cardW = Math.min(320, vw - 24);
-  let pos: { top: number; left: number };
-  if (!rect) pos = { top: vh / 2 - 90, left: (vw - cardW) / 2 };
-  else {
-    const below = rect.top + rect.height + 10;
-    const top = below + 190 < vh ? below : Math.max(12, rect.top - 200);
-    const inside = rect.height > vh * 0.5 ? rect.top + rect.height / 2 - 90 : top; // tall targets: overlay the middle
-    pos = { top: Math.max(12, Math.min(inside, vh - 200)), left: Math.max(12, Math.min(rect.left + rect.width / 2 - cardW / 2, vw - cardW - 12)) };
-  }
+  const t = FIRST_STEPS.tour;
+  // Amber only for Try it and Start exploring (DESIGN-tutorial §7 adv.try, adv.done): Next stays graphite, so the shift's
+  // own amber button isn't matched by a second one on most stops. The keys go to Try it until it's been tried, then Next.
+  const tryFirst = !!stop.tryIt && !tried;
 
   return (
-    <div className="tour" role="presentation" onKeyDown={onKey}>
+    // The layer takes no room and no presses (display: contents): only the card's own keys (Enter, Escape) are its.
+    <div className="tour-layer" role="presentation" onKeyDown={onKey}>
       <div className={`tour-ring ${rect ? '' : 'none'}`} style={rect} aria-hidden="true" />
-      <div ref={card} className="tour-card" role="dialog" aria-modal="true" aria-labelledby="tour-title" aria-describedby="tour-body" style={pos}>
+      <div ref={card} className="tour-card" role="dialog" aria-labelledby="tour-title" aria-describedby="tour-body" style={pos ?? { top: 0, left: 0, opacity: 0 }}>
         <div className="tour-head">
-          <Portrait id={i === 0 ? 'user' : 'concierge'} size={32} />
-          <h2 id="tour-title">{step.title}</h2>
+          <Portrait id="concierge" size={32} />
+          <h2 id="tour-title">{stop.title}</h2>
+          <button className="btn ghost tiny tour-end" onClick={end}>
+            {t.end}
+          </button>
         </div>
-        <p id="tour-body">{step.body}</p>
+        <p id="tour-body">{stop.body}</p>
+        {stop.tryIt && tried && (
+          <p className="tour-tried" role="status">
+            {t.tried}
+          </p>
+        )}
         <div className="tour-foot">
-          <span className="step-count pips" aria-label={`Step ${i + 1} of ${list.length}`}>
-            {list.map((_, k) => (
+          <span className="pips" role="img" aria-label={fill(t.label, { n: i + 1, of: stops.length })}>
+            {stops.map((_, k) => (
               <i key={k} className={k === i ? 'on' : k < i ? 'done' : ''} />
             ))}
           </span>
-          <button className="btn" onClick={() => close(false)}>
-            Skip
-          </button>
           {i > 0 && (
             <button className="btn" onClick={() => setI(i - 1)}>
-              Back
+              {t.back}
             </button>
           )}
-          <button className="btn primary" data-primary onClick={next}>
-            {last ? 'Start my first job' : 'Next'}
+          <button className={`btn${last ? ' primary' : ''}`} data-next data-primary={tryFirst ? undefined : true} onClick={next}>
+            {last ? t.done : t.next}
           </button>
+          {tryFirst && (
+            <button className="btn primary" data-try data-primary onClick={tryIt}>
+              {t.try}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -323,13 +380,18 @@ export function CoachTips({ layout }: { layout: Layout }) {
   const quiet = useQuiet();
   // After graduation's card, what opened comes one thing at a time (store SETTLE): tips come last.
   const allowed = useCity((s) => s.settle === 0) && shows('coachTips', prefs, quiet);
-  const graduated = useFirstSteps().graduated;
+  const { graduated, active: onPath } = useFirstSteps();
   // Never over a celebration card (graduation's included): the tip comes once it closes.
   const celebrating = useCity((s) => !!s.celebration);
   const [tip, setTip] = useState<TipId>();
   const [rect, setRect] = useState<Rect>();
   const showing = useRef<TipId | undefined>(undefined);
   showing.current = tip;
+  // A tip already up when the first steps (or a replay of them) or the quick tour start goes: it's been seen, and
+  // the guide or the tour speaks now (seen 24 Nov 2026: the Workshops tip stayed through a replay).
+  useEffect(() => {
+    if (onPath || tourOpen) setTip(undefined);
+  }, [onPath, tourOpen]);
 
   const offer = useCallback(
     (id: TipId) => {

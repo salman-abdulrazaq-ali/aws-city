@@ -556,9 +556,19 @@ function MoreMenu({ layout }: { layout: Layout }) {
                   {playText}
                 </button>
               )}
-              {!path.active && (
-                <button role="menuitem" onClick={run(() => setTourOpen(true))}>
-                  Replay the tour
+              {hasCity && !path.active && (
+                <button
+                  role="menuitem"
+                  title="Six quick stops over the real city: buildings, asking in plain words, your OK, learning, the console helpers and ⋯"
+                  onClick={run(() => {
+                    // In the city, on the City tab (where the box and the panel's Copilot switch stand).
+                    const st = useCity.getState();
+                    if (st.view.name !== 'city') st.setView({ name: 'city' });
+                    bus.emit('showTab', { tab: 'home' });
+                    setTourOpen(true);
+                  })}
+                >
+                  {FIRST_STEPS.menu.tour}
                 </button>
               )}
             </div>

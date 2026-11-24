@@ -719,7 +719,7 @@ When a change touches a decision, update its entry and run its Proof.
 - **First steps: a beginner's guided path, then graduation** (quest `first-steps`, first in `shared/quests.json`; its
   words in `shared/first-steps.json`; pure rules in `src/state/firstSteps.ts`; Connie's guide card `src/ui/FirstSteps.tsx`;
   the canvas's rules `src/game/firstStepsGame.ts`). The world map's Start (or any dot) chooses it (`prefs.firstSteps`
-  'beginner'); "I already know AWS" skips it ('skipped', Everything on); a save with another quest under way or done, or
+  'beginner'); "I already know AWS" skips it ('skipped', Everything on) and starts the quick tour (below); a save with another quest under way or done, or
   `builder`, is never put on it. Six steps, each with one amber button on the guide card (the HUD says "First steps
   n/6"): walk to S3 Lake (Sally introduces herself first: an agent's `say` lines queue, each read before the next,
   `sayReadMs`), play S3 Fishing (its bins are shelves; the ✓ line names the level reached or the stars paid, never a level
@@ -738,12 +738,26 @@ When a change touches a decision, update its entry and run its Proof.
   anyone, hosted and legacy players included, from `prefs.firstStepsReplay` (the synced quest can't go back: merges keep
   it done), pays the quest's stars only once, and ends with the pref 'beginner', never cleared, so the old first-run tour
   can't open over graduation's card (`useFirstRunTour` marks it done once a path is chosen; under `navigator.webdriver` it
-  never opens, which is why only a unit test sees this). **Safety:** the practice task and the photo-bucket plan are
+  never opens, which is why only a unit test sees this). A coach tip already up when a path or a replay starts goes, the
+  citizen's "Right! +N ⭐" names the stars the answer really added (the card's review and the thank-you), and bubbles
+  said while a celebration card is up wait for it (the latest per speaker, if fresh: `freshLines`, `src/game/calm.ts`;
+  an agent's `say` line is read out when it shows). **The quick tour** (`src/ui/Tour.tsx`, its words in
+  `shared/first-steps.json` `tour`) is for players who already know AWS: it starts after the dive when they pick "I
+  already know AWS" (`startQuickTourAfterDive`, under automation too: they chose it), after a first run's "Skip to the
+  quick tour", and from ⋯ → How you play → Show the quick tour any time (not on the path); it's also the first-run tour a
+  save that never chose sees once. Six coach marks over the real UI, the card a non-modal dialog (no scrim, nothing over
+  the map, no `aria-modal`: Enter goes next, Escape ends, Tab leaves it; each stop is announced; the card stands beside
+  its target, never over it, `placeCard`, and steps aside while the city sleeps or a celebration card is up): S3 Lake on
+  the map (bus `locate` asks the city where a landmark or Kai stands; the camera flies there), the box (`.composer`, its
+  **Try it** plays Sally's practice task, `startPracticeTask`, local in every build), the Deploy tab (the demo's, the
+  hosted city's or the local server's own words), the Learn tab, the console helpers (the panel's `.console-btn`; ⋯ in
+  the tab, which says the side panel has them, or that Safari has none) and ⋯ (My AWS, Simple, the first steps), ending on
+  Start exploring. One amber button a stop (Try it, then Next). **Safety:** the practice task and the photo-bucket plan are
   played and decided on the device in every build (`src/backend/practiceTasks.ts`, `ServerBackend.planPractice` /
   `answerPractice`): no model call, no AWS call, no socket send, no MFA step-up, a hosted player with a real account linked
   included. Proof: `npx vitest run tests/practice-task.test.ts tests/first-steps.test.ts tests/first-steps-ui.test.tsx
-  tests/first-steps-game.test.ts tests/moments.test.ts`, `npm run smoke` (a new player lands on the guide card, 1/6, in a
-  quiet city).
+  tests/first-steps-game.test.ts tests/moments.test.ts tests/quick-tour.test.tsx`, `npm run smoke` (a new player lands on
+  the guide card, 1/6, in a quiet city; the quick tour's six stops end on Start exploring, with no scrim).
 - **New players climb an unlock ladder, and unlocks are earned.** `src/state/ladder.ts` (pure) opens tabs and panels as
   progress grows. Going somewhere (a button that names a tab, a building tap) shows that tab while the player is there but
   never opens it for good; only ⋯ → Show everything does (`opened`; it also turns Simple mode off). Findings are held until city care unlocks (a linked account sees them at once),
@@ -778,8 +792,8 @@ When a change touches a decision, update its entry and run its Proof.
   or the row is under "+N more"), and with Everything on only when the shift's `ConnectLine` offers nothing
   (`useConnectOffer`, `src/ui/Home.tsx`); Learn hides the Drawing board (a design step shows it); City care waits for a
   finished quest (the first steps count, done or skipped); My City is buildings, stars and coins. Hidden, never deleted: badges, combos, coins, the season road and
-  the shift keep recording, and ⋯ → Show everything / Keep it simple switches back and forth with nothing lost, and ⋯ → I already build on AWS turns Everything on, as the world intro's button does. The tour's
-  second step points at the list. Proof: `npx vitest run tests/simple.test.ts tests/simple-ui.test.tsx tests/session.test.ts tests/account-ui.test.tsx tests/connect-card.test.tsx tests/a11y-focus.test.tsx`, `npm run smoke`
+  the shift keep recording, and ⋯ → Show everything / Keep it simple switches back and forth with nothing lost, and ⋯ → I already build on AWS turns Everything on, as the world intro's button does. The quick
+  tour's second stop points at the box. Proof: `npx vitest run tests/simple.test.ts tests/simple-ui.test.tsx tests/session.test.ts tests/account-ui.test.tsx tests/connect-card.test.tsx tests/a11y-focus.test.tsx`, `npm run smoke`
   (runs Simple first: `01s-simple-first-city`, `80-simple-home`, `80b-simple-task-ticked`, `80c-simple-day-done`,
   `80d-simple-panel`, `80e-simple-tour`; then turns Everything on for the feature checks).
 - **Home is Today's shift** (with Everything on; the City tab, `src/ui/Home.tsx`): one big button from `nextAction` (`src/state/next.ts`, pure

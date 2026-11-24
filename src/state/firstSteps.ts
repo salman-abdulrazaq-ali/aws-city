@@ -143,10 +143,22 @@ export interface FirstStepsCopy {
   task: { id: string; agentId: string; prompt: string; steps: string[]; result: string };
   grad: { title: string; connie: string; learned: string[]; region: string; open: { jobs: string; decorate: string; ask: string }; next: string; later: string };
   coins: { note: string };
-  skip: { link: string; title: string; body: string; keep: string; go: string };
+  /** `go`/`body` end a replay; a first run's skip goes to the quick tour (`tour`/`tourBody`, DESIGN-tutorial §6.4). */
+  skip: { link: string; title: string; body: string; keep: string; go: string; tour: string; tourBody: string };
   resume: string;
   menu: { play: string; replay: string; tour: string };
   hud: { steps: string };
+  /** The quick tour (src/ui/Tour.tsx, DESIGN-tutorial §5): six stops; a stop's `hosted`/`local`/`tab`/`safari` replace its body there. */
+  tour: {
+    label: string;
+    next: string;
+    back: string;
+    end: string;
+    try: string;
+    tried: string;
+    done: string;
+    stops: { id: string; title: string; body: string; hosted?: string; local?: string; tab?: string; safari?: string }[];
+  };
   q2: { title: string; intro: string };
 }
 

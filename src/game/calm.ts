@@ -19,3 +19,13 @@ export type BubblePriority = 'alert' | 'normal' | 'ambient';
 /** Whether a bubble may show, given how many non-player bubbles are up now and the chatter setting. */
 export const mayShowBubble = (priority: BubblePriority, visibleNonPlayer: number, chatter: boolean) =>
   priority !== 'ambient' || (chatter && visibleNonPlayer === 0);
+
+/**
+ * A line said while a celebration card is up (graduation's included) waits for the card: the latest per speaker, said
+ * once it closes if it's still this fresh (seen 24 Nov 2026: Lena's bubble behind graduation's card).
+ */
+export const HELD_LINE_FRESH_MS = 20_000;
+
+/** The held lines still worth saying once the card closes, oldest first. Pure. */
+export const freshLines = <K, L extends { at: number }>(held: Iterable<[K, L]>, now: number): [K, L][] =>
+  [...held].filter(([, l]) => now - l.at <= HELD_LINE_FRESH_MS).sort((a, b) => a[1].at - b[1].at);

@@ -44,7 +44,7 @@
       "body": "People in your city have questions too. Answer this one: it's about a card you just learned, and remembering it now makes it stick.",
       "button": "Walk to the citizen",
       "citizen": "Excuse me, Mayor! Can you help?",
-      "right": "Right! +2 ⭐ for S3 Lake.",
+      "right": "Right! +{n} ⭐ for S3 Lake.",
       "wrong": "Not quite: it's \"{answer}\". That card will come back soon."
     },
     {
@@ -100,11 +100,58 @@
     "title": "Skip the first steps?",
     "body": "The whole city opens now. You can play the first steps any time from ⋯.",
     "keep": "Keep going",
-    "go": "Skip the first steps"
+    "go": "Skip the first steps",
+    "tourBody": "The whole city opens now, with a quick tour instead. You can play the first steps any time from ⋯.",
+    "tour": "Skip to the quick tour"
   },
   "resume": "Welcome back, Mayor. Next: {step}.",
   "menu": { "play": "▶ Play the first steps", "replay": "↺ Replay the first steps", "tour": "Show the quick tour" },
   "hud": { "steps": "First steps {n}/6" },
+  "tour": {
+    "label": "Quick tour · {n} of {of}",
+    "next": "Next",
+    "back": "Back",
+    "end": "End tour",
+    "try": "Try it",
+    "tried": "Sally is on it: watch her in the city, and her steps in the City tab. Practice: nothing real is made.",
+    "done": "Start exploring",
+    "stops": [
+      {
+        "id": "building",
+        "title": "Every building is an AWS service",
+        "body": "Tap one to see what it does, how far it's grown and who works there. Each Region (the 🌍 chip) is its own city."
+      },
+      {
+        "id": "ask",
+        "title": "Ask in plain words",
+        "body": "Type what you want, like \"Store my holiday photos cheaply\". The right agent walks over and does it while you watch."
+      },
+      {
+        "id": "deploy",
+        "title": "Every change waits for your OK",
+        "body": "Agents propose, you approve in Deploy. Try it with the practice account: nothing real is made.",
+        "hosted": "Agents propose, you approve in Deploy. Link your own account with a role you install; every write needs your OK and your authenticator.",
+        "local": "Agents propose, you approve in Deploy. Nothing changes in your AWS account without your OK."
+      },
+      {
+        "id": "learn",
+        "title": "Learn, then prove it",
+        "body": "Cards come back just before you'd forget. Puzzles and the Drawing board check your designs against the Well-Architected Framework."
+      },
+      {
+        "id": "console",
+        "title": "Beside your console",
+        "body": "Open this panel next to the AWS Console. The Lookout reads the page you're on; the Console Copilot fills in forms and leaves every press that commits to you.",
+        "tab": "The same helpers work in the browser's {surface}, next to the AWS Console: the Lookout reads the page you're on, and the Console Copilot fills in forms.",
+        "safari": "Safari has no side panel, so the Lookout and the Console Copilot can't sit beside the AWS Console. Ask in plain words here instead."
+      },
+      {
+        "id": "more",
+        "title": "Your account as a map",
+        "body": "⋯ → My AWS, live draws your real resources, costs and traffic once an account is linked. ⋯ also has Simple mode and the first steps."
+      }
+    ]
+  },
   "q2": {
     "title": "The City Brochure Site",
     "intro": "Your photos have a home. Now let's put the city's brochure online, fast for visitors everywhere."

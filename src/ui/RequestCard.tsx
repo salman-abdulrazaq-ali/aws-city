@@ -30,16 +30,21 @@ function countAnswer() {
   }
 }
 
-/** The verdict that leads the sheet once answered (the first steps say it their own way). */
-function verdictOf(r: CitizenRequest, picked: number, onPath: boolean): string {
+/**
+ * The verdict that leads the sheet once answered (the first steps say it their own way). A right answer names the stars
+ * it really added: the card's review plus the thank-you (seen 24 Nov 2026: "+2 ⭐" while the counter rose by 6).
+ */
+function verdictOf(r: CitizenRequest, picked: number, onPath: boolean, gained: number): string {
   const c = FIRST_STEPS.steps[3];
-  if (picked === r.right) return onPath && c.right ? c.right : `Thanks! +${THANKS_STARS} ⭐`;
+  if (picked === r.right) return onPath && c.right ? fill(c.right, { n: gained }) : `Thanks! +${gained} ⭐`;
   return onPath && c.wrong ? fill(c.wrong, { answer: r.options[r.right] }) : 'Not quite, but now you both know.';
 }
 
 export function RequestCard() {
   const [ask, setAsk] = useState<{ request: CitizenRequest; name: string }>();
   const [picked, setPicked] = useState<number>();
+  /** Stars the right answer added to the building (the card's review and the thank-you). */
+  const [gained, setGained] = useState(0);
   const box = useRef<HTMLElement>(null);
   const scrim = useRef<HTMLDivElement>(null);
   const back = useRef<HTMLButtonElement>(null);
@@ -82,7 +87,7 @@ export function RequestCard() {
     return () => window.removeEventListener('keydown', onKey, true);
   }, [open]);
   // Answered: the verdict leads (and is said), and "Back to the city" takes focus (Enter goes back).
-  const said = ask && picked !== undefined ? verdictOf(ask.request, picked, onPath) : undefined;
+  const said = ask && picked !== undefined ? verdictOf(ask.request, picked, onPath, gained) : undefined;
   useEffect(() => {
     if (!said) return;
     announce(said);
@@ -97,9 +102,10 @@ export function RequestCard() {
     setPicked(i);
     countAnswer();
     const s = useCity.getState();
-    s.reviewCard(r.cardId, i === r.right ? 'good' : 'again');
+    const { stars } = s.reviewCard(r.cardId, i === r.right ? 'good' : 'again');
     if (i === r.right) {
       s.addXp(r.serviceId, THANKS_STARS);
+      setGained(stars + THANKS_STARS);
       feel.good();
     } else feel.bad();
     bus.emit('answer', { serviceId: r.serviceId, ok: i === r.right });

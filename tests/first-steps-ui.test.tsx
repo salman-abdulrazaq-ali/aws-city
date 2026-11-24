@@ -203,7 +203,7 @@ describe('the guide card', () => {
     elsewhere.remove();
   });
 
-  it('asks before skipping; Keep going stays, Skip opens the whole city and ends the path', () => {
+  it('asks before skipping; Keep going stays, Skip opens the whole city, ends the path and starts the quick tour', () => {
     render(<GuideCard openTab={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: 'Skip the first steps' }));
     const ask = screen.getByRole('alertdialog', { name: 'Skip the first steps?' });
@@ -214,8 +214,10 @@ describe('the guide card', () => {
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(useCity.getState().prefs.firstSteps).toBe('beginner');
     fireEvent.click(screen.getByRole('button', { name: 'Skip the first steps' }));
-    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Skip the first steps' }));
+    expect(screen.getByRole('alertdialog').textContent).toContain(FIRST_STEPS.skip.tourBody);
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Skip to the quick tour' }));
     const st = useCity.getState();
+    expect(st.tourOpen).toBe(true);
     expect(st.prefs.firstSteps).toBe('skipped');
     expect(st.prefs.builder).toBe(true);
     expect(st.prefs.simple).toBe(false);
@@ -450,7 +452,8 @@ describe('the citizen’s question', () => {
     render(<RequestCard />);
     act(() => bus.emit('citizenRequest', ask));
     fireEvent.keyDown(window, { key: '1' });
-    expect(screen.getByRole('dialog').querySelector('.request-verdict')?.textContent).toBe(FIRST_STEPS.steps[3].right);
+    // The stars it really added (the card's review and the thank-you), never a fixed "+2" (tests/quick-tour.test.tsx).
+    expect(screen.getByRole('dialog').querySelector('.request-verdict')?.textContent).toMatch(/^Right! \+\d+ ⭐ for S3 Lake\.$/);
   });
 });
 

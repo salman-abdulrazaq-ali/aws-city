@@ -4,7 +4,7 @@ import { FRAME_H, FRAME_W, frameOf, hasAnim, PIVOT, type Dir } from './assets';
 import { dirFor, entityDepth, toScreen, type Iso } from './iso';
 import { findPath, type RouteCache } from './pathfinding';
 import { crisp, SpeechBubble, TEXT_FONT, type SayOptions } from './SpeechBubble';
-import { mayShowBubble } from './calm';
+import { freshLines, mayShowBubble } from './calm';
 import { useCity } from '@/state/store';
 import { quietCity } from '@/state/firstSteps';
 import { CSS, labelStyle } from './theme';
@@ -73,6 +73,21 @@ export const setBubbleTopInset = (scene: Phaser.Scene, px: number) => void topIn
  * A Habbo-style character: walks tile to tile in 4 directions, idles, emotes and works.
  * The backend drives `setWorking`; tasks drive `goTo` / `pin`.
  */
+/** Lines said while a celebration card is up: the latest per agent, said once the card closes (src/game/calm.ts). */
+const held = new Map<Agent, { text: string; opts?: SayOptions; at: number }>();
+let stopWatching: (() => void) | undefined;
+function holdLine(a: Agent, text: string, opts?: SayOptions) {
+  held.set(a, { text, opts, at: Date.now() });
+  stopWatching ??= useCity.subscribe((s) => {
+    if (s.celebration) return;
+    stopWatching?.();
+    stopWatching = undefined;
+    const lines = freshLines(held, Date.now());
+    held.clear();
+    for (const [agent, l] of lines) agent.sayHeld(l.text, l.opts);
+  });
+}
+
 export class Agent {
   readonly id: string;
   readonly name: string;
@@ -212,13 +227,23 @@ export class Agent {
    */
   say(text: string, opts?: SayOptions): boolean {
     // Chatter waits while the first steps run (the quiet city), whatever ⋯ says.
-    const { prefs, progress } = useCity.getState();
+    const { prefs, progress, celebration } = useCity.getState();
+    // Never behind a celebration card (graduation's included): the line waits for it to close.
+    if (celebration) {
+      holdLine(this, text, opts);
+      return false;
+    }
     if (!mayShowBubble(opts?.priority ?? 'normal', this.visibleBubbles(), prefs.chatter && !quietCity(progress, prefs))) return false;
     this.bubble.say(text, this.shortName, opts);
     this.spokeAt = this.scene.time.now;
     if (!opts?.silent) this.onSpeak?.(this);
     this.sync();
     return true;
+  }
+
+  /** A line held behind a celebration card, said now if this agent is still in a running scene. */
+  sayHeld(text: string, opts?: SayOptions) {
+    if (this.scene.sys?.isActive() && this.bubble.active) this.say(text, opts);
   }
 
   /** Walk to a tile; `onArrive` fires when there (or immediately if unreachable). */

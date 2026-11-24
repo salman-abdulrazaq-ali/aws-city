@@ -124,7 +124,10 @@ export function FirstStepsMoments() {
   return null;
 }
 
-/** "Skip the first steps": the whole city opens (a replay just ends, leaving the city as it was). */
+/**
+ * "Skip the first steps": the whole city opens with the quick tour instead (DESIGN-tutorial §6.4); a replay just ends,
+ * leaving the city as it was.
+ */
 function skip(replay: boolean) {
   const s = useCity.getState();
   if (!replay) {
@@ -133,6 +136,7 @@ function skip(replay: boolean) {
     openEverything();
   }
   s.skipFirstSteps();
+  if (!replay) s.setTourOpen(true);
 }
 
 /**
@@ -248,13 +252,13 @@ export function GuideCard({ openTab }: { openTab: Go }) {
           {asking ? (
             <div className="confirm guide-skip" role="alertdialog" aria-labelledby="guide-skip-title" aria-describedby="guide-skip-body">
               <b id="guide-skip-title">{FIRST_STEPS.skip.title}</b>
-              <span id="guide-skip-body">{FIRST_STEPS.skip.body}</span>
+              <span id="guide-skip-body">{fs.replay ? FIRST_STEPS.skip.body : FIRST_STEPS.skip.tourBody}</span>
               <div className="row">
                 <button className="btn primary" autoFocus onClick={() => setAsking(false)}>
                   {FIRST_STEPS.skip.keep}
                 </button>
                 <button className="btn" onClick={() => skip(fs.replay)}>
-                  {FIRST_STEPS.skip.go}
+                  {fs.replay ? FIRST_STEPS.skip.go : FIRST_STEPS.skip.tour}
                 </button>
               </div>
             </div>

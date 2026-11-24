@@ -1,14 +1,12 @@
-/* ── coach-mark tour ── */
-.tour {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-tour);
+/* ── coach marks (the quick tour, src/ui/Tour.tsx): no scrim, nothing over the map but the card itself ── */
+.tour-layer {
+  display: contents;
 }
 .tour-ring {
   position: fixed;
+  z-index: var(--z-tour);
   border: 2px solid var(--accent);
   border-radius: var(--r-lg);
-  box-shadow: 0 0 0 9999px var(--scrim);
   transition:
     top var(--dur-3) var(--ease-out),
     left var(--dur-3) var(--ease-out),
@@ -17,14 +15,11 @@
   pointer-events: none;
 }
 .tour-ring.none {
-  width: 0;
-  height: 0;
-  border: none;
-  top: 50%;
-  left: 50%;
+  display: none;
 }
 .tour-card {
   position: fixed;
+  z-index: var(--z-tour);
   width: min(320px, calc(100vw - 24px));
   background: var(--panel);
   border: 1px solid var(--line-strong);
@@ -43,6 +38,8 @@
   margin-bottom: var(--s-4);
 }
 .tour-card h2 {
+  flex: 1;
+  min-width: 0;
   margin: 0;
   font-family: var(--font-ui);
   font-weight: 800;
@@ -75,6 +72,14 @@
   align-items: center;
   gap: var(--s-3);
 }
-.tour-foot .step-count {
+.tour-head .tour-end {
+  align-self: flex-start;
+  white-space: nowrap;
+}
+.tour-card .tour-tried {
+  font-size: var(--fs-xs);
+  color: var(--ink-soft);
+}
+.tour-foot .pips {
   margin-right: auto;
 }
