@@ -572,7 +572,7 @@
         "id": "s3-01",
         "q": "What is Amazon S3?",
         "a": "S3 stores files, called objects, in containers called buckets. Each object is found by its name (its key) and carries extra details (metadata), and a bucket can hold a practically unlimited number of objects.",
-        "simple": "S3 is a giant lake of files. Each file has a name, and a bucket can hold practically any number of them.",
+        "simple": "S3 is a giant lake of files. You keep them in buckets: one bucket holds practically any number of files.",
         "tier": 1,
         "source": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html"
       },

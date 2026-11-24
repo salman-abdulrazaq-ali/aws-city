@@ -7,6 +7,8 @@ import { createBackend, type AgentBackend } from '@/backend';
 import type { ConsoleStepEvent, PageSnapshot, ResourceRemove } from '@/backend/contract';
 import { agentName, emptyProgress, errorText } from '@/state/store';
 import { uid } from '@/backend/AgentBackend';
+import { PRACTICE_TASK_PREFIX } from '@/backend/practiceTasks';
+import { FIRST_STEPS } from '@/state/firstSteps';
 import type { Progress } from '@/backend/contract';
 import { captureVisibleTab, hasCapturePermission, requestCapturePermission } from '@/capture/screenshot';
 import { bus } from '@/state/bus';
@@ -534,6 +536,18 @@ export function submitPrompt(prompt: string) {
   const taskId = uid();
   store().addTask(taskId, text);
   backend.send({ action: 'task.submit', taskId, prompt: text, context: { ...pageContext(), screenshotKey: lastScreenshotKey } });
+}
+
+/**
+ * The first steps' "Watch Sally work" (or any practice script): a task card, then the script plays inside the backend
+ * (src/backend/practiceTasks.ts). Nothing is sent, no model is called and nothing touches AWS, in every build, a linked
+ * account included. Returns the task id (its TaskCard), or undefined before the backend is up.
+ */
+export function startPracticeTask(scriptId = FIRST_STEPS.task.id) {
+  if (!backend) return undefined;
+  const taskId = `${PRACTICE_TASK_PREFIX}${uid().slice(0, 8)}`;
+  store().addTask(taskId, FIRST_STEPS.task.prompt);
+  return backend.practiceTask(scriptId, taskId);
 }
 
 /** Ask a district's agent; `shown` is what the chat shows as the player's words (the framing stays out of it). */

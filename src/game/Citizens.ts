@@ -7,14 +7,21 @@ import { click } from './audio';
 
 import { citizenLines, REPLIES, type ChatContext } from '@/world/dialogue';
 import { leavers } from '@/world/traffic';
+import { Stillness, STILL_TIME } from './stillness';
 
-/** Pedestrians that make the city feel alive. They never block agents or the player. */
+/**
+ * Pedestrians that make the city feel alive. They never block agents or the player. Under reduced motion they stand
+ * where they are (Stillness): no wandering, benches or fishing trips, though they still wave, chat and answer a tap.
+ */
 export class Citizens {
   readonly list: Agent[] = [];
   private nextThink = 0;
   private waved = new WeakMap<Agent, number>();
   private benchTaken = new Map<string, Agent>();
   private roles = new Map<Agent, string[]>();
+  /** Citizens this class pinned for a bench or the lake, each with its trip (a later trip's timer isn't ended by an old one). */
+  private outings = new Map<Agent, object>();
+  private calm = new Stillness();
 
   constructor(
     private scene: Phaser.Scene,
@@ -68,13 +75,23 @@ export class Citizens {
     for (const c of gone) {
       this.list.splice(this.list.indexOf(c), 1);
       this.roles.delete(c);
+      this.outings.delete(c);
       for (const [k, who] of this.benchTaken) if (who === c) this.benchTaken.delete(k);
       c.destroy();
     }
   }
 
+  /** Reduced motion turned on: everyone stops where they stand (a walk, a bench, the lake), free again. */
+  private park() {
+    for (const c of this.list) c.goTo(c.tile);
+    for (const c of this.outings.keys()) c.pin(false);
+    this.outings.clear();
+    this.benchTaken.clear();
+  }
+
   update(time: number, dt: number) {
-    for (const c of this.list) c.update(time, dt);
+    const still = this.calm.check(time, () => this.park());
+    for (const c of this.list) c.update(still ? STILL_TIME : time, dt);
     const player = this.extras.player();
     if (player) {
       for (const c of this.list) {
@@ -92,6 +109,8 @@ export class Citizens {
     const idle = this.list.filter((c) => !c.isBusy);
     const c = idle[Math.floor(Math.random() * idle.length)];
     if (!c) return;
+    // Standing still, only words: a chat with a neighbour (talking in place); no trips, no dancing.
+    if (still) return this.chat(c, idle);
     const roll = Math.random();
     if (roll < 0.2) this.sitOnBench(c);
     else if (roll < 0.4) this.chat(c, idle);
@@ -106,13 +125,12 @@ export class Citizens {
     if (!b) return;
     const k = `${b.x},${b.y}`;
     this.benchTaken.set(k, c);
-    c.pin(true);
+    const trip = this.goOut(c);
     c.goTo(b, () => {
       c.hold('sit', 'SE');
       this.scene.time.delayedCall(6000 + Math.random() * 8000, () => {
-        c.release();
-        c.pin(false);
         if (this.benchTaken.get(k) === c) this.benchTaken.delete(k);
+        this.comeBack(c, trip);
       });
     });
   }
@@ -138,14 +156,27 @@ export class Citizens {
   private fish(c: Agent) {
     const shore = this.extras.lakeShore();
     if (!shore) return;
-    c.pin(true);
+    const trip = this.goOut(c);
     c.goTo(shore, () => {
       c.hold('fish', 'NE');
-      this.scene.time.delayedCall(8000 + Math.random() * 6000, () => {
-        c.release();
-        c.pin(false);
-      });
+      this.scene.time.delayedCall(8000 + Math.random() * 6000, () => this.comeBack(c, trip));
     });
+  }
+
+  /** A trip starts: the citizen is pinned until it ends (or reduced motion parks everyone). */
+  private goOut(c: Agent) {
+    const trip = {};
+    this.outings.set(c, trip);
+    c.pin(true);
+    return trip;
+  }
+
+  /** The trip's time is up: the citizen stands and is free to wander, unless parking or a newer trip already took over. */
+  private comeBack(c: Agent, trip: object) {
+    if (this.outings.get(c) !== trip) return;
+    this.outings.delete(c);
+    c.release();
+    c.pin(false);
   }
 
   setUiScale(s: number) {

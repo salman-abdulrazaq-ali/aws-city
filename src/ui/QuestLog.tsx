@@ -11,7 +11,7 @@ import { districtStyle } from './logic';
 import { Portrait } from './Portrait';
 import { Plain } from './Term';
 
-const KIND: Record<QuestStep['kind'], string> = { visit: 'Visit', cards: 'Flashcards', puzzle: 'Puzzle', ask: 'Ask the agents', deploy: 'Deploy', choose: 'Your call', workshop: 'Workshop', console: 'In the console', design: 'Drawing board' };
+const KIND: Record<QuestStep['kind'], string> = { visit: 'Visit', cards: 'Flashcards', puzzle: 'Puzzle', ask: 'Ask the agents', deploy: 'Deploy', choose: 'Your call', workshop: 'Workshop', console: 'In the console', design: 'Drawing board', game: 'Game', request: 'A citizen asks', watch: 'Watch it done' };
 
 /**
  * Where a button sends the player. 'feed', 'quests' and 'map' are the City tab (today's shift, the quests, the places);

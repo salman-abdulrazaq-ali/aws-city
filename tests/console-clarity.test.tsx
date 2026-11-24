@@ -34,6 +34,35 @@ describe('the Console Copilot switch', () => {
     expect(screen.getByRole('textbox', { name: /in your console/ })).toBeTruthy();
   });
 
+  // Seen 24 Nov 2026: pressing the words didn't flip it. The press took the focus into the bar, which unfolds the AI note
+  // above the box and lifts the switch from under the pointer before the release. A press keeps the focus where it was.
+  it('flips from a press on its words, and the press never moves the focus (nothing unfolds under the pointer)', () => {
+    localStorage.clear();
+    render(
+      <>
+        <button>Elsewhere</button>
+        <PromptBar layout="panel" />
+      </>,
+    );
+    const words = screen.getByText('Do it in my console');
+    const sw = screen.getByRole('switch', { name: /Do it in my console/ });
+    const away = screen.getByRole('button', { name: 'Elsewhere' });
+    away.focus();
+    expect(fireEvent.mouseDown(words)).toBe(false); // default prevented: the button doesn't take the focus
+    fireEvent.mouseUp(words);
+    fireEvent.click(words);
+    expect(sw.getAttribute('aria-checked')).toBe('true');
+    expect(document.activeElement).toBe(away);
+    // Turned on: the Copilot's coach tip has nothing left to explain.
+    expect(localStorage.getItem('awscity.tip.copilot')).toBe('1');
+    fireEvent.click(words);
+    expect(sw.getAttribute('aria-checked')).toBe('false');
+    // The keyboard still flips it from the switch itself.
+    sw.focus();
+    fireEvent.click(sw);
+    expect(sw.getAttribute('aria-checked')).toBe('true');
+  });
+
   it('is not offered in the full tab (it needs the console beside it)', () => {
     render(<PromptBar layout="full" />);
     expect(screen.queryByRole('switch')).toBeNull();

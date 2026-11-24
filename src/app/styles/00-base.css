@@ -21,7 +21,7 @@
   --ink: #e6e2d8;
   --ink-hi: #fff8ee;
   --ink-soft: #c9c4b8;
-  --muted: #8b8f98; /* 5.3:1 on --panel */
+  --muted: #969aa3; /* 4.6:1 on --panel-hi, 5.3:1 on --panel-2, 5.7:1 on --panel, 6.4:1 on --bg (AA on every surface) */
 
   /* accent (amber): one per screen */
   --accent: #f0a63a;
@@ -73,6 +73,19 @@
   --map-sea: #0b2440;
   --map-land: #2f6f4f;
 
+  /* City Lights (27-loops.css): the night strip's sky and its windows; lit is the city's default glow (DEFAULT_GLOW) */
+  --night-sky-top: #0b1020;
+  --night-sky-bottom: #161d33;
+  --window-lit: #ffd98a;
+  --window-dim: #2b3248;
+  --window-dim-line: #3a4360;
+  --window-frozen: #bfe6ff;
+  --window-frozen-glow: #8fd3ff;
+  /* Daily Supply Drop rarity rims */
+  --rarity-common: #9ccfd8;
+  --rarity-rare: #6aa7ff;
+  --rarity-epic: #c58bff;
+
   /* type: 12px is the floor for body text; 11px only for non-essential labels */
   --font-ui: 'Nunito', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-pixel: 'Press Start 2P', 'Nunito', sans-serif;
@@ -82,6 +95,7 @@
   --fs-md: 13px;
   --fs-lg: 15px;
   --fs-xl: 17px;
+  /* emoji and icon glyphs follow the text size too: calc(var(--fs-md) * <px at 100 %> / 13) */
   /* Press Start 2P is drawn on an 8px grid: only these sizes stay crisp */
   --fs-pixel: 11px;
   --fs-pixel-lg: 15px;
@@ -171,6 +185,12 @@ code {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+/* Every disclosure row is at least a 24 px target (WCAG 2.2 SC 2.5.8), its words in the middle. Components that lay
+   a summary out themselves keep their own display; glossary terms are inline buttons in a sentence (the SC's exception). */
+summary {
+  min-height: 24px;
+  align-content: center;
 }
 .sr-only {
   position: absolute;

@@ -3,6 +3,7 @@ import type { Rect } from '@/world/layout';
 import { addSprite, hasSprite } from './assets';
 import { cornerScreen, footprintDepth, type Iso } from './iso';
 import { hoverTip } from './HoverTip';
+import { CROWN_DROP_MS, nightLift, riseMs } from './cityView';
 import { inView } from './labels';
 import { reducedMotion } from './motion';
 import { FADED } from './occlusion';
@@ -28,6 +29,11 @@ export interface LandmarkSpec {
 export class Landmark {
   readonly img: Phaser.GameObjects.Image;
   private lights?: Phaser.GameObjects.Image;
+  /** At night: the building again, added over itself, so it stays legible through the night's tint (cityView.nightLift). */
+  private lift?: Phaser.GameObjects.Image;
+  private zoom = 1;
+  /** The sign says "· Lv N" only while the building is picked or hovered (the scene's label budget). */
+  private detailed = false;
   private sign: Phaser.GameObjects.Text;
   private icon?: Phaser.GameObjects.Image;
   /** How many of this service's resources the account has (city.inventory), beside the sign. */
@@ -70,20 +76,26 @@ export class Landmark {
         .setBlendMode(Phaser.BlendModes.ADD)
         .setAlpha(0);
     }
-    // Same words as the panel: "Lv 2", not stars.
-    const stars = spec.showStars && spec.tier >= 1 ? ` · Lv ${spec.tier}` : '';
+    // Just above the building itself, so whatever stands in front still covers it; additive, so its own colours light it.
+    this.lift = addSprite(scene, spec.sprite, n.x, n.y)
+      .setDepth(this.img.depth + 0.25)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setAlpha(0)
+      .setVisible(false);
     const topY = this.img.getTopCenter().y ?? n.y;
     this.sign = crisp(
       scene.add
-        .text(Math.round(n.x + ((f.w - f.h) * iso.halfW) / 2), Math.round(topY - 2), (spec.tier === 0 ? '🚧 ' : '') + spec.label + stars, labelStyle(TEXT_FONT, CSS.inkHi))
+        .text(Math.round(n.x + ((f.w - f.h) * iso.halfW) / 2), Math.round(topY - 2), (spec.tier === 0 ? '🚧 ' : '') + spec.label, labelStyle(TEXT_FONT, CSS.inkHi))
         .setOrigin(0.5, 1)
         .setDepth(40_000),
     );
     this.anchor = { x: this.sign.x, y: this.sign.y };
     if (spec.noSign) this.sign.setVisible(false);
     if (spec.icon && scene.textures.exists(spec.icon)) {
-      // Integer world pixels: the 16px raster is drawn at scale 1, so camera zoom (always an integer) keeps it crisp.
+      // Counter-scaled like its sign (placeExtras): 16 screen px at every zoom, times the text size (it grew to 48 px at
+      // zoom 3 while the sign didn't). Drawn 1:1 at 100 %, smoothed like crisp text when the text size stretches it.
       this.icon = scene.add.image(Math.round(this.sign.x), Math.round(this.sign.y), spec.icon).setOrigin(0.5, 1).setDepth(40_001);
+      this.icon.texture.setFilter(Phaser.Textures.FilterMode.LINEAR);
     }
   }
 
@@ -94,12 +106,22 @@ export class Landmark {
     }
   }
 
-  /** 0 = day, 1 = full night: windows glow. */
-  setNight(n: number) {
+  /** 0 = day, 1 = full night: windows glow, and the building is lifted out of the dark (most at zoom 1). */
+  setNight(n: number, zoom = this.zoom) {
     this.night = n;
+    this.zoom = zoom;
+    this.syncLift();
     // A disrupted building has lost power; a degraded one is half lit.
     this.lights?.setAlpha(this.outage?.severity === 'disruption' ? 0 : this.outage ? n * 0.5 : n);
     this.crownLights?.setAlpha(this.outage ? 0 : n);
+  }
+
+  /** The night lift's strength now: none for a building not up yet, closed or without power; less while see-through. */
+  private syncLift() {
+    if (!this.lift) return;
+    const off = this.spec.tier < 1 || !!this.closed || this.outage?.severity === 'disruption';
+    const k = off ? 0 : nightLift(this.night, this.zoom) * (this.outage ? 0.5 : 1) * (this.faded ? FADED : 1);
+    this.lift.setVisible(k > 0.01).setAlpha(k);
   }
 
   /** Show "×n" beside the sign when the account has some here; nothing at 0 (a row of grey ×0s is noise). */
@@ -181,7 +203,7 @@ export class Landmark {
     return (this.crown ?? this.img).getTopCenter().y ?? this.img.y;
   }
 
-  /** A new crown: it drops onto the tower's tip with a little bounce. */
+  /** A new crown: it drops onto the tower's tip with a little bounce (CROWN_DROP_MS). */
   crownDrop() {
     if (!this.crown || reducedMotion()) return;
     const y = this.crown.y;
@@ -189,7 +211,7 @@ export class Landmark {
     this.scene.tweens.add({
       targets: [this.crown, this.crownLights].filter(Boolean),
       y: { from: y - 30, to: y },
-      duration: 700,
+      duration: CROWN_DROP_MS,
       ease: 'Bounce.easeOut',
       onComplete: () => {
         this.dropping = false;
@@ -197,9 +219,19 @@ export class Landmark {
     });
   }
 
+  /** "· Lv N" on the sign while the building is picked or hovered; at rest the sign is its name (and cards due). */
+  setDetailed(on: boolean) {
+    if (on === this.detailed) return;
+    this.detailed = on;
+    if (this.closed || this.outage) return;
+    this.sign.setText(this.label());
+    // The sign's width changed: the badge beside it follows.
+    this.placeExtras();
+  }
+
   private label() {
     const level = this.level ?? this.spec.tier;
-    const lv = this.spec.showStars && level >= 1 ? ` · Lv ${level}${level > 4 ? ' 👑' : ''}` : '';
+    const lv = this.detailed && this.spec.showStars && level >= 1 ? ` · Lv ${level}${level > 4 ? ' 👑' : ''}` : '';
     return (this.spec.tier === 0 ? '🚧 ' : '') + this.spec.label + lv + (this.due ? ` · 🃏 ${this.due} due` : '');
   }
 
@@ -229,6 +261,7 @@ export class Landmark {
       this.lights?.setVisible(true);
       this.sign.setText(this.label()).setColor(CSS.inkHi);
     }
+    this.syncLift();
     this.setUiScale(this.ui);
   }
 
@@ -265,11 +298,11 @@ export class Landmark {
     this.placeExtras();
   }
 
-  /** The badge beside the sign and the icon just above it (the sign is counter-scaled), on whole world pixels. */
+  /** The badge beside the sign and the icon just above it, counter-scaled like the sign, on whole world pixels. */
   private placeExtras() {
     const s = this.ui;
     this.badge?.setScale(s).setPosition(Math.round(this.sign.x + (this.sign.width * s) / 2 + 1), Math.round(this.sign.y));
-    this.icon?.setPosition(Math.round(this.sign.x), Math.round(this.sign.y - this.sign.height * s - 1));
+    this.icon?.setScale(s).setPosition(Math.round(this.sign.x), Math.round(this.sign.y - (this.sign.height + 1) * s));
   }
 
   get signShown() {
@@ -279,6 +312,14 @@ export class Landmark {
   /** The sign's bounds (world px) while it shows, for the scene's overlap check. */
   signBounds() {
     return this.sign.visible ? this.sign.getBounds() : undefined;
+  }
+
+  /** Everything the sign takes while it shows (world px): the sign, the icon over it and the "×N" badge beside it. */
+  labelBounds() {
+    const b = this.signBounds();
+    if (!b) return undefined;
+    for (const o of [this.icon, this.badge]) if (o?.visible) Phaser.Geom.Rectangle.Union(b, o.getBounds(), b);
+    return b;
   }
 
   showSign(on: boolean) {
@@ -291,7 +332,7 @@ export class Landmark {
   keepInView(view: Phaser.Geom.Rectangle, topInset = 0) {
     if (!this.sign.visible || this.bouncing) return;
     const s = this.ui;
-    const iconH = this.icon ? this.icon.height + 1 : 0;
+    const iconH = this.icon ? (this.icon.height + 1) * s : 0;
     const badgeW = this.badge ? this.badge.width * s + 1 : 0;
     const w = this.sign.displayWidth + 2 * badgeW;
     const h = this.sign.displayHeight + iconH;
@@ -307,6 +348,7 @@ export class Landmark {
     if (on === this.faded || this.closed) return;
     this.faded = on;
     this.scene.tweens.add({ targets: [this.img, this.crown].filter(Boolean), alpha: on ? FADED : 1, duration: 180 });
+    this.syncLift();
   }
 
   /** A pixel of the building (not its transparent margin) at world (x, y), for the fade's outline test. */
@@ -317,24 +359,26 @@ export class Landmark {
   }
 
   /**
-   * A level-up: the new building rises out of the ground floor by floor (8 px steps), then bounces. `done` runs at the
-   * end. Reduced motion shows it at once.
+   * A level-up: the new building rises out of the ground floor by floor (8 px steps). `done` runs at the end. `delay`:
+   * it waits on its ground floor that long first (while the camera flies there). Reduced motion shows it at once.
    */
-  rise(done?: () => void) {
+  rise(done?: () => void, delay = 0) {
     const h = this.img.height;
     if (reducedMotion() || h < 16) return done?.();
     const floors = Math.ceil(h / 8);
-    const layers = [this.img, this.lights].filter((o): o is Phaser.GameObjects.Image => !!o);
-    const show = (k: number) => layers.forEach((o) => o.setCrop(0, Math.max(0, o.height - k * 8 * (o.height / h)), o.width, o.height));
+    const layers = [this.img, this.lights, this.lift].filter((o): o is Phaser.GameObjects.Image => !!o);
+    // A building rebuilt meanwhile (another progress change) is gone: its layers are left alone.
+    const show = (k: number) => layers.forEach((o) => o.active && o.setCrop(0, Math.max(0, o.height - k * 8 * (o.height / h)), o.width, o.height));
     show(0);
     this.scene.tweens.addCounter({
       from: 0,
       to: floors,
-      duration: Math.min(1400, 300 + floors * 30),
+      delay,
+      duration: riseMs(h),
       ease: 'Quad.easeOut',
       onUpdate: (tw) => show(Math.round(tw.getValue() ?? floors)),
       onComplete: () => {
-        layers.forEach((o) => o.setCrop());
+        layers.forEach((o) => o.active && o.setCrop());
         done?.();
       },
     });
@@ -343,7 +387,7 @@ export class Landmark {
   celebrate() {
     this.bouncing = true;
     this.scene.tweens.add({
-      targets: [this.img, this.lights, ...(this.dropping ? [] : [this.crown, this.crownLights]), this.sign, this.icon].filter(Boolean),
+      targets: [this.img, this.lights, this.lift, ...(this.dropping ? [] : [this.crown, this.crownLights]), this.sign, this.icon].filter(Boolean),
       y: '-=6',
       yoyo: true,
       duration: 160,
@@ -360,6 +404,7 @@ export class Landmark {
     this.crownLights?.destroy();
     this.img.destroy();
     this.lights?.destroy();
+    this.lift?.destroy();
     this.sign.destroy();
     this.icon?.destroy();
     this.badge?.destroy();

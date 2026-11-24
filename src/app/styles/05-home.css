@@ -224,6 +224,19 @@
   color: var(--muted);
   text-decoration: line-through;
 }
+/* A goal's state (Home.tsx GoalMark): an open ring that fills like the day's ring, solid when done; never a checkbox. */
+.goal-mark {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--r-pill);
+  box-shadow: inset 0 0 0 2px var(--muted);
+  background: conic-gradient(var(--good) calc(var(--p, 0) * 1turn), transparent 0);
+}
+.goal-mark.full {
+  background: var(--good);
+  box-shadow: none;
+}
 /* A goal that opened after the day's were set: dashed, with a small "bonus" tag; it doesn't count in "2/3 done". */
 .today-goal.bonus {
   border-style: dashed;

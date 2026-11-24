@@ -1,6 +1,7 @@
 // The minimap and the map credit, over the city (src/game/minimap.ts does the colours and the maths). The minimap is a
 // small canvas in the city's own isometric turn: the camera's view is the gold box, a click (or drag) moves the camera
-// there, and M (or the 🗺 button) shows or hides it. On by default in the full tab, behind the button in the side panel.
+// there, and M (or the 🗺 button) shows or hides it. On by default in the full tab, behind the button in the side panel
+// and on a tab's map too small to give it room (MINI_ROOM).
 // Nothing here touches the network: the plan and the map data are bundled.
 import { useEffect, useRef, useState } from 'react';
 import type { Layout } from '@/app/runtime';
@@ -17,8 +18,35 @@ const MINI_H = 92;
 /** How often the camera box follows the camera. */
 const TICK_MS = 200;
 
-/** Whether the minimap shows: the player's choice, else on in the full tab and off in the side panel. */
-export const minimapShown = (pref: boolean | undefined, layout: Layout) => pref ?? layout === 'full';
+/**
+ * A tab's map smaller than this (CSS px) keeps the minimap behind its button, as the side panel does: there the 168×92
+ * box would cover over a quarter of its width or height (a 760 px window's map is 422×732, a stacked 600 px one 582×395).
+ */
+export const MINI_ROOM = { w: 600, h: 400 } as const;
+
+/** A map's size, CSS px (0×0 before it's laid out, which counts as room: the tab's own default). */
+export type MapSize = { w: number; h: number };
+
+const cramped = (map?: MapSize) => !!map && map.w > 0 && map.h > 0 && (map.w < MINI_ROOM.w || map.h < MINI_ROOM.h);
+
+/** Whether the minimap shows: the player's choice, else on in the full tab with room for it, and off in the side panel. */
+export const minimapShown = (pref: boolean | undefined, layout: Layout, map?: MapSize) => pref ?? (layout === 'full' && !cramped(map));
+
+/** The size of the map the minimap stands on (its parent, the stage), followed as the window changes. */
+function useMapSize(button: React.RefObject<HTMLButtonElement | null>, active: boolean) {
+  const [size, setSize] = useState<MapSize>();
+  useEffect(() => {
+    const stage = button.current?.parentElement;
+    if (!active || !stage) return;
+    const read = () => setSize((s) => (s && s.w === stage.clientWidth && s.h === stage.clientHeight ? s : { w: stage.clientWidth, h: stage.clientHeight }));
+    read();
+    if (typeof ResizeObserver === 'undefined') return;
+    const watch = new ResizeObserver(read);
+    watch.observe(stage);
+    return () => watch.disconnect();
+  }, [button, active]);
+  return size;
+}
 
 /** M toggles the minimap, unless the player is typing. */
 export const isMinimapKey = (e: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'altKey'> & { target: EventTarget | null }) => {
@@ -45,7 +73,9 @@ export function Minimap({ layout }: { layout: Layout }) {
   const setPref = useCity((s) => s.setPref);
   const progress = useCity((s) => s.progress);
   const region = useCity((s) => s.cityRegion);
-  const shown = minimapShown(pref, layout);
+  const button = useRef<HTMLButtonElement>(null);
+  const map = useMapSize(button, inCity);
+  const shown = minimapShown(pref, layout, map);
   const state = useCityState(inCity && shown);
   const canvas = useRef<HTMLCanvasElement>(null);
   const tiles = useRef<{ key: string; grid: MiniGrid; img: HTMLCanvasElement; core: number } | undefined>(undefined);
@@ -53,11 +83,11 @@ export function Minimap({ layout }: { layout: Layout }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!inCity || !isMinimapKey(e)) return;
-      setPref('minimap', !minimapShown(useCity.getState().prefs.minimap, layout));
+      setPref('minimap', !minimapShown(useCity.getState().prefs.minimap, layout, map));
     };
     addEventListener('keydown', onKey);
     return () => removeEventListener('keydown', onKey);
-  }, [inCity, layout, setPref]);
+  }, [inCity, layout, map, setPref]);
 
   // The grid is redrawn only when the plan, the landscape or a district's open state changes; the box every tick.
   useEffect(() => {
@@ -113,6 +143,7 @@ export function Minimap({ layout }: { layout: Layout }) {
   if (!inCity) return null;
   const toggle = (
     <button
+      ref={button}
       className={`minimap-btn ${shown ? 'on' : ''}`}
       aria-pressed={shown}
       aria-label={shown ? 'Hide the minimap (M)' : 'Show the minimap (M)'}
@@ -131,6 +162,9 @@ export function Minimap({ layout }: { layout: Layout }) {
     bus.emit('panTo', { x: Math.round(p.x), y: Math.round(p.y) });
   };
   const city = state?.plan.city;
+  // The box waits for the city's first answer: while a city is still being built there's nothing to draw, and an empty
+  // dark box would stand over the sea for a second (the first run's dive).
+  if (!state) return toggle;
   return (
     <>
       {toggle}

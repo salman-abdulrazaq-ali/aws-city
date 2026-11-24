@@ -123,7 +123,8 @@ describe('explain it back', () => {
   it('asks one question, waits for a few words, then shows the key ideas used and the agent’s reply', async () => {
     const { ExplainBack } = await import('@/ui/ExplainBack');
     const { QUESTS } = await import('@/world/content');
-    const q = QUESTS[0];
+    // The first regular quest (QUESTS[0] is the first steps, played with Connie's guide).
+    const q = QUESTS.find((x) => x.id !== 'first-steps')!;
     render(<ExplainBack quest={q} />);
     fireEvent.click(screen.getByRole('button', { name: /Explain it back/ }));
     const box = screen.getByRole('textbox', { name: /In your own words/ });
@@ -400,9 +401,10 @@ describe('the HUD’s small helpers', () => {
     const p = useCity.getState().progress;
     const region = useCity.getState().cityRegion;
     localStorage.removeItem('awscity.tip.coins');
-    useCity.setState({ view: { name: 'city' }, prefs: { ...useCity.getState().prefs, region, simple: false }, progress: { ...p, wallet: { earned: 20, spent: 0 } } } as never);
+    // No celebration card up (an earlier test's): the note waits for one to close.
+    useCity.setState({ view: { name: 'city' }, celebration: undefined, prefs: { ...useCity.getState().prefs, region, simple: false }, progress: { ...p, wallet: { earned: 20, spent: 0 } } } as never);
     const { container } = render(<Hud layout="panel" />);
-    expect(screen.getByRole('note').textContent).toMatch(/spend them on decorations in 🌳 Decorate/);
+    expect(screen.getByRole('note').textContent).toMatch(/You've earned 20 City Coins: spend them in 🌳 Decorate\./);
     fireEvent.click(screen.getByRole('button', { name: 'Got it' }));
     expect(screen.queryByRole('note')).toBeNull();
     expect(localStorage.getItem('awscity.tip.coins')).toBe('1');
@@ -420,7 +422,8 @@ describe('the City tab: today’s shift', () => {
     const { QUESTS } = await import('@/world/content');
     const { setNextRunner } = await import('@/state/next');
     const region = useCity.getState().cityRegion;
-    const q = QUESTS[0];
+    // The first regular quest (QUESTS[0] is the first steps, played with Connie's guide).
+    const q = QUESTS.find((x) => x.id !== 'first-steps')!;
     useCity.setState({
       view: { name: 'city' },
       prefs: { ...useCity.getState().prefs, region, simple: false },
@@ -450,7 +453,8 @@ describe('the City tab: today’s shift', () => {
     const { Home } = await import('@/ui/Home');
     const { QUESTS } = await import('@/world/content');
     const region = useCity.getState().cityRegion;
-    const q = QUESTS[0];
+    // The first regular quest (QUESTS[0] is the first steps, played with Connie's guide).
+    const q = QUESTS.find((x) => x.id !== 'first-steps')!;
     useCity.setState({
       view: { name: 'city' },
       prefs: { ...useCity.getState().prefs, region, simple: false },

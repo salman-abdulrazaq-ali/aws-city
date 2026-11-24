@@ -3,6 +3,7 @@ import type { Tile } from '@/world/layout';
 import { foundIn, GLINT_TILES, tokenFact, tokensFor, TOKENS_PER_CITY, type Token } from '@/world/tokens';
 import { useCity } from '@/state/store';
 import { addSprite, hasSprite } from './assets';
+import { cityShows } from './firstStepsGame';
 import { CITY_ISO, footprintDepth, toScreen } from './iso';
 import { reducedMotion } from './motion';
 
@@ -18,7 +19,8 @@ const BURST_DEPTH = 49_000;
 /**
  * The city's golden tokens (src/world/tokens.ts): hidden until Kai walks within GLINT_TILES, then they glint and spin;
  * stepping on one collects it (Progress.finds, synced) with a short sparkle where it lay. `onFound` lets the scene
- * celebrate (one moment, on the street).
+ * celebrate (one moment, on the street). On the first steps (the quiet city) they aren't drawn, glint or get picked
+ * up; they come back at graduation without a reload.
  */
 export class Tokens {
   private shown: { token: Token; img: Phaser.GameObjects.Image }[] = [];
@@ -28,6 +30,8 @@ export class Tokens {
   /** Pooled motes for the pickup sparkle (made on the first pickup, reused after). */
   private motes: Phaser.GameObjects.Rectangle[] = [];
   private burstTween?: Phaser.Tweens.Tween;
+  /** Whether tokens show now (not in the quiet city: src/game/firstStepsGame.ts cityShows). */
+  private on = true;
 
   constructor(
     private scene: Phaser.Scene,
@@ -44,15 +48,23 @@ export class Tokens {
     if (key === this.key || !hasSprite('token:0')) return;
     this.key = key;
     this.clear();
+    this.on = cityShows('tokens', st.progress, st.prefs);
     for (const token of left) {
       const p = toScreen(CITY_ISO, token.x, token.y);
-      const img = addSprite(this.scene, 'token:0', p.x, p.y).setDepth(footprintDepth(CITY_ISO, { x: token.x, y: token.y, w: 1, h: 1 }) + 1).setAlpha(0);
+      const img = addSprite(this.scene, 'token:0', p.x, p.y).setDepth(footprintDepth(CITY_ISO, { x: token.x, y: token.y, w: 1, h: 1 }) + 1).setAlpha(0).setVisible(this.on);
       this.shown.push({ token, img });
     }
   }
 
   /** Per frame: glint near Kai, spin, and pick up the one he stands on. */
   update(time: number, kai: Tile) {
+    const st = useCity.getState();
+    const on = cityShows('tokens', st.progress, st.prefs);
+    if (on !== this.on) {
+      this.on = on;
+      for (const s of this.shown) s.img.setVisible(on).setAlpha(0);
+    }
+    if (!on) return;
     const spin = !reducedMotion() && time - this.frameAt >= SPIN_MS;
     if (spin) {
       this.frameAt = time;

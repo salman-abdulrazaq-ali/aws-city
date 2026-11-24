@@ -12,6 +12,15 @@
 .app-panel.stage-tall {
   grid-template-rows: auto minmax(200px, 54%) minmax(0, 1fr);
 }
+/* Reading (App.tsx): the tab below is scrolled down, so the map steps back to its 150 px floor until the tab is back
+   at its top. Same track shapes as above, so the rows slide (instant under reduced motion). A taller map the player
+   asked for (stage-tall), Decorate and a game keep theirs. */
+.app-panel {
+  transition: grid-template-rows var(--dur-3) var(--ease-out);
+}
+.app-panel.reading:not(.stage-tall, .building, .view-game) {
+  grid-template-rows: auto minmax(150px, 0%) minmax(0, 1fr);
+}
 /* A mini-game in the side panel takes all the height under the HUD (Phaser resizes to its parent); the HUD's back
    button and the game's own "← City" bring the panel back. */
 .app-panel.view-game {
@@ -21,8 +30,12 @@
 .app-panel.view-game .side {
   display: none;
 }
+/* The tab: the side column is 400 px on a laptop. It gives way before the map does, narrowing to 320 px (the panel's
+   own narrowest) between ~1270 and ~910 px wide, so a 760 px window's map is 422 px, not 342; past 2000 px it grows
+   a little with the screen (20 %, 480 px at most). */
 .app-full {
-  grid-template-columns: minmax(0, 1fr) 400px;
+  --side-w: max(clamp(320px, 120px + 22vw, 400px), min(20vw, 480px));
+  grid-template-columns: minmax(0, 1fr) var(--side-w);
   grid-template-rows: auto 1fr;
   grid-template-areas: 'hud hud' 'stage side';
 }
@@ -77,4 +90,29 @@
 }
 .game canvas {
   display: block;
+}
+/* The tab in a narrow window (city.html under 720 px, e.g. a phone-width browser or a docked window): beside even the
+   320 px column the map would be narrower than the side panel's own (under 382 px), and at 340 px nothing at all (its
+   canvas 0 wide, which Chromium then draws once a second). Stack it like the side panel instead: the map on top with a
+   usable height, the panel below; a mini-game takes the whole height, as in the side panel. */
+@media (max-width: 719px) {
+  .app-full {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(220px, 45%) minmax(0, 1fr);
+    grid-template-areas: 'hud' 'stage' 'side';
+  }
+  .app-full .stage {
+    margin: 0 var(--s-4) var(--s-4);
+  }
+  .app-full .side {
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+  .app-full.view-game {
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: 'hud' 'stage';
+  }
+  .app-full.view-game .side {
+    display: none;
+  }
 }

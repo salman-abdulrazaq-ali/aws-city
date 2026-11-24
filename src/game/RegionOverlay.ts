@@ -73,6 +73,8 @@ export class RegionOverlay {
   private details = false;
   /** AWS news shows (Everything mode): an island AWS reports trouble on says so in its label. */
   private newsShown = true;
+  /** The first steps' quiet city (setQuiet). */
+  private quiet = false;
   /** The island under the pointer (its label shows the real names), and whether the Region sign is hovered. */
   private hoveredIsland = -1;
   private regionHover = false;
@@ -197,6 +199,14 @@ export class RegionOverlay {
     if (!on) for (const n of this.notes) n.destroy();
     if (!on) this.notes = [];
     this.syncVisibility();
+    this.counts = '';
+    this.syncCounts();
+  }
+
+  /** The first steps' quiet city: no zone letters on the islands until graduation (the storm cloud still shows). */
+  setQuiet(on: boolean) {
+    if (on === this.quiet) return;
+    this.quiet = on;
     this.counts = '';
     this.syncCounts();
   }
@@ -380,12 +390,13 @@ export class RegionOverlay {
   private syncCounts() {
     const inv: Inventory | undefined = useCity.getState().inventory;
     const per = azCounts(this.islands, inv, this.region);
-    const key = JSON.stringify([this.region, per, [...this.outageAzs], this.details, this.hoveredIsland, this.newsShown]);
-    if (key === this.counts && this.islandLabels.length) return;
+    const key = JSON.stringify([this.region, per, [...this.outageAzs], this.details, this.hoveredIsland, this.newsShown, this.quiet]);
+    if (key === this.counts && (this.islandLabels.length || this.quiet)) return;
     this.counts = key;
     for (const t of this.islandLabels) t.destroy();
     this.islandLabels = [];
     this.islandAnchors = [];
+    if (this.quiet) return;
     this.islands.forEach((az, i) => {
       const n = per[i];
       const zone = `Zone ${zoneLetter(az, i)}`;

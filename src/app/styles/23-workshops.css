@@ -2,7 +2,7 @@
 .workshop-card {
   max-width: 560px;
   /* Compact: the terminal and its tools fit at 1400×880 and in the 400 px panel (no empty bands between blocks). */
-  gap: 8px;
+  gap: var(--s-4);
   padding: var(--s-4);
 }
 .workshop-card > p,
@@ -11,7 +11,7 @@
 }
 .workshop-status {
   display: flex;
-  gap: 8px;
+  gap: var(--s-4);
   align-items: center;
 }
 .workshop-status > span {
@@ -21,7 +21,7 @@
   flex: 1;
   min-width: 60px;
   height: 6px;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   background: var(--sunken);
   overflow: hidden;
 }
@@ -36,12 +36,12 @@
   padding: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--s-2);
 }
 .workshop-steps li {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--s-2);
 }
 .workshop-steps input[type='checkbox'] {
   width: 18px;
@@ -59,11 +59,11 @@
 .workshop-step {
   position: relative;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px;
+  border-radius: var(--r-lg);
+  padding: var(--s-4);
   background: var(--panel-3);
   display: grid;
-  gap: 6px;
+  gap: var(--s-3);
 }
 .workshop-what summary {
   cursor: pointer;
@@ -71,26 +71,26 @@
   font-size: var(--fs-sm);
 }
 .workshop-what p {
-  margin-top: 4px;
+  margin-top: var(--s-2);
 }
 .workshop-step h4 {
   margin: 0;
 }
 .code-row {
   display: flex;
-  gap: 6px;
+  gap: var(--s-3);
   align-items: flex-start;
 }
 .workshop-cmd {
   flex: 1;
   min-width: 0;
   display: block;
-  padding: 6px 8px;
-  border-radius: 6px;
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--r-lg);
   background: var(--bg-deep);
   color: var(--code);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   /* A long command wraps, and past five lines it scrolls in its box. */
@@ -103,22 +103,22 @@
 }
 .terminal {
   border: 1px solid var(--line-strong);
-  border-radius: 6px;
+  border-radius: var(--r-lg);
   background: var(--bg-deep);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .terminal-screen {
   max-height: 150px;
   min-height: 44px;
   overflow-y: auto;
-  padding: 6px 8px;
+  padding: var(--s-3) var(--s-4);
 }
 .terminal-hint {
   color: var(--muted);
 }
 .terminal-line {
-  margin: 0 0 4px;
+  margin: 0 0 var(--s-2);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font: inherit;
@@ -136,7 +136,7 @@
 /* A coaching line in the game's voice ("Practice terminal: …", a placeholder note): help, not a CLI error. */
 .terminal-line.help {
   border-left: 2px solid var(--line);
-  padding-left: 6px;
+  padding-left: var(--s-3);
   color: var(--ink-soft);
   font-family: var(--font-ui);
 }
@@ -147,14 +147,14 @@
   bottom: 0;
   z-index: 1;
   background: var(--bg-deep);
-  border-radius: 0 0 6px 6px;
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
 }
 .terminal-input {
   display: flex;
-  gap: 6px;
+  gap: var(--s-3);
   align-items: center;
   border-top: 1px solid var(--line);
-  padding: 4px 8px;
+  padding: var(--s-2) var(--s-4);
   color: var(--accent);
 }
 .terminal-input textarea {
@@ -164,11 +164,11 @@
   border: 0;
   color: var(--ink-hi);
   font: inherit;
-  padding: 4px 0;
+  padding: var(--s-2) 0;
   resize: none;
   /* Grows with a long command (wrapped, monospace), then scrolls. */
   field-sizing: content;
-  min-height: 1.6em;
+  min-height: max(24px, 1.6em); /* a 24 px target at least (SC 2.5.8) */
   max-height: 7.5em;
   overflow-y: auto;
   white-space: pre-wrap;
@@ -181,15 +181,15 @@
 .terminal-tools {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--s-2);
   align-items: center;
   border-top: 1px solid var(--line);
-  padding: 2px 6px;
+  padding: var(--s-1) var(--s-3);
   font-family: var(--font-ui);
 }
 .terminal-note {
   margin: 0;
-  padding: 4px 8px 6px;
+  padding: var(--s-2) var(--s-4) var(--s-3);
   color: var(--ink-soft);
   font-family: var(--font-ui);
   font-size: var(--fs-sm);
@@ -198,11 +198,11 @@
 .workshop-building {
   display: grid;
   grid-template-columns: auto auto 1fr;
-  gap: 8px;
+  gap: var(--s-4);
   align-items: center;
-  padding: 6px 8px;
+  padding: var(--s-3) var(--s-4);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--r-lg);
   background: var(--panel-3);
 }
 .workshop-building .grow-line {
@@ -241,12 +241,12 @@
 .workshop-plaque {
   display: flex;
   justify-content: center;
-  margin: 4px 0;
+  margin: var(--s-2) 0;
 }
 .workshop-plaque span {
-  padding: 4px 12px;
+  padding: var(--s-2) var(--s-5);
   border: 2px solid var(--gold-deep);
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: linear-gradient(180deg, var(--gold-hi), var(--gold));
   color: var(--black);
   font-weight: 800;
@@ -272,49 +272,53 @@
 .workshop-check,
 .workshop-names {
   display: grid;
-  gap: 6px;
+  gap: var(--s-3);
 }
 /* For real: the names a command needs, typed once; they fill the command and the account check. */
 .workshop-names {
-  margin: 6px 0;
+  margin: var(--s-3) 0;
 }
 .workshop-check label,
 .workshop-names label {
   display: grid;
-  gap: 2px;
+  gap: var(--s-1);
 }
 .workshop-check input,
 .workshop-names input,
 .workshop-error textarea {
   background: var(--bg-deep);
   border: 1px solid var(--line-strong);
-  border-radius: 6px;
+  border-radius: var(--r-lg);
   color: var(--ink-hi);
   font-family: var(--font-mono);
-  font-size: 12px;
-  padding: 6px 8px;
+  font-size: var(--fs-sm);
+  padding: var(--s-3) var(--s-4);
 }
 .workshop-error textarea {
   width: 100%;
   box-sizing: border-box;
   resize: vertical;
-  margin: 6px 0;
+  margin: var(--s-3) 0;
 }
 .ok-note {
   color: var(--good-ink);
 }
 .workshop-list {
   list-style: none;
-  margin: 6px 0 0;
+  margin: var(--s-3) 0 0;
   padding: 0;
   display: grid;
-  gap: 4px;
+  gap: var(--s-2);
 }
 .workshop-pick {
   display: flex;
-  gap: 8px;
+  gap: var(--s-4);
   align-items: center;
   text-align: left;
+}
+/* "· 30 min · 0/6 steps" never splits: the title wraps before it instead, so no line starts with "·" or "steps". */
+.workshop-pick .muted {
+  white-space: nowrap;
 }
 .workshop-source {
   margin: 0;
@@ -322,7 +326,7 @@
 /* AWS North Hall (src/ui/NorthHall.tsx). */
 .talk-stage {
   display: grid;
-  gap: 8px;
+  gap: var(--s-4);
 }
 /* A talk fits the side panel: its answers and sources are sentences, so they wrap (buttons don't by default). */
 .north-hall {
@@ -344,23 +348,23 @@
 }
 .talk-ideas {
   margin: 0;
-  padding-left: 18px;
+  padding-left: var(--s-6);
   display: grid;
-  gap: 4px;
+  gap: var(--s-2);
 }
 .talk-services {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--s-2);
 }
 .talk-check {
   margin: 0;
-  padding-left: 18px;
+  padding-left: var(--s-6);
   display: grid;
-  gap: 8px;
+  gap: var(--s-4);
 }
 .talk-check p {
-  margin: 0 0 4px;
+  margin: 0 0 var(--s-2);
 }
 .talk-check .btn.good {
   border-color: var(--good);
@@ -370,14 +374,15 @@
   border-color: var(--bad-line);
   color: var(--bad-ink);
 }
-/* "Show the CloudFormation" (src/ui/TemplateView.tsx). */
+/* "Show the CloudFormation" (src/ui/TemplateView.tsx): the one disclosure look ("For AWS learners", `.why summary`). */
 .template-view summary {
   cursor: pointer;
   min-height: 24px; /* WCAG 2.2 target size */
-  padding-block: 3px;
+  padding-block: var(--s-2);
   box-sizing: border-box;
-  color: var(--info);
-  margin-top: 4px;
+  color: var(--ink-soft);
+  font-weight: 700;
+  margin-top: var(--s-2);
 }
 .template-yaml {
   max-height: 260px;
@@ -385,7 +390,7 @@
   /* Its long lines scroll inside it: they never widen the card past the side panel (no min-content push upward). */
   contain: inline-size;
   max-width: 100%;
-  margin: 6px 0;
+  margin: var(--s-3) 0;
   white-space: pre;
 }
 .btn.workshop-pick {
@@ -406,14 +411,14 @@
 .rank-ladder {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin: 6px 0;
+  gap: var(--s-2);
+  margin: var(--s-3) 0;
 }
 .rank-step {
   border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 2px 8px;
-  font-size: 12px;
+  border-radius: var(--r-pill);
+  padding: var(--s-1) var(--s-4);
+  font-size: var(--fs-sm);
   color: var(--muted);
 }
 .rank-step.got {
@@ -427,21 +432,21 @@
 }
 .badge-grid {
   list-style: none;
-  margin: 6px 0;
+  margin: var(--s-3) 0;
   padding: 0;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
-  gap: 6px;
+  gap: var(--s-3);
 }
 .badge-grid li {
   display: grid;
   justify-items: center;
-  gap: 2px;
-  padding: 6px 4px;
+  gap: var(--s-1);
+  padding: var(--s-3) var(--s-2);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--r-lg);
   text-align: center;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .badge-grid li.got {
   border-color: var(--accent-line);
@@ -451,20 +456,20 @@
   color: var(--muted);
 }
 .badge-icon {
-  font-size: 20px;
+  font-size: calc(var(--fs-md) * 20 / 13);
 }
 .collection-stats {
   list-style: none;
-  margin: 4px 0 8px;
+  margin: var(--s-2) 0 var(--s-4);
   padding: 0;
   display: grid;
-  gap: 2px;
+  gap: var(--s-1);
 }
 .collection-stats li {
   display: flex;
   justify-content: space-between;
-  gap: 8px;
-  padding: 3px 0;
+  gap: var(--s-4);
+  padding: var(--s-2) 0;
   border-bottom: 1px solid var(--line);
 }
 .rank-chip {
@@ -473,17 +478,17 @@
 /* Leaderboards (src/ui/Leaderboard.tsx). */
 .board-list {
   list-style: none;
-  margin: 8px 0;
+  margin: var(--s-4) 0;
   padding: 0;
   display: grid;
-  gap: 2px;
+  gap: var(--s-1);
 }
 .board-list li {
   display: grid;
   grid-template-columns: 28px 1fr auto;
-  gap: 8px;
-  padding: 4px 6px;
-  border-radius: 6px;
+  gap: var(--s-4);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-lg);
 }
 .board-list li.you {
   background: var(--accent-soft);
@@ -496,31 +501,31 @@
 }
 .board-profile {
   border-top: 1px solid var(--line);
-  margin-top: 8px;
-  padding-top: 8px;
+  margin-top: var(--s-4);
+  padding-top: var(--s-4);
   display: grid;
-  gap: 6px;
+  gap: var(--s-3);
 }
 .toggle-row {
   display: flex;
-  gap: 8px;
+  gap: var(--s-4);
   align-items: flex-start;
 }
 .scale-facts {
-  margin: 0 0 8px;
-  padding-left: 18px;
+  margin: 0 0 var(--s-4);
+  padding-left: var(--s-6);
   display: grid;
-  gap: 4px;
-  font-size: 13px;
+  gap: var(--s-2);
+  font-size: var(--fs-md);
 }
 /* The Well-Architected review (src/ui/WaReview.tsx). */
 .wa-review summary {
   cursor: pointer;
   color: var(--info);
-  margin: 6px 0;
+  margin: var(--s-3) 0;
 }
 .wa-pillar {
-  margin: 8px 0;
+  margin: var(--s-4) 0;
 }
 .wa-pillar-head {
   display: flex;
@@ -528,35 +533,35 @@
 }
 .wa-checks {
   list-style: none;
-  margin: 4px 0 0;
+  margin: var(--s-2) 0 0;
   padding: 0;
   display: grid;
-  gap: 2px;
-  font-size: 13px;
+  gap: var(--s-1);
+  font-size: var(--fs-md);
 }
 .wa-checks li {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--s-3);
   align-items: center;
 }
 /* The architecture sandbox (src/ui/diagram/Sandbox.tsx). */
 .sandbox {
   display: grid;
-  gap: 8px;
+  gap: var(--s-4);
 }
 .sandbox-bar {
   display: flex;
-  gap: 6px;
+  gap: var(--s-3);
   flex-wrap: wrap;
 }
 .sandbox-name,
 .sandbox-bar select {
   background: var(--bg-deep);
   border: 1px solid var(--line-strong);
-  border-radius: 6px;
+  border-radius: var(--r-lg);
   color: var(--ink-hi);
-  padding: 4px 6px;
+  padding: var(--s-2) var(--s-3);
   min-width: 0;
 }
 .sandbox-name {
@@ -567,7 +572,7 @@
   height: auto;
   background: var(--bg-deep);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--r-lg);
 }
 .sb-cell {
   cursor: pointer;
@@ -581,18 +586,18 @@
 .sandbox-palette {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--s-2);
   max-height: 160px;
   overflow-y: auto;
 }
 .sb-piece {
   display: inline-flex;
-  gap: 4px;
+  gap: var(--s-2);
   align-items: center;
-  font-size: 12px;
-  padding: 3px 7px;
+  font-size: var(--fs-sm);
+  padding: var(--s-2) var(--s-4);
   border: 1px solid var(--line-strong);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: var(--panel-2);
   color: var(--ink);
   cursor: pointer;
@@ -604,7 +609,7 @@
 }
 .sandbox-selected {
   display: flex;
-  gap: 6px;
+  gap: var(--s-3);
   align-items: center;
   flex-wrap: wrap;
 }
@@ -615,31 +620,31 @@
 .launch-budget {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 8px;
+  gap: var(--s-4);
   align-items: center;
 }
 .launch-slots {
   list-style: none;
-  margin: 6px 0;
+  margin: var(--s-3) 0;
   padding: 0;
   display: grid;
-  gap: 6px;
+  gap: var(--s-3);
 }
 .launch-slots li {
   display: grid;
-  gap: 2px;
+  gap: var(--s-1);
 }
 .launch-timeline svg {
   width: 100%;
   height: auto;
   background: var(--bg-deep);
-  border-radius: 6px;
+  border-radius: var(--r-lg);
 }
 .launch-timeline {
-  margin: 8px 0 0;
+  margin: var(--s-4) 0 0;
 }
 .launch-grade {
-  font-size: 15px;
+  font-size: var(--fs-lg);
 }
 .grade {
   display: inline-grid;
@@ -650,7 +655,7 @@
   font-weight: 800;
   color: var(--accent-ink);
   background: var(--accent);
-  margin-right: 6px;
+  margin-right: var(--s-3);
 }
 .grade-A {
   background: var(--good);
@@ -659,7 +664,7 @@
   background: var(--bad);
 }
 .launch-cta {
-  margin-top: 6px;
+  margin-top: var(--s-3);
 }
 .sb-piece.on .muted {
   color: var(--ink-soft);
@@ -707,7 +712,7 @@
   margin-bottom: var(--s-3);
 }
 .sandbox-gaps ul {
-  margin: var(--s-1, 4px) 0 0;
+  margin: var(--s-1) 0 0;
   padding-left: 1.2em;
 }
 
@@ -758,8 +763,8 @@
 /* A step here finished the active quest's workshop step: say so, and that the dialog can close. */
 .workshop-quest-done {
   margin: 0;
-  padding: 6px 10px;
-  border-radius: 6px;
+  padding: var(--s-3) var(--s-5);
+  border-radius: var(--r-lg);
   border: 1px solid var(--good);
   color: var(--good-ink);
   font-weight: 600;
@@ -769,16 +774,16 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: var(--s-3);
 }
 /* "Help me fix it": the agent's portrait while it reads the error, then commands with their own Copy. */
 .workshop-thinking {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--s-3);
 }
 .workshop-answer .code-row {
-  margin: 4px 0;
+  margin: var(--s-2) 0;
 }
 @media (prefers-reduced-motion: no-preference) {
   .thinking-dots span {
@@ -804,8 +809,8 @@
 /* For real: which account CloudShell must run in, and the console-account warning when the city can tell. */
 .workshop-account {
   display: grid;
-  gap: 4px;
-  margin: 4px 0 8px;
+  gap: var(--s-2);
+  margin: var(--s-2) 0 var(--s-4);
 }
 
 /* The account number the check should print, large enough to compare digit by digit (asked for on 24 Nov 2026). */

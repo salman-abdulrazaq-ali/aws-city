@@ -52,10 +52,33 @@ export function pickRequest(p: Progress, region: string | undefined, seed: numbe
   if (!deck.length) return undefined;
   const card = deck[Math.abs(seed) % deck.length]!;
   const serviceId = here.find((id) => cardsFor(id).some((c) => c.id === card.id))!;
+  return requestOf(card, serviceId, here, seed);
+}
+
+/**
+ * The first steps' planted citizen (bus requestNow): a question on one card, chosen now. `cardId` when the caller
+ * names one; else one of `deck` (the tutorial deck) the player last answered "Didn't know" (it's the one worth
+ * remembering now), else the deck's first answered card, else its first. Wrong answers as in pickRequest, from the
+ * service's other cards. Undefined when the service has no such card.
+ */
+export function requestFor(p: Progress, serviceId: string, opts: { cardId?: string; deck?: readonly string[]; seed?: number } = {}): CitizenRequest | undefined {
+  const cards = cardsFor(serviceId);
+  const inDeck = opts.deck?.length ? cards.filter((c) => opts.deck!.includes(c.id)) : cards;
+  const missed = inDeck.find((c) => p.cards?.[c.id] && p.cards[c.id].reps === 0);
+  const seen = inDeck.find((c) => p.cards?.[c.id]);
+  const card = (opts.cardId ? cards.find((c) => c.id === opts.cardId) : undefined) ?? missed ?? seen ?? inDeck[0];
+  if (!card) return undefined;
+  // The deck's other cards are the wrong answers: things the player just learned, so the question asks which is which.
+  const pool = opts.deck?.length && inDeck.length >= 3 ? inDeck : undefined;
+  return requestOf(card, serviceId, [serviceId], opts.seed ?? 0, pool);
+}
+
+/** A question on `card` with two wrong answers: the same building's other cards first, then the other buildings'. */
+function requestOf(card: Flashcard, serviceId: string, here: string[], seed: number, pool?: Flashcard[]): CitizenRequest | undefined {
   // Wrong answers from the same building's other cards first (they sound alike, so the question needs knowing, not
   // spotting which answer is about the right service), then from other buildings when its deck is too small.
   const right = short(card);
-  const same = [...new Set(cardsFor(serviceId).filter((c) => c.id !== card.id).map(short))].filter((t) => t !== right);
+  const same = [...new Set((pool ?? cardsFor(serviceId)).filter((c) => c.id !== card.id).map(short))].filter((t) => t !== right);
   const rest = [...new Set(here.filter((id) => id !== serviceId).flatMap(cardsFor).map(short))].filter((t) => t !== right && !same.includes(t));
   const pick = (from: string[], salt: number) => from[Math.abs(seed * salt + 3) % from.length]!;
   const a = same.length ? pick(same, 7) : rest.length ? pick(rest, 7) : undefined;

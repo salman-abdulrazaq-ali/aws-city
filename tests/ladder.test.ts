@@ -134,3 +134,25 @@ describe('Puzzles offers one puzzle first', () => {
     expect(featuredPuzzle(all as Progress)).toBe('thumbnails');
   });
 });
+
+describe('the first steps on the ladder', () => {
+  const fsOn = (step: number) => ({ active: true, step, graduated: false });
+  it('graduation is what "a quest done" was: the path done, or skipped', () => {
+    const skipped = ladder(input({ firstSteps: { active: false, step: 0, graduated: true } }));
+    expect(skipped.tabs.has('jobs')).toBe(true);
+    expect(skipped).toMatchObject({ care: true, news: true, clients: true });
+    expect(ladder(input({ firstSteps: { active: false, step: 0, graduated: false } })).clients).toBe(false);
+  });
+
+  it('is quiet on the path: Learn from its cards step, Deploy for its plan, nothing opened before (a replay)', () => {
+    const everything = new Set<string>(ALL_AREAS);
+    const at = (step: number) => ladder(input({ firstSteps: fsOn(step), opened: everything, linked: true, hasDeploys: true, canConnect: true, progress: p({ landmarks: landmarks(10), quests: doneQuest }) }));
+    expect([...at(0).tabs]).toEqual(['home']);
+    expect([...at(2).tabs]).toEqual(['home', 'learn']);
+    expect([...at(5).tabs]).toEqual(['home', 'learn', 'deploy']);
+    expect(at(5)).toMatchObject({ places: false, learnBuild: false, care: false, worldList: false, news: false, clients: false });
+    // After it, all of it is back.
+    const after = ladder(input({ firstSteps: { active: false, step: 5, graduated: true }, opened: everything, linked: true }));
+    expect([...after.tabs].sort()).toEqual(['deploy', 'home', 'jobs', 'learn']);
+  });
+});

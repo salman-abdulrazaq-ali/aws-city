@@ -41,6 +41,24 @@ describe('the loops on screen', () => {
     expect(screen.queryByRole('button', { name: 'Open the crate' })).toBeNull();
   });
 
+  it('the card keeps its words and size while the crate shakes: the button says “Opening…” in place (motion.md 5)', () => {
+    vi.useFakeTimers();
+    render(<SupplyDrop shiftDone />);
+    const card = screen.getByLabelText('Daily Supply Drop');
+    vi.spyOn(card, 'getBoundingClientRect').mockReturnValue({ height: 132 } as DOMRect);
+    fireEvent.click(screen.getByRole('button', { name: 'Open the crate' }));
+    const shaking = screen.getByLabelText('Daily Supply Drop');
+    expect(shaking.className).toMatch(/shaking/);
+    expect(shaking.getAttribute('aria-busy')).toBe('true');
+    expect(shaking.textContent).toMatch(/Free, nothing to buy/);
+    expect(shaking.textContent).toMatch(/What could be inside: Common 70% · Rare 25% · Epic 5%/);
+    expect((screen.getByRole('button', { name: 'Opening…' }) as HTMLButtonElement).disabled).toBe(true);
+    act(() => void vi.advanceTimersByTime(CRATE_SHAKE_MS));
+    vi.useRealTimers();
+    // The reveal swaps the words inside a box at least as tall as the closed card.
+    expect(screen.getByRole('status', { name: 'Daily Supply Drop' }).style.minHeight).toBe('132px');
+  });
+
   it('under reduced motion the crate opens at once (no shake)', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true }));
     render(<SupplyDrop shiftDone />);

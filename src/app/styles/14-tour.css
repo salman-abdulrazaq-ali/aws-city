@@ -1,14 +1,12 @@
-/* ── coach-mark tour ── */
-.tour {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-tour);
+/* ── coach marks (the quick tour, src/ui/Tour.tsx): no scrim, nothing over the map but the card itself ── */
+.tour-layer {
+  display: contents;
 }
 .tour-ring {
   position: fixed;
+  z-index: var(--z-tour);
   border: 2px solid var(--accent);
   border-radius: var(--r-lg);
-  box-shadow: 0 0 0 9999px var(--scrim);
   transition:
     top var(--dur-3) var(--ease-out),
     left var(--dur-3) var(--ease-out),
@@ -17,14 +15,11 @@
   pointer-events: none;
 }
 .tour-ring.none {
-  width: 0;
-  height: 0;
-  border: none;
-  top: 50%;
-  left: 50%;
+  display: none;
 }
 .tour-card {
   position: fixed;
+  z-index: var(--z-tour);
   width: min(320px, calc(100vw - 24px));
   background: var(--panel);
   border: 1px solid var(--line-strong);
@@ -43,6 +38,8 @@
   margin-bottom: var(--s-4);
 }
 .tour-card h2 {
+  flex: 1;
+  min-width: 0;
   margin: 0;
   font-family: var(--font-ui);
   font-weight: 800;
@@ -75,6 +72,67 @@
   align-items: center;
   gap: var(--s-3);
 }
-.tour-foot .step-count {
+.tour-head .tour-end {
+  align-self: flex-start;
+  white-space: nowrap;
+}
+.tour-card .tour-tried {
+  font-size: var(--fs-xs);
+  color: var(--ink-soft);
+}
+.tour-foot .pips {
   margin-right: auto;
+}
+/* No room beside the stop's controls: the card folds to one docked row (Quick tour · n of 6, Next, End tour) that
+   covers nothing the stop names. Its title and words stay for screen readers (sr-only). */
+.tour-card.pill {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: auto;
+  max-width: calc(100vw - 24px);
+  padding: var(--s-2) var(--s-3);
+}
+.tour-card.pill .tour-head,
+.tour-card.pill .tour-foot {
+  display: contents;
+}
+.tour-card.pill .tour-end {
+  order: 1;
+  align-self: center;
+}
+.tour-pill-n {
+  margin-right: auto;
+  font-size: var(--fs-xs);
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+/* The side panel: the card docks as a strip in the column, just above the prompt bar (App's #tour-dock), in the page's
+   flow. The scrolling body above it shrinks instead of hiding under it, and the dialogs and sheets that open over the
+   column (⋯, My AWS, a citizen's question) stand over it, so it covers nothing (seen 24 Nov 2026: the floating card over
+   the approval's rows, My AWS's header, the shift's Start). */
+.tour-dock {
+  flex: none;
+}
+.tour-card.docked {
+  position: static;
+  z-index: auto;
+  width: auto;
+  margin: var(--s-2) var(--s-4);
+  padding: var(--s-3) var(--s-4);
+  animation: none;
+  transition: none;
+}
+.tour-card.docked .tour-head {
+  margin-bottom: var(--s-2);
+}
+.tour-card.docked h2 {
+  font-size: var(--fs-pixel);
+  line-height: 1.4;
+}
+.tour-card.docked p {
+  margin-bottom: var(--s-3);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
 }

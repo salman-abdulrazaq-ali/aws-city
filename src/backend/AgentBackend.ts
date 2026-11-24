@@ -28,6 +28,13 @@ export interface AgentBackend {
   /** Send any contract command. Queued until connected. */
   send(cmd: ClientCommand): void;
 
+  /**
+   * A practice task (src/backend/practiceTasks.ts: the first steps' "Watch Sally work"): its script plays here as the
+   * usual task.plan, task.step, agent.state and task.done events. Never sent, never a model call, never AWS, in every
+   * build. Returns its task id (a fresh practice-task-… one unless `taskId` is given), or undefined for an unknown script.
+   */
+  practiceTask(scriptId: string, taskId?: string): string | undefined;
+
   /** Upload a JPEG data URL via a presigned URL; returns the S3 key to reference in later commands. */
   uploadScreenshot(dataUrl: string): Promise<string>;
 

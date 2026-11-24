@@ -3,13 +3,15 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AwsIncident } from '@/backend/contract';
 import { bus } from '@/state/bus';
-import { useCity } from '@/state/store';
+import { SETTLE_BEAT_MS, useCity } from '@/state/store';
 import { QUESTS } from '@/world/content';
 import { TIER_XP } from '@/world/places';
 import { WORKSHOPS } from '@/world/workshops';
 
 // One moment, one celebration: a big event gets one channel, never a toast stacked on the city's own celebration.
 const s = () => useCity.getState();
+/** A regular quest (the first steps' graduation also plays its after-moments one at a time: tests/first-steps.test.ts). */
+const QUEST = QUESTS.find((q) => q.id !== 'first-steps')!;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -47,7 +49,7 @@ describe('moments', () => {
   });
 
   it('a deploy that finishes a quest celebrates once (no "built" toast on top of the card)', () => {
-    const q = QUESTS.find((x) => x.steps.at(-1)?.kind === 'deploy')!;
+    const q = QUESTS.find((x) => x.id !== 'first-steps' && x.steps.at(-1)?.kind === 'deploy')!;
     const last = q.steps.at(-1)!;
     s().startQuest(q.id);
     for (const step of q.steps.slice(0, -1)) {
@@ -104,7 +106,7 @@ describe('moments', () => {
 
   it('while a celebration card is up, toasts wait and come one by one after it closes', () => {
     useCity.setState({ view: { name: 'city' } });
-    s().celebrate(QUESTS[0].id);
+    s().celebrate(QUEST.id);
     s().toast('🏅', 'Badge earned: Questing.');
     s().toast('⛈️', 'AWS has trouble somewhere.');
     expect(s().toasts).toHaveLength(0);
@@ -119,7 +121,7 @@ describe('moments', () => {
     useCity.setState({ view: { name: 'city' } });
     s().toast('🔓', 'Learn is open');
     expect(s().toasts).toHaveLength(1);
-    s().celebrate(QUESTS[0].id);
+    s().celebrate(QUEST.id);
     vi.advanceTimersByTime(200);
     expect(s().toasts).toHaveLength(0);
     s().celebrate(undefined);
@@ -171,6 +173,8 @@ describe('moments', () => {
       updated: new Date().toISOString(),
       log: [],
     } as unknown as AwsIncident;
+    // The first quest is the first steps: graduation's card, then its after-moments (the coins note, Connie, the
+    // banner) one at a time, then the drill (seen 24 Nov 2026: the storm toast came with everything else).
     const q = QUESTS[0];
     useCity.setState({ progress: { ...s().progress, quests: { [q.id]: { status: 'done', step: q.steps.length } } } });
     s().celebrate(q.id);
@@ -178,6 +182,8 @@ describe('moments', () => {
     s().applyServerEvent({ type: 'aws.health', incidents: [drill], asOf: new Date().toISOString() } as never);
     expect(s().toasts).toHaveLength(0);
     s().celebrate(undefined);
+    expect(s().toasts).toHaveLength(0);
+    vi.advanceTimersByTime(3 * SETTLE_BEAT_MS);
     expect(s().toasts[0]?.text).toMatch(/^Practice storm: nothing is wrong with your city\. \(/);
     expect(s().toasts[0]?.kind).toBe('info');
   });

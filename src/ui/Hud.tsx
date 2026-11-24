@@ -25,6 +25,8 @@ import { starsEarned } from '@/state/buildmode';
 import { coins } from '@/state/wallet';
 import { lightsLine } from '@/state/lights';
 import { glowingNow } from './Loops';
+import { holdTickerLine } from './NewsTicker';
+import { useShieldGame } from './useDialog';
 import { useBump } from './feedback';
 import { connectionLabel, DEMO_KEY, GAME_NAMES, isDemo, readPref, setDemo, syncLine, TIP_COINS_KEY, writePref } from './logic';
 import { Coin, Icon } from './icons';
@@ -34,51 +36,102 @@ import { BuildToggle } from './BuildDrawer';
 import { isSimple, shows } from '@/state/simple';
 import { useTodo } from './today';
 import { DeleteAccountDialog, openAccountCard } from './Account';
+import { playLabel, stepsChip, useFirstSteps, useQuiet } from './FirstSteps';
+import { FIRST_STEPS, fill } from '@/state/firstSteps';
 
+
+/** How long the coins note stays on the map before it counts as read (Got it and Decorate put it away sooner). */
+export const COINS_TIP_MS = 45_000;
+
+/** A map shorter than this (the side panel's, the narrow tab's) has room for one line over its top edge, not two. */
+export const SHORT_MAP_PX = 480;
 
 /**
  * The first time the player has City Coins, a one-time note under the counter says where they go (Decorate). "Got it"
- * (or opening Decorate) puts it away for good on this device. It hangs just under the coin counter but always inside
- * the map (the full tab's side column and tab bar sit under the HUD too; the panel's map is short): placed from both
- * boxes, and only its button takes taps, so it never covers the tabs or blocks a click.
+ * (or opening Decorate, or COINS_TIP_MS on screen) puts it away for good on this device. It hangs just under the coin
+ * counter but always inside the map and under the AWS news ticker (the full tab's side column and tab bar sit under the
+ * HUD too): placed from those boxes, and only its button takes taps, so it never covers the tabs, the ticker or a click.
+ * On a short map (under SHORT_MAP_PX: the side panel's, the narrow tab's) it's one short line in the ticker's place at
+ * the map's top-left, under the counter, and the ticker steps aside meanwhile (`holdTickerLine`): never two rows over
+ * the map. One thing over the map at a time: it steps aside while a toast shows, and comes back after.
  */
 function CoinsTip({ wallet }: { wallet: number }) {
   const [seen, setSeen] = useState(() => readPref(TIP_COINS_KEY) === '1');
   const building = useCity((s) => !!s.build);
-  // Only on the city itself: a mini-game, an HQ or the world map keeps its own screen clear.
-  const inCity = useCity((s) => s.view.name === 'city');
+  // Only on the city itself: a mini-game, an HQ or the world map keeps its own screen clear. Never with a celebration
+  // card up: graduation's card names the coins, and the note comes once it closes (seen 24 Nov 2026: both at once).
+  const inCity = useCity((s) => s.view.name === 'city' && !s.celebration);
+  const toastUp = useCity((s) => s.toasts.some((t) => !t.leaving));
+  // One tip at a time: never beside the quick tour or a coach tip (seen 24 Nov 2026: the Mayor's tip and this note at
+  // once). The tour's end marks it read (src/ui/Tour.tsx TOUR_COVERS), so the pref is read again as it closes.
+  const tipUp = useCity((s) => s.tourOpen || s.coachTipUp);
   const done = () => (writePref(TIP_COINS_KEY, '1'), setSeen(true));
   useEffect(() => {
     if (building && !seen) done();
   }, [building, seen]);
   const ref = useRef<HTMLSpanElement>(null);
   const [at, setAt] = useState<CSSProperties>({});
-  const show = !seen && wallet > 0 && inCity;
-  useLayoutEffect(() => {
+  /** On a short map: one line in the ticker's place. */
+  const [line, setLine] = useState(false);
+  const show = !seen && readPref(TIP_COINS_KEY) !== '1' && wallet > 0 && inCity && !tipUp;
+  // Read once it's been on screen a while: a note that never leaves the short panel map is clutter.
+  useEffect(() => {
     if (!show) return;
+    const t = setTimeout(done, COINS_TIP_MS);
+    return () => clearTimeout(t);
+  }, [show]);
+  const visible = show && !toastUp;
+  // "Got it" stands over the map: its press must not reach Phaser's window listeners and pick the building under it.
+  useShieldGame(visible, ref);
+  // Before paint, so the ticker and the note never show as two rows for a frame.
+  useLayoutEffect(() => {
+    if (!visible || !line) return;
+    holdTickerLine(true);
+    return () => holdTickerLine(false);
+  }, [visible, line]);
+  useLayoutEffect(() => {
+    if (!visible) return;
     const place = () => {
       const chip = ref.current?.parentElement?.getBoundingClientRect();
-      const map = document.querySelector('.stage')?.getBoundingClientRect();
+      const stage = document.querySelector('.stage');
+      const map = stage?.getBoundingClientRect();
       // No map on this page (a test, a game's own screen): the stylesheet's place under the counter.
-      if (!chip || !map) return setAt({});
+      if (!chip || !map) return (setLine(false), setAt({}));
       if (map.width < 120) return setAt({ visibility: 'hidden' });
+      const short = map.height < SHORT_MAP_PX;
+      setLine(short);
+      // Where the ticker's line stands (styles/21-status-and-cards.css: --s-3 in from the map's edges).
+      if (short) return setAt({ position: 'fixed', top: map.top + 6, left: map.left + 6, right: 'auto', maxWidth: map.width - 12 });
       const pad = 8;
+      // The news ticker owns the map's top edge (as it does for toasts): the note hangs under it.
+      const ticker = stage?.querySelector(':scope > .ticker')?.getBoundingClientRect();
+      const top = Math.max(chip.bottom + 6, map.top + pad, ticker ? ticker.bottom + 6 : 0);
       const right = Math.min(chip.right, map.right - pad);
-      setAt({ position: 'fixed', top: Math.max(chip.bottom + 6, map.top + pad), right: window.innerWidth - right, maxWidth: Math.min(260, right - map.left - pad) });
+      // Under the counter when there's room to its left; else (the panel's counter sits near the left edge) from the
+      // map's left edge, so the note never turns into a narrow column.
+      if (right - map.left - pad >= 200) setAt({ position: 'fixed', top, right: window.innerWidth - right, maxWidth: Math.min(260, right - map.left - pad) });
+      else setAt({ position: 'fixed', top, left: map.left + pad, right: 'auto', maxWidth: Math.min(260, map.width - 2 * pad) });
     };
     place();
-    // The panel's map grows and shrinks on request: follow it, and the window.
+    // The panel's map grows and shrinks on request (and while its tab is read), and the ticker comes and goes: follow them.
     const stage = document.querySelector('.stage');
     const ro = typeof ResizeObserver === 'function' && stage ? new ResizeObserver(place) : undefined;
     if (stage) ro?.observe(stage);
+    const mo = typeof MutationObserver === 'function' && stage ? new MutationObserver(place) : undefined;
+    if (stage) mo?.observe(stage, { childList: true });
     window.addEventListener('resize', place);
-    return () => (ro?.disconnect(), window.removeEventListener('resize', place));
-  }, [show]);
-  if (!show) return null;
+    return () => (ro?.disconnect(), mo?.disconnect(), window.removeEventListener('resize', place));
+  }, [visible]);
+  if (!visible) return null;
+  const text = fill(FIRST_STEPS.coins.note, { n: wallet });
+  const cut = text.indexOf('. ') + 1;
+  const note = cut > 0 ? { main: text.slice(0, cut), more: text.slice(cut + 1) } : { main: text };
   return (
-    <span ref={ref} className="hud-tip" role="note" style={at}>
+    <span ref={ref} className={`hud-tip${line ? ' hud-tip-line' : ''}`} role="note" style={at}>
+      {/* "You've earned N City Coins: spend them in 🌳 Decorate." The line keeps that and drops the rest (.tip-more). */}
       <span>
-        <b>City Coins</b>: spend them on decorations in 🌳 Decorate. Stars ⭐ are never spent.
+        {note.main}
+        {note.more && <span className="tip-more"> {note.more}</span>}
       </span>
       <button className="btn tiny" onClick={done}>
         Got it
@@ -114,6 +167,22 @@ function TodoChip() {
         <b>
           {done}/{of}
         </b>
+      </span>
+    </>
+  );
+}
+
+/** The first steps' "First steps 2/6", in To do's place while the path runs (the guide card says what's next). */
+function StepsChip({ step }: { step: number }) {
+  return (
+    <>
+      <span className="sep" aria-hidden="true">
+        ·
+      </span>
+      <span className="hud-todo hud-steps" title="Your first steps: the guide is at the top of the City tab">
+        {/* "First steps 2/6", the count in bold like To do's. */}
+        {stepsChip(step).replace(/\S+$/, '')}
+        <b>{stepsChip(step).match(/\S+$/)?.[0]}</b>
       </span>
     </>
   );
@@ -246,7 +315,7 @@ export const DEMO_PRIVACY_LINE = 'Demo: your progress stays on this device; noth
 /** The ⋯ menu's items in order (checkbox items too), for its arrow keys. */
 const menuItems = (menu: HTMLElement | null) => [...(menu?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? [])];
 
-/** Everything that isn't needed every minute, in one flat list: sound, chatter, peek, tour, full city, the Lookout. */
+/** Everything that isn't needed every minute, in labelled groups: sound and view, accessibility, how you play, your city. */
 function MoreMenu({ layout }: { layout: Layout }) {
   const [open, setOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -266,6 +335,8 @@ function MoreMenu({ layout }: { layout: Layout }) {
   const relaxed = useCity((s) => !!s.prefs.relaxed);
   const captions = useCity((s) => !!s.prefs.captions);
   const builder = useCity((s) => !!s.prefs.builder);
+  const decorating = useCity((s) => !!s.build);
+  const setBuild = useCity((s) => s.setBuild);
   const setPref = useCity((s) => s.setPref);
   const setTourOpen = useCity((s) => s.setTourOpen);
   const backendKind = useCity((s) => s.backendKind);
@@ -273,6 +344,10 @@ function MoreMenu({ layout }: { layout: Layout }) {
   const signedIn = useCity((s) => s.backendKind !== 'mock' && s.backendStatus !== 'signed-out');
   const locked = useLocked();
   const simple = useCity((s) => isSimple(s.prefs));
+  const hasCity = useCity((s) => !!s.prefs.region);
+  // The first steps: Play them (anyone, any time), or Replay them once done; Decorate and the old tour wait meanwhile.
+  const path = useFirstSteps();
+  const playText = playLabel(path);
   const box = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -361,25 +436,36 @@ function MoreMenu({ layout }: { layout: Layout }) {
           <div className="menu" role="menu" aria-label="More" ref={list} tabIndex={-1} onKeyDown={onMenuKey}>
             {/* Where players look for Sign out first (seen 22 Nov 2026): any build that can sign in, once signed in. */}
             {accountItems && <AccountItems run={run} askDelete={() => setConfirmDelete(true)} />}
-            <button
-              role="menuitemcheckbox"
-              aria-checked={!muted}
-              onClick={() => {
-                setMuted(!muted);
-                if (muted) chime();
-              }}
-            >
-              <span>Sound effects</span>
-              <span className={`switch ${muted ? '' : 'on'}`} aria-hidden="true" />
-            </button>
-            <button role="menuitemcheckbox" aria-checked={chatter} onClick={() => setPref('chatter', !chatter)}>
-              <span>Agents chat in the city</span>
-              <span className={`switch ${chatter ? 'on' : ''}`} aria-hidden="true" />
-            </button>
-            <button role="menuitemcheckbox" aria-checked={mapDetails} onClick={() => setPref('mapDetails', !mapDetails)}>
-              <span>Show the map details</span>
-              <span className={`switch ${mapDetails ? 'on' : ''}`} aria-hidden="true" />
-            </button>
+            {/* Labelled groups of a few rows each: what you see and hear, Accessibility, how you play, your city. */}
+            <div role="group" aria-label="Sound and view">
+              <div className="menu-label" aria-hidden="true">
+                Sound &amp; view
+              </div>
+              <button
+                role="menuitemcheckbox"
+                aria-checked={!muted}
+                onClick={() => {
+                  setMuted(!muted);
+                  if (muted) chime();
+                }}
+              >
+                <span>Sound effects</span>
+                <span className={`switch ${muted ? '' : 'on'}`} aria-hidden="true" />
+              </button>
+              <button role="menuitemcheckbox" aria-checked={chatter} onClick={() => setPref('chatter', !chatter)}>
+                <span>Agents chat in the city</span>
+                <span className={`switch ${chatter ? 'on' : ''}`} aria-hidden="true" />
+              </button>
+              <button role="menuitemcheckbox" aria-checked={mapDetails} onClick={() => setPref('mapDetails', !mapDetails)}>
+                <span>Show the map details</span>
+                <span className={`switch ${mapDetails ? 'on' : ''}`} aria-hidden="true" />
+              </button>
+              {layout === 'panel' && (
+                <button role="menuitem" onClick={run(openFullCity)}>
+                  Open the full city in a tab ↗
+                </button>
+              )}
+            </div>
             <hr />
             <div role="group" aria-label="Accessibility">
               <div className="menu-label" aria-hidden="true">
@@ -414,22 +500,12 @@ function MoreMenu({ layout }: { layout: Layout }) {
                 <span>Sound captions</span>
                 <span className={`switch ${captions ? 'on' : ''}`} aria-hidden="true" />
               </button>
-              <button
-                role="menuitemcheckbox"
-                aria-checked={builder}
-                title="Everything on (not Simple): every area open, and the deeper “For AWS learners” text shown first"
-                onClick={() => {
-                  // On, it does what the world intro's “I already build on AWS” does (src/ui/WorldIntro.tsx): Everything on
-                  // and every area open. Off, only the deeper text goes; Simple stays as the player set it.
-                  setPref('builder', builder ? undefined : true);
-                  if (builder) return;
-                  setPref('simple', false);
-                  openEverything();
-                }}
-              >
-                <span>I already build on AWS</span>
-                <span className={`switch ${builder ? 'on' : ''}`} aria-hidden="true" />
-              </button>
+            </div>
+            <hr />
+            <div role="group" aria-label="How you play">
+              <div className="menu-label" aria-hidden="true">
+                How you play
+              </div>
               {/* Simple mode (the default) ↔ Everything: one switch, and "Show everything" also opens every locked area. */}
               {simple ? (
                 <button
@@ -447,46 +523,94 @@ function MoreMenu({ layout }: { layout: Layout }) {
                   Keep it simple
                 </button>
               )}
+              <button
+                role="menuitemcheckbox"
+                aria-checked={builder}
+                title="Everything on (not Simple): every area open, and the deeper “For AWS learners” text shown first"
+                onClick={() => {
+                  // On, it does what the world intro's “I already build on AWS” does (src/ui/WorldIntro.tsx): Everything on
+                  // and every area open. Off, only the deeper text goes; Simple stays as the player set it.
+                  setPref('builder', builder ? undefined : true);
+                  if (builder) return;
+                  setPref('simple', false);
+                  openEverything();
+                }}
+              >
+                <span>I already build on AWS</span>
+                <span className={`switch ${builder ? 'on' : ''}`} aria-hidden="true" />
+              </button>
+              {layout === 'panel' && (
+                <button role="menuitemcheckbox" aria-checked={autoSnap} onClick={() => setAutoSnap(!autoSnap)}>
+                  <span>Lookout watches my AWS pages</span>
+                  <span className={`switch ${autoSnap ? 'on' : ''}`} aria-hidden="true" />
+                </button>
+              )}
+              {hasCity && playText && (
+                <button
+                  role="menuitem"
+                  title="Connie's six short steps: walk, fish, learn, help, watch and approve. All practice: nothing real is made."
+                  onClick={run(() => {
+                    const st = useCity.getState();
+                    st.playFirstSteps();
+                    if (st.view.name !== 'city') st.setView({ name: 'city' });
+                    bus.emit('showTab', { tab: 'home' });
+                  })}
+                >
+                  {playText}
+                </button>
+              )}
+              {hasCity && !path.active && (
+                <button
+                  role="menuitem"
+                  title="Six quick stops over the real city: buildings, asking in plain words, your OK, learning, the console helpers and ⋯"
+                  onClick={run(() => {
+                    // In the city, on the City tab (where the box and the panel's Copilot switch stand).
+                    const st = useCity.getState();
+                    if (st.view.name !== 'city') st.setView({ name: 'city' });
+                    bus.emit('showTab', { tab: 'home' });
+                    setTourOpen(true);
+                  })}
+                >
+                  {FIRST_STEPS.menu.tour}
+                </button>
+              )}
             </div>
             <hr />
-            <button role="menuitem" onClick={run(() => useCity.getState().openCollection(true))}>
-              🏙️ My City: everything you've earned
-            </button>
-            {linked && (
-              <button role="menuitem" title="What runs where, data that moves, live traffic and this month's cost" onClick={run(() => useCity.getState().openAccountMap(true))}>
-                🗺️ My AWS, live: your account as a map
+            <div role="group" aria-label="Your city">
+              <div className="menu-label" aria-hidden="true">
+                Your city
+              </div>
+              <button role="menuitem" onClick={run(() => useCity.getState().openCollection(true))}>
+                🏙️ My City: everything you've earned
               </button>
-            )}
-            <button role="menuitem" title="Weekly leaderboards, and whether other players can see you" onClick={run(() => openLeaderboard(`mayors:${useCity.getState().cityRegion}`))}>
-              🏆 Leaderboards and live city
-            </button>
-            {cityView && <BuildToggle menu={() => setOpen(false)} />}
-            {inCity && (
-              <button role="menuitem" title="Download a picture of your city as it is now (nothing is uploaded)" onClick={run(() => bus.emit('postcard'))}>
-                📸 Save a postcard of my city
+              {linked && (
+                <button role="menuitem" title="What runs where, data that moves, live traffic and this month's cost" onClick={run(() => useCity.getState().openAccountMap(true))}>
+                  🗺️ My AWS, live: your account as a map
+                </button>
+              )}
+              <button role="menuitem" title="Weekly leaderboards, and whether other players can see you" onClick={run(() => openLeaderboard(`mayors:${useCity.getState().cityRegion}`))}>
+                🏆 Leaderboards and live city
               </button>
-            )}
-            <button role="menuitem" onClick={run(() => setTourOpen(true))}>
-              Replay the tour
-            </button>
-            {layout === 'panel' && (
-              <button role="menuitem" onClick={run(openFullCity)}>
-                Open the full city in a tab ↗
-              </button>
-            )}
-            {layout === 'panel' && (
-              <button role="menuitemcheckbox" aria-checked={autoSnap} onClick={() => setAutoSnap(!autoSnap)}>
-                <span>Lookout watches my AWS pages</span>
-                <span className={`switch ${autoSnap ? 'on' : ''}`} aria-hidden="true" />
-              </button>
-            )}
+              {/* An action, not a setting: it opens Decorate's drawer (or closes it), like the HUD's Decorate button. */}
+              {cityView && !path.active && (
+                <button role="menuitem" title="Decorate your city with City Coins: trees, fountains, benches, a sign with its name" onClick={run(() => setBuild(!decorating))}>
+                  {decorating ? '🌳 Done decorating' : '🌳 Decorate'}
+                </button>
+              )}
+              {inCity && (
+                <button role="menuitem" title="Download a picture of your city as it is now (nothing is uploaded)" onClick={run(() => bus.emit('postcard'))}>
+                  📸 Save a postcard of my city
+                </button>
+              )}
+            </div>
+            {/* The demo says where its data goes (nowhere), as a muted item a screen reader reaches with the arrows, and
+                links the privacy policy when the build has one (Account has it otherwise). */}
+            {(inDemo || backendKind === 'mock') && <hr />}
             {inDemo && (
               <button role="menuitem" onClick={() => switchDemo(false)}>
                 Sign in to save your city
               </button>
             )}
-            {/* The demo says where its data goes (nowhere), as a muted item a screen reader reaches with the arrows, and
-                links the privacy policy when the build has one (Account has it otherwise). */}
             {backendKind === 'mock' && (
               <div role="group" aria-label="Privacy">
                 <button role="menuitem" aria-disabled="true" className="menu-note">
@@ -524,6 +648,9 @@ export function Hud({ layout }: { layout: Layout }) {
   const hasCity = useCity((s) => !!s.prefs.region);
   const prefs = useCity((s) => s.prefs);
   const simple = isSimple(prefs);
+  // The quiet city (the first steps): coins, Decorate and the extras wait; "First steps n/6" stands in for To do.
+  const path = useFirstSteps();
+  const quiet = useQuiet();
 
   // Three numbers, one meaning each: ⭐ knowledge (every city's buildings; never spent), 🪙 City Coins (what Decorate
   // spends), 💡 City Lights (a window for each learning day, src/state/lights.ts). Everything else earned lives in My City.
@@ -558,16 +685,20 @@ export function Hud({ layout }: { layout: Layout }) {
           <b>{xp}</b>
           <span className="sr-only"> stars</span>
         </span>
-        <span className="sep" aria-hidden="true">
-          ·
-        </span>
-        <span className={`hud-coins ${coinBump ? 'bump' : ''}`} title={`${wallet} City Coins to spend on decorations. Jobs, mini-games, workshops and the drawing board pay them.`}>
-          <Coin size={14} /> <b>{wallet}</b>
-          <span className="sr-only"> City Coins</span>
-          <CoinsTip wallet={wallet} />
-        </span>
-        {simple && hasCity && <TodoChip />}
-        {shows('cityLights', prefs) && (
+        {shows('coins', prefs, quiet) && (
+          <>
+            <span className="sep" aria-hidden="true">
+              ·
+            </span>
+            <span className={`hud-coins ${coinBump ? 'bump' : ''}`} title={`${wallet} City Coins to spend on decorations. Jobs, mini-games, workshops and the drawing board pay them.`}>
+              <Coin size={14} /> <b>{wallet}</b>
+              <span className="sr-only"> City Coins</span>
+              <CoinsTip wallet={wallet} />
+            </span>
+          </>
+        )}
+        {path.active ? hasCity && <StepsChip step={path.step} /> : simple && hasCity && <TodoChip />}
+        {shows('cityLights', prefs, quiet) && (
           <>
         <span className="sep" aria-hidden="true">
           ·
@@ -575,14 +706,15 @@ export function Hud({ layout }: { layout: Layout }) {
         <button className="hud-streak hud-lights" title={`City Lights: ${lightsLine(lights)}`} onClick={() => useCity.getState().openCollection(true)}>
           <span aria-hidden="true">💡 </span>
           <b>{lights.glowing}</b>
-          <span className="sr-only"> {lights.glowing === 1 ? 'window' : 'windows'} lit</span>
+          {/* Said in the tab, where there's room (styles/02-hud.css); read out everywhere. */}
+          <span className="hud-lights-word"> {lights.glowing === 1 ? 'window' : 'windows'} lit</span>
         </button>
           </>
         )}
       </span>
-      {hasCity && view.name === 'city' && shows('rushSurge', prefs) && <RushChip />}
-      {hasCity && view.name === 'city' && <BuildToggle />}
-      {hasCity && shows('rank', prefs) && <RankChip />}
+      {hasCity && view.name === 'city' && shows('rushSurge', prefs, quiet) && <RushChip />}
+      {hasCity && view.name === 'city' && shows('decorate', prefs, quiet) && <BuildToggle />}
+      {hasCity && shows('rank', prefs, quiet) && <RankChip />}
       <ConnectionPill />
       <MoreMenu layout={layout} />
     </header>

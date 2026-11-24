@@ -10,7 +10,10 @@ import { SERVICES, matchText, serviceById, servicesIn, type DistrictId } from '@
 import { cardPlace, placeFor } from '@/world/places';
 import { QUESTS } from '@/world/content';
 import { checkExplain, checkKeywords, EXPLAIN_MARK, explainFeedback, explainService } from '@/state/explain';
+import { followsScript, nameIn } from '@/state/watch';
 import { ALL_TASKS } from '@/world/clients';
+import { isPracticeTemplate, playPracticeTask } from './practiceTasks';
+import { PRACTICE_PREFIX } from './ServerBackend';
 
 /**
  * In-browser fake of the AWS City server. Emits exactly the events the real one will (contract v2),
@@ -121,6 +124,33 @@ function genericScript(serviceId: string): MockScript {
     ],
     result: p?.blurb ?? 'Done.',
   };
+}
+
+/** What a demo script makes, by service: a name typed in the request ("a table called orders") goes on it. */
+const MADE: Record<string, { kind: string; aws: string }> = {
+  s3: { kind: 'bucket', aws: 's3:CreateBucket' },
+  dynamodb: { kind: 'table', aws: 'dynamodb:CreateTable' },
+  sqs: { kind: 'queue', aws: 'sqs:CreateQueue' },
+};
+
+/**
+ * The demo's script for a request: the hand-written one only for the words it was written for (`followsScript`), else
+ * the building's generic one, which claims nothing it wasn't asked (seen 24 Nov 2026: "expire after 30 days" played
+ * holiday.jpg and Glacier after 90 days, "a table called orders" an unnamed one), making the bucket, table or queue under
+ * the name typed. The task card says it's a scripted example (`scriptedNote`, src/ui/ActivityFeed.tsx).
+ */
+export function scriptFor(serviceId: string, prompt: string): MockScript {
+  if (followsScript(serviceId, prompt)) return SCRIPTS[serviceId] ?? genericScript(serviceId);
+  const generic = genericScript(serviceId);
+  const typed = nameIn(prompt);
+  const made = MADE[serviceId];
+  // Only on the kind the words ask for: an agent picked by the page's context never names a "table" a bucket (seen 24
+  // Nov 2026 in the tab after the practice console's S3: "Make a table called orders" → "The bucket “orders” is ready").
+  const asked = Object.values(MADE).filter((m) => new RegExp(`\\b${m.kind}s?\\b`, 'i').test(prompt));
+  if (!typed || !made || (asked.length && !asked.includes(made))) return generic;
+  // Bucket names are lowercase.
+  const name = serviceId === 's3' ? typed.toLowerCase() : typed;
+  return { steps: [{ text: `Making the ${made.kind} “${name}”`, aws: made.aws }, ...generic.steps.slice(1)], result: `The ${made.kind} “${name}” is ready. ${generic.result}` };
 }
 
 /** Agents talking among themselves (shared/dialogue.json). */
@@ -382,7 +412,7 @@ export class MockBackend implements AgentBackend {
     void (async () => {
       const serviceId = matchText(prompt) ?? context.serviceId ?? 'bedrock';
       const place = placeFor(serviceId);
-      const script = SCRIPTS[serviceId] ?? genericScript(serviceId);
+      const script = scriptFor(serviceId, prompt);
 
       await this.work('concierge', 'bedrock', 'InvokeModel — routing your request', 900);
       this.emit({ type: 'agent.message', from: 'concierge', to: 'user', text: `Sounds like a job for ${place?.agentName ?? serviceId}!` });
@@ -408,8 +438,9 @@ export class MockBackend implements AgentBackend {
       for (let i = 0; i < script.steps.length; i++) {
         const step = script.steps[i];
         index++;
-        // Memory: agents skip steps the player has already been through on this kind of task.
-        const memKey = `${serviceId}:${i}`;
+        // Memory: agents skip steps the player has already been through on this kind of task (by its words: a generic
+        // script's step isn't the hand-written one at the same place, and a bucket named again is new).
+        const memKey = `${serviceId}:${step.text}`;
         if (this.remembered.has(memKey) && i < script.steps.length - 1) {
           this.emit({ type: 'task.step', taskId, index, text: `${step.text} (you know this — skipping)`, status: 'skipped' });
           if (i === 1 && helperStep) this.emit({ type: 'task.step', taskId, index: ++index, text: `${helperStep} (you know this — skipping)`, status: 'skipped' });
@@ -576,7 +607,7 @@ export class MockBackend implements AgentBackend {
       case 'resource.remove':
         return void this.previewRemoval(cmd);
       case 'quest.start':
-        return this.emit({ type: 'agent.message', from: 'concierge', to: 'user', text: 'Quest accepted! Follow the steps in your quest log.' });
+        return this.emit({ type: 'agent.message', from: 'concierge', to: 'user', text: 'Quest accepted! Each step is on your City tab.' });
       case 'deploy.plan':
         return void this.planDeploy(cmd);
       case 'deploy.approve':
@@ -706,9 +737,46 @@ export class MockBackend implements AgentBackend {
     };
   }
 
+  /** A practice task (src/backend/practiceTasks.ts), played like the server's: locally, never a model call. */
+  practiceTask(scriptId: string, taskId?: string) {
+    // Like a real task, it holds the city's chatter back while it runs.
+    let running = true;
+    this.running++;
+    const id = playPracticeTask(
+      scriptId,
+      (e) => {
+        if (running && (e.type === 'task.done' || e.type === 'error')) {
+          running = false;
+          this.running--;
+        }
+        this.emit(e);
+      },
+      { taskId, speed: this.speed },
+    );
+    return id;
+  }
+
   private async planDeploy({ requestId, templateId, taskId }: DeployPlan) {
     const t = templatesJson.templates.find((x) => x.id === templateId);
     if (!t) return this.emit({ type: 'error', requestId, message: `Unknown template ${templateId}` });
+    // A practice-only template (the first steps' photo-bucket): the same practice build as ServerBackend's, so every
+    // build shows the same card (its practice- id: "Practice", no Tear down) and pays no deploy stars.
+    if (isPracticeTemplate(templateId)) {
+      const deployId = `${PRACTICE_PREFIX}${Date.now().toString(36)}`;
+      this.deploys.set(deployId, templateId);
+      await this.sleep(400);
+      return this.emit({
+        type: 'deploy.preview',
+        requestId,
+        deployId,
+        ...(taskId ? { taskId } : {}),
+        templateId,
+        stackName: `${t.title} (practice)`,
+        region: 'practice',
+        changes: t.resources.map((r) => ({ action: 'Add' as const, logicalId: r.logicalId, resourceType: r.type })),
+        costNote: t.costNote,
+      });
+    }
     const deployId = `d-${Date.now().toString(36)}`;
     await this.work('builder', 'cloudformation', `CreateChangeSet aws-city-${templateId}`, 2000);
     this.deploys.set(deployId, templateId);
@@ -731,6 +799,10 @@ export class MockBackend implements AgentBackend {
     const t = templatesJson.templates.find((x) => x.id === templateId);
     if (!t) return this.emit({ type: 'deploy.status', deployId, status: 'failed', message: 'Unknown deployment' });
     this.emit({ type: 'deploy.status', deployId, status: 'creating' });
+    if (isPracticeTemplate(t.id)) {
+      this.deploys.delete(deployId);
+      return this.emit({ type: 'deploy.status', deployId, status: 'complete', message: `${t.title}: practice build done. Nothing was made.` });
+    }
     for (const r of t.resources) {
       const svc = r.type.split('::')[1].toLowerCase();
       const agent = t.serviceIds.find((id) => svc.includes(id) || (id === 'apigateway' && svc.startsWith('apigateway'))) ?? 'builder';

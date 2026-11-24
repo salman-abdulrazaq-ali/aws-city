@@ -1,5 +1,5 @@
-import { agentName, useCity } from '@/state/store';
-import { actionText, whereOf, nextAction, readyToUpgrade, shiftSummary, type NextAction } from '@/state/next';
+import { agentName, useCity, type TaskView } from '@/state/store';
+import { actionText, chipLabel, whereOf, nextAction, readyToUpgrade, shiftSummary, type NextAction } from '@/state/next';
 import { weeklyChallenge } from '@/state/events';
 import { questById, QUESTS } from '@/world/content';
 import { taskById } from '@/world/clients';
@@ -11,7 +11,7 @@ import { ActivityFeed, AgentOffer, TaskCard } from './ActivityFeed';
 import { AwsIcon } from './AwsIcon';
 import { feel } from './feedback';
 import { districtStyle } from './logic';
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { bus } from '@/state/bus';
 import { Portrait } from './Portrait';
 import { CityCare } from './FindingCard';
@@ -31,6 +31,8 @@ import { ANY_GAME, playAt, runTodo, useCare, useTodayGoals, useTodo } from './to
 import { ConnectLine, useConnectOffer } from './Account';
 import { EventBanner } from './EventBanner';
 import { ConnectCard } from './ConnectCard';
+import { useFirstSteps } from './FirstSteps';
+import { FIRST_STEPS } from '@/state/firstSteps';
 
 export { gameBuilding } from './today';
 
@@ -47,6 +49,8 @@ export function Home({ openTab, places }: { openTab: OpenTab; places?: ReactNode
   // On a first run's world map the only thing to do is pick a Region (WorldIntro): the shift waits until the city opens.
   const choosing = useCity((s) => s.view.name === 'world' && !s.prefs.region);
   const offer = useConnectOffer();
+  // The first steps: Connie's guide (App puts it above this) replaces the To-do list, the banner and "Coming up next".
+  const onPath = useFirstSteps().active;
   const more = useRef<HTMLDetailsElement>(null);
   const careFold = useRef<HTMLDetailsElement>(null);
   /** Today's "Fix something" opens City care (inside More to do) and brings it into view. */
@@ -61,10 +65,11 @@ export function Home({ openTab, places }: { openTab: OpenTab; places?: ReactNode
     return (
       <div className="home">
         <p className="home-wait">
-          <span aria-hidden="true">🌍</span> Pick a glowing dot on the map to start your city. Your first job will be waiting here.
+          <span aria-hidden="true">🌍</span> {FIRST_STEPS.map.tab.replace(/^🌍\s*/u, '')}
         </p>
       </div>
     );
+  if (onPath) return null;
   if (simple) return <SimpleHome openTab={openTab} care={care} places={ladder.places ? places : undefined} />;
   return (
     <div className="home">
@@ -370,6 +375,16 @@ function Ring({ done, of }: { done: number; of: number }) {
   );
 }
 
+/**
+ * The agent whose latest task is finished, no step still to come, for Connie's "Sally sorted that for you": never while
+ * that task (or a newer one) still runs, on the strength of an older one (seen 24 Nov 2026: said while Sally was on
+ * step 6/6). `order` is newest first (the store's taskOrder).
+ */
+export function helpedBy(tasks: Record<string, Pick<TaskView, 'status' | 'steps' | 'agentId'>>, order: string[]): string | undefined {
+  const t = tasks[order[0]];
+  return t?.status === 'done' && !t.steps.some((st) => st.status === 'pending' || st.status === 'running') ? t.agentId : undefined;
+}
+
 /** Who speaks for the next action, and what they say (the button itself says what happens). */
 function voiceOf(a: NextAction, p: Progress, helped?: string): { who: string; line: string; quest?: { title: string; at: number; of: number; color?: number } } {
   switch (a.kind) {
@@ -415,7 +430,7 @@ function voiceOf(a: NextAction, p: Progress, helped?: string): { who: string; li
 /** The one big button: its label is exactly what happens, and it says when it opens another tab. */
 function NextButton({ action, calm }: { action: NextAction; calm: boolean }) {
   const progress = useCity((s) => s.progress);
-  const lastDone = useCity((s) => s.taskOrder.map((id) => s.tasks[id]).find((t) => t?.status === 'done')?.agentId);
+  const lastDone = useCity((s) => helpedBy(s.tasks, s.taskOrder));
   const v = voiceOf(action, progress, lastDone && agentName(lastDone));
   const where = whereOf(action);
   return (
@@ -590,7 +605,7 @@ function OvertimeChip({ goal, openTab, game }: { goal: OvertimeGoal; openTab: Op
             openTab(goal.id === 'jobs' ? 'jobs' : 'cards');
           }}
         >
-          <span aria-hidden="true">{ok ? '✅' : '⏱️'}</span>
+          {ok ? <GoalMark have={goal.have} goal={goal.goal} /> : <span aria-hidden="true">⏱️</span>}
           <span>{goal.label}</span>
           <span className="today-bonus">bonus crate</span>
           {!ok && (
@@ -603,6 +618,15 @@ function OvertimeChip({ goal, openTab, game }: { goal: OvertimeGoal; openTab: Op
       </li>
     </ul>
   );
+}
+
+/**
+ * A goal's state as a small round mark: an open ring that fills like the day's ring as the goal moves, solid once
+ * it's done. Round, so it never reads as an unticked checkbox (the chip is a button that goes there, not a box to tick).
+ */
+function GoalMark({ have, goal }: { have: number; goal: number }) {
+  const p = goal > 0 ? Math.min(1, have / goal) : 0;
+  return <span className={`goal-mark ${p >= 1 ? 'full' : ''}`} style={{ '--p': p } as CSSProperties} aria-hidden="true" />;
 }
 
 /** Today's goals as small chips under the ring (never a second big button): tap one to go and do it. */
@@ -630,8 +654,8 @@ function TodayChips({ goals, openTab, game, openCare }: { goals: TodayGoal[]; op
                 openTab(GOAL_TAB[g.id]);
               }}
             >
-              <span aria-hidden="true">{ok ? '✅' : '◻️'}</span>
-              <span>{g.label}</span>
+              <GoalMark have={g.have} goal={g.goal} />
+              <span>{chipLabel(g, ok)}</span>
               {g.bonus && <span className="today-bonus">bonus</span>}
               {g.goal > 1 && !ok && <span className="muted">{g.have}/{g.goal}</span>}
               <span className="sr-only">{ok ? ', done' : where ? `, opens ${where}` : ''}</span>

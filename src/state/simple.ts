@@ -41,7 +41,34 @@ export type Feature =
   // tabs and panels that Simple shows only when they're needed
   | 'care'
   | 'deployTab'
-  | 'drawingBoard';
+  | 'drawingBoard'
+  // shown in both modes, but they wait in the quiet city (the first steps: src/state/firstSteps.ts quietContext)
+  | 'coins'
+  | 'decorate'
+  | 'promptBar'
+  | 'copilotSwitch'
+  | 'eventBanner'
+  | 'comingUp'
+  | 'connect'
+  | 'accountCard'
+  | 'tokens'
+  | 'citizenRequests'
+  | 'coachTips';
+
+/** Shown in Simple and Everything alike, except in the quiet city. */
+const OUTSIDE_THE_PATH: ReadonlySet<Feature> = new Set([
+  'coins',
+  'decorate',
+  'promptBar',
+  'copilotSwitch',
+  'eventBanner',
+  'comingUp',
+  'connect',
+  'accountCard',
+  'tokens',
+  'citizenRequests',
+  'coachTips',
+]);
 
 /** What a surface knows that can bring a hidden part back in Simple (the part is needed now). */
 export interface SimpleContext {
@@ -57,10 +84,18 @@ export interface SimpleContext {
   linking?: boolean;
   /** A hosted player with no AWS account linked yet: Deploy is where it connects. */
   canConnect?: boolean;
+  /**
+   * The quiet city: the player is on the first steps (src/state/firstSteps.ts quietContext, which also puts the step's
+   * kind in `steps`). Everything waits but the path itself: Deploy only on its plan's step.
+   */
+  quiet?: boolean;
 }
 
 /** Whether `feature` shows for these prefs (and, in Simple, whether it's needed now). */
 export function shows(feature: Feature, prefs: { simple?: boolean } | undefined, ctx: SimpleContext = {}): boolean {
+  // The quiet city, in either mode: the guide card leads, and only the Deploy tab comes, for the plan's step.
+  if (ctx.quiet) return feature === 'deployTab' && !!ctx.steps?.includes('deploy');
+  if (OUTSIDE_THE_PATH.has(feature)) return true;
   if (!isSimple(prefs)) return feature !== 'todo';
   switch (feature) {
     case 'todo':
@@ -247,6 +282,10 @@ export function buildTodo(i: TodoInput): TodoList {
     if (k === undefined) return (at.set(t.key, out.length), void out.push(t));
     // The same thing twice: the first keeps its place, button and words; a goal brings its tick and count.
     const first = out[k];
+    // A goal already met never ticks a quest step that's still to do (seen 24 Nov 2026: after replaying the first steps,
+    // "Review 5 cards" was met and struck "The City Brochure Site · step 3 of 7"): the met goal is its own row.
+    const stepStillToDo = first.run.kind === 'plan' && first.run.plan.kind === 'step';
+    if (t.counts && t.done && stepStillToDo) return (at.set(`${t.key}:met`, out.length), void out.push({ ...t, key: `${t.key}:met` }));
     if (t.counts && !first.counts) out[k] = { ...first, done: t.done, counts: true, have: t.have, goal: t.goal };
   };
   const first = planTask(i.next);

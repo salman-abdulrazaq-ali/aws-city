@@ -4,7 +4,9 @@ import { sfx } from '../../audio';
 import { reducedMotion } from '../../motion';
 import { crisp } from '../../SpeechBubble';
 import { FEEDBACK, MiniGame, pace, PAL, TXT } from './MiniGame';
-import { POINTS } from './scoring';
+import { COLOR, CSS, withAlpha } from '../../theme';
+import { PILL, POINTS } from './scoring';
+import { answerPop } from './stageFx';
 import { sortKeysLine } from './say';
 import { drain, isHot, label, newSortStats, nextParcel, send, shelfFor, SHELVES, SORT, SORT_LESSON, sortPoints, sortStars, sortVerdict, spawnMs, type Parcel, type SortStats } from './sorting';
 
@@ -21,7 +23,8 @@ interface Shelf {
   busy: Phaser.GameObjects.Text;
 }
 
-const SHELF_COLORS = [0xdd344c, 0xfde047, 0x8c4fff, 0x01a88d];
+/** Each shelf's stripe: four categorical colours (scene art), so a shelf can be told by colour as well as its number. */
+const SHELF_COLORS = [0xdd344c, 0xfde047, 0x3f7fd6, 0x01a88d];
 
 /**
  * DynamoDB Sorting Office: each parcel's key says which shelf it lives on. Send it there fast. In the
@@ -39,6 +42,8 @@ export class SortGame extends MiniGame {
   private spreadBtn?: Phaser.GameObjects.Container;
   private hint!: Phaser.GameObjects.Text;
   private dyna!: Phaser.GameObjects.Sprite;
+  /** Each shelf's top stripe (middle and width), where an answer's frame goes (stageFx.answerPop). */
+  private shelfTops: { x: number; y: number; w: number }[] = [];
   private geo = { beltY: 0, frontX: 0, step: 0, shelfTop: 0, shelfW: 0, shelfH: 0, hintY: 0, left: 0, right: 0 };
 
   constructor() {
@@ -50,6 +55,7 @@ export class SortGame extends MiniGame {
   protected setup() {
     this.belt = [];
     this.shelves = [];
+    this.shelfTops = [];
     this.loads = SHELVES.map(() => 0);
     this.stats = newSortStats();
     this.hotShown = this.tipShown = false;
@@ -64,7 +70,8 @@ export class SortGame extends MiniGame {
     // The office is laid out top-down in a centred column (MiniGame.column): the belt, Dyna, the shelves (no taller
     // than they need to be), and the hint right under them. The belt runs on to the canvas's right edge.
     const room = h - top;
-    const scale = Phaser.Math.Clamp(Math.floor((Math.min(room, 560) / 300) * 2) / 2, 1, 2);
+    // Dyna at a whole-number scale (1.5× dropped pixels): 2× when the view has room, else 1×.
+    const scale = Math.min(2, Math.max(1, Math.floor(Math.min(room, 560) / 280)));
     // Dyna stands between the belt's "sort me" mark and the shelves.
     const dynaRoom = 40 + Math.round(62 * scale) + 22;
     const shelfH = Phaser.Math.Clamp(room - 34 - dynaRoom - 44, 120, 230);
@@ -72,11 +79,11 @@ export class SortGame extends MiniGame {
     // the belt
     const beltY = col.y + 34;
     g.fillStyle(PAL.black, 1).fillRect(0, beltY - 18, w, 36);
-    g.fillStyle(0x334155, 1).fillRect(0, beltY - 16, w, 32);
-    for (let x = 6; x < w; x += 22) g.fillStyle(0x475569, 1).fillRect(x, beltY - 16, 4, 32);
+    g.fillStyle(COLOR.panel, 1).fillRect(0, beltY - 16, w, 32);
+    for (let x = 6; x < w; x += 22) g.fillStyle(COLOR.panelHi, 1).fillRect(x, beltY - 16, 4, 32);
     const frontX = col.x + 44;
-    g.fillStyle(0xffb84d, 1).fillRect(frontX - 30, beltY + 18, 60, 4);
-    crisp(this.add.text(frontX, beltY + 30, 'sort me', TXT(12, '#ffb84d'))).setOrigin(0.5);
+    g.fillStyle(PAL.accent, 1).fillRect(frontX - 30, beltY + 18, 60, 4);
+    crisp(this.add.text(frontX, beltY + 30, 'sort me', TXT(12, PAL.accentCss))).setOrigin(0.5);
     // Dyna in the middle, sorting
     const shelfTop = beltY + dynaRoom;
     this.dyna = this.add.sprite(col.cx, shelfTop - 22, 'char:dynamodb', 0).setOrigin(PIVOT.x / FRAME_W, PIVOT.y / FRAME_H).setScale(scale);
@@ -92,18 +99,19 @@ export class SortGame extends MiniGame {
       g.fillStyle(0x7c4a21, 1).fillRect(x, shelfTop, shelfW, shelfH);
       for (let y = shelfTop + 44; y < shelfTop + shelfH - 6; y += 22) g.fillStyle(0x5b3415, 1).fillRect(x + 4, y, shelfW - 8, 4);
       g.fillStyle(SHELF_COLORS[i], 1).fillRect(x, shelfTop, shelfW, 6);
-      crisp(this.add.text(cx, shelfTop + 18, `${i + 1}`, TXT(20, '#ffffff'))).setOrigin(0.5);
+      crisp(this.add.text(cx, shelfTop + 18, `${i + 1}`, TXT(20, PAL.ink))).setOrigin(0.5);
       // The keys are the thing to read: big, on a dark plate so they stand off the wood.
-      const keyText = crisp(this.add.text(cx, shelfTop + 34, keys.join(' '), { ...TXT(24, '#ffffff'), align: 'center', backgroundColor: '#140d1f99', padding: { x: 6, y: 3 } })).setOrigin(0.5, 0);
-      this.add.rectangle(x + 4, shelfTop + shelfH - 12, shelfW - 8, 8, 0x1f2937).setOrigin(0, 0.5).setStrokeStyle(1, PAL.black);
-      const bar = this.add.rectangle(x + 5, shelfTop + shelfH - 12, 0, 6, 0x6fe3a3).setOrigin(0, 0.5);
-      const busy = crisp(this.add.text(cx, shelfTop + shelfH - 26, '', { ...TXT(12, PAL.bad), backgroundColor: '#140d1fcc', padding: { x: 3, y: 1 } })).setOrigin(0.5);
+      const keyText = crisp(this.add.text(cx, shelfTop + 34, keys.join(' '), { ...TXT(24, PAL.ink), align: 'center', backgroundColor: withAlpha('bg', 0.6), padding: { x: 6, y: 3 } })).setOrigin(0.5, 0);
+      this.add.rectangle(x + 4, shelfTop + shelfH - 12, shelfW - 8, 8, COLOR.bgDeep).setOrigin(0, 0.5).setStrokeStyle(1, PAL.black);
+      const bar = this.add.rectangle(x + 5, shelfTop + shelfH - 12, 0, 6, COLOR.good).setOrigin(0, 0.5);
+      const busy = crisp(this.add.text(cx, shelfTop + shelfH - 26, '', { ...TXT(12, PAL.bad), backgroundColor: PILL, padding: { x: 3, y: 1 } })).setOrigin(0.5);
       this.add
         .zone(x, shelfTop, shelfW, shelfH)
         .setOrigin(0)
         .setInteractive({ useHandCursor: true })
         .on('pointerdown', () => this.sortTo(i));
       this.shelves.push({ x: cx, keys: keyText, bar, busy });
+      this.shelfTops.push({ x: cx, y: shelfTop + 3, w: shelfW });
     });
     this.geo = { beltY, frontX, step: Math.min(46, (col.r - frontX - 20) / SORT.beltMax), shelfTop, shelfW, shelfH, hintY: shelfTop + shelfH + 24, left: col.x, right: col.r };
     this.hint = crisp(this.add.text(w / 2, this.geo.hintY, 'Tap the shelf with the parcel’s key (or press 1–4)', { ...TXT(13, PAL.muted), align: 'center', wordWrap: { width: col.w - 24 } })).setOrigin(0.5);
@@ -142,7 +150,7 @@ export class SortGame extends MiniGame {
       return;
     }
     const p = nextParcel(this.t, this.stats.spread);
-    const t = crisp(this.add.text(this.scale.width + 30, this.geo.beltY, label(p), { ...TXT(24, PAL.paperInk), backgroundColor: '#fffbeb', padding: { x: 6, y: 3 } })).setOrigin(0.5);
+    const t = crisp(this.add.text(this.scale.width + 30, this.geo.beltY, label(p), { ...TXT(24, PAL.paperInk), backgroundColor: CSS.paper, padding: { x: 6, y: 3 } })).setOrigin(0.5);
     this.belt.push({ p, t });
     this.layout();
   }
@@ -177,15 +185,17 @@ export class SortGame extends MiniGame {
       this.wrong();
       this.addScore(POINTS.sort.wrong);
       this.verdict(vx, vy, `✗ ${label(b.p)} lives on shelf ${right + 1}`, FEEDBACK.wrong, 1);
+      this.popShelf(i, false);
       return;
     }
     if (send(this.loads, i) === 'busy') {
       this.stats.throttled++;
       this.miss();
       this.verdict(vx, vy, '✗ Too busy! Wait…', FEEDBACK.wrong, 1);
+      this.popShelf(i, false);
       if (!this.stats.spread && this.spreadBtn && !this.tipShown) {
         this.tipShown = true;
-        this.hint.setText(`One shelf has all the ${SORT.hotKey}. Tap 🔀 to share them over every shelf (or press S)`).setColor('#fde047');
+        this.hint.setText(`One shelf has all the ${SORT.hotKey}. Tap 🔀 to share them over every shelf (or press S)`).setColor(CSS.gold);
         this.speak(`One shelf has all the ${SORT.hotKey}. Press S to share them over every shelf.`);
       }
       return;
@@ -195,6 +205,7 @@ export class SortGame extends MiniGame {
     this.hit();
     this.addScore(pts);
     this.verdict(vx, vy, `✓ Shelf ${i + 1} +${pts}`, FEEDBACK.right, 1);
+    this.popShelf(i, true);
     this.belt.shift();
     this.dyna.play('dynamodb:file:SE');
     this.time.delayedCall(600, () => !this.over && this.dyna.play('dynamodb:idle:SE'));
@@ -204,6 +215,12 @@ export class SortGame extends MiniGame {
     this.layout();
   }
 
+  /** The answer shows on the shelf it went to, keyboard play included (the pointer may be anywhere). */
+  private popShelf(i: number, ok: boolean) {
+    const t = this.shelfTops[i];
+    if (t) answerPop(this, t.x, t.y, t.w, 6, ok, 30);
+  }
+
   private spread() {
     if (this.over || this.stats.spread) return;
     this.stats.spread = true;
@@ -211,9 +228,9 @@ export class SortGame extends MiniGame {
     this.spreadBtn = undefined;
     const hot = SORT.hotKey;
     this.shelves.forEach((s, i) => s.keys.setText(`${SHELVES[i].join(' ')}\n${hot}${i + 1}`));
-    this.hint.setText(`Now each ${hot} gets a number: ${hot}1 goes on shelf 1, ${hot}2 on shelf 2…`).setColor('#fde047');
+    this.hint.setText(`Now each ${hot} gets a number: ${hot}1 goes on shelf 1, ${hot}2 on shelf 2…`).setColor(CSS.gold);
     this.speak(`Shared out. Now each ${hot} gets a number: ${hot}1 goes on shelf 1, ${hot}2 on shelf 2, and so on.`);
-    this.floater(this.scale.width / 2, this.geo.shelfTop - 40, 'Shared over every shelf!', '#fde047');
+    this.floater(this.scale.width / 2, this.geo.shelfTop - 40, 'Shared over every shelf!', CSS.gold);
     sfx('correct', { own: true });
   }
 
@@ -223,17 +240,17 @@ export class SortGame extends MiniGame {
     this.loads = drain(this.loads, dt / 1000);
     this.shelves.forEach((s, i) => {
       const f = this.loads[i] / SORT.shelfCap;
-      s.bar.setSize((this.geo.shelfW - 10) * f, 6).setFillStyle(f > 0.67 ? 0xff6b6b : f > 0.34 ? 0xffb84d : 0x6fe3a3);
+      s.bar.setSize((this.geo.shelfW - 10) * f, 6).setFillStyle(f > 0.67 ? COLOR.bad : f > 0.34 ? COLOR.warn : COLOR.good);
       s.busy.setText(this.loads[i] + 1 > SORT.shelfCap ? 'too busy' : '');
     });
     if (!this.hotShown && isHot(this.t)) {
       this.hotShown = true;
       const { width: w } = this.scale;
-      this.floater(w / 2, this.geo.beltY + 60, `So many ${SORT.hotKey}!`, '#fde047');
+      this.floater(w / 2, this.geo.beltY + 60, `So many ${SORT.hotKey}!`, CSS.gold);
       if (!this.stats.spread) {
         this.hint.setText('');
         // In plain words (Jay, 22 Nov 2026: "Spread the 🍎 keys" said nothing): the 🍎 go on every shelf, not one.
-        this.spreadBtn = this.pxButton(w / 2, this.geo.hintY, `🔀 Share ${SORT.hotKey} over every shelf`, () => this.spread(), 0x6fe3a3, PAL.paperInk);
+        this.spreadBtn = this.pxButton(w / 2, this.geo.hintY, `🔀 Share ${SORT.hotKey} over every shelf`, () => this.spread(), COLOR.good, PAL.paperInk);
         this.speak(`So many ${SORT.hotKey}! Their one shelf will get too busy. Press S to share the ${SORT.hotKey} over every shelf.`);
       }
       sfx('pop', { soft: true });

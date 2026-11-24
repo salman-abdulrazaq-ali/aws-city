@@ -24,6 +24,37 @@
 .nav-district.closed {
   opacity: 0.8;
 }
+/* A district folds to one row: its name, how many are ready to upgrade, and how many are put up (Navigator.tsx). */
+.nav-district > summary.nav-head {
+  cursor: pointer;
+  min-height: 32px;
+  list-style: none;
+}
+.nav-district > summary.nav-head::-webkit-details-marker {
+  display: none;
+}
+/* The fold's arrow sits after the count (the heading keeps its district square, 05-home.css). */
+.nav-district > summary.nav-head .nav-counts::after {
+  content: '▸';
+  color: var(--muted);
+}
+.nav-district[open] > summary.nav-head {
+  margin-bottom: var(--s-2);
+}
+.nav-district[open] > summary.nav-head .nav-counts::after {
+  content: '▾';
+}
+.nav-counts {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s-3);
+  white-space: nowrap;
+}
+.nav-ready {
+  color: var(--good-ink);
+  font-size: var(--fs-xs);
+  font-weight: 800;
+}
 .meter.thin {
   height: 4px;
   border: 0;
@@ -172,16 +203,19 @@ details.world[open] > summary::after {
 }
 
 /* The building card: what it is, what you can do, then the detail (LandmarkCard.tsx). */
+/* Each section opens with a real heading (ink, body size), more space above it than below. */
 .place-what,
 .place-do,
 .place-compare,
+.place-workshops,
+.place-news,
 .place-reading {
-  margin-top: var(--s-3);
+  margin-top: var(--s-5);
 }
-.place-do .label,
-.place-compare .label,
-.place-reading .label {
-  margin-bottom: var(--s-1);
+.place h4.label {
+  margin-bottom: var(--s-2);
+  color: var(--ink-hi);
+  font-size: var(--fs-md);
 }
 .place-what .blurb {
   margin-top: var(--s-1);
@@ -295,8 +329,25 @@ details.world[open] > summary::after {
   align-items: flex-start;
   text-align: left;
 }
+.reading-link {
+  white-space: normal;
+  height: auto;
+  padding-block: var(--s-2);
+}
 .reading-by,
 .reading-note {
+  font-size: var(--fs-xs);
+}
+/* What's New on a building's card: the same rows as the reading shelf, the date on one line under the title. */
+.place-news-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s-1);
+}
+.place-news-when {
+  white-space: nowrap;
   font-size: var(--fs-xs);
 }
 

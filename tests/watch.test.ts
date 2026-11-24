@@ -1,9 +1,9 @@
 // Watch it done (src/state/watch.ts): an agent's task as a story, before, during and after; and the demo's task flow
 // (src/backend/MockBackend.ts) lists exactly the steps the city shows.
 import { describe, expect, it } from 'vitest';
-import { MockBackend } from '@/backend/MockBackend';
+import { MockBackend, scriptFor } from '@/backend/MockBackend';
 import type { ServerEvent, TaskPlanEvent } from '@/backend/contract';
-import { accountNews, agentOffer, liveStep, paidLine, taskPhase, taskStory } from '@/state/watch';
+import { accountNews, agentOffer, DEMO_SCRIPTED, doneBubble, followsScript, liveStep, nameIn, paidLine, scriptedNote, taskPhase, taskStory } from '@/state/watch';
 import { cardPlace } from '@/world/places';
 import type { TaskView } from '@/state/store';
 import templatesJson from '../shared/templates.json' with { type: 'json' };
@@ -28,9 +28,19 @@ describe('the story', () => {
     expect(s.framing).toBe('Sally will take this on at S3 Lake.');
     expect(s.teaches).not.toMatch(/storage classes/);
     expect(s.teaches.length).toBeGreaterThan(10);
-    expect(s.templateId).toBeUndefined();
     // The story's own words, in any case and spacing, still get it.
     expect(taskStory(task({ prompt: '  store my HOLIDAY photos cheaply ' })).framing).toBe('Sally will store your holiday photos in S3 Lake.');
+  });
+
+  // Seen 24 Nov 2026: the Copilot's city-photos bucket taught the holiday photos' storage classes.
+  it('a hand-written lesson only for the request it was written for', () => {
+    for (const prompt of ['🖥️ Create a bucket called city-photos', 'Make a bucket called logs-2026']) {
+      const s = taskStory(task({ prompt, agentId: 's3' }));
+      expect(s.teaches, prompt).not.toMatch(/storage classes/);
+      expect(s.teaches.length).toBeGreaterThan(10);
+    }
+    // The first steps' practice task plays her own script: her lesson.
+    expect(taskStory(task({ taskId: 'practice-task-1', prompt: 'Store my holiday photos', agentId: 's3' })).teaches).toMatch(/storage classes/);
   });
 
   it('any building has a story (its own first lesson when nothing is hand-written)', () => {
@@ -124,5 +134,80 @@ describe('news of a change the player made in AWS', () => {
   it('is nothing else an agent says', () => {
     expect(accountNews('Sounds like a job for Sally!')).toBeUndefined();
     expect(accountNews('"web-1" went running → stopped.')).toBeUndefined();
+  });
+});
+
+// Seen 24 Nov 2026 (an experienced player): "expire after 30 days" played holiday.jpg and Glacier after 90 days, "a table
+// called orders" made an unnamed one, a Copilot bucket read "Sally will store your holiday photos", and "Done! +20 ⭐"
+// while the day's task stars were used up.
+describe('the demo is honest about its scripts', () => {
+  it('a script is followed only for the words it was written for (its offer, a featured request), case and punctuation aside', () => {
+    for (const r of FEATURED_REQUESTS) expect(followsScript(r.agent, r.prompt), r.prompt).toBe(true);
+    for (const id of ['s3', 'lambda', 'iam', 'route53', 'dynamodb', 'shield', 'bedrock', 'ec2']) expect(followsScript(id, agentOffer(id)!.prompt)).toBe(true);
+    expect(followsScript('s3', '  store my HOLIDAY photos cheaply!')).toBe(true);
+    expect(followsScript('s3', 'Store my photos and expire them after 30 days')).toBe(false);
+    expect(followsScript('sqs', 'Make a queue')).toBe(false);
+    expect(followsScript('s3', '')).toBe(false);
+  });
+
+  it('reads the name a request gives ("called", "named"), else none', () => {
+    expect(nameIn('Create a table called orders')).toBe('orders');
+    expect(nameIn('Make a bucket named “Holiday-Pics”.')).toBe('Holiday-Pics');
+    expect(nameIn('a queue called orders.fifo please')).toBe('orders.fifo');
+    expect(nameIn('Store my holiday photos cheaply')).toBeUndefined();
+  });
+
+  it('plays the hand-written script only for its words; anything else gets the generic one, under the typed name', () => {
+    const texts = (serviceId: string, prompt: string) => {
+      const s = scriptFor(serviceId, prompt);
+      return [...s.steps.map((x) => x.text), s.result].join(' | ');
+    };
+    expect(texts('s3', 'Store my holiday photos cheaply')).toMatch(/holiday\.jpg[\s\S]*90 days/);
+    const expire = texts('s3', 'Store my photos and expire them after 30 days');
+    expect(expire).not.toMatch(/holiday|90 days|Glacier/);
+    const orders = scriptFor('dynamodb', 'Create a table called orders');
+    expect(orders.steps[0]).toEqual({ text: 'Making the table “orders”', aws: 'dynamodb:CreateTable' });
+    expect(orders.result).toMatch(/^The table “orders” is ready\./);
+    expect(texts('dynamodb', 'Create a table called orders')).not.toMatch(/user#42|userId/);
+    // A bucket's name is lowercase; a queue has no hand-written script, so its name goes on the generic one.
+    expect(scriptFor('s3', 'Create a bucket called Orders').steps[0]).toEqual({ text: 'Making the bucket “orders”', aws: 's3:CreateBucket' });
+    expect(scriptFor('sqs', 'Make a queue named jobs').steps[0].text).toBe('Making the queue “jobs”');
+    expect(texts('s3', 'Create a bucket called orders')).not.toMatch(/holiday|photos/i);
+    // The name goes only on the kind asked for: S3 picked from the page's context never makes a "table" a bucket.
+    expect(texts('s3', 'Make a table called orders')).not.toMatch(/orders|Making the bucket/);
+    expect(texts('dynamodb', 'Make a bucket called orders')).not.toMatch(/orders/);
+    expect(scriptFor('s3', 'Make one called orders').steps[0].text).toBe('Making the bucket “orders”');
+  });
+
+  it('the demo task runs that script: a typed table name, no canned users table', async () => {
+    const mock = new MockBackend({ speed: 200 });
+    const events: ServerEvent[] = [];
+    mock.onEvent((e) => events.push(e));
+    mock.send({ action: 'task.submit', taskId: 't2', prompt: 'Create a DynamoDB table called orders', context: {} });
+    await new Promise((r) => setTimeout(r, 300));
+    const plan = events.find((e): e is TaskPlanEvent => e.type === 'task.plan')!;
+    expect(plan.agentId).toBe('dynamodb');
+    expect(plan.steps).toContain('Making the table “orders”');
+    expect(plan.steps.join(' ')).not.toMatch(/user#42/);
+    mock.disconnect();
+  });
+
+  it('the card frames only a matching request with the story’s words, and the demo says when its script didn’t follow', () => {
+    expect(taskStory(task({ prompt: 'Create a bucket called orders', agentId: 's3' })).framing).toBe('Sally will take this on at S3 Lake.');
+    expect(taskStory(task({ prompt: '🖥️ Create a bucket called city-photos', agentId: 's3' })).framing).toBe('Sally will take this on at S3 Lake.');
+    expect(scriptedNote(task(), true)).toBeUndefined();
+    expect(scriptedNote(task({ prompt: 'Store my photos and expire them after 30 days' }), true)).toBe(DEMO_SCRIPTED);
+    expect(DEMO_SCRIPTED).toMatch(/^Demo: .*scripted example.*hosted city does what you type/);
+    // Never on a hosted or local build, the first steps' practice task (the tutorial's own script) or a Copilot run.
+    expect(scriptedNote(task({ prompt: 'Store my photos and expire them after 30 days' }), false)).toBeUndefined();
+    expect(scriptedNote(task({ taskId: 'practice-task-ab12cd34', prompt: 'Keep my holiday photos safe', agentId: 's3' }), true)).toBeUndefined();
+    expect(scriptedNote(task({ prompt: '🖥️ Create a bucket called city-photos', agentId: 's3' }), true)).toBeUndefined();
+    expect(scriptedNote(task({ prompt: 'Launch a server called big m5.large', agentId: 'ec2', status: 'failed' }), true)).toBeUndefined();
+  });
+
+  it('the agent’s “Done!” names the stars really paid, none past the daily cap', () => {
+    expect(doneBubble(task({ paid: [{ serviceId: 's3', stars: 3 }, { serviceId: 'iam', stars: 1 }] }))).toBe('Done! +4 ⭐');
+    expect(doneBubble(task({ paid: [], capped: true }))).toBe('Done!');
+    expect(doneBubble(undefined)).toBe('Done!');
   });
 });

@@ -74,6 +74,15 @@ describe('Watch it done', () => {
     off();
   });
 
+  // Seen 24 Nov 2026: "Done · 1 steps".
+  it('counts its steps in words that fit: 1 step, 2 steps', () => {
+    const t = (n: number) => ({ taskId: `s${n}`, prompt: 'Store my holiday photos cheaply', agentId: 's3', status: 'done' as const, steps: Array.from({ length: n }, (_, k) => ({ text: `Step ${k}`, status: 'done' as const })) });
+    const { rerender, container } = render(<TaskCard task={t(1)} />);
+    expect(container.textContent).toMatch(/· 1 step(?!s)/);
+    rerender(<TaskCard task={t(2)} />);
+    expect(container.textContent).toMatch(/· 2 steps/);
+  });
+
   it('when the day’s paid tasks at a building are used up, it says so kindly', () => {
     for (let i = 0; i < 4; i++) {
       act(() => useCity.getState().addTask(`c${i}`, 'Store my holiday photos cheaply'));
@@ -123,6 +132,20 @@ describe('Watch it done', () => {
     render(<TaskCard task={useCity.getState().tasks.t12} openTab={openTab} quiet />);
     expect(screen.queryByRole('button', { name: /Turn it on/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
+  });
+
+  // Seen 24 Nov 2026: typed words got holiday photos and Glacier after 90 days, with nothing said.
+  it('in the demo, says when its script didn’t follow the words typed (never for its own words, never hosted)', () => {
+    act(() => useCity.getState().addTask('t3', 'Store my photos and expire them after 30 days'));
+    act(() => useCity.getState().addTask('t4', 'Store my holiday photos cheaply'));
+    const { container, rerender } = render(<TaskCard task={useCity.getState().tasks.t3} />);
+    expect(container.querySelector('.task-scripted')?.textContent).toMatch(/^Demo: this is a scripted example, not your exact request\. The hosted city does what you type\.$/);
+    expect(container.querySelector('.watch-framing')?.textContent).toBe('Sally will take this on at S3 Lake. Watch Sally walk there.');
+    rerender(<TaskCard task={useCity.getState().tasks.t4} />);
+    expect(container.querySelector('.task-scripted')).toBeNull();
+    act(() => useCity.setState({ backendKind: 'server' }));
+    rerender(<TaskCard task={useCity.getState().tasks.t3} />);
+    expect(container.querySelector('.task-scripted')).toBeNull();
   });
 
   it('an agent offers a job as a little story, and Watch it done sends it', () => {

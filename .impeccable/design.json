@@ -1,0 +1,184 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-23T16:57:52Z",
+  "title": "Design System: AWS City",
+  "extensions": {
+    "colorMeta": {
+      "accent": { "role": "primary", "displayName": "Lantern Amber", "canonical": "#f0a63a", "tonalRamp": ["#2a1a04", "#4d3009", "#77490f", "#a66616", "#d48a24", "#f0a63a", "#f6c47c", "#fbe4bf"] },
+      "aws-compute": { "role": "secondary", "displayName": "District colours (AWS Architecture Icon categories)", "canonical": "#ed7100", "tonalRamp": ["#ed7100", "#7aa116", "#c925d1", "#8c4fff", "#dd344c", "#01a88d", "#e7157b", "#ed7100"] },
+      "gold": { "role": "secondary", "displayName": "City Gold", "canonical": "#ffc233", "tonalRamp": ["#3d2a05", "#6b4a0c", "#b7791f", "#dfa024", "#ffc233", "#ffd56b", "#fff1b8", "#fffaf0"] },
+      "paper": { "role": "tertiary", "displayName": "Flashcard Parchment", "canonical": "#d9cfba", "tonalRamp": ["#1b1200", "#4a3a1c", "#7a6740", "#a8987a", "#c4b89f", "#d2c7b0", "#d9cfba", "#f0eadc"] },
+      "panel": { "role": "neutral", "displayName": "Warm Graphite (project ramp)", "canonical": "#1e2126", "tonalRamp": ["#0f1114", "#15171b", "#191c20", "#1e2126", "#24282e", "#2c3138", "#3a3f48", "#969aa3"] },
+      "ink": { "role": "neutral", "displayName": "Parchment Ink", "canonical": "#e6e2d8", "tonalRamp": ["#3a3f48", "#5c6068", "#969aa3", "#a9a59b", "#c9c4b8", "#e6e2d8", "#f3efe5", "#fff8ee"] },
+      "good": { "role": "neutral", "displayName": "Linked Teal", "canonical": "#5db39e", "tonalRamp": ["#0f2a24", "#1a463c", "#276355", "#3a8473", "#5db39e", "#86c8b7", "#bfe8dc", "#e6f6f1"] },
+      "bad": { "role": "neutral", "displayName": "Coral Alarm", "canonical": "#e5676b", "tonalRamp": ["#3a1213", "#5e1c1e", "#8f2a2e", "#bc4247", "#e5676b", "#ec8f92", "#f6c9ca", "#fbe8e8"] },
+      "info": { "role": "neutral", "displayName": "Sky Note", "canonical": "#8fb8e8", "tonalRamp": ["#13243a", "#1f3a5c", "#2f5684", "#4f7db3", "#8fb8e8", "#b3cff0", "#d6e4f5", "#eef4fb"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Pixel display", "purpose": "The wordmark and a few pixel badges; Press Start 2P on its 8 px grid only (10, 11, 15 px). The mini-games' titles are Nunito 800 in amber." },
+      "headline": { "displayName": "Headline", "purpose": "Big numbers and celebration lines (--fs-xl)." },
+      "title": { "displayName": "Title", "purpose": "Card titles, a building's name, the flashcard question (--fs-lg)." },
+      "body": { "displayName": "Body", "purpose": "Running text in cards, the menu and the shift (--fs-md)." },
+      "label": { "displayName": "Section label", "purpose": "The one 'what this block is' style: 12 px 800, muted, sentence case." },
+      "caption": { "displayName": "Caption", "purpose": "Tab labels, tab badges, counts, the connection word; non-essential only." },
+      "wordmark": { "displayName": "Wordmark", "purpose": "The HUD's AWS City logotype at --fs-pixel (11 px); the panel's city HUD drops it." },
+      "mono": { "displayName": "Mono", "purpose": "Inline code and the practice terminal." }
+    },
+    "shadows": [
+      { "name": "float", "value": "0 12px 32px rgba(0, 0, 0, 0.5)", "purpose": "Menus, toasts and bottom sheets that float over the city." },
+      { "name": "pixel", "value": "0 2px 8px rgba(0, 0, 0, 0.35)", "purpose": "Small lifted chips on the map." },
+      { "name": "pixel-sm", "value": "0 1px 2px rgba(0, 0, 0, 0.3)", "purpose": "Pressed-in details." },
+      { "name": "primary-bevel", "value": "inset 0 -2px 0 rgba(0, 0, 0, 0.18)", "purpose": "The amber button's bottom lip; inverted (inset 0 2px) while pressed." },
+      { "name": "toast-bar", "value": "inset 4px 0 0 #f0a63a, inset 0 0 0 1px rgba(240, 166, 58, 0.45), 0 12px 32px rgba(0, 0, 0, 0.5)", "purpose": "A toast's amber left bar and float." },
+      { "name": "focus-halo", "value": "0 0 0 3px rgba(240, 166, 58, 0.13)", "purpose": "An input's focus halo under the amber border." }
+    ],
+    "motion": [
+      { "name": "dur-1", "value": "80ms", "purpose": "Press feedback (a 1 px button press, card tap)." },
+      { "name": "dur-2", "value": "160ms", "purpose": "Hover colours, switches, the tab body's enter, menus." },
+      { "name": "dur-3", "value": "320ms", "purpose": "Toast pop, HUD number bump." },
+      { "name": "ease-step", "value": "steps(3, end)", "purpose": "Sprite-like stepped entrances (toasts)." },
+      { "name": "ease-out", "value": "cubic-bezier(0.2, 0.8, 0.2, 1)", "purpose": "Default easing for state changes and entrances." },
+      { "name": "enter", "value": "opacity 0.6 → 1, translateY(4px) → 0 over dur-2", "purpose": "Every child of the tab body, menus and scrims. It starts at 0.6, never 0, so content shows at the side panel's low frame rate." },
+      { "name": "reduced-motion", "value": "@media (prefers-reduced-motion: reduce): animation and transition durations 0.01ms, one iteration", "purpose": "Global CSS rule; the canvas parks ambient motion, cargo jets and crate shakes separately." }
+    ],
+    "breakpoints": [
+      { "name": "panel", "value": "max-width: 480px" },
+      { "name": "panel-narrow", "value": "max-width: 420px" },
+      { "name": "tab", "value": "1400 x 880 reference; side column fixed at 400px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one amber action per screen; says exactly what happens.",
+      "html": "<button class=\"ds-btn ds-btn-primary\">Review 5 cards</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 4px 12px; border-radius: 4px; font-family: 'Nunito', sans-serif; font-weight: 700; font-size: 13px; color: var(--ink, #e6e2d8); background: var(--panel-2, #24282e); border: 1px solid var(--line-strong, #3a3f48); cursor: pointer; transition: transform 80ms cubic-bezier(0.2, 0.8, 0.2, 1), background-color 160ms, border-color 160ms; } .ds-btn-primary { background: var(--accent, #f0a63a); border-color: var(--accent, #f0a63a); color: var(--accent-ink, #2a1a04); font-weight: 800; box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.18); } .ds-btn-primary:hover { background: #f5b75a; border-color: #f5b75a; } .ds-btn-primary:active { transform: translateY(1px); box-shadow: inset 0 2px 0 rgba(0, 0, 0, 0.18); } .ds-btn:focus-visible { outline: 2px solid var(--accent, #f0a63a); outline-offset: 2px; }"
+    },
+    {
+      "name": "Graphite Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "Every secondary action: quiet graphite with a hairline.",
+      "html": "<button class=\"ds-btn2\">Preview</button>",
+      "css": ".ds-btn2 { display: inline-flex; align-items: center; min-height: 32px; padding: 4px 12px; border-radius: 4px; font-family: 'Nunito', sans-serif; font-weight: 700; font-size: 13px; color: var(--ink, #e6e2d8); background: var(--panel-2, #24282e); border: 1px solid var(--line-strong, #3a3f48); cursor: pointer; transition: background-color 160ms, border-color 160ms; } .ds-btn2:hover { background: var(--panel-hi, #2c3138); border-color: var(--muted, #969aa3); color: var(--ink-hi, #fff8ee); } .ds-btn2:focus-visible { outline: 2px solid var(--accent, #f0a63a); outline-offset: 2px; }"
+    },
+    {
+      "name": "Warn Button",
+      "kind": "button",
+      "refersTo": "button-warn",
+      "description": "Destructive steps (Disconnect, Take it down); a typed name confirms the real ones.",
+      "html": "<button class=\"ds-btn-warn\">Disconnect</button>",
+      "css": ".ds-btn-warn { min-height: 32px; padding: 4px 12px; border-radius: 4px; font-family: 'Nunito', sans-serif; font-weight: 700; font-size: 13px; background: transparent; border: 1px solid rgba(229, 103, 107, 0.5); color: var(--bad-ink, #f6c9ca); cursor: pointer; } .ds-btn-warn:hover { background: rgba(229, 103, 107, 0.13); border-color: var(--bad, #e5676b); } .ds-btn-warn:focus-visible { outline: 2px solid var(--accent, #f0a63a); outline-offset: 2px; }"
+    },
+    {
+      "name": "Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Pill outlines for goals, suggestions and filters.",
+      "html": "<button class=\"ds-chip\">Pass a puzzle</button>",
+      "css": ".ds-chip { padding: 4px 8px; border-radius: 999px; border: 1px solid var(--line-strong, #3a3f48); background: none; color: var(--ink-soft, #c9c4b8); font-family: 'Nunito', sans-serif; font-size: 12px; font-weight: 700; cursor: pointer; transition: background-color 160ms, border-color 160ms; } .ds-chip:hover { background: var(--panel, #1e2126); border-color: var(--muted, #969aa3); color: var(--ink-hi, #fff8ee); } .ds-chip:focus-visible { outline: 2px solid var(--accent, #f0a63a); outline-offset: 2px; }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Flat graphite tile with a hairline; a district square before the title.",
+      "html": "<div class=\"ds-card\"><h3 class=\"ds-card-title\"><i></i>Host a static website</h3><p>Your files stay private in S3. CloudFront serves them.</p></div>",
+      "css": ".ds-card { background: var(--panel, #1e2126); border: 1px solid var(--line, #2c3038); border-radius: 6px; padding: 12px; color: var(--ink, #e6e2d8); font-family: 'Nunito', sans-serif; font-size: 13px; line-height: 1.45; } .ds-card-title { margin: 0 0 6px; font-size: 15px; font-weight: 800; color: var(--ink-hi, #fff8ee); } .ds-card-title i { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 2px; background: var(--aws-storage, #7aa116); vertical-align: 1px; } .ds-card p { margin: 6px 0 0; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "The prompt bar and form fields.",
+      "html": "<input class=\"ds-input\" placeholder=\"Ask the city to do something…\" />",
+      "css": ".ds-input { min-height: 34px; padding: 6px 8px; border-radius: 4px; background: var(--panel, #1e2126); color: var(--ink, #e6e2d8); border: 1px solid var(--line-strong, #3a3f48); font-family: 'Nunito', sans-serif; font-size: 13px; transition: border-color 160ms, box-shadow 160ms; } .ds-input::placeholder { color: var(--muted, #969aa3); } .ds-input:focus { outline: none; border-color: var(--accent, #f0a63a); box-shadow: 0 0 0 3px rgba(240, 166, 58, 0.13); }"
+    },
+    {
+      "name": "Tab Bar",
+      "kind": "nav",
+      "refersTo": "tab",
+      "description": "City · Learn · Jobs · Deploy: line icons over small labels, amber underline on the active tab.",
+      "html": "<nav class=\"ds-tabs\"><button class=\"on\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M3 11l9-7 9 7v9H3z\"/></svg><span>City</span></button><button><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><rect x=\"5\" y=\"4\" width=\"14\" height=\"16\" rx=\"2\"/></svg><span>Learn</span></button></nav>",
+      "css": ".ds-tabs { display: flex; padding: 0 6px; border-bottom: 1px solid var(--line, #2c3038); background: var(--bg, #15171b); } .ds-tabs button { position: relative; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 2px 6px; background: none; border: 0; color: var(--muted, #969aa3); font-family: 'Nunito', sans-serif; font-size: 11px; font-weight: 700; cursor: pointer; transition: color 160ms; } .ds-tabs button:hover { color: var(--ink, #e6e2d8); } .ds-tabs button.on { color: var(--ink-hi, #fff8ee); } .ds-tabs button.on svg { color: var(--accent, #f0a63a); } .ds-tabs button.on::after { content: ''; position: absolute; left: 22%; right: 22%; bottom: -1px; height: 2px; border-radius: 2px 2px 0 0; background: var(--accent, #f0a63a); } .ds-tabs button:focus-visible { outline: 2px solid var(--accent, #f0a63a); outline-offset: -3px; }"
+    },
+    {
+      "name": "Toast",
+      "kind": "custom",
+      "refersTo": "toast",
+      "description": "A note over the city: amber inset bar, float shadow, stepped pop.",
+      "html": "<div class=\"ds-toast\"><span class=\"ds-toast-icon\">🏗️</span><span>Combo found: Static site! S3 and CloudFront work together.</span></div>",
+      "css": ".ds-toast { display: flex; align-items: center; gap: 8px; max-width: 420px; padding: 8px 12px 8px 16px; background: var(--panel, #1e2126); color: var(--ink, #e6e2d8); border: 1px solid var(--line-strong, #3a3f48); border-radius: 6px; box-shadow: inset 4px 0 0 #f0a63a, inset 0 0 0 1px rgba(240, 166, 58, 0.45), 0 12px 32px rgba(0, 0, 0, 0.5); font-family: 'Nunito', sans-serif; font-weight: 700; font-size: 13px; line-height: 1.35; animation: ds-pop 320ms steps(3, end); } .ds-toast-icon { font-size: 17px; line-height: 1; } @keyframes ds-pop { from { transform: translateY(-8px) scale(0.96); opacity: 0; } } @media (prefers-reduced-motion: reduce) { .ds-toast { animation: none; } }"
+    },
+    {
+      "name": "Flashcard",
+      "kind": "custom",
+      "refersTo": "flashcard",
+      "description": "The one paper surface: a cream card that flips to its answer.",
+      "html": "<button class=\"ds-flash\"><small>S3 LAKE · NOVICE</small><b>What is Amazon S3?</b><em>tap or press F to reveal</em></button>",
+      "css": ".ds-flash { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 160px; padding: 16px 12px; background: var(--paper, #d9cfba); color: var(--paper-ink, #1b1200); border: 0; border-radius: 6px; font-family: 'Nunito', sans-serif; font-size: 15px; cursor: pointer; transition: transform 80ms; } .ds-flash small { font-size: 11px; font-weight: 800; color: #7c2d12; letter-spacing: 0.04em; } .ds-flash em { font-style: normal; font-size: 11px; color: #4a4540; } .ds-flash:active { transform: translateY(2px); } .ds-flash:focus-visible { outline: 2px solid var(--accent, #f0a63a); outline-offset: 2px; }"
+    },
+    {
+      "name": "Mini-game Stage",
+      "kind": "custom",
+      "refersTo": "mini-game-stage",
+      "description": "A game on the canvas wears the desk: graphite title bar with the title in amber, stat chips, the hint strip, a verdict on the near-opaque pill, one chunky amber ✓ Done that sinks when pressed.",
+      "html": "<div class=\"ds-game\"><div class=\"ds-game-bar\"><b>📬 Queue Juggler</b><span class=\"ds-game-expert\">⚡ Expert</span><button class=\"ds-game-btn\">✓ Done</button><span class=\"ds-game-stat\">★ 12</span></div><div class=\"ds-game-hint\">Click a message (or Space) to queue it; drag red poison to the DLQ (or D)</div><div class=\"ds-game-play\"><span class=\"ds-game-hit\">order #12</span><span class=\"ds-game-verdict\">✓ Right: poison to the dead-letter queue.</span></div></div>",
+      "css": ".ds-game { width: 100%; max-width: 400px; background: var(--bg, #15171b); color: var(--ink-hi, #fff8ee); font-family: 'Nunito', sans-serif; font-weight: 800; } .ds-game-bar { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; background: rgba(21, 23, 27, 0.94); border-bottom: 2px solid #000; } .ds-game-bar b { flex: 1; color: var(--accent, #f0a63a); font-size: 14px; } .ds-game-expert { padding: 2px 6px; background: var(--gold-hi, #fff1b8); color: var(--paper-ink, #1b1200); font-size: 12px; } .ds-game-stat { padding: 3px 8px; background: var(--panel-hi, #2c3138); font-size: 14px; } .ds-game-btn { padding: 2px 8px; background: var(--accent, #f0a63a); color: var(--accent-ink, #2a1a04); border: 2px solid #000; box-shadow: 0 3px 0 #000; font: 800 13px 'Nunito', sans-serif; cursor: pointer; } .ds-game-btn:hover { opacity: 0.88; } .ds-game-btn:active { transform: translateY(3px); box-shadow: none; } .ds-game-btn:focus-visible { outline: 2px solid var(--gold-hi, #fff1b8); outline-offset: 2px; } .ds-game-hint { padding: 4px 12px; background: rgba(30, 33, 38, 0.88); color: var(--ink-soft, #c9c4b8); font-size: 12px; font-weight: 700; } .ds-game-play { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 24px 12px; image-rendering: pixelated; } .ds-game-hit { padding: 2px 5px; background: rgba(21, 23, 27, 0.85); font-size: 11px; outline: 3px solid var(--good, #5db39e); } .ds-game-verdict { padding: 5px 10px; background: rgba(21, 23, 27, 0.95); color: var(--good, #5db39e); font-size: 14px; text-align: center; }"
+    },
+    {
+      "name": "Label Chip",
+      "kind": "chip",
+      "refersTo": "label-chip",
+      "description": "Every sign and tag on the map: 11 px heavy ink on graphite at 85 %, square, counter-scaled by the zoom. '· Lv N' shows only while the building is picked or hovered; world-map city names are gold-hi.",
+      "html": "<div class=\"ds-map\"><span class=\"ds-label\">S3 Lake · 🃏 3</span><span class=\"ds-label ds-label-city\">Seattle</span><span class=\"ds-label\">Kai</span></div>",
+      "css": ".ds-map { display: flex; flex-wrap: wrap; gap: 12px; padding: 16px; background: #3f6b3a; image-rendering: pixelated; } .ds-label { padding: 2px 5px; background: rgba(21, 23, 27, 0.85); color: var(--ink-hi, #fff8ee); font-family: 'Nunito', sans-serif; font-size: 11px; font-weight: 800; white-space: nowrap; } .ds-label:first-child:hover::after { content: ' · Lv 3'; } .ds-label-city { color: var(--gold-hi, #fff1b8); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Lamplit Desk Beside the City",
+    "overview": "AWS City is two things side by side: a bright, generated pixel-art city (one per AWS Region, drawn on a 32×16 isometric grid) and a quiet warm-graphite desk where the player reads, decides and approves. The desk exists to let the city carry the colour. Its surfaces are near-black graphite with a warm cast, its text is parchment-white rather than pure white, and a single amber lamp (the accent) marks the one thing to do next. Paper (cream flashcards, white speech bubbles, the gold of a found token) appears only where the city \"speaks\" into the desk.\n\nDensity is high but small: 13 px body text, 8 px and 12 px gaps, 6 px corners, everything sized to work first in a 400 px browser side panel and then reused unchanged as the right-hand column of the full tab. Motion is short and stepped like sprite frames, and a big moment in the city plays in order, one thing at a time. Every visual setting a player can change (text size, contrast, font, motion) is a token override, never a second stylesheet.",
+    "keyCharacteristics": [
+      "Warm graphite surfaces layered by tone (bg → panel → panel-2 → panel-hi), with hairline borders instead of shadows.",
+      "One amber primary per screen; district colours only as small identity marks.",
+      "Nunito for everything readable; Press Start 2P only for the wordmark and a few game labels, on its 8 px grid.",
+      "The pixel city is the only hard-edged, saturated thing on screen; the UI recedes around it.",
+      "The side panel (400 px) is the design's first surface; the tab adds a wide stage, not a different UI.",
+      "The canvas wears the same tokens: the mini-games' chrome is the desk's graphite and amber, and its text follows Text size."
+    ],
+    "rules": [
+      { "name": "The One Lamp Rule", "body": "One amber-filled button per screen (the smoke test counts them on the City tab). Everything else is a quiet graphite button, a ghost or a chip.", "section": "colors" },
+      { "name": "The District Square Rule", "body": "A district's colour appears as a small mark (an 8 px square, a 4 px progress segment, an eyebrow word), never as a background.", "section": "colors" },
+      { "name": "The Token-Only Rule", "body": "Colours come from :root in src/app/styles/00-base.css (and src/game/theme.ts mirrors them for Phaser under the same names). Accessibility modes work by overriding these tokens, so a raw hex in a component escapes them.", "section": "colors" },
+      { "name": "The 12 px Floor Rule", "body": "12 px is the floor for body text; 11 px only for non-essential labels. No shipped exceptions: tab badges are 11 px and the wordmark is --fs-pixel.", "section": "typography" },
+      { "name": "The 11 px Canvas Floor Rule", "body": "Nothing a player reads on the canvas is under 11 px, at any text size or zoom. A line too long for its place shrinks to the floor, then wraps (the Red Team Range's log lines); it never shrinks further.", "section": "typography" },
+      { "name": "The Pixel Grid Rule", "body": "Press Start 2P only at its two tokens, --fs-pixel 11 px and --fs-pixel-lg 15 px (15 and 19 px at the bigger text sizes). Never scale it by a fraction.", "section": "typography" },
+      { "name": "The Heavy-Weight Rule", "body": "Emphasis is weight (700/800), not colour or italics; most labels and buttons are 700–800.", "section": "typography" },
+      { "name": "The Whole Pixel Rule", "body": "Pixel art moves and scales on whole pixels: integer zoom at rest, whole-number sprite scales, positions rounded, confetti turning in quarter turns. A fractional zoom is allowed only mid-tween.", "section": "layout" },
+      { "name": "The Flat Desk Rule", "body": "Cards in the side column are flat (tone and hairline). Only what floats over the city (menus, toasts, sheets, the coin note) gets the float shadow.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do take every colour, size, gap and radius from the tokens in 00-base.css (and theme.ts for the canvas), so the text-size, high-contrast and easy-read modes in 22-access.css reach it.",
+      "Do keep one amber primary per screen and say exactly what it does (\"Review 5 cards\", \"Walk to S3 Lake\").",
+      "Do design for the 400 px side panel first, then check the 1400 × 880 tab.",
+      "Do keep district colours to small marks (an 8 px square, a 4 px segment).",
+      "Do draw coins with the pixel Coin icon and stars as ⭐; never show \"XP\".",
+      "Do give every animation a reduced-motion state: CSS durations collapse to 0.01 ms under prefers-reduced-motion, and the canvas parks its ambient motion (cars at the kerb, walkers and agents where they stand) and cuts its camera moves.",
+      "Do play a big moment in order, one thing at a time (land, rise, payoff, push-in), and time a camera flight by its distance.",
+      "Do start entrances from opacity 0.6 (the shared enter), never 0: the side panel can draw at a few frames a second, and content must show before the entrance ends.",
+      "Do keep one overlay at a time on the panel's map: one line on its top edge (a toast, else the coins note, else the ticker), one speech bubble.",
+      "Do render in-world text with crisp() and counter-scale it by 1/zoom; keep camera zoom and sprite scales on whole numbers, and size canvas text through textPx (a mini-game's through TXT)."
+    ],
+    "donts": [
+      "Don't set font sizes in raw px outside the token scale: they ignore ⋯ → Text size.",
+      "Don't use Press Start 2P for running text or at sizes off its 8 px grid.",
+      "Don't fill large areas with a district colour or with amber.",
+      "Don't add a second filled button beside the primary; use a graphite or ghost button.",
+      "Don't hand-edit or regenerate the city's sprites in a UI change; they come from npm run art.",
+      "Don't start a moment's effects in the same frame, or let a celebration's zoom pop the labels on and off.",
+      "Don't give a mini-game's chrome a hex of its own: chrome is GAME_PAL; only its scene art (skies, the lake, the factory's brick, a district's colour) keeps colours of its own."
+    ]
+  }
+}

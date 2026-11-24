@@ -101,8 +101,20 @@ interface BusEvents {
   coins: { n: number; from?: { x: number; y: number } };
   /** Tonight's City Lights window just lit (the first learning of the day): the city twinkles it in. */
   windowLit: void;
-  /** The tour asks where Kai stands on the page (CSS pixels); the city answers through `reply` (undefined: not shown). */
-  locateKai: { reply: (r: { top: number; left: number; width: number; height: number } | undefined) => void };
+  /**
+   * The tour asks where Kai (`player`) or a landmark (its service id) stands on the page (CSS pixels); the city answers
+   * through `reply` (undefined: not in view, or no city).
+   */
+  locate: { id: string; reply: (r: { top: number; left: number; width: number; height: number } | undefined) => void };
+  // ── The first steps (src/state/firstSteps.ts) ──
+  /** A landmark's agent says one short line in the city (a bubble, to the player; announced). Never a model call. */
+  say: { agentId: string; text: string; tone?: 'info' | 'good' };
+  /** Put a citizen with this question by Kai now (the first steps' planted citizen): src/state/requests.ts requestFor. */
+  requestNow: { serviceId: string; cardId?: string };
+  /** The guide's "Walk to the citizen": Kai walks to the planted citizen (src/game/Requests.ts); arriving opens the question. */
+  walkToRequest: void;
+  /** The first steps are done (or a replay of them): the city's moment (tier-up, camera). The card is Celebrate's. */
+  graduated: void;
 }
 
 type Handler<K extends keyof BusEvents> = (payload: BusEvents[K]) => void;
