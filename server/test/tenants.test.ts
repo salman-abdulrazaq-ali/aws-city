@@ -205,8 +205,10 @@ describe('the account lifecycle (v2.19)', () => {
     tenant.subscribe((e) => tab.push(e));
     await tenant.unlink('r-unlink', () => {});
     expect(running()).toBe(0);
-    expect(await stores.accounts.get('u1')).toBeUndefined();
-    expect(statuses(tab)).toEqual([expect.objectContaining({ requestId: 'r-unlink', linked: false, message: expect.stringMatching(/delete the AWSCity stack/) })]);
+    // Seen 24 Nov 2026: Disconnect keeps the setup (ExternalId, Region) as a pending record nothing reads with, so
+    // Reconnect needs no change in AWS; the role ARN, account and linkedAt are gone.
+    expect(await stores.accounts.get('u1')).toEqual({ status: 'pending', externalId: linkedRecord.externalId, region: linkedRecord.region });
+    expect(statuses(tab)).toEqual([expect.objectContaining({ requestId: 'r-unlink', linked: false, message: expect.stringMatching(/Reconnect any time with one press; to remove its role for good, delete the AWSCity stack/) })]);
     expect(await tenant.snapshot()).toBeUndefined();
     tenants.closeAll();
   });
@@ -763,7 +765,8 @@ describe('a disconnected or changed account changes nothing (v2.19)', () => {
     expect(await stores.accounts.get('u1')).toBeDefined(); // not forgotten while the write runs
     release();
     await Promise.all([job, unlinking]);
-    expect(await stores.accounts.get('u1')).toBeUndefined();
+    expect(await stores.accounts.get('u1')).toMatchObject({ status: 'pending' });
+    expect(await stores.accounts.get('u1')).not.toHaveProperty('roleArn');
     expect(statusOf(events, previews(events)[0]!.deployId)).toMatchObject({ status: 'complete' });
     tenants.closeAll();
   });

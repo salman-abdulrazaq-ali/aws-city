@@ -375,9 +375,10 @@ export function DeployPanel() {
   // reconnect was folded away and missed). After a Disconnect here it starts on reconnect.
   const [stackChoice, setStackPath] = useState<'reconnect' | 'fresh'>();
   // One-click connect (asked for on 24 Nov 2026): the press made a link, and AWS opens by itself when it lands.
-  const quickAsked = useRef(false);
-  const [quickOpened, setQuickOpened] = useState(false);
-  const [quickReconnect, setQuickReconnect] = useState(false);
+  // Connect / Reconnect (24 Nov 2026): the press made a link; when it lands the city verifies at once (an account already
+  // set up links with no AWS page), and only an account AWS City's role isn't in yet opens AWS's one approval page.
+  const quickAsked = useRef<'connect' | 'reconnect' | undefined>(undefined);
+  const [quickPhase, setQuickPhase] = useState<'idle' | 'verifying' | 'first'>('idle');
   const consoleAccount = useCity((s) => s.consoleAccount);
   const stackPath = stackChoice ?? (account.stackLeft ? 'reconnect' : 'fresh');
   const [linkCopied, copyLink] = useCopy();
@@ -418,15 +419,33 @@ export function DeployPanel() {
 
   // Clear each pending button when the event it was waiting for lands.
   useEffect(() => clear('link'), [account.linkUrl, clear]);
-  // One-click connect: the link this press asked for opens AWS at once (never a link from another tab or an old one).
+  // The link this press asked for (never one from another tab or an old one): verify at once with the account number,
+  // else (no number) open AWS's approval page.
   useEffect(() => {
-    if (!quickAsked.current || !account.linkUrl) return;
-    quickAsked.current = false;
-    setQuickOpened(true);
-    openUrl(account.linkUrl);
+    const asked = quickAsked.current;
+    if (!asked || !account.linkUrl) return;
+    quickAsked.current = undefined;
+    const target = asked === 'reconnect' ? account.lastAccountId : role.trim() || consoleAccount;
+    if (target) {
+      setQuickPhase('verifying');
+      const requestId = verifyAccount(accountInput(target));
+      if (requestId) pending.start('verify', requestId);
+    } else {
+      setQuickPhase('first');
+      openUrl(account.linkUrl);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account.linkUrl]);
+  // Verify couldn't use a role: this account hasn't approved AWS City yet, so its one AWS page opens (the error is said there).
   useEffect(() => {
-    if (account.linked) setQuickOpened(false);
+    if (quickPhase !== 'verifying' || !account.error || !account.linkUrl) return;
+    setQuickPhase('first');
+    clear('verify');
+    useCity.getState().patchAccount({ error: undefined });
+    openUrl(account.linkUrl);
+  }, [quickPhase, account.error, account.linkUrl, clear]);
+  useEffect(() => {
+    if (account.linked) setQuickPhase('idle');
   }, [account.linked]);
   useEffect(() => {
     clear('verify');
@@ -477,9 +496,20 @@ export function DeployPanel() {
     pending.start('link', linkAccount(where, { allowFixes, ...(allowCleanup ? { allowCleanup } : {}) }));
   const restart = () => {
     setPicked(undefined);
-    setQuickOpened(false);
-    setQuickReconnect(false);
+    setQuickPhase('idle');
+    quickAsked.current = undefined;
+    clear('link');
+    clear('verify');
     useCity.getState().restartLink();
+  };
+  const connectNowPress = () => {
+    quickAsked.current = 'connect';
+    getLink(region, !!account.allowFixes, !!account.allowCleanup);
+  };
+  const reconnectPress = () => {
+    if (!account.stackLeft) return;
+    quickAsked.current = 'reconnect';
+    getLink(account.stackLeft, !!account.allowFixes, !!account.lastCleanup);
   };
   /** The account number to verify: what the player typed, else the account the open AWS console is signed in to. */
   const accountGuess = role.trim() || consoleAccount || '';
@@ -496,20 +526,60 @@ export function DeployPanel() {
    */
   const quickConnect = () => (
     <div className="quick-connect">
-      {!quickOpened || !account.linkUrl ? (
+      {quickPhase === 'first' && account.linkUrl ? (
         <>
+          <ol className="account-steps quick-steps" aria-label="Approve AWS City in your AWS account">
+            <li>
+              First time in this account: AWS asks you to approve AWS City once. In the AWS tab, check the account at the top right is <b>yours</b>
+              {linkFor ? (
+                <>
+                  {' '}
+                  (the page says <b>ConnectsPlayer: {linkFor}</b>)
+                </>
+              ) : null}
+              , tick <b>I acknowledge…</b>, then press <b>Create stack</b>.{' '}
+              <button className="btn tiny ghost" onClick={() => openUrl(account.linkUrl!)}>
+                Open AWS again ↗
+              </button>
+            </li>
+            <li>
+              Wait about a minute, until it says <b>CREATE_COMPLETE</b>.
+            </li>
+            <li>
+              <PendingButton className="btn primary" pending={pending.is('verify')} busyLabel="Connecting…" disabled={!accountGuess || !!offline} title={offline} onClick={finishConnecting}>
+                ✅ Connect now
+              </PendingButton>
+              {!accountGuess && <span className="muted small"> Type your account number above first.</span>}
+            </li>
+          </ol>
+          <button className="btn tiny ghost" onClick={restart}>
+            Start over
+          </button>
+        </>
+      ) : (
+        <>
+          {account.stackLeft && account.lastAccountId && (
+            <div className="reconnect-one">
+              <PendingButton
+                className="btn primary"
+                pending={pending.is('link') || pending.is('verify')}
+                busyLabel="Reconnecting…"
+                disabled={!!offline}
+                title={offline}
+                onClick={reconnectPress}
+              >
+                🔁 Reconnect {accountTitle(account.lastAccountId)}
+              </PendingButton>
+              <p className="muted small">One press: AWS City’s role is still in that account.</p>
+            </div>
+          )}
           <div className="row">
-            <label className="field-hint" htmlFor="quick-region">
-              Region for AWS City’s role
+            <label className="field-hint" htmlFor="quick-account">
+              Your AWS account number
             </label>
-            <select id="quick-region" value={region} onChange={(e) => setPicked(e.target.value)}>
-              {LINK_REGIONS.map((r) => (
-                <option key={r.code} value={r.code}>
-                  {r.name} ({r.code})
-                </option>
-              ))}
-            </select>
+            <input id="quick-account" placeholder="1234-5678-9012" value={role || consoleAccount || ''} onChange={(e) => setRole(e.target.value)} autoComplete="off" spellCheck={false} />
           </div>
+          {consoleAccount && !role.trim() && <p className="muted small">Filled in from the AWS console you have open.</p>}
           <label className="check-row">
             <input type="checkbox" checked={!!account.allowCleanup} onChange={(e) => useCity.getState().patchAccount({ allowCleanup: e.target.checked })} />
             <span>Allow the agents to change things I made (servers and empty buckets; I type the name and approve each removal)</span>
@@ -519,76 +589,18 @@ export function DeployPanel() {
             <span>Allow small safety fixes (I approve each one)</span>
           </label>
           <PendingButton
-            className="btn primary"
-            pending={pending.is('link')}
-            busyLabel="Opening AWS…"
+            className={account.stackLeft && account.lastAccountId ? 'btn' : 'btn primary'}
+            pending={!(account.stackLeft && account.lastAccountId) && (pending.is('link') || pending.is('verify'))}
+            busyLabel="Connecting…"
             disabled={!!offline}
             title={offline}
-            onClick={() => {
-              quickAsked.current = true;
-              getLink(region, !!account.allowFixes, !!account.allowCleanup);
-            }}
+            onClick={connectNowPress}
           >
             🔗 Connect your AWS account
           </PendingButton>
-          <p className="muted small">Opens AWS with everything filled in. You only press Create stack there.</p>
-        </>
-      ) : (
-        <>
-          <ol className="account-steps quick-steps" aria-label="Finish connecting">
-            <li>
-              In the AWS tab: check the account at the top right is <b>yours</b>
-              {linkFor ? (
-                <>
-                  {' '}
-                  (the page says <b>ConnectsPlayer: {linkFor}</b>)
-                </>
-              ) : null}
-              . Tick <b>I acknowledge…</b> at the bottom, then press <b>Create stack</b>.{' '}
-              <button className="btn tiny ghost" onClick={() => openUrl(account.linkUrl!)}>
-                Open AWS again ↗
-              </button>
-              <div className="muted small">
-                Already have an AWSCity stack there?{' '}
-                <button className="btn tiny ghost" aria-expanded={quickReconnect} onClick={() => setQuickReconnect(!quickReconnect)}>
-                  Reconnect it instead
-                </button>
-              </div>
-              {quickReconnect && <ReconnectStack onDone={() => setQuickReconnect(false)} />}
-            </li>
-            <li>
-              Wait about a minute, until it says <b>CREATE_COMPLETE</b> (or <b>UPDATE_COMPLETE</b> after a reconnect).
-            </li>
-            <li>
-              <form
-                className="row"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  finishConnecting();
-                }}
-              >
-                <label className="field-hint" htmlFor="quick-account">
-                  Your AWS account number
-                </label>
-                <input
-                  id="quick-account"
-                  placeholder="1234-5678-9012"
-                  value={role || consoleAccount || ''}
-                  onChange={(e) => setRole(e.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <PendingButton className="btn primary" pending={pending.is('verify')} busyLabel="Connecting…" disabled={!accountGuess || !!offline} title={offline} onClick={finishConnecting}>
-                  ✅ Finish connecting
-                </PendingButton>
-              </form>
-              {consoleAccount && !role.trim() && <p className="muted small">Filled in from the AWS console you have open.</p>}
-              {account.error && <p className="muted small">Not ready yet? Wait a moment until the stack is complete, then press again.</p>}
-            </li>
-          </ol>
-          <button className="btn tiny ghost" onClick={restart}>
-            Start over
-          </button>
+          <p className="muted small">
+            Connects in {regionName(region)}, the city you’re in. Already set up? It connects at once. The first time, AWS asks you to approve AWS City once.
+          </p>
         </>
       )}
       <details className="why">
@@ -973,7 +985,7 @@ export function DeployPanel() {
                   {/* Seen 24 Nov 2026: reconnecting failed, because the old stack trusts the old link (Disconnect forgets its
                       ExternalId) and its name is taken; "to remove it too" read as optional. */}
                   <Plain
-                    text={`Disconnected. Your AWSCity stack in ${regionName(account.stackLeft)} stays in your account, still trusting the old link. To connect again: reconnect it in step 2 (one command), or delete it and start fresh. To stop AWS City for good, delete it (Stacks, then AWSCity, then Delete).`}
+                    text={`Disconnected: the city stopped reading your account. Reconnect any time with one press below. To remove AWS City for good, delete the AWSCity stack in ${regionName(account.stackLeft)} (Stacks, then AWSCity, then Delete).`}
                   />
                 </p>
                 <StackLink region={account.stackLeft} />

@@ -223,6 +223,9 @@ export interface AccountState {
   unlinking?: string;
   /** After a Disconnect: the Region whose AWSCity stack is still in the account until the player deletes it. */
   stackLeft?: string;
+  /** After a Disconnect: the account and switch it had, so 🔁 Reconnect is one press (the server kept its ExternalId). */
+  lastAccountId?: string;
+  lastCleanup?: boolean;
 }
 
 export interface DeployView {
@@ -1385,8 +1388,10 @@ export const useCity = create<CityState>()((set, get) => ({
             latestRoleVersion: e.latestRoleVersion,
             templateUrl: e.templateUrl,
             seq: (was.seq ?? 0) + 1,
-            ...(fresh ? { wantsLink: false, linkUrl: undefined, externalId: undefined, stackLeft: undefined } : {}),
-            ...(disconnected ? { unlinking: undefined, wantsLink: false, linkUrl: undefined, externalId: undefined, stackLeft: was.region ?? e.region } : {}),
+            ...(fresh ? { wantsLink: false, linkUrl: undefined, externalId: undefined, stackLeft: undefined, lastAccountId: undefined, lastCleanup: undefined } : {}),
+            ...(disconnected
+              ? { unlinking: undefined, wantsLink: false, linkUrl: undefined, externalId: undefined, stackLeft: was.region ?? e.region, lastAccountId: was.accountId, lastCleanup: was.cleanup === true }
+              : {}),
           },
         });
         // A real account's findings show at once (src/state/ladder.ts: linking unlocks care); the practice account's still drip.

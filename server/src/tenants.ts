@@ -641,12 +641,26 @@ export const createTenants = (deps: TenantDeps): TenantHub => {
       unlink: (requestId, emit) => serial(async () => {
         if (!deps.linker) return emit({ ...accountStatus(requestId), message: 'The local server uses the workshop AWS profile, so there’s no account to disconnect.' });
         // Under the account lock: a write already past its live check finishes first; none can change it afterwards.
-        await forgetUnderLock(sub, () => deps.stores.accounts.delete(sub), world.accountId);
-        replaceWorld(await makeWorld(undefined), DISCONNECTED_MESSAGE);
+        // Disconnect stops the city using the account but keeps its setup (the ExternalId and Region) as a pending record,
+        // which nothing reads with (playerAws needs a linked one): Reconnect is then a new link plus Verify, with no change
+        // in AWS (seen 24 Nov 2026: forgetting the ExternalId left the player's AWSCity role trusting a link the city no
+        // longer had). DELETE /me still forgets everything. A link another task changed meanwhile is left as it is.
+        let kept: AccountRecord | undefined;
+        await forgetUnderLock(
+          sub,
+          async () => {
+            const stored = await deps.stores.accounts.get(sub);
+            if (!stored) return;
+            const pending: AccountRecord = { status: 'pending', externalId: stored.externalId, region: stored.region };
+            if (await deps.stores.accounts.put(sub, pending, stored)) kept = pending;
+          },
+          world.accountId,
+        );
+        replaceWorld(await makeWorld(kept), DISCONNECTED_MESSAGE);
         log.info('account unlinked', { who: who(sub) });
         const status: AccountStatusEvent = {
           ...accountStatus(requestId),
-          message: 'Disconnected: AWS City no longer reads or changes your AWS account. To remove its role too, delete the AWSCity stack in CloudFormation.',
+          message: 'Disconnected: AWS City no longer reads or changes your AWS account. Reconnect any time with one press; to remove its role for good, delete the AWSCity stack in CloudFormation.',
         };
         // Every open tab of this player sees the account go (the asking socket is a subscriber too).
         broadcast([status]);

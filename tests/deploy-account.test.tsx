@@ -285,7 +285,7 @@ describe('a linked account (v2.19)', () => {
     const { container } = render(<DeployPanel />);
     // Plain words: glossary terms inside it are their own buttons, so the note is read as a whole.
     // Seen 24 Nov 2026: reconnecting needs the old stack gone first (it trusts the old link), and the card says so.
-    expect(container.querySelector('.stack-left')!.textContent).toMatch(/Disconnected\. Your AWSCity stack in Europe \(Ireland\) stays in your account, still trusting the old link\. To connect again: reconnect it in step 2 \(one command\), or delete it and start fresh\./);
+    expect(container.querySelector('.stack-left')!.textContent).toMatch(/Disconnected: the city stopped reading your account\. Reconnect any time with one press below\. To remove AWS City for good, delete the AWSCity stack in Europe \(Ireland\)/);
     fireEvent.click(screen.getByRole('button', { name: 'Open the AWSCity stack ↗' }));
     expect(rt.openUrl).toHaveBeenCalledWith(stacksUrl('eu-west-1'));
   });
@@ -326,43 +326,73 @@ describe('a linked account (v2.19)', () => {
     expect(screen.getByText('Tell us your account number (12 digits): this links the role')).toBeTruthy();
   });
 
-  // Asked for on 24 Nov 2026: "too much information, bring back one click". One button opens AWS ready to go; the
-  // account number is read from the open console; one button finishes.
-  it('one-click connect: one button makes the link and opens AWS; the account comes from the console; Finish connecting verifies', () => {
-    useCity.setState({ consoleAccount: undefined, account: { linked: false } });
+  // Asked for on 24 Nov 2026: "one click, no stack, no Region". Connect verifies at once (an account already set up links
+  // with no AWS page); only an account without AWS City's role opens AWS's one approval page.
+  it('Connect: an account already set up links in one press, with no AWS page and no Region to pick', () => {
+    useCity.setState({ consoleAccount: '047463438585', account: { linked: false } });
     const { rerender } = render(<DeployPanel />);
-    expect((screen.getByLabelText('Region for AWS City’s role') as HTMLSelectElement).value).toBe('eu-west-2');
+    expect(screen.queryByLabelText('Region for AWS City’s role')).toBeNull();
+    expect(screen.getByText(/Connects in Europe \(London\), the city you’re in/)).toBeTruthy();
+    expect((screen.getByLabelText('Your AWS account number') as HTMLInputElement).value).toBe('047463438585');
     fireEvent.click(screen.getByLabelText(/Allow the agents to change things I made/));
     fireEvent.click(screen.getByRole('button', { name: '🔗 Connect your AWS account' }));
     expect(rt.linkAccount).toHaveBeenLastCalledWith('eu-west-2', { allowFixes: false, allowCleanup: true });
-    expect(rt.openUrl).not.toHaveBeenCalled();
-    // The link lands: AWS opens by itself, and the three finish lines show.
     act(() => useCity.getState().patchAccount({ linkUrl: LINK, externalId: 'abcdefghijklmnop1234', linkRegion: 'eu-west-2' }));
     rerender(<DeployPanel />);
-    expect(rt.openUrl).toHaveBeenCalledWith(LINK);
-    const finish = screen.getByRole('list', { name: 'Finish connecting' });
-    expect(finish.textContent).toMatch(/ConnectsPlayer: Player u1/);
-    expect(finish.textContent).toMatch(/press Create stack/);
-    // The console the player has open says which account: filled in, then one press.
-    act(() => useCity.setState({ consoleAccount: '047463438585' }));
-    rerender(<DeployPanel />);
-    expect((screen.getByLabelText('Your AWS account number') as HTMLInputElement).value).toBe('047463438585');
-    fireEvent.click(screen.getByRole('button', { name: '✅ Finish connecting' }));
     expect(rt.verifyAccount).toHaveBeenLastCalledWith('047463438585');
-    // A stack from before: reconnect it with the one command instead.
-    fireEvent.click(screen.getByRole('button', { name: 'Reconnect it instead' }));
-    expect(within(finish).getByRole('list', { name: 'Reconnect the AWSCity stack you have' })).toBeTruthy();
-    // Start over goes back to the button.
+    expect(rt.openUrl).not.toHaveBeenCalled();
+  });
+
+  it('Connect, the first time in an account: verify can’t use a role yet, so AWS’s one approval page opens; then Connect now', () => {
+    useCity.setState({ consoleAccount: '047463438585', account: { linked: false } });
+    const { rerender } = render(<DeployPanel />);
+    fireEvent.click(screen.getByRole('button', { name: '🔗 Connect your AWS account' }));
+    act(() => useCity.getState().patchAccount({ linkUrl: LINK, externalId: 'abcdefghijklmnop1234', linkRegion: 'eu-west-2' }));
+    rerender(<DeployPanel />);
+    act(() => useCity.getState().patchAccount({ error: 'I couldn’t use the AWSCity role in 047463438585 (eu-west-2).' }));
+    rerender(<DeployPanel />);
+    expect(rt.openUrl).toHaveBeenCalledWith(LINK);
+    expect(useCity.getState().account.error).toBeUndefined();
+    const steps = screen.getByRole('list', { name: 'Approve AWS City in your AWS account' });
+    expect(steps.textContent).toMatch(/First time in this account: AWS asks you to approve AWS City once/);
+    expect(steps.textContent).toMatch(/ConnectsPlayer: Player u1/);
+    rt.verifyAccount.mockClear();
+    fireEvent.click(within(steps).getByRole('button', { name: '✅ Connect now' }));
+    expect(rt.verifyAccount).toHaveBeenLastCalledWith('047463438585');
     fireEvent.click(screen.getByRole('button', { name: 'Start over' }));
     expect(screen.getByRole('button', { name: '🔗 Connect your AWS account' })).toBeTruthy();
   });
 
-  it('one-click connect never opens a link it didn’t ask for (another tab’s, or one from before)', () => {
-    useCity.setState({ account: { linked: false } });
+  it('Connect with no account number known opens AWS’s approval page straight away', () => {
+    useCity.setState({ consoleAccount: undefined, account: { linked: false } });
+    const { rerender } = render(<DeployPanel />);
+    fireEvent.click(screen.getByRole('button', { name: '🔗 Connect your AWS account' }));
+    act(() => useCity.getState().patchAccount({ linkUrl: LINK, externalId: 'abcdefghijklmnop1234' }));
+    rerender(<DeployPanel />);
+    expect(rt.openUrl).toHaveBeenCalledWith(LINK);
+    expect(rt.verifyAccount).not.toHaveBeenCalled();
+  });
+
+  // Seen 24 Nov 2026: after a Disconnect, reconnecting needed the AWS role changed. The server now keeps the setup, so
+  // Reconnect is one press: a new link (the same ExternalId), then Verify with the account it had.
+  it('after a Disconnect, 🔁 Reconnect is one press: a link in that Region with the switch it had, then Verify, no AWS page', () => {
+    useCity.setState({ consoleAccount: undefined, account: { linked: false, stackLeft: 'us-west-2', lastAccountId: '047463438585', lastCleanup: true } });
+    const { rerender } = render(<DeployPanel />);
+    fireEvent.click(screen.getByRole('button', { name: '🔁 Reconnect AWSCity-8585 (0474-6343-8585)' }));
+    expect(rt.linkAccount).toHaveBeenLastCalledWith('us-west-2', { allowFixes: false, allowCleanup: true });
+    act(() => useCity.getState().patchAccount({ linkUrl: LINK, externalId: 'abcdefghijklmnop1234', linkRegion: 'us-west-2' }));
+    rerender(<DeployPanel />);
+    expect(rt.verifyAccount).toHaveBeenLastCalledWith('047463438585');
+    expect(rt.openUrl).not.toHaveBeenCalled();
+  });
+
+  it('Connect never acts on a link it didn’t ask for (another tab’s, or one from before)', () => {
+    useCity.setState({ consoleAccount: '047463438585', account: { linked: false } });
     const { rerender } = render(<DeployPanel />);
     act(() => useCity.getState().patchAccount({ linkUrl: LINK, externalId: 'abcdefghijklmnop1234' }));
     rerender(<DeployPanel />);
     expect(rt.openUrl).not.toHaveBeenCalled();
+    expect(rt.verifyAccount).not.toHaveBeenCalled();
   });
 
   it('the local server has no Disconnect (it reads the developer’s own account)', () => {

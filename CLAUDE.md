@@ -306,8 +306,11 @@ When a change touches a decision, update its entry and run its Proof.
   test/hosted.test.ts -t "MFA|me/mfa|30 minutes|auth.renew"` (includes "MFA step-up for writes"),
   `npx vitest run tests/auth.test.ts tests/ui-logic.test.ts tests/runtime-session.test.ts tests/server-backend.test.ts tests/link-steps.test.tsx`, `cd infra && npm test`.
 - **A linked account can be disconnected, notices a deleted stack, and upgrades its role** (contract v2.19). `account.unlink`
-  needs no MFA (taking access away): `AccountStore.delete` (files or DynamoDB `USER#<sub> ACCOUNT`), an unlinked world, the
-  poller stopped, `account.status {linked: false}` to every tab. Unlink and DELETE /me forget the record holding that AWS
+  needs no MFA (taking access away): the record goes back to pending, keeping only its ExternalId and Region (nothing reads
+  with a pending record: `playerAws` needs a linked one), so Reconnect is a new link (the same ExternalId, `link()`) plus
+  Verify with no change in AWS (seen 24 Nov 2026: forgetting the ExternalId left the player's AWSCity role trusting a link
+  the city no longer had); DELETE /me still forgets everything. Then an unlinked world, the poller stopped,
+  `account.status {linked: false}` to every tab. Unlink and DELETE /me forget the record holding that AWS
   account's lock (`forgetUnderLock` in `server/src/tenants.ts`; no account id: at once), so a write already past `live()` on any
   task finishes first and once they return nothing more changes; a DELETE /me that fails (the lock timed out after ~36 s, a
   store error: a 500) rebuilds the city from the stored record instead of leaving it retired. Replacing a world retires the old one (`World.retired`, an
@@ -389,14 +392,16 @@ When a change touches a decision, update its entry and run its Proof.
   Approve, on or off. Proof: `cd server && npx vitest run test/player-role.test.ts test/guard.test.ts test/service.test.ts test/hosted.test.ts -t "AllowCleanup|cleanup|player made|switch|v6"`,
   `npx vitest run tests/deploy-account.test.tsx -t "change things you made|AllowCleanup|older than v6"`, and on a real
   account `cd infra && AWS_PROFILE=aws-city node scripts/check-player-role.mjs --account <id> --assume <role> [--cleanup]`.
-- **Connecting is one click, then Finish** (asked for on 24 Nov 2026: "too much information, bring back one click";
-  `quickConnect` in `src/ui/DeployPanel.tsx`, hosted unlinked players): the Region (the city's by default) and the two
-  choices (change things I made: AllowCleanup; small fixes: AllowFixes), then 🔗 Connect your AWS account makes the setup
-  link and opens AWS by itself when that link lands (never a link another tab or an earlier press asked for); there the
-  player presses Create stack (only they can approve a role in their account); then ✅ Finish connecting verifies with the
-  account number read from the open console (`consoleAccount`, editable). "Reconnect it instead" offers the one command
-  for a stack from before; the three steps below stay under "Prefer step by step?"; the demo keeps its own card.
-  Proof: `npx vitest run tests/deploy-account.test.tsx -t "one-click connect"`.
+- **Connecting is one press, and Reconnect after a Disconnect is one press** (asked for on 24 Nov 2026: "one click, no
+  stack, no Region"; `quickConnect` in `src/ui/DeployPanel.tsx`, hosted unlinked players). The card: the account number
+  (read from the open console, `consoleAccount`, editable), the two choices (change things I made: AllowCleanup; small
+  fixes: AllowFixes) and 🔗 Connect your AWS account, in the city's Region (no picker on it). The press makes the setup
+  link; when that link lands (only a link this press asked for) the city verifies at once: an account that already has
+  AWS City's role links with no AWS page; when verify can't use a role (or no number is known) AWS's one approval page
+  opens ("First time in this account…", Create stack, then ✅ Connect now; the raw error is replaced). Disconnect keeps
+  the setup (below), so after it the card offers 🔁 Reconnect <account>: a link in that Region with the switch it had
+  (`lastAccountId`/`lastCleanup` beside `stackLeft`), then Verify. The three steps stay under "Prefer step by step?";
+  the demo keeps its own card. Proof: `npx vitest run tests/deploy-account.test.tsx -t "Connect|Reconnect"`.
 - **The player's own AWS account: easy to find, linked where they choose, easy to let go** (contract v2.19; rules pure in
   `src/state/account.ts`, `src/ui/Account.tsx`, the card in `src/ui/DeployPanel.tsx`). On the hosted server (and on any build that can sign in, once signed in: `hosted || signedIn && canSignIn()` in
   `src/ui/Hud.tsx`, so Sign out is where players look first) ⋯ → Account

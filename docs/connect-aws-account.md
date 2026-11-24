@@ -129,6 +129,12 @@ The card shows "Small fixes: off" with **Turn small fixes on**. In CloudFormatio
 fixes, and changes nothing. City care also says up front when fixes are off, so you aren't asked to approve something
 that can't run.
 
+### Disconnect and reconnect
+
+**Disconnect** stops AWS City reading or changing your account at once. It keeps the setup (your AWSCity role and its
+ExternalId), so **🔁 Reconnect** brings it back with one press and no change in AWS. To remove AWS City for good, delete
+the `AWSCity` stack in CloudFormation as well.
+
 ### Let the city change things you made (on or off)
 
 Off by default: the agents look at everything in your account but change only what the city built. The card's **Let the
