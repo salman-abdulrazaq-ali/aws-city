@@ -371,7 +371,10 @@ export function DeployPanel() {
   /** Step 2 done: the player says the AWSCity stack is created, so step 3 (the account number) opens. */
   const [stackMade, setStackMade] = useState(false);
   // Linking again after a Disconnect: reconnect the AWSCity stack still in the account, or delete it and start fresh.
-  const [stackPath, setStackPath] = useState<'reconnect' | 'fresh'>('reconnect');
+  // Step 2 asks first: make the AWSCity stack, or reconnect one already in the account (asked for on 24 Nov 2026: the
+  // reconnect was folded away and missed). After a Disconnect here it starts on reconnect.
+  const [stackChoice, setStackPath] = useState<'reconnect' | 'fresh'>();
+  const stackPath = stackChoice ?? (account.stackLeft ? 'reconnect' : 'fresh');
   const [linkCopied, copyLink] = useCopy();
   const where = linkRegion(account.linkUrl);
   const findings = useCity((s) => s.findings);
@@ -554,18 +557,18 @@ export function DeployPanel() {
               The stack page will say <b>ConnectsPlayer: {linkFor}</b>. Don’t create the stack if that isn’t you.
             </p>
           )}
-          {/* Asked for on 24 Nov 2026: after a Disconnect, reconnect the stack you have, or delete it and start fresh. */}
-          {account.stackLeft && kind !== 'mock' && (
-            <div className="seg stack-path" role="group" aria-label={`Your AWSCity stack in ${regionName(account.stackLeft)}`}>
-              <button aria-pressed={stackPath === 'reconnect'} onClick={() => setStackPath('reconnect')}>
-                🔁 Reconnect the stack you have
-              </button>
+          {/* Asked for on 24 Nov 2026: first time, or reconnect the stack you already have (after a Disconnect: or delete it). */}
+          {kind !== 'mock' && (
+            <div className="seg stack-path" role="group" aria-label={`Your AWSCity stack in ${setupRegionName}`}>
               <button aria-pressed={stackPath === 'fresh'} onClick={() => setStackPath('fresh')}>
-                🧹 Delete it and start fresh
+                {account.stackLeft ? '🧹 Delete it and start fresh' : '🆕 Create it (first time)'}
+              </button>
+              <button aria-pressed={stackPath === 'reconnect'} onClick={() => setStackPath('reconnect')}>
+                {account.stackLeft ? '🔁 Reconnect the stack you have' : '🔁 I already have an AWSCity stack here'}
               </button>
             </div>
           )}
-          {account.stackLeft && kind !== 'mock' && stackPath === 'reconnect' ? (
+          {kind !== 'mock' && stackPath === 'reconnect' ? (
             <ReconnectStack onDone={() => setStackMade(true)} />
           ) : (
           <>
@@ -614,12 +617,6 @@ export function DeployPanel() {
           {kind !== 'mock' && <p className="muted">Signed in to AWS in another browser? Copy the link and open it there.</p>}
           </>
           )}
-          {!account.stackLeft && kind !== 'mock' && account.linkUrl && (
-            <details className="why">
-              <summary>Already have an AWSCity stack in {setupRegionName} from before?</summary>
-              <ReconnectStack onDone={() => setStackMade(true)} />
-            </details>
-          )}
           <p className="muted small">This link works for a day. After that, get a new one: the role you made keeps working.</p>
           <p className="muted">
             Hosting AWS City yourself? Use a different AWS account from the one it runs in. The city refuses that one, so it can never act inside the account
@@ -633,7 +630,7 @@ export function DeployPanel() {
             </div>
           </details>
         </Step>
-        <Step n={3} state={account.linkUrl && stackMade ? 'now' : 'todo'} title="Tell us your account number (12 digits)">
+        <Step n={3} state={account.linkUrl && stackMade ? 'now' : 'todo'} title="Tell us your account number (12 digits): this links the role">
           <p className="muted">In the AWS console, click your name at the top right: it’s the Account ID.</p>
           <form
             className="prompt-row"

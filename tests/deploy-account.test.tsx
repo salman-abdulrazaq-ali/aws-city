@@ -312,11 +312,18 @@ describe('a linked account (v2.19)', () => {
     expect(screen.queryByRole('list', { name: 'Reconnect the AWSCity stack you have' })).toBeNull();
   });
 
-  it('without a Disconnect here, reconnecting a stack from before is offered folded', () => {
+  it('without a Disconnect here, step 2 still asks: Create it (first time) by default, or I already have one (reconnect)', () => {
     useCity.setState({ account: { linked: false, wantsLink: true, linkRegion: 'us-west-2', linkUrl: LINK, externalId: 'abcdefghijklmnop1234' } });
     render(<DeployPanel />);
-    expect(screen.queryByRole('group', { name: /Your AWSCity stack in/ })).toBeNull();
-    expect(screen.getByText(/Already have an AWSCity stack in .* from before\?/)).toBeTruthy();
+    const choice = screen.getByRole('group', { name: 'Your AWSCity stack in US West (Oregon)' });
+    expect(within(choice).getByRole('button', { name: '🆕 Create it (first time)' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Open CloudFormation ↗' })).toBeTruthy();
+    expect(screen.queryByRole('list', { name: 'Reconnect the AWSCity stack you have' })).toBeNull();
+    fireEvent.click(within(choice).getByRole('button', { name: '🔁 I already have an AWSCity stack here' }));
+    expect(within(screen.getByRole('list', { name: 'Reconnect the AWSCity stack you have' })).getByText(/update-stack/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Open CloudFormation ↗' })).toBeNull();
+    // Step 3 says it's where the role is linked.
+    expect(screen.getByText('Tell us your account number (12 digits): this links the role')).toBeTruthy();
   });
 
   it('the local server has no Disconnect (it reads the developer’s own account)', () => {
