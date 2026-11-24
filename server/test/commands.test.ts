@@ -17,6 +17,22 @@ describe('parseCommand: a plain request in the player’s own words', () => {
     expect(parseCommand('can you terminate the server i-0123456789abcdef0?')).toEqual({ ok: true, name: 'terminate_instance', input: { instanceId: 'i-0123456789abcdef0' } });
   });
 
+  // Seen 24 Nov 2026: "delete my bucket bucket x" went to the AI, which asked the player to type Approve in chat.
+  it('"my", "this" and a doubled noun still read as the plain request (straight to the card)', () => {
+    expect(parseCommand('delete my bucket finaldemotestsalman444555')).toEqual({ ok: true, name: 'delete_bucket', input: { name: 'finaldemotestsalman444555' } });
+    expect(parseCommand('delete my bucket bucket finaldemotestsalman444555')).toEqual({ ok: true, name: 'delete_bucket', input: { name: 'finaldemotestsalman444555' } });
+    expect(parseCommand('Remove this S3 bucket called "photos-1"')).toEqual({ ok: true, name: 'delete_bucket', input: { name: 'photos-1' } });
+    // A bucket actually named "bucket" still parses.
+    expect(parseCommand('delete bucket bucket')).toEqual({ ok: true, name: 'delete_bucket', input: { name: 'bucket' } });
+    expect(parseCommand('delete my table city-scores')).toEqual({ ok: true, name: 'delete_table', input: { name: 'city-scores' } });
+    expect(parseCommand('stop my server i-0123456789abcdef0')).toEqual({ ok: true, name: 'stop_instance', input: { instanceId: 'i-0123456789abcdef0' } });
+    expect(parseCommand('terminate this instance i-0123456789abcdef0')).toEqual({ ok: true, name: 'terminate_instance', input: { instanceId: 'i-0123456789abcdef0' } });
+    expect(parseCommand('create my bucket called holiday-123')).toEqual({ ok: true, name: 'create_bucket', input: { suffix: 'holiday-123' } });
+    // Still one plain request only.
+    expect(parseCommand('delete my bucket x1y2z3 and then my table city-a')).toBeUndefined();
+    expect(parseCommand('delete my bucket')).toBeUndefined();
+  });
+
   it('"start" an instance id is never read as launching a server named after it', () => {
     expect(parseCommand('start instance i-0123456789abcdef0')?.name).toBe('start_instance');
     expect(parseCommand('start a server called web')).toBeUndefined();
