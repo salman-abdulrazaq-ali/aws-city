@@ -389,6 +389,14 @@ When a change touches a decision, update its entry and run its Proof.
   Approve, on or off. Proof: `cd server && npx vitest run test/player-role.test.ts test/guard.test.ts test/service.test.ts test/hosted.test.ts -t "AllowCleanup|cleanup|player made|switch|v6"`,
   `npx vitest run tests/deploy-account.test.tsx -t "change things you made|AllowCleanup|older than v6"`, and on a real
   account `cd infra && AWS_PROFILE=aws-city node scripts/check-player-role.mjs --account <id> --assume <role> [--cleanup]`.
+- **Connecting is one click, then Finish** (asked for on 24 Nov 2026: "too much information, bring back one click";
+  `quickConnect` in `src/ui/DeployPanel.tsx`, hosted unlinked players): the Region (the city's by default) and the two
+  choices (change things I made: AllowCleanup; small fixes: AllowFixes), then 🔗 Connect your AWS account makes the setup
+  link and opens AWS by itself when that link lands (never a link another tab or an earlier press asked for); there the
+  player presses Create stack (only they can approve a role in their account); then ✅ Finish connecting verifies with the
+  account number read from the open console (`consoleAccount`, editable). "Reconnect it instead" offers the one command
+  for a stack from before; the three steps below stay under "Prefer step by step?"; the demo keeps its own card.
+  Proof: `npx vitest run tests/deploy-account.test.tsx -t "one-click connect"`.
 - **The player's own AWS account: easy to find, linked where they choose, easy to let go** (contract v2.19; rules pure in
   `src/state/account.ts`, `src/ui/Account.tsx`, the card in `src/ui/DeployPanel.tsx`). On the hosted server (and on any build that can sign in, once signed in: `hosted || signedIn && canSignIn()` in
   `src/ui/Hud.tsx`, so Sign out is where players look first) ⋯ → Account

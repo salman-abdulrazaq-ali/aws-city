@@ -326,6 +326,45 @@ describe('a linked account (v2.19)', () => {
     expect(screen.getByText('Tell us your account number (12 digits): this links the role')).toBeTruthy();
   });
 
+  // Asked for on 24 Nov 2026: "too much information, bring back one click". One button opens AWS ready to go; the
+  // account number is read from the open console; one button finishes.
+  it('one-click connect: one button makes the link and opens AWS; the account comes from the console; Finish connecting verifies', () => {
+    useCity.setState({ consoleAccount: undefined, account: { linked: false } });
+    const { rerender } = render(<DeployPanel />);
+    expect((screen.getByLabelText('Region for AWS City’s role') as HTMLSelectElement).value).toBe('eu-west-2');
+    fireEvent.click(screen.getByLabelText(/Allow the agents to change things I made/));
+    fireEvent.click(screen.getByRole('button', { name: '🔗 Connect your AWS account' }));
+    expect(rt.linkAccount).toHaveBeenLastCalledWith('eu-west-2', { allowFixes: false, allowCleanup: true });
+    expect(rt.openUrl).not.toHaveBeenCalled();
+    // The link lands: AWS opens by itself, and the three finish lines show.
+    act(() => useCity.getState().patchAccount({ linkUrl: LINK, externalId: 'abcdefghijklmnop1234', linkRegion: 'eu-west-2' }));
+    rerender(<DeployPanel />);
+    expect(rt.openUrl).toHaveBeenCalledWith(LINK);
+    const finish = screen.getByRole('list', { name: 'Finish connecting' });
+    expect(finish.textContent).toMatch(/ConnectsPlayer: Player u1/);
+    expect(finish.textContent).toMatch(/press Create stack/);
+    // The console the player has open says which account: filled in, then one press.
+    act(() => useCity.setState({ consoleAccount: '047463438585' }));
+    rerender(<DeployPanel />);
+    expect((screen.getByLabelText('Your AWS account number') as HTMLInputElement).value).toBe('047463438585');
+    fireEvent.click(screen.getByRole('button', { name: '✅ Finish connecting' }));
+    expect(rt.verifyAccount).toHaveBeenLastCalledWith('047463438585');
+    // A stack from before: reconnect it with the one command instead.
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect it instead' }));
+    expect(within(finish).getByRole('list', { name: 'Reconnect the AWSCity stack you have' })).toBeTruthy();
+    // Start over goes back to the button.
+    fireEvent.click(screen.getByRole('button', { name: 'Start over' }));
+    expect(screen.getByRole('button', { name: '🔗 Connect your AWS account' })).toBeTruthy();
+  });
+
+  it('one-click connect never opens a link it didn’t ask for (another tab’s, or one from before)', () => {
+    useCity.setState({ account: { linked: false } });
+    const { rerender } = render(<DeployPanel />);
+    act(() => useCity.getState().patchAccount({ linkUrl: LINK, externalId: 'abcdefghijklmnop1234' }));
+    rerender(<DeployPanel />);
+    expect(rt.openUrl).not.toHaveBeenCalled();
+  });
+
   it('the local server has no Disconnect (it reads the developer’s own account)', () => {
     useCity.setState({ hosted: false, account: { ...linked } });
     render(<DeployPanel />);
