@@ -5,10 +5,12 @@ import { announce } from '@/state/announce';
 import { bus } from '@/state/bus';
 import { useCity } from '@/state/store';
 import { FIRST_STEPS, fill } from '@/state/firstSteps';
-import { isTourDone, markTourDone, readPref, TIP_ASK_KEY, TIP_COPILOT_KEY, writePref } from './logic';
+import { isTourDone, markTourDone, readPref, TIP_ASK_KEY, TIP_COINS_KEY, TIP_COPILOT_KEY, writePref } from './logic';
 import { Portrait } from './Portrait';
 import { shows } from '@/state/simple';
+import { tierForXp } from '@/world/places';
 import { useFirstSteps, useQuiet } from './FirstSteps';
+import { useShieldGame } from './useDialog';
 
 // ── The quick tour (DESIGN-tutorial §5): six coach marks over the real UI for players who already know AWS ──
 
@@ -109,13 +111,39 @@ export function quickTourStops(layout: Layout, build: TourBuild, surface: Surfac
 }
 
 /**
- * Stop 1's building: S3 Lake when it's up in this city, else the first building that is (a player who skipped the first
- * steps may have none yet: then S3 Lake's lot, which the city rings all the same).
+ * Stop 1's building: one that stands built in this city (Novice or more; a building put up at level 0 is still a
+ * construction site under a crane: seen 24 Nov 2026, stop 1 rang DynamoDB Library's site). S3 Lake when it's built, else
+ * the built one nearest Kai (`near`: its distance, when the city can tell), else the first in a stable order; none built
+ * yet: Kai himself (`player`, which the city locates and flies to like a building).
  */
-export function tourBuilding(landmarks: Record<string, { discovered?: boolean }> | undefined): string {
-  const up = Object.entries(landmarks ?? {}).filter(([, l]) => l.discovered).map(([id]) => id);
-  return up.includes('s3') || !up.length ? 's3' : up[0];
+export function tourBuilding(landmarks: Record<string, { discovered?: boolean; xp?: number }> | undefined, near?: (id: string) => number | undefined): string {
+  const built = Object.entries(landmarks ?? {})
+    .filter(([, l]) => l.discovered && tierForXp(l.xp ?? 0) >= 1)
+    .map(([id]) => id);
+  if (built.includes('s3')) return 's3';
+  if (!built.length) return 'player';
+  const d = (id: string) => near?.(id) ?? Infinity;
+  return built.sort((a, b) => d(a) - d(b) || a.localeCompare(b))[0];
 }
+
+/** How far a building stands from Kai on screen, when the city shows both (bus `locate`); undefined otherwise. */
+function distanceToKai(id: string): number | undefined {
+  let kai: Box | undefined;
+  let it: Box | undefined;
+  bus.emit('locate', { id: 'player', reply: (r) => (kai = r) });
+  bus.emit('locate', { id, reply: (r) => (it = r) });
+  if (!kai || !it) return undefined;
+  return Math.hypot(it.left + it.width / 2 - (kai.left + kai.width / 2), it.top + it.height / 2 - (kai.top + kai.height / 2));
+}
+
+/**
+ * The tips the quick tour has covered, marked shown when it ends (Start exploring, End tour, Escape): the box (Ask), the
+ * Console Copilot, the Mayor's rank, the workshops, and the HUD's coins note (seen 24 Nov 2026: Workshops, Ask and the
+ * Copilot's tip came right after Start exploring, and the tab got the Mayor's tip and the coins note at once).
+ */
+const TIP_RANK_KEY = 'awscity.tip.rank';
+const TIP_WORKSHOP_KEY = 'awscity.tip.workshop';
+export const TOUR_COVERS = [TIP_ASK_KEY, TIP_COPILOT_KEY, TIP_RANK_KEY, TIP_WORKSHOP_KEY, TIP_COINS_KEY];
 
 /** A box on the page, in CSS pixels (a DOMRect fits). */
 export type Box = { top: number; left: number; width: number; height: number };
@@ -321,7 +349,9 @@ export function Tour({ layout }: { layout: Layout }) {
   const setOpen = useCity((s) => s.setTourOpen);
   const build = useCity((s): TourBuild => (s.backendKind === 'mock' ? 'demo' : s.hosted ? 'hosted' : 'local'));
   const shown = useCity((s) => s.view.name === 'city' && !s.celebration);
-  const building = useCity((s) => tourBuilding(s.progress.cities?.[s.cityRegion]?.landmarks));
+  // Stop 1's building, picked once as the tour opens (the nearest to Kai then), so the camera never chases him.
+  const [picked, setPicked] = useState<string>();
+  const building = picked ?? 's3';
   const linked = useCity((s) => s.account.linked);
   const [i, setI] = useState(0);
   const [tried, setTried] = useState(false);
@@ -344,6 +374,7 @@ export function Tour({ layout }: { layout: Layout }) {
   const end = useCallback(() => {
     const inCard = !!card.current?.contains(document.activeElement);
     markTourDone();
+    for (const key of TOUR_COVERS) writePref(key, '1');
     setOpen(false);
     setI(0);
     setTried(false);
@@ -354,12 +385,23 @@ export function Tour({ layout }: { layout: Layout }) {
   }, [setOpen]);
 
   useEffect(() => {
-    if (open) opener.current = document.activeElement;
+    if (!open) {
+      setPicked(undefined);
+      return;
+    }
+    opener.current = document.activeElement;
+    const s = useCity.getState();
+    setPicked(tourBuilding(s.progress.cities?.[s.cityRegion]?.landmarks, distanceToKai));
   }, [open]);
+
+  // The card stands over the map: its presses (Next, Start exploring) stop at it, never reaching Phaser's window
+  // listeners as a tap on the building under them (seen 24 Nov 2026: Start exploring opened AWS North Hall's card and
+  // moved the panel to the City tab). The map itself still takes every press: the tour isn't modal.
+  useShieldGame(live, card);
 
   // The building stop: the camera goes there (and rings it); again if the city's own arrival moved it meanwhile (seen
   // 24 Nov 2026 in the panel, right after the dive), but only in the stop's first seconds, never against the player.
-  const flyId = stop.id === 'building' ? building : undefined;
+  const flyId = stop.id === 'building' ? picked : undefined;
   useEffect(() => {
     if (!live || !flyId) return;
     const fly = () => bus.emit('flyTo', { id: flyId });
@@ -582,13 +624,13 @@ const TIPS: Record<TipId, { key: string; title: string; body: (layout: Layout, d
     target: '.console-btn',
   },
   rank: {
-    key: 'awscity.tip.rank',
+    key: TIP_RANK_KEY,
     title: 'You are the Mayor',
     body: () => 'Your city has a rank, from Village to Global City and on to Legendary City. Every building level and golden token raises it. Tap it to see everything you have earned.',
     target: '.rank-chip',
   },
   workshop: {
-    key: 'awscity.tip.workshop',
+    key: TIP_WORKSHOP_KEY,
     title: 'Workshops: hands on, step by step',
     body: () => 'Practise each command in the terminal here, or run it for real in AWS CloudShell. Every step grows the building.',
     target: '.workshop-list',
@@ -638,11 +680,38 @@ export function CoachTips({ layout }: { layout: Layout }) {
   useEffect(() => {
     if (onPath || tourOpen) setTip(undefined);
   }, [onPath, tourOpen]);
+  // One tip at a time: the HUD's coins note waits while one is up (src/ui/Hud.tsx CoinsTip).
+  const setTipUp = useCity((s) => s.setCoachTipUp);
+  useEffect(() => {
+    setTipUp(!!tip);
+    return () => setTipUp(false);
+  }, [tip, setTipUp]);
+
+  // Never a tip for what the player just did (seen 24 Nov 2026: "Ask for anything" right after an Ask, the Copilot's tip
+  // after using it). A task started (the box, Try it, an agent's offer; not the first steps' own practice task, which
+  // asks nothing) is the Ask tip's lesson done; a Copilot run, the Copilot's. Either one up goes.
+  const newest = useCity((s) => s.taskOrder[0]);
+  const copilotRan = useCity((s) => !!s.copilotTaskId);
+  const lastTask = useRef(newest);
+  useEffect(() => {
+    if (newest === lastTask.current) return;
+    lastTask.current = newest;
+    if (!newest || onPath) return;
+    writePref(TIP_ASK_KEY, '1');
+    setTip((t) => (t === 'ask' ? undefined : t));
+  }, [newest, onPath]);
+  useEffect(() => {
+    if (!copilotRan) return;
+    writePref(TIP_COPILOT_KEY, '1');
+    setTip((t) => (t === 'copilot' ? undefined : t));
+  }, [copilotRan]);
 
   const offer = useCallback(
     (id: TipId) => {
-      // Never over the tour, never before it (the tour comes first), never twice, never under automation.
+      // Never over the tour, never before it (the tour comes first), never twice, never under automation, never beside
+      // the HUD's coins note (one tip at a time).
       if (showing.current || tourOpen || celebrating || !allowed || !(isTourDone() || graduated) || navigator.webdriver || readPref(TIPS[id].key) === '1') return;
+      if (document.querySelector('.hud-tip')) return;
       if (!findTarget([TIPS[id].target])) return;
       writePref(TIPS[id].key, '1');
       setTip(id);

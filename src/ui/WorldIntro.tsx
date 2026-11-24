@@ -93,8 +93,9 @@ export function WorldIntro({ docked = false }: { docked?: boolean }) {
         </button>
         <span className="world-intro-note">{FIRST_STEPS.map.note}</span>
       </div>
+      {/* A real secondary button (graphite), never a dim link (seen 24 Nov 2026): the amber stays the start's. */}
       <button
-        className="btn ghost tiny"
+        className="btn"
         title="The whole game: every tab and area open from the start (Everything, not Simple), and the deeper text shown first. Play the first steps any time from ⋯."
         onClick={() => {
           setPref('builder', true);

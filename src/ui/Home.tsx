@@ -1,4 +1,4 @@
-import { agentName, useCity } from '@/state/store';
+import { agentName, useCity, type TaskView } from '@/state/store';
 import { actionText, chipLabel, whereOf, nextAction, readyToUpgrade, shiftSummary, type NextAction } from '@/state/next';
 import { weeklyChallenge } from '@/state/events';
 import { questById, QUESTS } from '@/world/content';
@@ -375,6 +375,16 @@ function Ring({ done, of }: { done: number; of: number }) {
   );
 }
 
+/**
+ * The agent whose latest task is finished, no step still to come, for Connie's "Sally sorted that for you": never while
+ * that task (or a newer one) still runs, on the strength of an older one (seen 24 Nov 2026: said while Sally was on
+ * step 6/6). `order` is newest first (the store's taskOrder).
+ */
+export function helpedBy(tasks: Record<string, Pick<TaskView, 'status' | 'steps' | 'agentId'>>, order: string[]): string | undefined {
+  const t = tasks[order[0]];
+  return t?.status === 'done' && !t.steps.some((st) => st.status === 'pending' || st.status === 'running') ? t.agentId : undefined;
+}
+
 /** Who speaks for the next action, and what they say (the button itself says what happens). */
 function voiceOf(a: NextAction, p: Progress, helped?: string): { who: string; line: string; quest?: { title: string; at: number; of: number; color?: number } } {
   switch (a.kind) {
@@ -420,7 +430,7 @@ function voiceOf(a: NextAction, p: Progress, helped?: string): { who: string; li
 /** The one big button: its label is exactly what happens, and it says when it opens another tab. */
 function NextButton({ action, calm }: { action: NextAction; calm: boolean }) {
   const progress = useCity((s) => s.progress);
-  const lastDone = useCity((s) => s.taskOrder.map((id) => s.tasks[id]).find((t) => t?.status === 'done')?.agentId);
+  const lastDone = useCity((s) => helpedBy(s.tasks, s.taskOrder));
   const v = voiceOf(action, progress, lastDone && agentName(lastDone));
   const where = whereOf(action);
   return (

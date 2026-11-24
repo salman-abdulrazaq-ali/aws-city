@@ -6,7 +6,7 @@
 // tip goes when the first steps start, the citizen names the stars it really added, and bubbles wait behind a
 // celebration card.
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Progress } from '@/backend/contract';
 
 vi.mock('@/ui/Portrait', () => ({ Portrait: () => <span data-testid="portrait" />, agentColor: () => undefined }));
@@ -28,13 +28,14 @@ vi.mock('@/app/runtime', async (importOriginal) => ({ ...(await importOriginal<t
 const { useCity } = await import('@/state/store');
 const { bus } = await import('@/state/bus');
 const { FIRST_STEPS } = await import('@/state/firstSteps');
-const { Tour, CoachTips, quickTourStops, placeCoach, overlaps, ALWAYS_CLEAR, MORE_BUTTON, tourBuilding, TOUR_FALLBACK_MS, startQuickTourAfterDive } = await import('@/ui/Tour');
+const { Tour, CoachTips, quickTourStops, placeCoach, overlaps, ALWAYS_CLEAR, MORE_BUTTON, tourBuilding, TOUR_FALLBACK_MS, TOUR_COVERS, startQuickTourAfterDive } = await import('@/ui/Tour');
 const { Hud } = await import('@/ui/Hud');
 const { App } = await import('@/app/App');
 const { freshLines, HELD_LINE_FRESH_MS } = await import('@/game/calm');
 const { RequestCard } = await import('@/ui/RequestCard');
 const { THANKS_STARS } = await import('@/state/requests');
-const { readPref, TIP_ASK_KEY } = await import('@/ui/logic');
+const { readPref, TIP_ASK_KEY, TIP_COINS_KEY, TIP_COPILOT_KEY } = await import('@/ui/logic');
+const { helpedBy } = await import('@/ui/Home');
 
 const REGION = 'us-west-2';
 /** A player who already knows AWS: the first steps skipped, Everything on. */
@@ -67,6 +68,8 @@ beforeEach(() => {
     selected: undefined,
     build: undefined,
     tourOpen: false,
+    coachTipUp: false,
+    copilotTaskId: undefined,
     prefs: { chatter: false, stage: 'compact', region: REGION, firstSteps: 'skipped', builder: true, simple: false },
   } as never);
 });
@@ -133,11 +136,36 @@ describe('the six stops', () => {
     expect(quickTourStops('panel', 'demo', 'sidepanel', 's3', true).slice(0, 5)).toEqual(quickTourStops('panel', 'demo', 'sidepanel').slice(0, 5));
   });
 
-  it('stop 1 points at S3 Lake, or a building already up when S3 Lake isn’t (its lot when none is)', () => {
-    expect(tourBuilding({ s3: { discovered: true }, ec2: { discovered: true } })).toBe('s3');
-    expect(tourBuilding({ ec2: { discovered: true }, s3: { discovered: false } })).toBe('ec2');
-    expect(tourBuilding(undefined)).toBe('s3');
+  // Seen 24 Nov 2026: stop 1 rang DynamoDB Library, a construction site under a crane (put up, level 0).
+  it('stop 1 points at a built landmark: S3 Lake when built, else the built one nearest Kai, else Kai', () => {
+    expect(tourBuilding({ s3: { discovered: true, xp: 12 }, ec2: { discovered: true, xp: 50 } })).toBe('s3');
+    // S3 Lake (or DynamoDB) put up but still a site: never rung.
+    expect(tourBuilding({ dynamodb: { discovered: true, xp: 0 }, s3: { discovered: true, xp: 3 }, ec2: { discovered: true, xp: 10 } })).toBe('ec2');
+    expect(tourBuilding({ s3: { discovered: false, xp: 0 }, ec2: { discovered: true, xp: 10 } })).toBe('ec2');
+    // Two built: the nearer to Kai when the city can tell, else a stable order.
+    const two = { lambda: { discovered: true, xp: 40 }, ec2: { discovered: true, xp: 10 } };
+    expect(tourBuilding(two)).toBe('ec2');
+    expect(tourBuilding(two, (id) => (id === 'lambda' ? 50 : 300))).toBe('lambda');
+    expect(tourBuilding(two, (id) => (id === 'lambda' ? 50 : undefined))).toBe('lambda');
+    // None built yet: Kai himself.
+    expect(tourBuilding({ dynamodb: { discovered: true, xp: 0 } })).toBe('player');
+    expect(tourBuilding(undefined)).toBe('player');
     expect(quickTourStops('panel', 'demo', 'sidepanel', 'ec2')[0].targets).toEqual(['@ec2', '.stage']);
+    expect(quickTourStops('panel', 'demo', 'sidepanel', 'player')[0].targets).toEqual(['@player', '.stage']);
+  });
+
+  it('the tour flies to the built one nearest Kai, picked as it opens', () => {
+    useCity.setState({ progress: { ...builder, cities: { [REGION]: { landmarks: { dynamodb: { discovered: true, xp: 0 }, lambda: { discovered: true, xp: 40 }, ec2: { discovered: true, xp: 10 } } } } } } as never);
+    const at = (left: number) => ({ top: 100, left, width: 40, height: 40 });
+    const where: Record<string, ReturnType<typeof at>> = { player: at(100), lambda: at(140), ec2: at(380), dynamodb: at(110) };
+    const offLocate = bus.on('locate', ({ id, reply }) => reply(where[id]));
+    const fly = vi.fn();
+    const off = bus.on('flyTo', fly);
+    render(<Tour layout="panel" />);
+    act(() => useCity.getState().setTourOpen(true));
+    expect(fly.mock.calls.map(([e]) => e.id)).toEqual(['lambda']);
+    off();
+    offLocate();
   });
 
   for (const layout of ['panel', 'full'] as const) {
@@ -275,6 +303,9 @@ describe('the coach engine', () => {
     }
     expect(useCity.getState().tourOpen).toBe(false);
     expect(readPref('awscity.tourDone')).toBe('1');
+    // What the tour covered never comes back as a tip: Ask, the Copilot, the Mayor, Workshops, the coins note.
+    expect(TOUR_COVERS).toEqual([TIP_ASK_KEY, TIP_COPILOT_KEY, 'awscity.tip.rank', 'awscity.tip.workshop', TIP_COINS_KEY]);
+    for (const key of TOUR_COVERS) expect(readPref(key), key).toBe('1');
   });
 
   it('is not modal: no scrim, no aria-modal, Tab leaves it, the map stays pressable and focusable', () => {
@@ -313,6 +344,7 @@ describe('the coach engine', () => {
     fireEvent.keyDown(card(), { key: 'Escape' });
     expect(useCity.getState().tourOpen).toBe(false);
     expect(screen.queryByRole('dialog')).toBeNull();
+    for (const key of TOUR_COVERS) expect(readPref(key), key).toBe('1');
   });
 
   it('steps aside while the city sleeps or a celebration card is up, and comes back where it was', () => {
@@ -610,5 +642,177 @@ describe('the three verify fixes', () => {
     ]);
     expect(freshLines(held, HELD_LINE_FRESH_MS + 1_000).map(([k]) => k)).toEqual(['sally']);
     expect(freshLines(held, 6_000).map(([k]) => k)).toEqual(['lena', 'sally']);
+  });
+});
+
+// Group 3 (24 Nov 2026, an experienced player's playtest): what happens once the tour ends.
+describe('after the tour', () => {
+  // jsdom has no scrolling: a tab pressed scrolls its body to the top (App's setTab).
+  beforeAll(() => void (Element.prototype.scrollTo ??= () => {}));
+  /** A press the way Phaser hears it: its window listeners take presses outside the canvas as a tap on the map below. */
+  const phaserPicks = (id: string) => {
+    const pick = () => {
+      useCity.getState().select(id);
+      bus.emit('select', { id });
+    };
+    window.addEventListener('mouseup', pick);
+    return () => window.removeEventListener('mouseup', pick);
+  };
+  const press = (el: HTMLElement) => {
+    fireEvent.mouseDown(el);
+    fireEvent.mouseUp(el);
+    fireEvent.click(el);
+  };
+
+  // Seen 24 Nov 2026: Start exploring (over the map) opened AWS North Hall's card and moved the panel to the City tab.
+  it('Start exploring leaves the player on their tab (Deploy), with no building’s card opened under the card', () => {
+    const offPick = phaserPicks('northhall');
+    render(<App layout="panel" />);
+    act(() => useCity.getState().setTourOpen(true));
+    for (let k = 0; k < 5; k++) press(within(card()).getByRole('button', { name: 'Next' }));
+    expect(within(card()).getByRole('heading').textContent).toBe(TITLES[5]);
+    fireEvent.click(document.getElementById('tab-deploy')!);
+    expect(document.getElementById('tab-deploy')!.getAttribute('aria-selected')).toBe('true');
+    press(within(card()).getByRole('button', { name: 'Start exploring' }));
+    expect(useCity.getState().tourOpen).toBe(false);
+    expect(document.getElementById('tab-deploy')!.getAttribute('aria-selected')).toBe('true');
+    expect(useCity.getState().selected).toBeUndefined();
+    expect(document.querySelector('.back-link')).toBeNull();
+    offPick();
+  });
+
+  it('End tour and Next stop at the card too; a press on the map itself still reaches the city', () => {
+    const picked = vi.fn();
+    const onUp = () => picked();
+    window.addEventListener('mouseup', onUp);
+    render(
+      <>
+        <div data-testid="map" />
+        <Tour layout="full" />
+      </>,
+    );
+    act(() => useCity.getState().setTourOpen(true));
+    press(within(card()).getByRole('button', { name: 'Next' }));
+    expect(picked).not.toHaveBeenCalled();
+    fireEvent.mouseUp(screen.getByTestId('map'));
+    expect(picked).toHaveBeenCalledTimes(1);
+    press(within(card()).getByRole('button', { name: 'End tour' }));
+    expect(picked).toHaveBeenCalledTimes(1);
+    expect(useCity.getState().tourOpen).toBe(false);
+    window.removeEventListener('mouseup', onUp);
+  });
+
+  describe('coach tips: none for what the tour covered or the player just did, and one at a time', () => {
+    beforeEach(() => {
+      localStorage.setItem('awscity.tourDone', '1');
+      Object.defineProperty(navigator, 'webdriver', { configurable: true, get: () => false });
+    });
+    afterEach(() => void delete (navigator as { webdriver?: boolean }).webdriver);
+    const page = (layout: 'panel' | 'full' = 'full') => {
+      const r = render(
+        <>
+          <form className="composer">
+            <input aria-label="Ask" />
+          </form>
+          <CoachTips layout={layout} />
+        </>,
+      );
+      (r.container.querySelector('.composer') as HTMLElement).getBoundingClientRect = () => ({ top: 500, left: 10, width: 300, height: 40, right: 310, bottom: 540, x: 10, y: 500, toJSON: () => ({}) });
+      return r;
+    };
+    const task = (id: string) => ({ taskId: id, prompt: '', agentId: 's3', steps: [{ text: 'Walk there', status: 'running' }], status: 'running' });
+
+    it('a task started (the box, Try it, an agent’s offer) is the Ask tip’s lesson done: it never comes after', () => {
+      page();
+      act(() => useCity.setState({ tasks: { t1: task('t1') }, taskOrder: ['t1'] } as never));
+      expect(readPref(TIP_ASK_KEY)).toBe('1');
+      fireEvent.focusIn(screen.getByLabelText('Ask'));
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+
+    it('a Copilot run is the Copilot tip’s lesson done', () => {
+      page('panel');
+      act(() => useCity.setState({ copilotTaskId: 'c1' } as never));
+      expect(readPref(TIP_COPILOT_KEY)).toBe('1');
+      act(() => useCity.setState({ copilotTaskId: undefined } as never));
+    });
+
+    it('the first steps’ own practice task asks nothing: the Ask tip still comes after graduation', () => {
+      useCity.setState({ progress: { ...builder, quests: { 'first-steps': { status: 'active', step: 4, count: 0 } } }, prefs: { ...useCity.getState().prefs, firstSteps: 'beginner', builder: undefined } } as never);
+      page();
+      act(() => useCity.setState({ tasks: { t1: task('t1') }, taskOrder: ['t1'] } as never));
+      expect(readPref(TIP_ASK_KEY)).toBeNull();
+    });
+
+    it('the HUD’s coins note waits while a coach tip or the tour is up; the tour’s end marks it read', () => {
+      useCity.setState({ progress: { ...builder, wallet: { earned: 20, spent: 0 } } } as never);
+      render(<Hud layout="panel" />);
+      expect(screen.getByRole('note').textContent).toMatch(/20 City Coins/);
+      act(() => useCity.getState().setCoachTipUp(true));
+      expect(screen.queryByRole('note')).toBeNull();
+      act(() => useCity.getState().setCoachTipUp(false));
+      expect(screen.getByRole('note')).toBeTruthy();
+      act(() => useCity.getState().setTourOpen(true));
+      expect(screen.queryByRole('note')).toBeNull();
+      for (const key of TOUR_COVERS) localStorage.setItem(key, '1');
+      act(() => useCity.getState().setTourOpen(false));
+      expect(screen.queryByRole('note')).toBeNull();
+    });
+
+    it('a coach tip says it’s up while it shows, and isn’t offered beside the coins note', () => {
+      const { unmount } = page();
+      fireEvent.focusIn(screen.getByLabelText('Ask'));
+      expect(screen.getByRole('dialog', { name: 'Ask for anything' })).toBeTruthy();
+      expect(useCity.getState().coachTipUp).toBe(true);
+      unmount();
+      expect(useCity.getState().coachTipUp).toBe(false);
+      localStorage.removeItem(TIP_ASK_KEY);
+      const note = document.createElement('span');
+      note.className = 'hud-tip';
+      document.body.append(note);
+      page();
+      fireEvent.focusIn(screen.getByLabelText('Ask'));
+      expect(screen.queryByRole('dialog')).toBeNull();
+      note.remove();
+    });
+  });
+
+  // Seen 24 Nov 2026 (tab): DynamoDB's next-level ghost and "Next: Novice…" stayed minutes after its card closed.
+  it('closing a building’s card (its back link, another tab) puts the building down, so the map’s ghost goes', () => {
+    render(<App layout="full" />);
+    const pick = () =>
+      act(() => {
+        useCity.getState().select('s3');
+        bus.emit('select', { id: 's3' });
+      });
+    pick();
+    expect(useCity.getState().selected).toBe('s3');
+    fireEvent.click(document.querySelector<HTMLElement>('.back-link')!);
+    expect(useCity.getState().selected).toBeUndefined();
+    pick();
+    expect(document.querySelector('.back-link')).toBeTruthy();
+    fireEvent.click(document.getElementById('tab-learn')!);
+    expect(useCity.getState().selected).toBeUndefined();
+    // Back on City: the shift, never a card waiting for a pick.
+    fireEvent.click(document.getElementById('tab-home')!);
+    expect(document.querySelector('.back-link')).toBeNull();
+  });
+
+  // Seen 24 Nov 2026 (tab): Connie said "Sally sorted that for you" while Sally was on step 6/6.
+  it('Connie says an agent sorted it only once the latest task is done, no step still to come', () => {
+    const steps = (last: 'running' | 'done' | 'skipped') => [
+      { text: 'Walk there', status: 'done' as const },
+      { text: 'Make the bucket', status: last },
+    ];
+    const older = { agentId: 's3', steps: steps('done'), status: 'done' as const };
+    const running = { agentId: 'lambda', steps: steps('running'), status: 'running' as const };
+    // The newest still runs: an older finished one doesn't count.
+    expect(helpedBy({ t1: older, t2: running }, ['t2', 't1'])).toBeUndefined();
+    // Marked done with its last step still running: not yet.
+    expect(helpedBy({ t2: { ...running, status: 'done' } }, ['t2'])).toBeUndefined();
+    expect(helpedBy({ t1: older, t2: { ...running, steps: steps('done'), status: 'done' } }, ['t2', 't1'])).toBe('lambda');
+    expect(helpedBy({ t2: { ...running, steps: steps('skipped'), status: 'done' } }, ['t2'])).toBe('lambda');
+    expect(helpedBy({ t2: { ...running, status: 'failed' } }, ['t2'])).toBeUndefined();
+    expect(helpedBy({}, [])).toBeUndefined();
   });
 });

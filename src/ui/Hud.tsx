@@ -62,6 +62,9 @@ function CoinsTip({ wallet }: { wallet: number }) {
   // card up: graduation's card names the coins, and the note comes once it closes (seen 24 Nov 2026: both at once).
   const inCity = useCity((s) => s.view.name === 'city' && !s.celebration);
   const toastUp = useCity((s) => s.toasts.some((t) => !t.leaving));
+  // One tip at a time: never beside the quick tour or a coach tip (seen 24 Nov 2026: the Mayor's tip and this note at
+  // once). The tour's end marks it read (src/ui/Tour.tsx TOUR_COVERS), so the pref is read again as it closes.
+  const tipUp = useCity((s) => s.tourOpen || s.coachTipUp);
   const done = () => (writePref(TIP_COINS_KEY, '1'), setSeen(true));
   useEffect(() => {
     if (building && !seen) done();
@@ -70,7 +73,7 @@ function CoinsTip({ wallet }: { wallet: number }) {
   const [at, setAt] = useState<CSSProperties>({});
   /** On a short map: one line in the ticker's place. */
   const [line, setLine] = useState(false);
-  const show = !seen && wallet > 0 && inCity;
+  const show = !seen && readPref(TIP_COINS_KEY) !== '1' && wallet > 0 && inCity && !tipUp;
   // Read once it's been on screen a while: a note that never leaves the short panel map is clutter.
   useEffect(() => {
     if (!show) return;

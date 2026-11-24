@@ -654,6 +654,9 @@ export interface CityState {
   /** Coach-mark tour overlay (UI-only, not persisted here — the done flag lives in localStorage). */
   tourOpen: boolean;
   setTourOpen(open: boolean): void;
+  /** A one-time coach tip is up (src/ui/Tour.tsx CoachTips): the HUD's coins note waits for it, one tip at a time. */
+  coachTipUp: boolean;
+  setCoachTipUp(up: boolean): void;
   dismissToast(id: number): void;
   setView(v: View): void;
   /** Zoom out to the world map. */
@@ -1058,6 +1061,7 @@ export const useCity = create<CityState>()((set, get) => ({
     get().setPref('workshopMemory', { ...all, [workshopId]: merged });
   },
   tourOpen: false,
+  coachTipUp: false,
   signingIn: false,
   culture: loadCulture(),
   prefs: loadPrefs(),
@@ -1724,6 +1728,7 @@ export const useCity = create<CityState>()((set, get) => ({
     toastTimers.set(id, setTimeout(() => get().dismissToast(id), t.ms));
   },
   setTourOpen: (tourOpen) => set({ tourOpen }),
+  setCoachTipUp: (coachTipUp) => set({ coachTipUp }),
   openDeployAt: (deployId) => {
     // An HQ's chat stands where the tabs are: go back out to the city first.
     if (get().view.name === 'interior') get().setView({ name: 'city' });

@@ -11,7 +11,7 @@ import { AiNote } from "./AiNote";
 import { ConsoleAccountWarning } from "./ConsoleAccountWarning";
 import { feel } from "./feedback";
 import { Icon } from "./icons";
-import { offlineReason } from "./logic";
+import { offlineReason, TIP_ASK_KEY, TIP_COPILOT_KEY, writePref } from "./logic";
 
 /**
  * The composer: one row that never crowds the panel. In the side panel, the "Do it in my console" switch above it
@@ -35,6 +35,8 @@ export function PromptBar({ layout, consoleHere = true }: { layout: Layout; cons
   const send = () => {
     if (!text.trim() || offline) return;
     feel.send();
+    // What the coach tips explain is done now: never a tip for it afterwards (src/ui/Tour.tsx CoachTips).
+    writePref(inConsole ? TIP_COPILOT_KEY : TIP_ASK_KEY, "1");
     if (inConsole) void startConsoleCopilot(text);
     else submitPrompt(text);
     setText("");
@@ -54,7 +56,15 @@ export function PromptBar({ layout, consoleHere = true }: { layout: Layout; cons
           aria-checked={inConsole}
           className={`btn tiny ghost console-btn ${inConsole ? "on" : ""}`}
           title={consoleTip}
-          onClick={() => (feel.tap(), setInConsole((v) => !v))}
+          // A press keeps the focus where it was (seen 24 Nov 2026: pressing the words didn't flip it). Taking the
+          // focus put it inside the bar, which unfolds the AI note above the box and lifts the bar's top edge: the
+          // switch moved up from under the pointer between press and release, so the click never landed on it.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            feel.tap();
+            if (!inConsole) writePref(TIP_COPILOT_KEY, "1");
+            setInConsole((v) => !v);
+          }}
         >
           <Icon name="console" size={10} />
           <span>Do it in my console</span>

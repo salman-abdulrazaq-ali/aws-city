@@ -187,6 +187,18 @@ export function App({ layout }: { layout: Layout }) {
   // A building tapped (in the city or a list): its card opens in the City tab, in place of the shift. A "Walk to" opens
   // it when Kai gets there (src/state/walk.ts), not at the press.
   useEffect(() => bus.on('select', ({ id }) => !cardWaitsForKai(id) && setTab('info')), []);
+  // The card going away (its back link, another tab, a question asked, Decorate) puts the building down too: the map's
+  // highlight and next-level ghost follow `selected` (seen 24 Nov 2026: DynamoDB's ghost and "Next: Novice…" stayed on
+  // the map minutes after its card closed).
+  const cardShown = shownTab === 'home' && place;
+  const cardWas = useRef(cardShown);
+  useEffect(() => {
+    const was = cardWas.current;
+    cardWas.current = cardShown;
+    if (!was || cardShown) return;
+    setPlace(false);
+    if (useCity.getState().selected) useCity.getState().select(undefined);
+  }, [cardShown]);
   // A button that went away with its row, tab or card leaves focus on the new panel's heading, never on <body>.
   const side = useRef<HTMLElement>(null);
   useKeepFocus(side, () => body.current);

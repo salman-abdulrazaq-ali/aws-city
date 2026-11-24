@@ -79,6 +79,15 @@ describe('WorldIntro', () => {
     await frame();
   });
 
+  // Seen 24 Nov 2026: the quick tour's choice read as a dim link. It's a graphite secondary button; the amber is the start's.
+  it('“I already know AWS: quick tour” is a secondary button, never a ghost link; “Start in …” keeps the amber', () => {
+    render(<Page />);
+    const tour = screen.getByRole('button', { name: 'I already know AWS: quick tour' });
+    expect(tour.className.split(' ')).toEqual(['btn']);
+    expect(screen.getByRole('button', { name: /^Start in / }).className).toMatch(/\bprimary\b/);
+    expect(screen.getByRole('region', { name: 'Where to start' }).querySelectorAll('.btn.primary')).toHaveLength(1);
+  });
+
   for (const name of [/^Start in /, /^I already know AWS: quick tour$/]) {
     it(`focus lands in the city's panel after ${name}`, async () => {
       render(<Page />);

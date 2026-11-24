@@ -129,7 +129,7 @@
   flex: none;
 }
 
-/* The world map's card: the start and its honest note together, the ghost choice under them. */
+/* The world map's card: the start and its honest note together, the quick tour's secondary button under them. */
 .world-intro-go {
   display: flex;
   flex: 1 1 100%;

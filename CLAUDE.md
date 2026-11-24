@@ -747,15 +747,24 @@ When a change touches a decision, update its entry and run its Proof.
   quick tour", and from ⋯ → How you play → Show the quick tour any time (not on the path); it's also the first-run tour a
   save that never chose sees once. Six coach marks over the real UI, the card a non-modal dialog (no scrim, nothing over
   the map, no `aria-modal`: Enter goes next, Escape ends, Tab leaves it; each stop is announced; the card stands beside
-  its target, never over it, `placeCard`, and steps aside while the city sleeps or a celebration card is up): S3 Lake on
-  the map (bus `locate` asks the city where a landmark or Kai stands; the camera flies there), the box (`.composer`, its
+  its target, never over it, `placeCard`, and steps aside while the city sleeps or a celebration card is up): a built
+  landmark on the map, never a construction site (`tourBuilding`: S3 Lake when it's Novice or more, else the built one
+  nearest Kai, else Kai; picked as the tour opens; bus `locate` asks the city where a landmark or Kai stands; the camera
+  flies there), the box (`.composer`, its
   **Try it** plays Sally's practice task, `startPracticeTask`, local in every build; the demo's words say it plays scripted
   examples), the Deploy tab ("Real changes wait for your OK": practice tasks build nothing, a build in Deploy or a real
   account's write waits for the OK; the demo's, the hosted city's or the local server's own words), the Learn tab, the
   console helpers (the panel's `.console-btn`; in the demo's tab "Try it in the practice console", graphite, starts the
   demo Copilot there on `consoleGoal`, `startConsoleCopilot`; ⋯ in a hosted or local tab, which says the side panel has
   them, or that Safari has none) and ⋯ (My AWS, Simple, the first steps; other words once an account is linked), ending on
-  Start exploring. One amber button a stop (Try it, then Next). **Safety:** the practice task and the photo-bucket plan are
+  Start exploring. One amber button a stop (Try it, then Next). The card's presses stop at it (`useShieldGame`: Phaser's
+  window listeners never take Next or Start exploring as a tap on the building below), so its end leaves the player on
+  their tab with no card opened; the end (Start exploring, End tour, Escape) marks the tips it covered shown
+  (`TOUR_COVERS`: Ask, the Copilot, the Mayor, Workshops, the HUD's coins note). No tip for what the player just did (a
+  task started outside the first steps: Ask; a Copilot run or its switch turned on: the Copilot), and one at a time (the
+  coins note waits while a coach tip or the tour is up, store `coachTipUp`). A building's card closing (its back link,
+  another tab) puts the building down (`select(undefined)`), so its next-level ghost leaves the map. "I already know
+  AWS: quick tour" is a graphite secondary button beside the amber start. **Safety:** the practice task and the photo-bucket plan are
   played and decided on the device in every build (`src/backend/practiceTasks.ts`, `ServerBackend.planPractice` /
   `answerPractice`): no model call, no AWS call, no socket send, no MFA step-up, a hosted player with a real account linked
   included. Proof: `npx vitest run tests/practice-task.test.ts tests/first-steps.test.ts tests/first-steps-ui.test.tsx
