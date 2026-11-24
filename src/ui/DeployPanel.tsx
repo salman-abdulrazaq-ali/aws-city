@@ -478,6 +478,11 @@ export function DeployPanel() {
             <Plain text="A CloudFormation stack makes one IAM role. Only AWS City’s server can use it, with the ExternalId in your setup link. It reads your account and builds only small things the city made, each after you approve it." />
           </p>
           <RolePermissions />
+          {account.stackLeft && (
+            <p className="field-error" role="note">
+              Delete the old AWSCity stack in {regionName(account.stackLeft)} first: a new one can’t be made while it’s there.
+            </p>
+          )}
           <label className="check-row">
             <input
               type="checkbox"
@@ -773,8 +778,10 @@ export function DeployPanel() {
             {account.stackLeft && (
               <div className="account-howto stack-left">
                 <p>
+                  {/* Seen 24 Nov 2026: reconnecting failed, because the old stack trusts the old link (Disconnect forgets its
+                      ExternalId) and its name is taken; "to remove it too" read as optional. */}
                   <Plain
-                    text={`Disconnected. To remove AWS City's role too, delete the AWSCity stack in CloudFormation (${regionName(account.stackLeft)}): Stacks, then AWSCity, then Delete.`}
+                    text={`Disconnected. Your AWSCity stack in ${regionName(account.stackLeft)} still trusts the old link. To connect again, delete it first in CloudFormation (Stacks, then AWSCity, then Delete; wait for DELETE_COMPLETE), then create a new one in step 2. To stop AWS City for good, delete it too.`}
                   />
                 </p>
                 <StackLink region={account.stackLeft} />

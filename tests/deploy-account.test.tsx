@@ -284,9 +284,17 @@ describe('a linked account (v2.19)', () => {
     useCity.setState({ account: { linked: false, stackLeft: 'eu-west-1' } });
     const { container } = render(<DeployPanel />);
     // Plain words: glossary terms inside it are their own buttons, so the note is read as a whole.
-    expect(container.querySelector('.stack-left')!.textContent).toMatch(/Disconnected\. To remove AWS City's role too, delete the AWSCity stack in CloudFormation \(Europe \(Ireland\)\)/);
+    // Seen 24 Nov 2026: reconnecting needs the old stack gone first (it trusts the old link), and the card says so.
+    expect(container.querySelector('.stack-left')!.textContent).toMatch(/Disconnected\. Your AWSCity stack in Europe \(Ireland\) still trusts the old link\. To connect again, delete it first/);
+    expect(container.querySelector('.stack-left')!.textContent).toMatch(/To stop AWS City for good, delete it too\./);
     fireEvent.click(screen.getByRole('button', { name: 'Open the AWSCity stack ↗' }));
     expect(rt.openUrl).toHaveBeenCalledWith(stacksUrl('eu-west-1'));
+  });
+
+  it('linking again after a Disconnect, step 2 says the old stack must be deleted first', () => {
+    useCity.setState({ account: { linked: false, stackLeft: 'us-west-2', wantsLink: true, linkUrl: 'https://x.example/#/stacks/quickcreate?param_ConnectsPlayer=P', externalId: 'e' } });
+    render(<DeployPanel />);
+    expect(screen.getByRole('note').textContent).toBe('Delete the old AWSCity stack in US West (Oregon) first: a new one can’t be made while it’s there.');
   });
 
   it('the local server has no Disconnect (it reads the developer’s own account)', () => {
