@@ -162,9 +162,19 @@ describe('the guide card', () => {
     expect(screen.getByRole('status').textContent).toMatch(/Kai is walking to S3 Lake…/);
     expect(container.querySelector('.btn.primary')).toBeNull();
     offWalk();
+    // A finished task from an earlier run (a replay) isn't this run's: no card before the press.
     act(() =>
       useCity.setState({
         progress: onStep(4),
+        tasks: { 'practice-task-0': { taskId: 'practice-task-0', prompt: 'Store my holiday photos', agentId: 's3', steps: [{ text: 'Walking to S3 Lake', status: 'done' }], status: 'done', coins: 2 } },
+        taskOrder: ['practice-task-0'],
+      }),
+    );
+    rerender(<GuideCard openTab={() => {}} />);
+    expect(container.querySelector('.guide-task')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Sally: store my photos' }));
+    act(() =>
+      useCity.setState({
         tasks: { 'practice-task-1': { taskId: 'practice-task-1', prompt: 'Store my holiday photos', agentId: 's3', steps: [{ text: 'Walking to S3 Lake', status: 'running' }], status: 'running' } },
         taskOrder: ['practice-task-1'],
       }),
@@ -175,6 +185,11 @@ describe('the guide card', () => {
     // Her task card sits under the guide, with no follow-ups of its own.
     expect(container.querySelector('.guide-task .task')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^(?:Next:|See it in Deploy)/ })).toBeNull();
+    // Done, and paid coins for watching: no coin line while coins are hidden.
+    act(() => useCity.setState({ tasks: { 'practice-task-1': { taskId: 'practice-task-1', prompt: 'Store my holiday photos', agentId: 's3', steps: [{ text: 'Walking to S3 Lake', status: 'done' }], status: 'done', result: 'Done!', coins: 2 } } }));
+    rerender(<GuideCard openTab={() => {}} />);
+    expect(container.querySelector('.guide-task .task')).toBeTruthy();
+    expect(container.textContent).not.toMatch(/City Coins/);
   });
 
   it('takes focus to the step’s button when it starts (never from somewhere the player is)', () => {
@@ -363,7 +378,11 @@ describe('the tutorial deck', () => {
     fireEvent.keyDown(window, { key: 'f' });
     const grades = screen.getByRole('group', { name: 'How well did you know it?' });
     expect(within(grades).getAllByRole('button')).toHaveLength(3);
-    expect(screen.getByText(FIRST_STEPS.steps[2].terms!)).toBeTruthy();
+    // "Words with a dotted line…" only on a card that shows one (seen 24 Nov 2026 on card 1, which has none).
+    const hint = () => !!screen.queryByText(FIRST_STEPS.steps[2].terms!);
+    const dotted = () => !!container.querySelector('.back-face .term');
+    expect(container.querySelector('.back-face')?.textContent).toMatch(/buckets/);
+    expect(hint()).toBe(dotted());
     // The answers dock to the bottom of the tab (styles/32-first-steps.css), so a long answer never pushes them away.
     const css = readFileSync('src/app/styles/32-first-steps.css', 'utf8');
     expect(css).toMatch(/\.cards \.grades \{[^}]*position: sticky;[^}]*bottom: 0;/);
@@ -371,6 +390,17 @@ describe('the tutorial deck', () => {
     fireEvent.keyDown(window, { key: '1' });
     expect(useCity.getState().progress.quests?.['first-steps']?.count).toBe(1);
     expect(container.querySelector('.deck-progress')?.textContent).toMatch(/^1 of 3/);
+    for (const n of [2, 3]) {
+      fireEvent.keyDown(window, { key: 'f' });
+      if (hint()) expect(dotted()).toBe(true);
+      fireEvent.keyDown(window, { key: '2' });
+      expect(container.querySelector('.deck-progress')?.textContent).toMatch(new RegExp(`^${n} of 3`));
+    }
+    // The step is done: Learn keeps the tutorial's view (no deck picker, no fourth card) until the player leaves.
+    expect(useCity.getState().progress.quests?.['first-steps']?.step).toBe(3);
+    expect(screen.queryByRole('combobox', { name: 'Deck' })).toBeNull();
+    expect(container.querySelector('.deck-progress')?.textContent).toMatch(/^3 of 3/);
+    expect(container.querySelector('.flash')).toBeNull();
   });
 });
 
@@ -403,6 +433,16 @@ describe('the citizen’s question', () => {
     // The verdict comes before the question.
     expect(verdict.compareDocumentPosition(card.querySelector('.request-q')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(document.activeElement?.textContent).toBe('Back to the city');
+  });
+
+  it('keeps each answer’s words in one box, a tappable term at its start too (never a column of its own)', () => {
+    useCity.setState({ progress: onStep(3) });
+    render(<RequestCard />);
+    act(() => bus.emit('citizenRequest', { ...ask, request: { ...ask.request, options: ['S3 keeps files in buckets', 'A server', 'A queue'] } }));
+    const first = document.querySelector('.request-option')!;
+    // The button is a flex row: the key, then one box for the words (seen 24 Nov 2026: "S3" stood in a column).
+    expect([...first.children].map((c) => c.className)).toEqual(['kbd', 'request-option-text']);
+    expect(first.querySelector('.request-option-text')?.textContent).toBe('S3 keeps files in buckets');
   });
 
   it('says it the path’s way when it’s right', () => {

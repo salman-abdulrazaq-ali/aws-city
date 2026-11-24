@@ -143,7 +143,10 @@ export function RequestCard() {
               <span className="kbd" aria-hidden="true">
                 {i + 1}
               </span>
-              <Plain text={o} still />
+              {/* One box for the words: the button is a flex row, so a marked term ("S3") would be a column of its own. */}
+              <span className="request-option-text">
+                <Plain text={o} still />
+              </span>
             </button>
           ))}
         </div>

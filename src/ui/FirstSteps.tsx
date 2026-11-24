@@ -80,8 +80,12 @@ function doneLine(step: number, toGrow: number): string | undefined {
   return `Done: ${copyOf(step - 1).title}.`;
 }
 
-/** The latest practice task (Watch Sally work), if this session has one. */
-const usePracticeTaskView = () => useCity((s) => s.taskOrder.map((id) => s.tasks[id]).find((t) => t && isPracticeTask(t.taskId)));
+/**
+ * The practice task this run of the path started (Watch Sally work), once its button is pressed: never one left from an
+ * earlier run (seen 24 Nov 2026: a replay showed the first run's finished card before the press).
+ */
+let pathTask: string | undefined;
+const usePracticeTaskView = () => useCity((s) => (pathTask && isPracticeTask(pathTask) ? s.tasks[pathTask] : undefined));
 
 /** The practice plan waiting for the player's OK, if one is. */
 const useWaitingPlan = () => useCity((s) => Object.values(s.deploys).find((d) => d.templateId === PLAN_TEMPLATE && d.status === 'preview'));
@@ -97,6 +101,8 @@ export function FirstStepsMoments() {
   const seen = useRef<number | undefined>(undefined);
   // A step done: "Done: Walk to S3 Lake. Step 2 of 6: Play S3 Fishing." (App's one polite live region.)
   useEffect(() => {
+    // Before Sally's task step (a new run, a replay), no task of an earlier run is this run's.
+    if (!fs.active || fs.step < 4) pathTask = undefined;
     if (!fs.active) return void (seen.current = undefined);
     const before = seen.current;
     seen.current = fs.step;
@@ -201,7 +207,8 @@ export function GuideCard({ openTab }: { openTab: Go }) {
       case 4:
         feel.send();
         bus.emit('flyTo', { id: `agent:${S3}` });
-        return void startPracticeTask();
+        pathTask = startPracticeTask();
+        return;
       case 5:
         // Already planned (a second press): its card is waiting in Deploy.
         if (plan) return useCity.getState().openDeployAt(plan.deployId);

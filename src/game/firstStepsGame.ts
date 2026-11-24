@@ -81,6 +81,28 @@ export function plantedRequest(p: Progress, serviceId: string, cardId?: string):
 
 /** On the path's walk to its building, the camera walks with Kai (and settles on the building when he's there). */
 /**
+ * A first-run map's line for a Region under a storm, for a player with no AWS account: the storm's plain words alone
+ * (seen 24 Nov 2026: mixed with "Bahrain is switched off in your account… Click to visit."). Else the usual lines.
+ */
+export const regionLines = (stormy: boolean, firstRun: boolean, linked: boolean, lines: string[]) =>
+  stormy && firstRun && !linked && FIRST_STEPS.map.storm ? [FIRST_STEPS.map.storm] : lines.filter(Boolean);
+
+/**
+ * On the first steps the fishing game's bins are shelves, the guide's word: "bucket" is S3's container (Sally's first card),
+ * and Riley read the game's buckets as the same thing (24 Nov 2026).
+ */
+export const binWord = (onPath: boolean) => (onPath ? 'shelf' : 'bucket');
+export const rightBin = (onPath: boolean) => (onPath ? 'on the right shelf' : 'in the right bucket');
+
+/** On the first steps a catch's reason is its shelf in plain words: none of the extras (CloudFront, Deep Archive, fees). */
+const SHELF_WHY: Record<string, string> = {
+  standard: 'Opened all the time → the hot shelf, S3 Standard.',
+  ia: 'Opened now and then, but needed at once → the warm shelf, Standard-IA.',
+  glacier: 'Kept, but hardly ever opened → the cold shelf, S3 Glacier.',
+};
+export const catchWhy = (onPath: boolean, item: { answer: string; why: string }) => (onPath ? (SHELF_WHY[item.answer] ?? item.why) : item.why);
+
+/**
  * A line an agent says to the player (bus `say`: Sally's introduction, her fishing line) is read before that agent's next
  * one replaces it: this long, by its length (seen 24 Nov 2026: her fishing line 3.5 s after arrival hid the introduction).
  */

@@ -175,6 +175,9 @@
 .request-option .kbd {
   flex: none;
 }
+.request-option-text {
+  min-width: 0;
+}
 
 /* Graduation: the celebration's lists read left to right. */
 .graduate .grad-list {

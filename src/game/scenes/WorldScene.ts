@@ -14,7 +14,7 @@ import { builtCities } from '@/state/cities';
 import { onSceneEnd } from './lifecycle';
 import { COLOR, CSS, LABEL_BG, withAlpha } from '../theme';
 import { setDiver, worldText } from '../worldUi';
-import { stormLine, stormLook } from '../firstStepsGame';
+import { regionLines, stormLine, stormLook } from '../firstStepsGame';
 
 /** The same blue the city sits in (palette.ts), so the dive fades from one sea into the other. */
 const SEA = SEA_COLOR;
@@ -498,9 +498,11 @@ export class WorldScene extends Phaser.Scene {
     const st = this.status(r.code);
     const hit = incidentsIn(useCity.getState().health, r.code).find((i) => i.region === r.code);
     const today = hit ? `${hit.severity === 'disruption' ? '⛈️ AWS reports a disruption here' : hit.severity === 'degradation' ? '🌧️ AWS reports trouble here' : 'ℹ️ AWS notice'} · updated ${ago(hit.updated)}` : '';
-    // A first-run map, for a player with no AWS account: the storm in plain words and what to do (pick another dot).
-    const health = hit && hit.severity !== 'informational' ? stormLine(!veteran, useCity.getState().account.linked, today) : today;
-    const friendly = [health, friendlyRegionLine(r.code, st === 'not-enabled' ? 'not-enabled' : undefined), visit].filter(Boolean).join('\n');
+    // A first-run map, for a player with no AWS account: the storm in plain words and what to do (pick another dot), alone.
+    const stormy = !!hit && hit.severity !== 'informational';
+    const linked = useCity.getState().account.linked;
+    const health = stormy ? stormLine(!veteran, linked, today) : today;
+    const friendly = regionLines(stormy, !veteran, linked, [health, friendlyRegionLine(r.code, st === 'not-enabled' ? 'not-enabled' : undefined), visit]).join('\n');
     if (!this.more) return this.info.setText(friendly);
     const cities = this.cities();
     const links = (useCity.getState().inventory?.links ?? []).filter((l) => l.from.region !== l.to.region && (l.from.region === r.code || l.to.region === r.code));

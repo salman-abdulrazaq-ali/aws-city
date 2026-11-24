@@ -8,6 +8,8 @@ import type { Tile } from '@/world/layout';
 import { endKeysLine } from '@/game/scenes/games/say';
 import { fishingKey } from '@/game/scenes/games/gameKeys';
 import {
+  binWord,
+  catchWhy,
   cityShows,
   fishingEnd,
   followsKai,
@@ -17,6 +19,8 @@ import {
   plantedFor,
   plantedRequest,
   plantTile,
+  regionLines,
+  rightBin,
   sayReadMs,
   stormLine,
   stormLook,
@@ -234,6 +238,42 @@ describe('the scenes are wired to the path (static: Phaser scenes don’t run un
   it('the stars of a fishing round land before the round is recorded (the guide names what it grew)', () => {
     const fish = read('src/game/scenes/FishingScene.ts');
     expect(fish.indexOf("s.addXp('s3', stars)")).toBeLessThan(fish.indexOf("s.recordGame('fishing'"));
+  });
+
+  it('on the path the fishing bins are shelves and a catch’s reason has no extras', () => {
+    // Seen 24 Nov 2026: "the fishing bins?" when graduation said "S3 keeps your files in buckets".
+    expect([binWord(true), rightBin(true)]).toEqual(['shelf', 'on the right shelf']);
+    expect([binWord(false), rightBin(false)]).toEqual(['bucket', 'in the right bucket']);
+    const fish = read('shared/minigames.json');
+    const items = (JSON.parse(fish) as { fishing: { answer: string; why: string }[] }).fishing;
+    for (const item of items) {
+      const why = catchWhy(true, item);
+      expect(why, item.why).not.toMatch(/CloudFront|Deep Archive|GB|compliance|lifecycle|minimum|Intelligent/i);
+      expect(why).toMatch(/hot|warm|cold/);
+      expect(catchWhy(false, item)).toBe(item.why);
+    }
+    const scene = read('src/game/scenes/FishingScene.ts');
+    expect(scene).not.toMatch(/Which bucket \(storage class\)|objects in the right bucket/);
+    expect(scene).toMatch(/catchWhy\(this\.onPath, item\)/);
+  });
+
+  it('a first-run map says a storm’s plain words alone; the canvas labels and the “press E” tip wait while quiet', () => {
+    const rest = ['🌧️ AWS reports trouble here', 'Bahrain is switched off in your account.', 'Click to visit.'];
+    expect(regionLines(true, true, false, rest)).toEqual([FIRST_STEPS.map.storm]);
+    expect(regionLines(true, false, false, rest)).toEqual(rest);
+    expect(regionLines(true, true, true, rest)).toEqual(rest);
+    expect(regionLines(false, true, false, ['', 'Click to visit.'])).toEqual(['Click to visit.']);
+    const city = read('src/game/scenes/CityScene.ts');
+    expect(city).toMatch(/for \(const d of this\.quiet \? \[\] : DISTRICTS\)/);
+    expect(city).toMatch(/lm\.setBadge\(this\.quiet \? 0/);
+    expect(read('src/game/RegionOverlay.ts')).toMatch(/if \(this\.quiet\) return;/);
+    expect(read('src/game/scenes/BootScene.ts')).toMatch(/quietCity\(progress, prefs\) \? TIPS\.filter\(\(t\) => !t\.includes\('press E '\)\)/);
+  });
+
+  it('the fishing quiz shows its buttons dimmed while they wait for a press', () => {
+    const scene = read('src/game/scenes/FishingScene.ts');
+    expect(scene).toMatch(/const QUIZ_CALM_MS = 500;/);
+    expect(scene).toMatch(/waiting\.push\(b\.setAlpha\(QUIZ_WAIT_ALPHA\), l\.setAlpha\(QUIZ_WAIT_ALPHA\)\)/);
   });
 
   it('the rules draw nothing at random (determinism, CLAUDE.md)', () => {

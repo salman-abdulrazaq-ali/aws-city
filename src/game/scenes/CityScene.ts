@@ -94,7 +94,7 @@ import type { Combo } from '@/world/combos';
 import { SCALERS, SURGE_MS, SURGE_WORKERS, type CourierLeg } from '@/world/couriers';
 import { nextLevelPreview } from '@/world/preview';
 import { shows } from '@/state/simple';
-import { FIRST_STEPS_QUEST, firstStep } from '@/state/firstSteps';
+import { FIRST_STEPS_QUEST, firstStep, quietCity } from '@/state/firstSteps';
 import { followsKai, SAY_GIVE_UP_MS, SAY_RETRY_MS, sayReadMs } from '../firstStepsGame';
 
 /**
@@ -370,6 +370,7 @@ export class CityScene extends Phaser.Scene {
     this.packets = new Packets(this, CITY_ISO, this.plan.size, (x, y) => this.map.isRoadTile(x, y) || this.map.isSidewalk(x, y), this.plan);
     this.day1Open = this.computeDay1();
     this.details = useCity.getState().prefs?.mapDetails === true;
+    this.quiet = quietCity(useCity.getState().progress, useCity.getState().prefs);
     this.syncWorld(useCity.getState().progress);
     // Combos already standing when the city opens aren't news; ones the Codex doesn't have yet are found now.
     this.combosReady = true;
@@ -523,6 +524,7 @@ export class CityScene extends Phaser.Scene {
     });
     // The account's data links drive as data carriers on the same roads as the traffic.
     this.region.dispatch = (kind, from, to, cargo) => this.ambient?.dispatchData(kind, from, to, cargo) ?? false;
+    this.region.setQuiet(this.quiet);
     this.enterRegion(useCity.getState().cityRegion);
     this.syncInventory(useCity.getState().inventory);
     this.syncDetails();
@@ -841,15 +843,15 @@ export class CityScene extends Phaser.Scene {
   private syncPlotSigns(p: Progress) {
     // One short line; pointing at a locked sign shows how to open it, tapping it opens that Place card.
     const want = new Map<string, { rect: Rect; text: string; more?: string; first?: string }>();
-    for (const d of DISTRICTS) {
+    for (const d of this.quiet ? [] : DISTRICTS) {
       const plot = this.plan.districts[d.id];
       if (!plot || this.districtUnlocked(p, d.id)) continue;
       const svcs = servicesIn(d.id);
       const names = svcs.slice(0, 3).map((s) => s.name.replace(/^(Amazon|AWS) /, '')).join(' · ');
       want.set(d.id, { rect: plot.bbox, text: `🔒 ${d.name}`, more: `🔒 ${d.name}\nOpen ${names}… in the console`, first: svcs[0]?.id });
     }
-    FUTURE_PLOTS.forEach((f, i) => want.set(f.id, { rect: f.rect, text: `🚧 ${FUTURE_LABELS[i]}` }));
-    if (!this.day1Open) want.set('day1', { rect: this.plan.day1, text: '🔒 Day 1 Quarter', more: '🔒 Day 1 Quarter\nFinish your first quest to open it' });
+    if (!this.quiet) FUTURE_PLOTS.forEach((f, i) => want.set(f.id, { rect: f.rect, text: `🚧 ${FUTURE_LABELS[i]}` }));
+    if (!this.day1Open && !this.quiet) want.set('day1', { rect: this.plan.day1, text: '🔒 Day 1 Quarter', more: '🔒 Day 1 Quarter\nFinish your first quest to open it' });
     for (const [id, sign] of this.plotSigns) if (!want.has(id)) sign.destroy(), this.plotSigns.delete(id);
     for (const [id, w] of want) {
       if (this.plotSigns.has(id)) continue;
@@ -1557,6 +1559,7 @@ export class CityScene extends Phaser.Scene {
           this.syncLabels();
         }
         if (s.inventory !== prev.inventory) this.syncInventory(s.inventory);
+        if (s.progress !== prev.progress || s.prefs !== prev.prefs) this.syncQuiet();
         if (s.prefs !== prev.prefs || s.account !== prev.account || s.deploys !== prev.deploys) {
           this.syncDetails();
           if (this.computeDay1() !== this.day1Open) this.syncWorld(s.progress);
@@ -1888,6 +1891,22 @@ export class CityScene extends Phaser.Scene {
     this.gateAnchor = { x: sign.x, y: sign.y };
   }
 
+  /** The first steps' quiet city (src/state/firstSteps.ts): its canvas labels wait for graduation. */
+  private quiet = false;
+  /**
+   * While quiet, no 🔒 district or Day 1 signs, zone letters or "×3" badges: none of them is explained on the path
+   * (seen 24 Nov 2026: "🔒 Database Row", "Zone B" and "×3" before the first cast). They come back at graduation.
+   */
+  private syncQuiet() {
+    const s = useCity.getState();
+    const quiet = quietCity(s.progress, s.prefs);
+    if (quiet === this.quiet) return;
+    this.quiet = quiet;
+    this.region?.setQuiet(quiet);
+    this.syncPlotSigns(s.progress);
+    this.syncInventory(s.inventory);
+  }
+
   /** The "Show the map details" setting (prefs.mapDetails, in the ⋯ menu): technical labels on or off. */
   private syncDetails() {
     this.details = useCity.getState().prefs?.mapDetails === true;
@@ -2089,7 +2108,7 @@ export class CityScene extends Phaser.Scene {
     const counts: Record<string, number> = home ? (inv?.counts ?? {}) : {};
     if (!home) for (const it of inv?.items ?? []) if (it.region === region) counts[it.serviceId ?? 'other'] = (counts[it.serviceId ?? 'other'] ?? 0) + 1;
     // A count beside each landmark the account has something in (none: no badge).
-    for (const [id, lm] of this.landmarks) if (serviceById(id)) lm.setBadge(counts[id] ?? 0);
+    for (const [id, lm] of this.landmarks) if (serviceById(id)) lm.setBadge(this.quiet ? 0 : (counts[id] ?? 0));
     this.region?.setRegion(region, accountZones(inv, region));
     this.region?.setLinks(inv?.links);
     this.syncFlow();

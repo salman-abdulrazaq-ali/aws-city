@@ -12,7 +12,7 @@ import { AwsIcon } from './AwsIcon';
 import { feel } from './feedback';
 import { Portrait } from './Portrait';
 import { NEW_CARDS_KEY, readPref, writePref } from './logic';
-import { Plain } from './Term';
+import { hasTerm, Plain } from './Term';
 import { EmptyState } from './EmptyState';
 import { bus } from '@/state/bus';
 import { FIRST_STEPS, TUTORIAL_DECK } from '@/state/firstSteps';
@@ -62,21 +62,31 @@ export function Flashcards() {
   const [practiced, setPracticed] = useState<ReadonlySet<string>>(new Set());
   // The first steps' cards step: Sally's three cards in order, whatever was picked or is due (any answer counts).
   const path = useFirstSteps();
-  const tutorial = path.active && path.step === 2;
+  const onCardsStep = path.active && path.step === 2;
+  // After the three cards, Learn keeps the tutorial's view (its "3 of 3", no deck picker or fourth card) until the
+  // player leaves the tab (seen 24 Nov 2026: the full deck view, "9 to review", took its place at once).
+  const [stayed, setStayed] = useState(false);
+  useEffect(() => {
+    if (onCardsStep) setStayed(true);
+  }, [onCardsStep]);
+  const tutorial = onCardsStep || stayed;
+  const tutorialCount = onCardsStep ? path.count : TUTORIAL_DECK.length;
   const tutorialCards = useMemo(() => {
     const s3 = cardsFor('s3');
     return TUTORIAL_DECK.flatMap((id) => s3.find((c) => c.id === id) ?? []);
   }, []);
+  // "Words with a dotted line explain themselves" goes with the first of them whose answer side has one (none: never).
+  const termCard = useMemo(() => tutorialCards.find((c) => hasTerm(c.q, 's3') || hasTerm(c.simple ?? c.a, 's3'))?.id, [tutorialCards]);
 
   // "All my decks": reviewed cards that are due, then at most 10 new ones a day. A single deck shows everything due,
   // topped up with practice cards while a quest's cards step for it needs more than that (src/learning/srs.ts).
   const { queue, practice } = useMemo((): { queue: Flashcard[]; practice: ReadonlySet<string> } => {
-    if (tutorial) return { queue: tutorialCards.slice(path.count), practice: new Set() };
+    if (tutorial) return { queue: tutorialCards.slice(tutorialCount), practice: new Set() };
     if (deck === 'due') return { queue: dueDeck(progress, discovered.map((s) => s.id), newCardsLeft(readNewLog(), dayKey())), practice: new Set() };
     const due = cardsFor(deck).filter((c) => isDue(progress.cards?.[c.id])).sort((a, b) => a.tier - b.tier);
     const extra = questPracticeDeck(progress, deck, due.length, practiced);
     return { queue: [...due, ...extra], practice: new Set(extra.map((c) => c.id)) };
-  }, [deck, progress, discovered, practiced, tutorial, tutorialCards, path.count]);
+  }, [deck, progress, discovered, practiced, tutorial, tutorialCards, tutorialCount]);
   const card = queue[0];
   const practising = !!card && practice.has(card.id);
   const serviceId = card?.id.replace(/-\d+$/, '');
@@ -144,10 +154,10 @@ export function Flashcards() {
       {tutorial ? (
         <div className="deck-progress">
           <span>
-            <b>{Math.min(path.count, tutorialCards.length)}</b> of {tutorialCards.length}
+            <b>{Math.min(tutorialCount, tutorialCards.length)}</b> of {tutorialCards.length}
           </span>
           <div className="meter district" aria-hidden="true">
-            <i style={{ width: `${Math.round((Math.min(path.count, tutorialCards.length) / Math.max(1, tutorialCards.length)) * 100)}%` }} />
+            <i style={{ width: `${Math.round((Math.min(tutorialCount, tutorialCards.length) / Math.max(1, tutorialCards.length)) * 100)}%` }} />
           </div>
         </div>
       ) : (
@@ -236,6 +246,10 @@ export function Flashcards() {
           )}
           {serviceId && <GrowLine serviceId={serviceId} bump={reward?.key} />}
         </div>
+      ) : tutorial ? (
+        <EmptyState title="Sally’s three cards: done" emoji="✓">
+          They come back right before you’d forget them, so they stick.
+        </EmptyState>
       ) : discovered.length === 0 ? (
         <EmptyState title="No cards yet">Start a quest, or tap a building and ask its helper. Its cards then open here.</EmptyState>
       ) : (
@@ -247,7 +261,7 @@ export function Flashcards() {
         {card && flipped ? `Answer: ${card.simple ?? card.a}` : ''}
       </div>
       {/* The first card's answer: its dotted words explain themselves (one quiet line, never over the card). */}
-      {tutorial && flipped && path.count === 0 && FIRST_STEPS.steps[2].terms && <p className="muted small flash-terms">{FIRST_STEPS.steps[2].terms}</p>}
+      {tutorial && flipped && card?.id === termCard && FIRST_STEPS.steps[2].terms && <p className="muted small flash-terms">{FIRST_STEPS.steps[2].terms}</p>}
       {card && flipped && (
         <>
           {/* Docked to the bottom of the tab while the answer is longer than the room left (styles/10-flashcards.css):

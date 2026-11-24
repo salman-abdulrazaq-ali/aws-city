@@ -400,7 +400,8 @@ export function App({ layout }: { layout: Layout }) {
             </div>
             {/* The Copilot's switch stands on the City tab (and wherever a console page or the Copilot is on). Both wait
                 while the first steps run (introduced at graduation as "Ask the city"). */}
-            {shows('promptBar', prefs, quiet) && <PromptBar layout={layout} consoleHere={shownTab === 'home'} />}
+            {/* Not on a first run's world map either: no city yet, and the box and its console switch say nothing there. */}
+            {shows('promptBar', prefs, quiet) && !(view.name === 'world' && !prefs.region) && <PromptBar layout={layout} consoleHere={shownTab === 'home'} />}
             <ErrorBoundary what="This card">
               <FindingCard openTab={setTab} />
             </ErrorBoundary>

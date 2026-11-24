@@ -72,7 +72,8 @@ export function TaskCard({ task, openTab, quiet = false }: { task: TaskView; ope
   const showSteps = task.steps.length > 0 && (finished ? details : !watching || details);
   const hasDetails = calls.length > 0 || task.steps.length > 0;
   // A capped repeat still pays a few City Coins: say so, so watching again isn't dead time.
-  const paid = [paidLine(task), task.coins ? `+${task.coins} City Coins for watching` : undefined].filter(Boolean).join(' · ') || undefined;
+  // City Coins wait while the first steps run (the quiet city hides them), so no coin line either.
+  const paid = [paidLine(task), task.coins && !onPath ? `+${task.coins} City Coins for watching` : undefined].filter(Boolean).join(' · ') || undefined;
   const watch = () => {
     feel.tap();
     setWatching(true);

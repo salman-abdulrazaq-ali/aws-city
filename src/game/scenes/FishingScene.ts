@@ -22,15 +22,18 @@ import { answerPop, playScale } from './games/stageFx';
 import { endKeysLine, fishLine, growthSaid } from './games/say';
 import { announce } from '@/state/announce';
 import { firstSteps } from '@/state/firstSteps';
-import { fishingEnd, pathEndKey, verdictLine } from '../firstStepsGame';
+import { binWord, catchWhy, fishingEnd, pathEndKey, rightBin, verdictLine } from '../firstStepsGame';
 
 /** Clicks are ignored this long after the line is reset, so the click that answered doesn't cast at once. */
 const CALM_MS = 300;
 /**
  * The quiz card's buttons wait this long, and then answer only on a press that starts and ends on the same button: an
- * excited click (or a held button) from the hook can't answer unread.
+ * excited click (or a held button) from the hook can't answer unread. Meanwhile they're dimmed, so a press that does
+ * nothing is seen to (seen 24 Nov 2026: about a second of dropped presses with no cue).
  */
-const QUIZ_CALM_MS = 800;
+const QUIZ_CALM_MS = 500;
+/** The quiz buttons' look while they wait (QUIZ_CALM_MS). */
+const QUIZ_WAIT_ALPHA = 0.45;
 /** The bite window: longer for the round's first bite, while the player learns the rhythm (both through pace()). */
 const FIRST_BITE_MS = 1800;
 const BITE_MS = 1100;
@@ -111,7 +114,7 @@ export class FishingScene extends Phaser.Scene {
     canvas?.setAttribute('aria-label', 'S3 Lake fishing: mini-game');
     onSceneEnd(this, () => cityLabel && canvas?.setAttribute('aria-label', cityLabel));
     announce(
-      `S3 Lake fishing. Each fish is an S3 object: drop it in the right storage class. Press Space to cast, and Space again when a fish bites. Then press 1 to ${CLASSES.length} for a bucket: ${CLASSES.map((c, i) => `${i + 1} ${c.label}`).join(', ')}. ${ROUND} fish a round.`,
+      `S3 Lake fishing. Each fish is an S3 object: drop it in the right storage class. Press Space to cast, and Space again when a fish bites. Then press 1 to ${CLASSES.length} for a ${binWord(this.onPath)}: ${CLASSES.map((c, i) => `${i + 1} ${c.label}`).join(', ')}. ${ROUND} fish a round.`,
     );
     this.scale.on('resize', this.relayout, this);
     onSceneEnd(this, () => this.scale.off('resize', this.relayout, this));
@@ -372,7 +375,7 @@ export class FishingScene extends Phaser.Scene {
     // spilling out of it.
     const card = this.add.container(w / 2, 0).setDepth(30);
     const t1 = crisp(this.add.text(0, 12, `📄 ${item.name}`, TXT(19, PAL.paperInk))).setOrigin(0.5, 0);
-    const t2 = crisp(this.add.text(0, t1.y + t1.height + 6, `“${item.hint}”\nWhich bucket (storage class)? Click one, or press 1–${CLASSES.length}.`, { ...TXT(16, PAL.paperHint), fontStyle: '600', align: 'center', wordWrap: { width: cw - 24 } })).setOrigin(0.5, 0);
+    const t2 = crisp(this.add.text(0, t1.y + t1.height + 6, `“${item.hint}”\nWhich ${binWord(this.onPath)} (storage class)? Click one, or press 1–${CLASSES.length}.`, { ...TXT(16, PAL.paperHint), fontStyle: '600', align: 'center', wordWrap: { width: cw - 24 } })).setOrigin(0.5, 0);
     const by = Math.round(t2.y + t2.height + 12);
     const bw = (cw - 40) / 3;
     const labels = CLASSES.map((c) =>
@@ -385,10 +388,12 @@ export class FishingScene extends Phaser.Scene {
     announce(fishLine(item, CLASSES));
     // A number key answers like a press that was armed (after the same calm).
     this.choose = (i) => this.time.now >= this.calmUntil && this.state === 'quiz' && this.answer(item, CLASSES[i].id);
+    const waiting: { setAlpha(a: number): unknown }[] = [];
     CLASSES.forEach((c, i) => {
       const x = -cw / 2 + 12 + bw / 2 + i * (bw + 8);
       const b = this.add.rectangle(x, by, bw, bh, c.color).setStrokeStyle(2, PAL.black).setOrigin(0.5, 0).setInteractive({ useHandCursor: true });
       const l = labels[i].setX(x);
+      waiting.push(b.setAlpha(QUIZ_WAIT_ALPHA), l.setAlpha(QUIZ_WAIT_ALPHA));
       // Armed by a press that starts on this button after the calm; answered when that press ends on it.
       let armed = false;
       b.on('pointerdown', () => (armed = this.time.now >= this.calmUntil))
@@ -396,6 +401,8 @@ export class FishingScene extends Phaser.Scene {
         .on('pointerup', () => armed && this.state === 'quiz' && this.answer(item, c.id));
       card.add([b, l]);
     });
+    // Lit once they take a press.
+    this.time.delayedCall(QUIZ_CALM_MS, () => this.card === card && waiting.forEach((o) => o.setAlpha(1)));
     this.card = card;
   }
 
@@ -427,10 +434,11 @@ export class FishingScene extends Phaser.Scene {
     const label = CLASSES.find((c) => c.id === item.answer)?.label;
     // The end card on the first steps keeps the last verdict and drops its tip (CloudFront, lifecycle rules).
     const tips = this.caught < ROUND || fishingEnd(this.onPath, false).tips;
-    const verdict = verdictLine(right, label, item.why, tips);
+    const why = catchWhy(this.onPath, item);
+    const verdict = verdictLine(right, label, why, tips);
     this.lastVerdict = verdict;
     // Screen readers: the verdict in words (no ✅ / ❌), the catch so far, and what to do next.
-    const said = `${right ? 'Right!' : `Wrong: it’s ${label}.`}${tips ? ` ${item.why}` : ''} Catches ${this.caught} of ${ROUND}, ${this.correct} right.`;
+    const said = `${right ? 'Right!' : `Wrong: it’s ${label}.`}${tips ? ` ${why}` : ''} Catches ${this.caught} of ${ROUND}, ${this.correct} right.`;
     if (this.caught >= ROUND) return this.summary(verdict, said);
     this.reset(`${verdict}\nClick the water or press Space to cast again.`);
     announce(`${said} Press Space to cast again.`);
@@ -475,7 +483,7 @@ export class FishingScene extends Phaser.Scene {
       return t;
     };
     text(record ? '🏆 New best!' : 'Round over', 19, PAL.paperMeta);
-    text(`${this.correct}/${ROUND} objects in the right bucket${perfect ? ' — perfect!' : ''}${stars ? `   ·   +${stars} ⭐${coins && end.coins ? `  +${coins} City Coins` : ''}${weekly ? ' ⚡ weekly' : ''}` : ''}`, 16, PAL.paperInk);
+    text(`${this.correct}/${ROUND} objects ${rightBin(this.onPath)}${perfect ? ' — perfect!' : ''}${stars ? `   ·   +${stars} ⭐${coins && end.coins ? `  +${coins} City Coins` : ''}${weekly ? ' ⚡ weekly' : ''}` : ''}`, 16, PAL.paperInk);
     if (halved)
       text(
         stars
@@ -549,7 +557,7 @@ export class FishingScene extends Phaser.Scene {
       [
         said,
         record ? 'New best!' : 'Round over.',
-        `${this.correct} of ${ROUND} objects in the right bucket${perfect ? ', perfect!' : '.'}`,
+        `${this.correct} of ${ROUND} objects ${rightBin(this.onPath)}${perfect ? ', perfect!' : '.'}`,
         stars ? `You earned ${stars} ${stars === 1 ? 'star' : 'stars'}${coins && end.coins ? ` and ${coins} City Coins` : ''}.` : '',
         halved ? (stars ? `Half stars after ${FULL_ROUNDS_A_DAY} rounds a day.` : "That's all the stars this game pays today.") : '',
         growthSaid(g),
