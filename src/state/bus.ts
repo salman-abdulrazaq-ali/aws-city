@@ -108,6 +108,8 @@ interface BusEvents {
   say: { agentId: string; text: string; tone?: 'info' | 'good' };
   /** Put a citizen with this question by Kai now (the first steps' planted citizen): src/state/requests.ts requestFor. */
   requestNow: { serviceId: string; cardId?: string };
+  /** The guide's "Walk to the citizen": Kai walks to the planted citizen (src/game/Requests.ts); arriving opens the question. */
+  walkToRequest: void;
   /** The first steps are done (or a replay of them): the city's moment (tier-up, camera). The card is Celebrate's. */
   graduated: void;
 }

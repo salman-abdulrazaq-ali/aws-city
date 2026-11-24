@@ -94,6 +94,8 @@ import type { Combo } from '@/world/combos';
 import { SCALERS, SURGE_MS, SURGE_WORKERS, type CourierLeg } from '@/world/couriers';
 import { nextLevelPreview } from '@/world/preview';
 import { shows } from '@/state/simple';
+import { FIRST_STEPS_QUEST, firstStep } from '@/state/firstSteps';
+import { followsKai } from '../firstStepsGame';
 
 /**
  * The season to draw: the `?season=winter` dev param (not in store builds: seasonParam), else prefs.season (testing),
@@ -122,6 +124,10 @@ const GHOST_GAP = 8;
 /** One-time hints about learning couriers: the first one seen, and the first one tapped (localStorage). */
 const COURIER_HINT_KEY = 'awscity.courierHint';
 const COURIER_TAP_KEY = 'awscity.courierTap';
+
+/** The first steps' graduation: how long after it the city looks for a tier-up before its camera visit, and how long it counts as one moment (ms). */
+const GRADUATION_BEAT_MS = 600;
+const GRADUATION_GAP_MS = 5_000;
 
 /** The Lookout's corner of the Town Square. */
 const lookoutHome = (square: Rect): Rect => ({ x: square.x + 8, y: square.y + 1, w: 4, h: 4 });
@@ -435,7 +441,12 @@ export class CityScene extends Phaser.Scene {
     );
     this.syncVisitors();
     this.citizens.ensure(this.citizenTarget());
-    this.requests = new Requests(this, () => this.citizens?.list ?? [], () => this.player);
+    // The first steps' planted citizen stands on a street by its building, and the camera goes with Kai to them.
+    this.requests = new Requests(this, () => this.citizens?.list ?? [], () => this.player, {
+      streets: sidewalks,
+      spot: (id) => this.plan.landmarkLayout(id)?.workSpot,
+      followKai: () => this.mayAutoPan() && this.follow(this.player),
+    });
     // Six golden tokens hidden on the streets: they glint when Kai is near; stepping on one picks it up.
     // One celebration at a time: a find right after a tier-up waits for the tier-up's bubble to go. The bubble is short
     // and gold; the certification on the token goes to the feed (and My City), not into the bubble.
@@ -1403,6 +1414,47 @@ export class CityScene extends Phaser.Scene {
     this.cameras.main.startFollow(a.sprite, true, 0.08, 0.08);
   }
 
+  /** The building Kai is walking to on the first steps (src/game/firstStepsGame.ts followsKai): the camera is with him. */
+  private kaiWalk?: string;
+
+  /**
+   * The first steps' walk (DESIGN §6.2): the camera follows Kai at the resting zoom while he walks, then settles on the
+   * building; the visit counts when he's there. Reduced motion: a cut at the start and at the arrival.
+   */
+  private walkWithKai(id: string) {
+    const l = this.plan.landmarkLayout(id)!;
+    const cam = this.cameras.main;
+    this.kaiWalk = id;
+    this.select(id);
+    click();
+    // A flight still under way would carry the camera off again.
+    cam.panEffect.reset();
+    this.following = this.player;
+    const lerp = reducedMotion() ? 1 : 0.08;
+    cam.startFollow(this.player.sprite, true, lerp, lerp);
+    this.player.goTo(l.workSpot, () => {
+      if (this.kaiWalk === id) this.kaiWalk = undefined;
+      // Still with him (the player didn't take the camera): it settles on the building.
+      if (this.following === this.player) this.flyTo(id);
+      useCity.getState().arrive(id);
+    });
+  }
+
+  /** When the first steps' graduation last played here (game time): one moment however many times it's sent. */
+  private graduatedAt = -Infinity;
+  private onGraduated() {
+    if (!this.sys.isActive() || this.time.now - this.graduatedAt < GRADUATION_GAP_MS) return;
+    this.graduatedAt = this.time.now;
+    if (reducedMotion()) return;
+    // The quest's stars land a moment after (store.questEvent's addXp): a tier-up they cause is the moment there.
+    this.time.delayedCall(GRADUATION_BEAT_MS, () => {
+      if (!this.sys.isActive() || reducedMotion() || !this.mayAutoPan()) return;
+      const id = questById(FIRST_STEPS_QUEST)?.serviceIds[0] ?? 's3';
+      if (!this.landmarks.has(id) || this.time.now - (this.tierUpAt.get(id) ?? -Infinity) < GRADUATION_GAP_MS) return;
+      this.time.delayedCall(this.flyTo(id), () => this.sys.isActive() && this.pushInNow());
+    });
+  }
+
   private highlight(id?: string) {
     this.focusedId = id;
     this.syncLabels();
@@ -1565,9 +1617,24 @@ export class CityScene extends Phaser.Scene {
       bus.on('walkTo', ({ id, accept }) => {
         if (!this.sys.isActive() || !this.plan.landmarkLayout(id)) return;
         accept();
+        // The first steps' walk: the camera walks with Kai, then settles on the building (not a jump ahead).
+        const st = useCity.getState();
+        if (followsKai(firstStep(st.progress, st.prefs), id) && !st.build) return this.walkWithKai(id);
         this.flyTo(id);
         this.onLandmarkClick(id);
       }),
+      // A landmark's agent says a line to the player (the first steps: Sally's greeting, her plan's outcome). Never a
+      // model call; one bubble at a time (the panel's solo rule, and no cheer over it); read out too.
+      bus.on('say', ({ agentId, text, tone }) => {
+        const a = this.agents.get(agentId);
+        if (!a || !text || !this.sys.isActive()) return;
+        if (!a.say(text, { caption: 'to you', tone: tone === 'good' ? 'done' : 'speech' })) return;
+        this.cheering = a;
+        announce(`${a.shortName} says: ${text}`);
+      }),
+      // The first steps are done: Celebrate's card is the moment; the city adds a gentle camera visit to the building
+      // they grew, unless its tier-up (which flies there itself) is playing. Once; nothing under reduced motion.
+      bus.on('graduated', () => this.onGraduated()),
       bus.on('questDone', ({ questId }) => this.onQuestDone(questId)),
       // A quest step done: its building bumps and a ✓ floats up (the store's toast says which step).
       bus.on('questStep', ({ serviceId }) => {
@@ -1684,6 +1751,8 @@ export class CityScene extends Phaser.Scene {
     this.keys = {};
     this.citizens = this.patrols = this.markers = this.cheering = this.following = undefined;
     this.hoveredId = this.hoveredSign = this.focusedId = this.hint = this.hintTarget = this.hintLandmark = undefined;
+    this.kaiWalk = undefined;
+    this.graduatedAt = -Infinity;
     this.gateSign = this.gateAnchor = undefined;
     this.gateHover = this.dragging = false;
     this.lastNight = -1;
@@ -2211,6 +2280,11 @@ export class CityScene extends Phaser.Scene {
   private onDiscovered(serviceId: string, quiet = false) {
     // Quiet: its agent is already standing at work (the landmark sync spawned it there).
     if (quiet) return;
+    // The first steps' walk there: the camera stays with Kai and the agent waits at work to greet him (bus say).
+    if (this.kaiWalk === serviceId) {
+      this.highlight(serviceId);
+      return this.play('discover');
+    }
     if (this.mayAutoPan()) this.flyTo(serviceId);
     this.highlight(serviceId);
     this.play('discover');

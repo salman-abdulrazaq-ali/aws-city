@@ -21,6 +21,8 @@ import { TXT } from './games/MiniGame';
 import { answerPop, playScale } from './games/stageFx';
 import { endKeysLine, fishLine, growthSaid } from './games/say';
 import { announce } from '@/state/announce';
+import { firstSteps } from '@/state/firstSteps';
+import { fishingEnd, pathEndKey, verdictLine } from '../firstStepsGame';
 
 /** Clicks are ignored this long after the line is reset, so the click that answered doesn't cast at once. */
 const CALM_MS = 300;
@@ -79,6 +81,8 @@ export class FishingScene extends Phaser.Scene {
   private again: (() => void) | undefined;
   private expertRound: (() => void) | undefined;
   private leave: (() => void) | undefined;
+  /** This round is played on the first steps: its end card leads back to the city (src/game/firstStepsGame.ts fishingEnd). */
+  private onPath = false;
 
   constructor() {
     super('fishing');
@@ -97,6 +101,7 @@ export class FishingScene extends Phaser.Scene {
     this.choose = this.again = this.expertRound = this.leave = undefined;
     this.summaryCard = undefined;
     this.lastVerdict = '';
+    this.onPath = firstSteps(useCity.getState().progress, useCity.getState().prefs).active;
     // A mix of storage classes each round (at most two of a kind), so the answer isn't "Standard" four times.
     this.deck = mixCatch(dealRound(FISH, useCity.getState().progress.games?.fishing?.plays ?? 0, ROUND), FISH);
     this.build();
@@ -118,6 +123,11 @@ export class FishingScene extends Phaser.Scene {
   /** Keyboard play (src/game/scenes/games/gameKeys.ts): the same actions as the pointer, unless a UI control has focus. */
   private onKey(e: KeyboardEvent) {
     if (e.repeat || keysBelongToUi(document.activeElement, this.game.canvas)) return;
+    // On the first steps the end card's primary is "Back to the city": Enter or Escape goes back, Space plays again.
+    if (this.state === 'summary' && this.onPath) {
+      const end = pathEndKey(e.key);
+      return void (end === 'leave' ? this.leave?.() : end === 'again' ? this.again?.() : undefined);
+    }
     const a = fishingKey(this.state, e.key, CLASSES.length);
     if (!a) return;
     if (a.kind === 'bucket') return this.choose?.(a.index);
@@ -414,10 +424,13 @@ export class FishingScene extends Phaser.Scene {
     this.spawnSwimmer(this.freeLane());
     this.updateHud();
     if (!right) sfx('wrong', { own: true });
-    const verdict = right ? `✅ Correct! ${item.why}` : `❌ Not quite: it’s ${CLASSES.find((c) => c.id === item.answer)?.label}. ${item.why}`;
+    const label = CLASSES.find((c) => c.id === item.answer)?.label;
+    // The end card on the first steps keeps the last verdict and drops its tip (CloudFront, lifecycle rules).
+    const tips = this.caught < ROUND || fishingEnd(this.onPath, false).tips;
+    const verdict = verdictLine(right, label, item.why, tips);
     this.lastVerdict = verdict;
     // Screen readers: the verdict in words (no ✅ / ❌), the catch so far, and what to do next.
-    const said = `${right ? 'Right!' : `Wrong: it’s ${CLASSES.find((c) => c.id === item.answer)?.label}.`} ${item.why} Catches ${this.caught} of ${ROUND}, ${this.correct} right.`;
+    const said = `${right ? 'Right!' : `Wrong: it’s ${label}.`}${tips ? ` ${item.why}` : ''} Catches ${this.caught} of ${ROUND}, ${this.correct} right.`;
     if (this.caught >= ROUND) return this.summary(verdict, said);
     this.reset(`${verdict}\nClick the water or press Space to cast again.`);
     announce(`${said} Press Space to cast again.`);
@@ -441,6 +454,8 @@ export class FishingScene extends Phaser.Scene {
     if (stars > 0) s.addXp('s3', stars);
     if (this.correct > 0) s.noteLearning('games');
     const record = this.correct > best && best > 0 ? ' New best!' : '';
+    // On the first steps: no tips, no Expert round, no coins (they wait for graduation), and "Back to the city" leads.
+    const end = fishingEnd(this.onPath, expertOpen('s3'));
     // The building the round grew, and how far (src/state/growth.ts), like the other games' end card.
     const g = growthOf(useCity.getState().progress, 's3', useCity.getState().cityRegion);
     // A paper card in the middle, like the other games' end card (MiniGame.finish): the last answer, the result, the
@@ -458,7 +473,7 @@ export class FishingScene extends Phaser.Scene {
       return t;
     };
     text(record ? '🏆 New best!' : 'Round over', 19, PAL.paperMeta);
-    text(`${this.correct}/${ROUND} objects in the right bucket${perfect ? ' — perfect!' : ''}${stars ? `   ·   +${stars} ⭐${coins ? `  +${coins} City Coins` : ''}${weekly ? ' ⚡ weekly' : ''}` : ''}`, 16, PAL.paperInk);
+    text(`${this.correct}/${ROUND} objects in the right bucket${perfect ? ' — perfect!' : ''}${stars ? `   ·   +${stars} ⭐${coins && end.coins ? `  +${coins} City Coins` : ''}${weekly ? ' ⚡ weekly' : ''}` : ''}`, 16, PAL.paperInk);
     if (halved)
       text(
         stars
@@ -473,7 +488,7 @@ export class FishingScene extends Phaser.Scene {
     const barW = Math.min(260, cw - 60);
     items.push(this.add.rectangle(0, y, barW, 8, PAL.black, 0.15), this.add.rectangle(-barW / 2, y, Math.max(4, barW * g.pct), 8, COLOR.roleOk).setOrigin(0, 0.5));
     y += 16;
-    text('Tip: Lifecycle rules can move files to cheaper shelves for you.', 15, PAL.paperHint, '600');
+    if (end.tips) text('Tip: Lifecycle rules can move files to cheaper shelves for you.', 15, PAL.paperHint, '600');
     const buttons: Phaser.GameObjects.Text[] = [];
     const button = (label: string, color: string, bg: string, run: () => void) =>
       buttons.push(
@@ -487,12 +502,15 @@ export class FishingScene extends Phaser.Scene {
     this.leave = leave;
     this.again = again;
     const expertRound = () => (setExpert(true), this.scene.restart());
-    this.expertRound = expertOpen('s3') ? expertRound : undefined;
-    // The desk's buttons: amber for the next try (the one primary), pale gold for Expert, graphite for the city.
-    button('🎣 Play again (Space)', PAL.accentInk, PAL.accentCss, again);
-    // S3 Lake at level 3: an Expert round with the harder catches and a shorter bite.
-    if (expertOpen('s3')) button('⚡ Expert', PAL.paperInk, PAL.expertCss, expertRound);
-    button('← City', PAL.ink, PAL.chipCss, leave);
+    // S3 Lake at level 3: an Expert round with the harder catches and a shorter bite (never on the first steps).
+    this.expertRound = end.buttons.some((b) => b.action === 'expert') ? expertRound : undefined;
+    // The desk's buttons: amber for the one primary (the next try; "Back to the city" on the first steps), pale gold for
+    // Expert, graphite for the rest.
+    const run = { again, expert: expertRound, leave };
+    for (const b of end.buttons)
+      if (b.primary) button(b.label, PAL.accentInk, PAL.accentCss, run[b.action]);
+      else if (b.action === 'expert') button(b.label, PAL.paperInk, PAL.expertCss, run[b.action]);
+      else button(b.label, PAL.ink, PAL.chipCss, run[b.action]);
     // Laid out by measured width, wrapping inside the card (bigger text in the 400 px panel would overlap at fixed steps).
     const gap = 10;
     const rows: Phaser.GameObjects.Text[][] = [[]];
@@ -530,11 +548,11 @@ export class FishingScene extends Phaser.Scene {
         said,
         record ? 'New best!' : 'Round over.',
         `${this.correct} of ${ROUND} objects in the right bucket${perfect ? ', perfect!' : '.'}`,
-        stars ? `You earned ${stars} ${stars === 1 ? 'star' : 'stars'}${coins ? ` and ${coins} City Coins` : ''}.` : '',
+        stars ? `You earned ${stars} ${stars === 1 ? 'star' : 'stars'}${coins && end.coins ? ` and ${coins} City Coins` : ''}.` : '',
         halved ? (stars ? `Half stars after ${FULL_ROUNDS_A_DAY} rounds a day.` : "That's all the stars this game pays today.") : '',
         growthSaid(g),
-        'Tip: Lifecycle rules can move files to cheaper shelves for you.',
-        endKeysLine(!!this.expertRound).replace('Press Enter', 'Press Space or Enter'),
+        end.tips ? 'Tip: Lifecycle rules can move files to cheaper shelves for you.' : '',
+        end.keysLine ?? endKeysLine(!!this.expertRound).replace('Press Enter', 'Press Space or Enter'),
       ]
         .filter(Boolean)
         .join(' '),

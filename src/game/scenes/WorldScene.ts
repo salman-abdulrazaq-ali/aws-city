@@ -14,6 +14,7 @@ import { builtCities } from '@/state/cities';
 import { onSceneEnd } from './lifecycle';
 import { COLOR, CSS, LABEL_BG, withAlpha } from '../theme';
 import { setDiver, worldText } from '../worldUi';
+import { stormLine, stormLook } from '../firstStepsGame';
 
 /** The same blue the city sits in (palette.ts), so the dive fades from one sea into the other. */
 const SEA = SEA_COLOR;
@@ -35,6 +36,8 @@ const CITY_LIT = 0xfff3c4;
 const GLOW = 0xffc861;
 /** v2.6: Regions with an open AWS Health event: the desk's bad red for a disruption, its warn amber for degradation. */
 const INCIDENT = { disruption: COLOR.bad, degradation: COLOR.warn } as const;
+/** A storm on a first-run map: a small still grey mark, so the suggested Region is the only thing that moves. */
+const STORM_STILL = COLOR.muted;
 /** A data link's colour: the same as its carriers and lines in the city (RegionOverlay's COLORS), so a link reads as one thing on both maps. */
 const LINK: Record<DataLink['kind'], number> = { replication: 0xc925d1, standby: 0x7dd3fc, traffic: 0xffb84d };
 /** Text chips on the map: the desk's graphite (theme.ts), a little more see-through than a sign so the coast shows. */
@@ -427,13 +430,20 @@ export class WorldScene extends Phaser.Scene {
       g.fillStyle(CITY, 0.15 + 0.45 * (1 - k));
       frame(g, p.x - rad, p.y - 1 - rad, rad * 2 + 1, rad * 2 + 1);
     });
-    // AWS Health: an affected Region throbs faster, in the incident's colour, with a second ring (no flashing).
+    // AWS Health: an affected Region throbs faster, in the incident's colour, with a second ring (no flashing). On a
+    // first-run map it's a small still grey mark instead: the suggested Region is the one pulse (src/game/firstStepsGame.ts).
     const worst = worstByRegion(useCity.getState().health);
+    const look = stormLook(!useCity.getState().prefs.region);
     for (const [code, sev] of Object.entries(worst)) {
       if (sev === 'informational') continue;
       const reg = REGIONS.regions.find((x) => x.code === code);
       if (!reg) continue;
       const p = this.at(reg);
+      if (look === 'still') {
+        g.fillStyle(STORM_STILL, 0.9);
+        frame(g, p.x - 5, p.y - 6, 11, 11);
+        continue;
+      }
       const k = this.calm ? 0.5 : 0.5 + 0.5 * Math.sin(time / 320);
       for (const [base, a] of [
         [10, 1],
@@ -487,7 +497,9 @@ export class WorldScene extends Phaser.Scene {
     const visit = this.touch ? 'Tap again to visit.' : 'Click to visit.';
     const st = this.status(r.code);
     const hit = incidentsIn(useCity.getState().health, r.code).find((i) => i.region === r.code);
-    const health = hit ? `${hit.severity === 'disruption' ? '⛈️ AWS reports a disruption here' : hit.severity === 'degradation' ? '🌧️ AWS reports trouble here' : 'ℹ️ AWS notice'} · updated ${ago(hit.updated)}` : '';
+    const today = hit ? `${hit.severity === 'disruption' ? '⛈️ AWS reports a disruption here' : hit.severity === 'degradation' ? '🌧️ AWS reports trouble here' : 'ℹ️ AWS notice'} · updated ${ago(hit.updated)}` : '';
+    // A first-run map, for a player with no AWS account: the storm in plain words and what to do (pick another dot).
+    const health = hit && hit.severity !== 'informational' ? stormLine(!veteran, useCity.getState().account.linked, today) : today;
     const friendly = [health, friendlyRegionLine(r.code, st === 'not-enabled' ? 'not-enabled' : undefined), visit].filter(Boolean).join('\n');
     if (!this.more) return this.info.setText(friendly);
     const cities = this.cities();
