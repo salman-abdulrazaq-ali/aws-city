@@ -144,7 +144,10 @@ export function scriptFor(serviceId: string, prompt: string): MockScript {
   const generic = genericScript(serviceId);
   const typed = nameIn(prompt);
   const made = MADE[serviceId];
-  if (!typed || !made) return generic;
+  // Only on the kind the words ask for: an agent picked by the page's context never names a "table" a bucket (seen 24
+  // Nov 2026 in the tab after the practice console's S3: "Make a table called orders" → "The bucket “orders” is ready").
+  const asked = Object.values(MADE).filter((m) => new RegExp(`\\b${m.kind}s?\\b`, 'i').test(prompt));
+  if (!typed || !made || (asked.length && !asked.includes(made))) return generic;
   // Bucket names are lowercase.
   const name = serviceId === 's3' ? typed.toLowerCase() : typed;
   return { steps: [{ text: `Making the ${made.kind} “${name}”`, aws: made.aws }, ...generic.steps.slice(1)], result: `The ${made.kind} “${name}” is ready. ${generic.result}` };

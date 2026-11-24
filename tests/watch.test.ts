@@ -152,6 +152,10 @@ describe('the demo is honest about its scripts', () => {
     expect(scriptFor('s3', 'Create a bucket called Orders').steps[0]).toEqual({ text: 'Making the bucket “orders”', aws: 's3:CreateBucket' });
     expect(scriptFor('sqs', 'Make a queue named jobs').steps[0].text).toBe('Making the queue “jobs”');
     expect(texts('s3', 'Create a bucket called orders')).not.toMatch(/holiday|photos/i);
+    // The name goes only on the kind asked for: S3 picked from the page's context never makes a "table" a bucket.
+    expect(texts('s3', 'Make a table called orders')).not.toMatch(/orders|Making the bucket/);
+    expect(texts('dynamodb', 'Make a bucket called orders')).not.toMatch(/orders/);
+    expect(scriptFor('s3', 'Make one called orders').steps[0].text).toBe('Making the bucket “orders”');
   });
 
   it('the demo task runs that script: a typed table name, no canned users table', async () => {
