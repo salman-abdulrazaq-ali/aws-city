@@ -86,6 +86,17 @@ describe('the account as a diagram', () => {
     expect(diagramOf(inv([item('apigateway', 'api'), item('dynamodb', 't')])).links.filter((l) => l.style === 'typical')).toEqual([]);
   });
 
+  // Seen 24 Nov 2026: AWS's default event bus counted as the player's put EventBridge on the diagram, with a dashed
+  // S3 → EventBridge line; the server now leaves AWS's defaults out, so a bucket alone stands alone.
+  it('a bucket alone draws no EventBridge and no S3 → EventBridge line (the line needs both ends)', () => {
+    const d = diagramOf(inv([item('s3', 'testdemo-1')]));
+    expect(d.nodes.map((n) => n.id)).toEqual(['s3']);
+    expect(d.links).toEqual([]);
+    // What the default event bus used to cause: with EventBridge counted, the teaching line appeared.
+    const before = diagramOf(inv([item('s3', 'testdemo-1'), item('eventbridge', 'default')]));
+    expect(before.links.filter((l) => l.style === 'typical').map((l) => `${l.from}>${l.to}`)).toContain('s3>eventbridge');
+  });
+
   it('flows where every service reports into the last one draw no lines between them (DynamoDB does not feed EFS)', () => {
     const d = diagramOf(inv([item('dynamodb', 't'), item('efs', 'fs'), item('ebs', 'v')]));
     expect(d.links.filter((l) => l.style === 'typical')).toEqual([]);

@@ -153,6 +153,8 @@ function DiagramView({ map, layout }: { map: Map; layout: Layout }) {
               ? 'est.: worked out from AWS’s figure for this month so far (a day = so far ÷ days so far).'
               : 'Turn on Show my bill above to see what each service costs a day and a month.'}
         </li>
+        {/* The server leaves AWS's automatic defaults out (server/src/state/inventory.ts isAwsDefault, 24 Nov 2026). */}
+        <li className="muted">Things AWS creates in every account (the default event bus, Athena’s primary workgroup…) are left out.</li>
       </ul>
       {node && (
         <section ref={pickedRef} className="arch-picked" aria-label={node.name}>

@@ -68,6 +68,20 @@ export const serviceForArn = (arn: string): { serviceId: string | null; type: st
   return { serviceId: serviceId && serviceById(serviceId) ? serviceId : null, type: CFN_TYPE[key] ?? key, name };
 };
 
+/** shared/arn-services.json awsDefaults: what AWS makes in every account by itself, as `service:resource` (a trailing * = any rest). */
+const AWS_DEFAULTS = (arnServices as { awsDefaults?: { pattern: string }[] }).awsDefaults?.map((d) => d.pattern) ?? [];
+
+/**
+ * Whether an ARN is one of AWS's own defaults (the default event bus, Athena's primary workgroup, ElastiCache's default
+ * user…): never the player's, so the inventory leaves it out (seen 24 Nov 2026: a fresh account showed EventBridge,
+ * Athena and ElastiCache, and an S3 → EventBridge line). Matched on the ARN's service and resource, never on a name.
+ */
+export const isAwsDefault = (arn: string): boolean => {
+  const [, , service = '', , , ...rest] = arn.split(':');
+  const key = `${service}:${rest.join(':')}`;
+  return AWS_DEFAULTS.some((p) => (p.endsWith('*') ? key.startsWith(p.slice(0, -1)) : key === p));
+};
+
 /** The Region in an ARN (empty for global services like IAM or S3 bucket ARNs). */
 const regionOfArn = (arn: string) => arn.split(':')[3] ?? '';
 
@@ -101,7 +115,8 @@ export const readInventory = async (clients: AwsClients, region: string): Promis
       let NextToken: string | undefined;
       do {
         const page = await clients.explorer.send(new SearchCommand({ QueryString: allRegions ? '' : `region:${region}`, MaxResults: 1000, NextToken }));
-        for (const r of page.Resources ?? []) if (r.Arn) items.push(item(r.Arn, false, r.Region));
+        // AWS's own defaults are skipped before they count toward MAX_ITEMS.
+        for (const r of page.Resources ?? []) if (r.Arn && !isAwsDefault(r.Arn)) items.push(item(r.Arn, false, r.Region));
         NextToken = page.NextToken;
       } while (NextToken && items.length < MAX_ITEMS);
       return { source: 'resource-explorer', complete: !NextToken, items: items.slice(0, MAX_ITEMS), allRegions };
@@ -116,7 +131,7 @@ export const readInventory = async (clients: AwsClients, region: string): Promis
     do {
       const page = await clients.tagging.send(new GetResourcesCommand({ PaginationToken, ResourcesPerPage: 100 }));
       for (const r of page.ResourceTagMappingList ?? []) {
-        if (r.ResourceARN) items.push(item(r.ResourceARN, !!r.Tags?.some((t) => t.Key === GAME_TAG.key && t.Value === GAME_TAG.value)));
+        if (r.ResourceARN && !isAwsDefault(r.ResourceARN)) items.push(item(r.ResourceARN, !!r.Tags?.some((t) => t.Key === GAME_TAG.key && t.Value === GAME_TAG.value)));
       }
       PaginationToken = page.PaginationToken || undefined;
     } while (PaginationToken && items.length < MAX_ITEMS);
@@ -225,11 +240,16 @@ export const enrich = (inv: Inventory, snapshot: WorldSnapshot | undefined, regi
     const az = r.meta.availabilityZone;
     if (typeof az === 'string' && az) azById.set(r.id, az);
   }
+  // Each VPC's security group named "default" is AWS's (it makes one per VPC and reserves the name): left out, like the
+  // other defaults (isAwsDefault). Home Region only: the poller reads security groups there.
+  const defaultGroups = new Set(snapshot.resources.filter((r) => r.kind === 'security-group' && r.name === 'default').map((r) => r.id));
   // By the ARN's id, not the item's name: a server is now named from its Name tag.
-  const items = reconcileLive(inv.items, snapshot, region).map((i) => {
-    const az = azById.get(idOf(i));
-    return az && (i.region ?? region) === region ? { ...i, az } : i;
-  });
+  const items = reconcileLive(inv.items, snapshot, region)
+    .filter((i) => !(i.type === 'AWS::EC2::SecurityGroup' && (i.region ?? region) === region && defaultGroups.has(idOf(i))))
+    .map((i) => {
+      const az = azById.get(idOf(i));
+      return az && (i.region ?? region) === region ? { ...i, az } : i;
+    });
   const links: DataLink[] = [];
   for (const r of snapshot.resources) {
     if (r.kind === 'table' && typeof r.meta.replicas === 'string') {
