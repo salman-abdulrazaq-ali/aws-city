@@ -157,6 +157,8 @@ function AccountCheck() {
       </p>
     </>
   );
+  // The linked account's Region (Oregon for a city there): commands without --region go to the profile's own.
+  const region = account.region ?? 'us-west-2';
   if (terminal)
     return (
       <div className="workshop-account workshop-terminal" role="group" aria-label="Set up your terminal once">
@@ -170,10 +172,15 @@ function AccountCheck() {
               Install the AWS CLI ↗
             </button>
           </li>
+          {/* Seen 24 Nov 2026: aws login asked for a Region the box didn't name (us-east-1 was picked; the city is in
+              Oregon), and the export line was pasted with its <your profile> placeholder. */}
           <li>
-            Sign in to that account (<CodeChip code="aws login" /> or your usual profile), then use it for every command:{' '}
+            Sign in: <CodeChip code="aws login" /> When it asks for a Region, type <b>{region}</b>.
+            <div className="muted small">
+              Already signed in? Set the Region: <CodeChip code={`aws configure set region ${region}`} />
+            </div>
             <label className="row aws-profile">
-              <span className="label">Your AWS CLI profile</span>
+              <span className="label">Using a named profile? (optional)</span>
               <input
                 value={profile ?? ''}
                 placeholder="e.g. city-047"
@@ -182,11 +189,12 @@ function AccountCheck() {
                 autoCapitalize="off"
               />
             </label>
-            <CodeChip code={`export AWS_PROFILE=${profile ?? '<your profile>'}`} />
+            {profile && <CodeChip code={`export AWS_PROFILE=${profile}`} />}
           </li>
           <li>Check you’re in the right account: {which}</li>
         </ol>
         <p className="muted small">Then paste each step’s command as it is, and press Check my account.</p>
+        <p className="muted small">These commands run as you (your own sign-in), not as AWS City’s role: it only needs the right account and Region.</p>
         <ConsoleAccountWarning />
       </div>
     );
