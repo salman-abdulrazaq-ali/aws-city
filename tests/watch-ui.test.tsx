@@ -74,6 +74,15 @@ describe('Watch it done', () => {
     off();
   });
 
+  // Seen 24 Nov 2026: "Done · 1 steps".
+  it('counts its steps in words that fit: 1 step, 2 steps', () => {
+    const t = (n: number) => ({ taskId: `s${n}`, prompt: 'Store my holiday photos cheaply', agentId: 's3', status: 'done' as const, steps: Array.from({ length: n }, (_, k) => ({ text: `Step ${k}`, status: 'done' as const })) });
+    const { rerender, container } = render(<TaskCard task={t(1)} />);
+    expect(container.textContent).toMatch(/· 1 step(?!s)/);
+    rerender(<TaskCard task={t(2)} />);
+    expect(container.textContent).toMatch(/· 2 steps/);
+  });
+
   it('when the day’s paid tasks at a building are used up, it says so kindly', () => {
     for (let i = 0; i < 4; i++) {
       act(() => useCity.getState().addTask(`c${i}`, 'Store my holiday photos cheaply'));

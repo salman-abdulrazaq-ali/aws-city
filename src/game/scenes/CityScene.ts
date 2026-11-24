@@ -596,8 +596,9 @@ export class CityScene extends Phaser.Scene {
       this.syncLabels();
     }
     // The AWS status ticker (src/ui/NewsTicker.tsx) covers the top ~34 px of the stage while it has something to say.
+    // Measured, not inferred: with ⋯ → Show everything the ticker shows before the news rung opens (`newsHeard`).
     const st = useCity.getState();
-    const inset = (st.health?.incidents.length || st.news?.items.length) && this.newsHeard() ? TICKER_PX : 0;
+    const inset = this.tickerInset();
     this.keepLabelsInView(cam.worldView, ui, inset);
     setBubbleTopInset(this, inset);
     if (time - this.ladderAt > LADDER_POLL_MS) {
@@ -1208,6 +1209,22 @@ export class CityScene extends Phaser.Scene {
   }
 
   /** The next (or previous) building in reading order, back to front then left to right: show it, select it, say it. */
+  private tickerAt = -Infinity;
+  private tickerPx = 0;
+  /**
+   * How far down the canvas the AWS status ticker reaches (CSS px; 0 while it isn't shown), measured twice a second at
+   * most (seen 24 Nov 2026: Sally's bubble clipped under it in the panel, where Show everything shows the ticker before
+   * the news rung opens, so the old guess said there was none). At least TICKER_PX while it shows.
+   */
+  private tickerInset(): number {
+    if (this.time.now - this.tickerAt < 500) return this.tickerPx;
+    this.tickerAt = this.time.now;
+    const t = document.querySelector('.stage .ticker')?.getBoundingClientRect();
+    const c = this.game.canvas.getBoundingClientRect();
+    this.tickerPx = t && t.height > 0 ? Math.max(TICKER_PX, Math.ceil(t.bottom - c.top) + 4) : 0;
+    return this.tickerPx;
+  }
+
   private stepBuilding(by: 1 | -1) {
     // Buildings only: the Leadership Principle and mechanism plaques (and other unsigned sites) are skipped, or 11 of
     // them stood between the player and S3 Lake.
@@ -1220,7 +1237,9 @@ export class CityScene extends Phaser.Scene {
     const id = order[at < 0 ? (by > 0 ? 0 : order.length - 1) : (at + by + order.length) % order.length];
     this.flyTo(id);
     this.highlight(id);
-    useCity.getState().select(id);
+    // Picked like a tap: its card opens, and closing it puts the building down, its next-level ghost and line too (seen
+    // 24 Nov 2026: a `]` pick opened no card, so nothing ever cleared its ghost).
+    this.select(id);
     // Its sign's name, never the raw id; quick presses replace the line still waiting, so the newest is always heard.
     announce(stepLine(id, this.landmarks.get(id)?.spec.label, order.indexOf(id) + 1, order.length), { replace: true });
   }

@@ -118,7 +118,7 @@ export function scriptedNote(task: Pick<TaskView, 'taskId' | 'agentId' | 'prompt
 }
 
 /** The story of a task (any agent: a hand-written one, else the building's own first lesson). */
-export function taskStory(task: Pick<TaskView, 'agentId' | 'prompt'>): TaskStory {
+export function taskStory(task: Pick<TaskView, 'agentId' | 'prompt'> & { taskId?: string }): TaskStory {
   const agentId = taskAgent(task);
   const p = placeFor(agentId);
   const who = p ? firstName(p.agentName) : 'An agent';
@@ -126,8 +126,12 @@ export function taskStory(task: Pick<TaskView, 'agentId' | 'prompt'>): TaskStory
   const def = STORIES[agentId];
   // Its hand-written words only for the request they were written for: "Create a table called orders" isn't Dina's
   // users table, and a Copilot bucket isn't Sally's holiday photos.
-  const framing = def && followsScript(agentId, task.prompt) ? `${who} will ${def.will} in ${place}.` : `${who} will take this on at ${place}.`;
-  const teaches = def?.teaches ?? p?.simple ?? p?.teaches[0] ?? '';
+  // The first steps' practice task plays Sally's own script (holiday.jpg, the warm shelf, the deep freeze), so it's hers too.
+  const scripted = !!def && (isPracticeTask(task.taskId ?? '') || followsScript(agentId, task.prompt));
+  const framing = scripted ? `${who} will ${def.will} in ${place}.` : `${who} will take this on at ${place}.`;
+  // Its lesson too (seen 24 Nov 2026: the Copilot's city-photos bucket taught the holiday photos' storage classes): any
+  // other request gets the building's own first lesson.
+  const teaches = (scripted ? def.teaches : undefined) ?? p?.simple ?? p?.teaches[0] ?? '';
   return { agentId, who, place, framing, watch: `Watch ${who} walk there.`, teaches, ...(def?.templateId ? { templateId: def.templateId } : {}) };
 }
 

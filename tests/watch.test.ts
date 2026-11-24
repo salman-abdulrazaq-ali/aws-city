@@ -22,6 +22,17 @@ describe('the story', () => {
     expect(taskStory(task({ agentId: 'lambda' })).who).toBe('Lola');
   });
 
+  // Seen 24 Nov 2026: the Copilot's city-photos bucket taught the holiday photos' storage classes.
+  it('a hand-written lesson only for the request it was written for', () => {
+    for (const prompt of ['🖥️ Create a bucket called city-photos', 'Make a bucket called logs-2026']) {
+      const s = taskStory(task({ prompt, agentId: 's3' }));
+      expect(s.teaches, prompt).not.toMatch(/storage classes/);
+      expect(s.teaches.length).toBeGreaterThan(10);
+    }
+    // The first steps' practice task plays her own script: her lesson.
+    expect(taskStory(task({ taskId: 'practice-task-1', prompt: 'Store my holiday photos', agentId: 's3' })).teaches).toMatch(/storage classes/);
+  });
+
   it('any building has a story (its own first lesson when nothing is hand-written)', () => {
     const s = taskStory(task({ prompt: 'Something about Amazon SQS queues', agentId: 'sqs' }));
     expect(s.framing).toMatch(/will take this on at/);

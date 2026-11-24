@@ -107,3 +107,32 @@
   color: var(--ink-soft);
   white-space: nowrap;
 }
+
+/* The side panel: the card docks as a strip in the column, just above the prompt bar (App's #tour-dock), in the page's
+   flow. The scrolling body above it shrinks instead of hiding under it, and the dialogs and sheets that open over the
+   column (⋯, My AWS, a citizen's question) stand over it, so it covers nothing (seen 24 Nov 2026: the floating card over
+   the approval's rows, My AWS's header, the shift's Start). */
+.tour-dock {
+  flex: none;
+}
+.tour-card.docked {
+  position: static;
+  z-index: auto;
+  width: auto;
+  margin: var(--s-2) var(--s-4);
+  padding: var(--s-3) var(--s-4);
+  animation: none;
+  transition: none;
+}
+.tour-card.docked .tour-head {
+  margin-bottom: var(--s-2);
+}
+.tour-card.docked h2 {
+  font-size: var(--fs-pixel);
+  line-height: 1.4;
+}
+.tour-card.docked p {
+  margin-bottom: var(--s-3);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}

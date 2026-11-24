@@ -122,7 +122,9 @@
       {
         "id": "building",
         "title": "Every building is an AWS service",
-        "body": "Tap one to see what it does, how far it's grown and who works there. Each Region (the 🌍 chip) is its own city."
+        "body": "Tap one to see what it does, how far it's grown and who works there. Each Region (the 🌍 chip) is its own city.",
+        "siteTitle": "Every lot is an AWS service",
+        "site": "Tap {place} to see what it does and who works there. It grows as you learn; each Region (the 🌍 chip) is its own city."
       },
       {
         "id": "ask",

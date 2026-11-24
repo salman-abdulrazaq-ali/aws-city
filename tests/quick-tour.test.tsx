@@ -6,12 +6,22 @@
 // tip goes when the first steps start, the citizen names the stars it really added, and bubbles wait behind a
 // celebration card.
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Progress } from '@/backend/contract';
 
 vi.mock('@/ui/Portrait', () => ({ Portrait: () => <span data-testid="portrait" />, agentColor: () => undefined }));
 // The App renders here (the stop targets in both layouts); the city's canvas and Phaser stay out of jsdom.
-vi.mock('phaser', () => ({ default: { Geom: { Rectangle: class {}, RectangleContains: () => true }, GameObjects: { Container: class {} }, Scene: class {} } }));
+// Enough Phaser for CityScene's module to load (its `]` key is tested on the prototype, with no game).
+vi.mock('phaser', () => ({
+  default: {
+    Geom: { Rectangle: class {}, RectangleContains: () => true },
+    GameObjects: { Container: class {}, Image: class {}, Sprite: class {}, Text: class {}, Graphics: class {} },
+    Scene: class {},
+    Math: {},
+    Input: { Keyboard: { KeyCodes: {} } },
+  },
+}));
 vi.mock('@/app/GameCanvas', () => ({ GameCanvas: () => <div className="game" tabIndex={0} data-testid="map" /> }));
 
 const rt = vi.hoisted(() => ({
@@ -25,7 +35,7 @@ const rt = vi.hoisted(() => ({
 }));
 vi.mock('@/app/runtime', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/app/runtime')>()), ...rt }));
 
-const { useCity } = await import('@/state/store');
+const { useCity, isDiscovered, tierOf } = await import('@/state/store');
 const { bus } = await import('@/state/bus');
 const { FIRST_STEPS } = await import('@/state/firstSteps');
 const { Tour, CoachTips, quickTourStops, placeCoach, overlaps, ALWAYS_CLEAR, MORE_BUTTON, tourBuilding, TOUR_FALLBACK_MS, TOUR_COVERS, startQuickTourAfterDive } = await import('@/ui/Tour');
@@ -137,7 +147,7 @@ describe('the six stops', () => {
   });
 
   // Seen 24 Nov 2026: stop 1 rang DynamoDB Library, a construction site under a crane (put up, level 0).
-  it('stop 1 points at a built landmark: S3 Lake when built, else the built one nearest Kai, else Kai', () => {
+  it('stop 1 points at a built landmark: S3 Lake when built, else the built one nearest Kai, else S3 Lake’s site', () => {
     expect(tourBuilding({ s3: { discovered: true, xp: 12 }, ec2: { discovered: true, xp: 50 } })).toBe('s3');
     // S3 Lake (or DynamoDB) put up but still a site: never rung.
     expect(tourBuilding({ dynamodb: { discovered: true, xp: 0 }, s3: { discovered: true, xp: 3 }, ec2: { discovered: true, xp: 10 } })).toBe('ec2');
@@ -147,11 +157,15 @@ describe('the six stops', () => {
     expect(tourBuilding(two)).toBe('ec2');
     expect(tourBuilding(two, (id) => (id === 'lambda' ? 50 : 300))).toBe('lambda');
     expect(tourBuilding(two, (id) => (id === 'lambda' ? 50 : undefined))).toBe('lambda');
-    // None built yet: Kai himself.
-    expect(tourBuilding({ dynamodb: { discovered: true, xp: 0 } })).toBe('player');
-    expect(tourBuilding(undefined)).toBe('player');
+    // None built yet (a fresh city): S3 Lake's lot, a site even beside another site (seen 24 Nov 2026: Kai was rung).
+    expect(tourBuilding({ dynamodb: { discovered: true, xp: 0 } })).toBe('s3');
+    expect(tourBuilding(undefined)).toBe('s3');
     expect(quickTourStops('panel', 'demo', 'sidepanel', 'ec2')[0].targets).toEqual(['@ec2', '.stage']);
-    expect(quickTourStops('panel', 'demo', 'sidepanel', 'player')[0].targets).toEqual(['@player', '.stage']);
+    // On a site, the stop's words fit one and name it; a built building keeps its own.
+    const [onSite] = quickTourStops('panel', 'demo', 'sidepanel', 's3', false, 'S3 Lake');
+    expect(onSite.title).toBe('Every lot is an AWS service');
+    expect(onSite.body).toMatch(/^Tap S3 Lake to see what it does and who works there\./);
+    expect(quickTourStops('panel', 'demo', 'sidepanel', 's3')[0].title).toBe(TITLES[0]);
   });
 
   it('the tour flies to the built one nearest Kai, picked as it opens', () => {
@@ -282,7 +296,11 @@ describe('where the card stands: never over its target, its stop’s controls or
     expect(consoleStop.keepClear[0]).toBe('.console-btn');
     expect(more.keepClear[0]).toBe(MORE_BUTTON);
     expect(quickTourStops('full', 'demo', 'sidepanel')[4].tab).toBeUndefined();
-    expect(ALWAYS_CLEAR).toEqual(['.tabs', '.hud']);
+    // The shift's big button, the order board's Go →, the panel's 🗺 and "Make the city bigger", the map's Region chip,
+    // credit and ticker, then the tabs and HUD.
+    expect(ALWAYS_CLEAR).toEqual(['.next-go', '.order-board button', '.minimap-btn', '.stage-size', '.world-btn', '.map-credit a', '.ticker', '.tabs', '.hud']);
+    expect(deploy.keepClear).toEqual(expect.arrayContaining(['.card.stack.preview .change-target', '.card.stack.preview .change-list']));
+    expect(more.keepClear).toEqual(expect.arrayContaining(['.account-map .finding-head', '.account-map .map-switches']));
   });
 });
 
@@ -814,5 +832,151 @@ describe('after the tour', () => {
     expect(helpedBy({ t2: { ...running, steps: steps('skipped'), status: 'done' } }, ['t2'])).toBe('lambda');
     expect(helpedBy({ t2: { ...running, status: 'failed' } }, ['t2'])).toBeUndefined();
     expect(helpedBy({}, [])).toBeUndefined();
+  });
+});
+
+describe('a real first building, rings that follow their stop, a docked card in the panel (Dev, 24 Nov 2026)', () => {
+  beforeAll(() => void (Element.prototype.scrollTo ??= () => {}));
+  const boxed = (el: Element, top: number, left: number, width: number, height: number) =>
+    (el.getBoundingClientRect = () => ({ top, left, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON: () => ({}) }));
+  const press = (el: HTMLElement) => {
+    fireEvent.mouseDown(el);
+    fireEvent.mouseUp(el);
+    fireEvent.click(el);
+  };
+
+  // N1: a fresh city's stop 1 rang Kai, and "tap a building" led into the Spheres' HQ, the tour gone with it.
+  it('a fresh city: stop 1 puts up S3 Lake’s site, rings it in words for a site, and its card opens with the tour still up', () => {
+    useCity.setState({ progress: { ...builder, cities: { [REGION]: { landmarks: {} } } } });
+    const asked: string[] = [];
+    const off = bus.on('locate', ({ id, reply }) => {
+      asked.push(id);
+      reply({ top: 100, left: 100, width: 80, height: 60 });
+    });
+    render(<App layout="panel" />);
+    act(() => useCity.getState().setTourOpen(true));
+    const p = useCity.getState().progress;
+    expect(isDiscovered(p, 's3', REGION)).toBe(true);
+    expect(tierOf(p, 's3', REGION)).toBe(0);
+    expect(asked).toContain('s3');
+    expect(asked).not.toContain('player');
+    expect(within(card()).getByRole('heading').textContent).toBe('Every lot is an AWS service');
+    expect(card().textContent).toContain('Tap S3 Lake to see what it does and who works there.');
+    // The tap (the city's select): S3 Lake's card opens in the City tab, and the tour's card is still there.
+    act(() => {
+      useCity.getState().select('s3');
+      bus.emit('select', { id: 's3' });
+    });
+    expect(document.querySelector('.back-link')).not.toBeNull();
+    expect(useCity.getState().view.name).toBe('city');
+    expect(within(card()).getByRole('heading').textContent).toBe('Every lot is an AWS service');
+    off();
+  });
+
+  // N2: the panel's stop 6 kept stop 5's ring on the Copilot switch.
+  it('each stop rings its own target as it opens: the panel’s stop 6 on ⋯, never where stop 5’s switch was', () => {
+    const { container } = render(
+      <>
+        <div className="more">
+          <button aria-haspopup="menu">⋯</button>
+        </div>
+        <button className="console-btn">Do it in my console</button>
+        <Tour layout="panel" />
+      </>,
+    );
+    boxed(container.querySelector('.console-btn')!, 780, 110, 180, 28);
+    boxed(container.querySelector(MORE_BUTTON)!, 8, 355, 36, 36);
+    act(() => useCity.getState().setTourOpen(true));
+    for (let k = 0; k < 4; k++) fireEvent.click(within(card()).getByRole('button', { name: 'Next' }));
+    expect(within(card()).getByRole('heading').textContent).toBe(TITLES[4]);
+    const ring5 = container.querySelector('.tour-ring') as HTMLElement;
+    expect([ring5.style.top, ring5.style.left, ring5.style.width]).toEqual(['776px', '106px', '188px']);
+    fireEvent.click(within(card()).getByRole('button', { name: 'Next' }));
+    expect(within(card()).getByRole('heading').textContent).toBe(TITLES[5]);
+    // A new ring (nothing slides over from the switch), standing on ⋯.
+    const ring6 = container.querySelector('.tour-ring') as HTMLElement;
+    expect(ring6).not.toBe(ring5);
+    expect([ring6.style.top, ring6.style.left, ring6.style.width]).toEqual(['4px', '351px', '44px']);
+    fireEvent.click(within(card()).getByRole('button', { name: 'Back' }));
+    expect((container.querySelector('.tour-ring') as HTMLElement).style.top).toBe('776px');
+  });
+
+  // N3–N5: in the panel the card stood over the approval's rows, My AWS's header, the shift's Start, the Go → buttons.
+  it('the side panel docks the card in the column, just above the box, in the page’s flow: it covers nothing there', () => {
+    render(<App layout="panel" />);
+    act(() => useCity.getState().setTourOpen(true));
+    const dock = document.getElementById('tour-dock')!;
+    // In the side column, after its scrolling body and right before the prompt bar: the body shrinks, nothing is under it.
+    expect(dock.parentElement).toBe(document.querySelector('aside.side'));
+    expect(dock.previousElementSibling).toBe(document.querySelector('.tab-body'));
+    expect(dock.nextElementSibling?.classList.contains('prompt-bar')).toBe(true);
+    for (let k = 0; k < 6; k++) {
+      const c = card();
+      expect(c.parentElement, `stop ${k + 1}`).toBe(dock);
+      expect(c.className).toMatch(/\bdocked\b/);
+      expect(c.className).not.toMatch(/\bpill\b/);
+      expect(c.getAttribute('style')).toBeNull();
+      expect(within(c).getByRole('heading').textContent).toBe(TITLES[k]);
+      // The keys still work through the dock (Enter goes next).
+      if (k < 5) fireEvent.keyDown(within(c).getByRole('heading'), { key: 'Enter' });
+    }
+    // Static in the flow, under whatever opens over the column (⋯, My AWS, a citizen's question).
+    const css = readFileSync('src/app/styles/14-tour.css', 'utf8');
+    expect(css).toMatch(/\.tour-card\.docked \{[^}]*position: static;[^}]*z-index: auto;/);
+    press(within(card()).getByRole('button', { name: 'Start exploring' }));
+    expect(useCity.getState().tourOpen).toBe(false);
+    expect(document.querySelector('.tour-card')).toBeNull();
+  });
+
+  // In the tab the card stood over the box and a building card's reading shelf: the side column stays clear there too.
+  it('the tab keeps its side column clear: stop 2’s card stands over the map beside the box', () => {
+    const { container } = render(
+      <>
+        <div className="stage" />
+        <aside className="side">
+          <div className="composer" />
+        </aside>
+        <Tour layout="full" />
+      </>,
+    );
+    boxed(container.querySelector('.stage')!, 0, 0, 624, 768);
+    boxed(container.querySelector('aside.side')!, 0, 624, 400, 768);
+    boxed(container.querySelector('.composer')!, 700, 634, 380, 40);
+    act(() => useCity.getState().setTourOpen(true));
+    fireEvent.click(within(card()).getByRole('button', { name: 'Next' }));
+    expect(within(card()).getByRole('heading').textContent).toBe(TITLES[1]);
+    expect(card().className).not.toMatch(/\bpill\b/);
+    expect(parseFloat(card().style.left) + 320).toBeLessThanOrEqual(624);
+  });
+
+  it('the tab’s card still stands over the page (no dock there)', () => {
+    render(<App layout="full" />);
+    act(() => useCity.getState().setTourOpen(true));
+    expect(document.getElementById('tour-dock')).toBeNull();
+    expect(card().className).not.toMatch(/\bdocked\b/);
+    expect(card().closest('aside')).toBeNull();
+  });
+
+  // N6: a building picked with `]` kept its next-level ghost: no card opened, so nothing ever put it down.
+  it('a building picked with ] opens its card like a tap, and closing the card puts it down (its ghost follows)', async () => {
+    const { CityScene } = await import('@/game/scenes/CityScene');
+    const scene = Object.create(CityScene.prototype) as { stepBuilding(by: 1 | -1): void };
+    const lm = (y: number, label: string) => ({ img: { x: 0, y }, spec: { label } });
+    Object.assign(scene, {
+      landmarks: new Map([
+        ['s3', lm(10, 'S3 Lake')],
+        ['ec2', lm(20, 'EC2 Foundry')],
+      ]),
+      plan: { landmarkLayout: () => ({}) },
+      flyTo: vi.fn(),
+      highlight: vi.fn(),
+    });
+    render(<App layout="panel" />);
+    act(() => scene.stepBuilding(1));
+    expect(useCity.getState().selected).toBe('s3');
+    const back = document.querySelector<HTMLButtonElement>('.back-link');
+    expect(back).not.toBeNull();
+    fireEvent.click(back!);
+    expect(useCity.getState().selected).toBeUndefined();
   });
 });

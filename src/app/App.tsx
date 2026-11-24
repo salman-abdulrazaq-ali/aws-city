@@ -413,6 +413,9 @@ export function App({ layout }: { layout: Layout }) {
             {/* The Copilot's switch stands on the City tab (and wherever a console page or the Copilot is on). Both wait
                 while the first steps run (introduced at graduation as "Ask the city"). */}
             {/* Not on a first run's world map either: no city yet, and the box and its console switch say nothing there. */}
+            {/* The side panel's quick tour docks here, above the box, in the column's flow (src/ui/Tour.tsx): the body above
+                shrinks, so the card covers nothing. */}
+            {layout === 'panel' && <div id="tour-dock" className="tour-dock" />}
             {shows('promptBar', prefs, quiet) && !(view.name === 'world' && !prefs.region) && <PromptBar layout={layout} consoleHere={shownTab === 'home'} />}
             <ErrorBoundary what="This card">
               <FindingCard openTab={setTab} />

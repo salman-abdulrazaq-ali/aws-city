@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { startConsoleCopilot, startPracticeTask, type Layout } from '@/app/runtime';
 import { SURFACE, SURFACE_NAME, type Surface } from '@/app/surface';
 import { announce } from '@/state/announce';
 import { bus } from '@/state/bus';
-import { useCity } from '@/state/store';
+import { isDiscovered, tierOf, useCity } from '@/state/store';
 import { FIRST_STEPS, fill } from '@/state/firstSteps';
 import { isTourDone, markTourDone, readPref, TIP_ASK_KEY, TIP_COINS_KEY, TIP_COPILOT_KEY, writePref } from './logic';
 import { Portrait } from './Portrait';
 import { shows } from '@/state/simple';
-import { tierForXp } from '@/world/places';
+import { placeFor, tierForXp } from '@/world/places';
 import { useFirstSteps, useQuiet } from './FirstSteps';
 import { useShieldGame } from './useDialog';
 
@@ -47,6 +48,8 @@ export interface TourStop {
 
 /** ⋯, the HUD's menu button. */
 export const MORE_BUTTON = '.more > [aria-haspopup="menu"]';
+/** The tab's side column (its whole box), kept clear in the tab after a stop's own controls. */
+export const SIDE_COLUMN = 'aside.side';
 /** ⋯'s open menu. */
 const MORE_MENU = '.more > [role="menu"]';
 
@@ -69,22 +72,31 @@ const TARGETS: Record<string, (layout: Layout, building: string) => string[]> = 
 const KEEP_CLEAR: Record<string, string[]> = {
   building: ['.place-do .actions', '.place-do .agent-asks', '.place-live-task'],
   ask: ['.composer'],
-  deploy: ['.card.account > .btn', '.card.account .account-actions', '.card.stack.preview .actions'],
+  // A waiting approval's whole story (seen 24 Nov 2026: the card over "Changes the practice account…" and its "+ Add" rows).
+  deploy: ['.card.account > .btn', '.card.account .account-actions', '.card.stack.preview .actions', '.card.stack.preview .change-target', '.card.stack.preview .change-list'],
   learn: ['#tab-learn', '.tab-body [role="group"][aria-label="Learn"]'],
   console: ['.console-btn', MORE_BUTTON, MORE_MENU],
-  more: [MORE_BUTTON, MORE_MENU],
+  // ⋯ → My AWS, live: its header (the ✕ in it) and its switches and views (seen 24 Nov 2026: over Show my bill).
+  more: [MORE_BUTTON, MORE_MENU, '.account-map .finding-head', '.account-map .map-switches', '.account-map [aria-pressed]'],
 };
-/** Every stop leaves the tabs pressable and the HUD in sight, after its own controls. */
-export const ALWAYS_CLEAR = ['.tabs', '.hud'];
+/**
+ * Every stop leaves these pressable, after its own controls: the shift's big button, the order board's Go →, the
+ * panel's 🗺 and "Make the city bigger", the map's 🌍 Region chip, OpenStreetMap credit and news ticker, the tabs and the
+ * HUD (the last let go first when even the pill has no room).
+ */
+export const ALWAYS_CLEAR = ['.next-go', '.order-board button', '.minimap-btn', '.stage-size', '.world-btn', '.map-credit a', '.ticker', '.tabs', '.hud'];
 
 /**
  * The six stops for this surface and build: a stop's body is its build's or layout's own where the copy has one, and
  * its `linked` words once an account is linked (seen 24 Nov 2026: "…once an account is linked" right after linking).
  * Stop 1 points at `building` (tourBuilding: S3 Lake, or a building already up when S3 Lake isn't).
  */
-export function quickTourStops(layout: Layout, build: TourBuild, surface: Surface = SURFACE, building = 's3', linked = false): TourStop[] {
+export function quickTourStops(layout: Layout, build: TourBuild, surface: Surface = SURFACE, building = 's3', linked = false, site?: string): TourStop[] {
   return FIRST_STEPS.tour.stops.map((c) => {
     let body = c.body;
+    // Stop 1 on a construction site (a fresh city: S3 Lake's lot): words that fit a site, naming it.
+    const onSite = c.id === 'building' && !!site && !!c.site;
+    if (onSite) body = fill(c.site!, { place: site! });
     if (build === 'hosted' && c.hosted) body = c.hosted;
     if (build === 'local' && c.local) body = c.local;
     // The demo's practice console works from every surface (Safari's tab too): the stop offers it instead.
@@ -95,7 +107,7 @@ export function quickTourStops(layout: Layout, build: TourBuild, surface: Surfac
     const tryIt = c.id === 'ask';
     return {
       id: c.id,
-      title: c.title,
+      title: onSite && c.siteTitle ? c.siteTitle : c.title,
       body,
       // The practice console's stop rings nothing (no switch in the tab, and ⋯ doesn't hold it): the card stands docked.
       targets: practiceConsole ? [] : (TARGETS[c.id]?.(layout, building) ?? []),
@@ -111,17 +123,16 @@ export function quickTourStops(layout: Layout, build: TourBuild, surface: Surfac
 }
 
 /**
- * Stop 1's building: one that stands built in this city (Novice or more; a building put up at level 0 is still a
- * construction site under a crane: seen 24 Nov 2026, stop 1 rang DynamoDB Library's site). S3 Lake when it's built, else
- * the built one nearest Kai (`near`: its distance, when the city can tell), else the first in a stable order; none built
- * yet: Kai himself (`player`, which the city locates and flies to like a building).
+ * Stop 1's building: one that stands built in this city (Novice or more). S3 Lake when it's built, else the built one
+ * nearest Kai (`near`: its distance, when the city can tell), else the first in a stable order. None built yet (a fresh
+ * city): S3 Lake, a construction site the tour puts up when it isn't there yet (seen 24 Nov 2026: stop 1 rang Kai, and
+ * "tap a building" led to the Spheres' HQ, the tour gone with it). Its card opens on a tap like any building's.
  */
 export function tourBuilding(landmarks: Record<string, { discovered?: boolean; xp?: number }> | undefined, near?: (id: string) => number | undefined): string {
   const built = Object.entries(landmarks ?? {})
     .filter(([, l]) => l.discovered && tierForXp(l.xp ?? 0) >= 1)
     .map(([id]) => id);
-  if (built.includes('s3')) return 's3';
-  if (!built.length) return 'player';
+  if (!built.length || built.includes('s3')) return 's3';
   const d = (id: string) => near?.(id) ?? Infinity;
   return built.sort((a, b) => d(a) - d(b) || a.localeCompare(b))[0];
 }
@@ -180,6 +191,9 @@ function findTarget(selectors: string[]): Rect | undefined {
   return undefined;
 }
 
+/** Whether two boxes (or none) are the same. */
+const sameBox = (a?: Box, b?: Box) => a === b || (!!a && !!b && a.top === b.top && a.left === b.left && a.width === b.width && a.height === b.height);
+
 /** An element's box when it's on the page with a size. */
 function boxOf(sel: string): Box | undefined {
   const b = document.querySelector(sel)?.getBoundingClientRect();
@@ -215,9 +229,12 @@ const STEP = 12;
 /** Whether two boxes share any area (touching edges don't). */
 export const overlaps = (a: Box, b: Box) => a.left < b.left + b.width && a.left + a.width > b.left && a.top < b.top + b.height && a.top + a.height > b.top;
 
-/** Where the coach stands: the full card, or folded to the docked pill ("Quick tour · 3 of 6", Next, End tour). */
+/**
+ * Where the coach stands: the full card, folded to the pill ("Quick tour · 3 of 6", Next, End tour), or docked in the
+ * side panel's column above the prompt bar (`dock`: in the page's flow, so it covers nothing).
+ */
 export interface CoachSpot {
-  mode: 'card' | 'pill';
+  mode: 'card' | 'pill' | 'dock';
   top: number;
   left: number;
 }
@@ -357,7 +374,9 @@ export function Tour({ layout }: { layout: Layout }) {
   const [tried, setTried] = useState(false);
   /** Stop 5's practice console was opened from the card (the demo's tab). */
   const [consoleTried, setConsoleTried] = useState(false);
-  const [rect, setRect] = useState<Rect>();
+  /** The ring's box, with the stop it was found for: a new stop never shows (or slides from) the last stop's ring. */
+  const [ring, setRing] = useState<{ i: number; r?: Rect }>();
+  const rect = ring?.i === i ? ring.r : undefined;
   const [pos, setPos] = useState<CoachSpot>();
   const card = useRef<HTMLDivElement>(null);
   const layer = useRef<HTMLDivElement>(null);
@@ -366,7 +385,9 @@ export function Tour({ layout }: { layout: Layout }) {
   const sizes = useRef<{ card: Size; pill: Size }>({ card: { w: 320, h: 200 }, pill: { w: 260, h: 44 } });
   /** Sally's task card was brought into the panel's view once after Try it. */
   const taskShown = useRef(false);
-  const stops = quickTourStops(layout, build, SURFACE, building, linked);
+  // A fresh city's S3 Lake is a construction site: stop 1 says so and names it.
+  const site = useCity((s) => (picked && tierOf(s.progress, picked, s.cityRegion) === 0 ? placeFor(picked)?.place : undefined));
+  const stops = quickTourStops(layout, build, SURFACE, building, linked, site);
   const stop = stops[Math.min(i, stops.length - 1)];
   const last = i === stops.length - 1;
   const live = open && shown;
@@ -391,13 +412,24 @@ export function Tour({ layout }: { layout: Layout }) {
     }
     opener.current = document.activeElement;
     const s = useCity.getState();
-    setPicked(tourBuilding(s.progress.cities?.[s.cityRegion]?.landmarks, distanceToKai));
+    const id = tourBuilding(s.progress.cities?.[s.cityRegion]?.landmarks, distanceToKai);
+    // Nothing built yet: S3 Lake's lot gets its construction site (quietly), so a tap opens its card like any building's.
+    if (!isDiscovered(s.progress, id, s.cityRegion)) s.discover(id, { quiet: true });
+    setPicked(id);
   }, [open]);
+
+  // The side panel's column is too narrow for a card beside anything (seen 24 Nov 2026: over the approval's rows, My
+  // AWS's header, the shift's Start, the order board's Go →): the card docks as a strip in the column, just above the
+  // prompt bar (App's #tour-dock), in the page's flow, so the column's scrolling body shrinks and nothing is under it.
+  const [dockEl, setDockEl] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => setDockEl(live && layout === 'panel' ? document.getElementById('tour-dock') : null), [live, layout]);
+  const docked = !!dockEl;
 
   // The card stands over the map: its presses (Next, Start exploring) stop at it, never reaching Phaser's window
   // listeners as a tap on the building under them (seen 24 Nov 2026: Start exploring opened AWS North Hall's card and
-  // moved the panel to the City tab). The map itself still takes every press: the tour isn't modal.
-  useShieldGame(live, card);
+  // moved the panel to the City tab). The map itself still takes every press: the tour isn't modal. Docked in the side
+  // panel's column, the card is a new element: shielded again.
+  useShieldGame(live, card, dockEl);
 
   // The building stop: the camera goes there (and rings it); again if the city's own arrival moved it meanwhile (seen
   // 24 Nov 2026 in the panel, right after the dive), but only in the stop's first seconds, never against the player.
@@ -431,7 +463,9 @@ export function Tour({ layout }: { layout: Layout }) {
   // the map and the side column resizing (the panel's map shrinks as its body scrolls), the page changing under the card
   // (a tab, a card, Sally's task), and for a building on the map the camera too (it pans with no change on the page).
   const targetKey = stop.targets.join('|');
-  const keepKey = [...stop.keepClear, ...(tried ? (stop.keepClearTried ?? []) : []), ...ALWAYS_CLEAR].join('|');
+  // The tab keeps its whole side column clear too, after the stop's own controls: the map has room for the card (seen 24
+  // Nov 2026: stop 6 over the box and a building card's reading shelf, stop 3 over "Today's shift").
+  const keepKey = [...stop.keepClear, ...(tried ? (stop.keepClearTried ?? []) : []), ...(layout === 'full' ? [SIDE_COLUMN] : []), ...ALWAYS_CLEAR].join('|');
   const bringTask = layout === 'panel' && !!stop.tryIt && tried;
   const mode = pos?.mode;
   useLayoutEffect(() => {
@@ -451,6 +485,8 @@ export function Tour({ layout }: { layout: Layout }) {
         task.scrollIntoView?.({ block: 'nearest' });
       }
       const r = findTarget(targets);
+      setRing((prev) => (prev && prev.i === i && sameBox(prev.r, r) ? prev : { i, r }));
+      if (docked) return setPos((prev) => (prev?.mode === 'dock' ? prev : { mode: 'dock', top: 0, left: 0 }));
       const p = placeCoach({
         target: r,
         keepClear: keepClearBoxes(keep),
@@ -459,7 +495,6 @@ export function Tour({ layout }: { layout: Layout }) {
         side: boxOf('.side'),
         stage: boxOf('.stage'),
       });
-      setRect((prev) => (prev && r && prev.top === r.top && prev.left === r.left && prev.width === r.width && prev.height === r.height ? prev : r));
       setPos((prev) => (prev && prev.mode === p.mode && prev.top === p.top && prev.left === p.left ? prev : p));
     };
     const soon = () => {
@@ -473,9 +508,9 @@ export function Tour({ layout }: { layout: Layout }) {
       const el = document.querySelector(sel);
       if (el) sizesSeen?.observe(el);
     }
-    // The card's own changes (its place, its size) are left out, or it would chase itself.
+    // The card's own changes (its place, its size) are left out, or it would chase itself (docked, it's elsewhere).
     const changes = new MutationObserver((list) => {
-      if (list.some((m) => !layer.current?.contains(m.target))) soon();
+      if (list.some((m) => !layer.current?.contains(m.target) && !card.current?.contains(m.target))) soon();
     });
     changes.observe(document.querySelector('.app') ?? document.body, { childList: true, subtree: true, attributes: true, characterData: true });
     const timer = targets.some((t) => t.startsWith('@')) ? setInterval(soon, 400) : undefined;
@@ -487,7 +522,7 @@ export function Tour({ layout }: { layout: Layout }) {
       changes.disconnect();
       clearInterval(timer);
     };
-  }, [live, targetKey, keepKey, bringTask, tried, i, mode]);
+  }, [live, targetKey, keepKey, bringTask, tried, i, mode, docked]);
 
   if (!live) return null;
 
@@ -500,7 +535,11 @@ export function Tour({ layout }: { layout: Layout }) {
     // Her steps are on the City tab's shift (the copy says so): it shows, a building's card or another tab giving way.
     bus.emit('showTab', { tab: 'home' });
     // Try it goes from the card: the keys move to Next, the new amber button (never to <body>).
-    requestAnimationFrame(() => card.current?.querySelector<HTMLButtonElement>('[data-next]')?.focus({ preventScroll: true }));
+    // In the panel her card comes into the (docked-shrunk) body's view, after the City tab's scroll to its top.
+    requestAnimationFrame(() => {
+      card.current?.querySelector<HTMLButtonElement>('[data-next]')?.focus({ preventScroll: true });
+      if (layout === 'panel') document.querySelector('.tab-body .task')?.scrollIntoView?.({ block: 'nearest' });
+    });
     bus.emit('flyTo', { id: `agent:${FIRST_STEPS.task.agentId}` });
   };
   // The demo's tab: the Console Copilot on the practice console, with a safe sample goal (it opens in a new tab; the
@@ -528,74 +567,80 @@ export function Tour({ layout }: { layout: Layout }) {
 
   // No room beside the stop's controls: the same dialog folds to one docked row (its title and words stay for screen
   // readers, and Enter, Escape and the buttons work the same).
-  const pill = pos?.mode === 'pill';
+  const pill = !docked && pos?.mode === 'pill';
+
+  const coach = (
+    <div
+      ref={card}
+      className={`tour-card${pill ? ' pill' : ''}${docked ? ' docked' : ''}`}
+      role="dialog"
+      aria-labelledby="tour-title"
+      aria-describedby="tour-body"
+      style={docked ? undefined : pos ? { top: pos.top, left: pos.left } : { top: 0, left: 0, opacity: 0 }}
+    >
+      <div className="tour-head">
+        {!pill && !docked && <Portrait id="concierge" size={32} />}
+        <h2 id="tour-title" className={pill ? 'sr-only' : undefined}>
+          {stop.title}
+        </h2>
+        <button className="btn ghost tiny tour-end" onClick={end}>
+          {t.end}
+        </button>
+      </div>
+      <p id="tour-body" className={pill ? 'sr-only' : undefined}>
+        {stop.body}
+      </p>
+      {stop.tryIt && tried && (
+        <p className={`tour-tried${pill ? ' sr-only' : ''}`} role="status">
+          {t.tried}
+        </p>
+      )}
+      {stop.practiceConsole && !pill && !consoleTried && (
+        <p>
+          <button className="btn" data-console onClick={tryConsole}>
+            {t.consoleTry}
+          </button>
+        </p>
+      )}
+      {stop.practiceConsole && consoleTried && (
+        <p className={`tour-tried${pill ? ' sr-only' : ''}`} role="status">
+          {t.consoleTried}
+        </p>
+      )}
+      <div className="tour-foot">
+        {pill ? (
+          <span className="tour-pill-n">{fill(t.label, { n: i + 1, of: stops.length })}</span>
+        ) : (
+          <span className="pips" role="img" aria-label={fill(t.label, { n: i + 1, of: stops.length })}>
+            {stops.map((_, k) => (
+              <i key={k} className={k === i ? 'on' : k < i ? 'done' : ''} />
+            ))}
+          </span>
+        )}
+        {i > 0 && !pill && (
+          <button className="btn" onClick={() => setI(i - 1)}>
+            {t.back}
+          </button>
+        )}
+        <button className={`btn${last ? ' primary' : ''}`} data-next data-primary={tryFirst ? undefined : true} onClick={next}>
+          {last ? t.done : t.next}
+        </button>
+        {tryFirst && (
+          <button className="btn primary" data-try data-primary onClick={tryIt}>
+            {t.try}
+          </button>
+        )}
+      </div>
+    </div>
+  );
 
   return (
-    // The layer takes no room and no presses (display: contents): only the card's own keys (Enter, Escape) are its.
+    // The layer takes no room and no presses (display: contents): only the card's own keys (Enter, Escape) are its (a
+    // docked card's keys come here too: React passes events up through the portal).
     <div ref={layer} className="tour-layer" role="presentation" onKeyDown={onKey}>
-      <div className={`tour-ring ${rect ? '' : 'none'}`} style={rect} aria-hidden="true" />
-      <div
-        ref={card}
-        className={`tour-card${pill ? ' pill' : ''}`}
-        role="dialog"
-        aria-labelledby="tour-title"
-        aria-describedby="tour-body"
-        style={pos ? { top: pos.top, left: pos.left } : { top: 0, left: 0, opacity: 0 }}
-      >
-        <div className="tour-head">
-          {!pill && <Portrait id="concierge" size={32} />}
-          <h2 id="tour-title" className={pill ? 'sr-only' : undefined}>
-            {stop.title}
-          </h2>
-          <button className="btn ghost tiny tour-end" onClick={end}>
-            {t.end}
-          </button>
-        </div>
-        <p id="tour-body" className={pill ? 'sr-only' : undefined}>
-          {stop.body}
-        </p>
-        {stop.tryIt && tried && (
-          <p className={`tour-tried${pill ? ' sr-only' : ''}`} role="status">
-            {t.tried}
-          </p>
-        )}
-        {stop.practiceConsole && !pill && !consoleTried && (
-          <p>
-            <button className="btn" data-console onClick={tryConsole}>
-              {t.consoleTry}
-            </button>
-          </p>
-        )}
-        {stop.practiceConsole && consoleTried && (
-          <p className={`tour-tried${pill ? ' sr-only' : ''}`} role="status">
-            {t.consoleTried}
-          </p>
-        )}
-        <div className="tour-foot">
-          {pill ? (
-            <span className="tour-pill-n">{fill(t.label, { n: i + 1, of: stops.length })}</span>
-          ) : (
-            <span className="pips" role="img" aria-label={fill(t.label, { n: i + 1, of: stops.length })}>
-              {stops.map((_, k) => (
-                <i key={k} className={k === i ? 'on' : k < i ? 'done' : ''} />
-              ))}
-            </span>
-          )}
-          {i > 0 && !pill && (
-            <button className="btn" onClick={() => setI(i - 1)}>
-              {t.back}
-            </button>
-          )}
-          <button className={`btn${last ? ' primary' : ''}`} data-next data-primary={tryFirst ? undefined : true} onClick={next}>
-            {last ? t.done : t.next}
-          </button>
-          {tryFirst && (
-            <button className="btn primary" data-try data-primary onClick={tryIt}>
-              {t.try}
-            </button>
-          )}
-        </div>
-      </div>
+      {/* Keyed by its stop: each stop's ring stands where its own target is, never sliding from the last stop's. */}
+      <div key={i} className={`tour-ring ${rect ? '' : 'none'}`} style={rect} aria-hidden="true" />
+      {dockEl ? createPortal(coach, dockEl) : coach}
     </div>
   );
 }

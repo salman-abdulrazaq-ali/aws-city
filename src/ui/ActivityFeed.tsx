@@ -100,7 +100,7 @@ export function TaskCard({ task, openTab, quiet = false }: { task: TaskView; ope
           <span className={`task-state ${task.status}`}>
             {task.status === 'routing' || task.status === 'running' ? <span className="spinner" aria-hidden="true" /> : null}
             {TASK_LABEL[task.status]}
-            {task.steps.length > 0 ? ` · ${task.status === 'running' ? `${done}/` : ''}${task.steps.length} steps` : ''}
+            {task.steps.length > 0 ? ` · ${task.status === 'running' ? `${done}/` : ''}${task.steps.length} ${task.steps.length === 1 ? 'step' : 'steps'}` : ''}
           </span>
         </div>
         {!finished && (
