@@ -749,9 +749,12 @@ When a change touches a decision, update its entry and run its Proof.
   the map, no `aria-modal`: Enter goes next, Escape ends, Tab leaves it; each stop is announced; the card stands beside
   its target, never over it, `placeCard`, and steps aside while the city sleeps or a celebration card is up): S3 Lake on
   the map (bus `locate` asks the city where a landmark or Kai stands; the camera flies there), the box (`.composer`, its
-  **Try it** plays Sally's practice task, `startPracticeTask`, local in every build), the Deploy tab (the demo's, the
-  hosted city's or the local server's own words), the Learn tab, the console helpers (the panel's `.console-btn`; ⋯ in
-  the tab, which says the side panel has them, or that Safari has none) and ⋯ (My AWS, Simple, the first steps), ending on
+  **Try it** plays Sally's practice task, `startPracticeTask`, local in every build; the demo's words say it plays scripted
+  examples), the Deploy tab ("Real changes wait for your OK": practice tasks build nothing, a build in Deploy or a real
+  account's write waits for the OK; the demo's, the hosted city's or the local server's own words), the Learn tab, the
+  console helpers (the panel's `.console-btn`; in the demo's tab "Try it in the practice console", graphite, starts the
+  demo Copilot there on `consoleGoal`, `startConsoleCopilot`; ⋯ in a hosted or local tab, which says the side panel has
+  them, or that Safari has none) and ⋯ (My AWS, Simple, the first steps; other words once an account is linked), ending on
   Start exploring. One amber button a stop (Try it, then Next). **Safety:** the practice task and the photo-bucket plan are
   played and decided on the device in every build (`src/backend/practiceTasks.ts`, `ServerBackend.planPractice` /
   `answerPractice`): no model call, no AWS call, no socket send, no MFA step-up, a hosted player with a real account linked
@@ -1095,7 +1098,13 @@ When a change touches a decision, update its entry and run its Proof.
   `TaskView.paid`/`capped`; a practice deploy pays what it reports, once per template), the next step
   (`nextAction`) and, in the demo when a task matches a practice template, 🏗️ See it in Deploy (`planDeploy`, link first
   if needed; Home passes `openTab` so it opens Deploy). Home's agent offer is the same `AgentOffer`, and each featured
-  request's words route to the agent offering it (`FEATURED_REQUESTS`, `matchText`: a keyword counts only at a word's start, "ebs" never inside "website"). A building card separates 💬 Ask a question (the HQ chat) from 🛠️ Watch it done (an agent task, whose TaskCard then shows on that same card, scrolled into view). Its sign's marks are said in words there (`signLegend`: ×N resources, ! N things to check). Small talk typed in the request box ("Eddie, how are you?", "Thanks Sally": a greeting or social question, at most 8 words, no word that asks for a change) is a chat, not a task: it opens that agent's HQ and asks there (`smallTalkTo`, `src/state/smallTalk.ts`, from `submitPrompt`; seen 23 Nov 2026: sent as a task, the CPU concierge planned "launch a t4g.nano called Eddie"); every request, question about the account and featured request stays a task. Proof:
+  request's words route to the agent offering it (`FEATURED_REQUESTS`, `matchText`: a keyword counts only at a word's start, "ebs" never inside "website"). The story's
+  own words ("Sally will store your holiday photos") and, in the demo, its hand-written script need the words they were
+  written for (`followsScript`: the offer or a featured request, word for word); anything else is framed plainly and the
+  demo plays the building's generic script under a typed name ("called orders": `scriptFor`, `nameIn`; the demo
+  Copilot's `flowName` too), its card saying "Demo: this is a scripted example…" (`scriptedNote`; seen 24 Nov 2026:
+  "expire after 30 days" played Glacier after 90). The agent's "Done!" bubble names the stars the store really paid
+  (`doneBubble`), none past the cap. A building card separates 💬 Ask a question (the HQ chat) from 🛠️ Watch it done (an agent task, whose TaskCard then shows on that same card, scrolled into view). Its sign's marks are said in words there (`signLegend`: ×N resources, ! N things to check). Small talk typed in the request box ("Eddie, how are you?", "Thanks Sally": a greeting or social question, at most 8 words, no word that asks for a change) is a chat, not a task: it opens that agent's HQ and asks there (`smallTalkTo`, `src/state/smallTalk.ts`, from `submitPrompt`; seen 23 Nov 2026: sent as a task, the CPU concierge planned "launch a t4g.nano called Eddie"); every request, question about the account and featured request stays a task. Proof:
   `npx vitest run tests/watch.test.ts tests/watch-ui.test.tsx tests/taxonomy.test.ts tests/daily-pay.test.ts tests/cards-order.test.tsx tests/small-talk.test.ts`, `npx vitest run tests/runtime-session.test.ts -t "small talk"`; `npm run smoke` (`03`–`06-task-*.png`).
   The agent is told the concierge's plan after the player's words, fenced as `<concierge_plan>` data it acts on only as
   far as the player asked; a step that destroys something reaches it only when the player's own words ask for one (`withPlan`,

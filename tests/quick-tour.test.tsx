@@ -78,7 +78,7 @@ afterEach(() => {
 const TITLES = [
   'Every building is an AWS service',
   'Ask in plain words',
-  'Every change waits for your OK',
+  'Real changes wait for your OK',
   'Learn, then prove it',
   'Beside your console',
   'Your account as a map',
@@ -93,14 +93,44 @@ describe('the six stops', () => {
     expect(demo.map((s) => s.targets[0])).toEqual(['@s3', '.composer', '#tab-deploy', '#tab-learn', '.console-btn', '.more > [aria-haspopup="menu"]']);
     expect(demo.filter((s) => s.tryIt).map((s) => s.id)).toEqual(['ask']);
     expect(demo[2].body).toMatch(/practice account: nothing real is made/);
-    expect(quickTourStops('panel', 'hosted', 'sidepanel')[2].body).toMatch(/role you install; every write needs your OK and your authenticator/);
+    expect(quickTourStops('panel', 'hosted', 'sidepanel')[2].body).toMatch(/role you install; every write needs your Approve and your authenticator/);
     expect(quickTourStops('panel', 'local', 'sidepanel')[2].body).not.toMatch(/practice account|authenticator/);
-    // The tab has no Copilot switch: stop 5 points at ⋯ and says where the helpers work.
-    const tab = quickTourStops('full', 'demo', 'sidepanel');
+    // The hosted and local tab have no Copilot switch: stop 5 points at ⋯ and says where the helpers work.
+    const tab = quickTourStops('full', 'hosted', 'sidepanel');
     expect(tab[4].targets).toEqual(['.more > [aria-haspopup="menu"]']);
     expect(tab[4].body).toMatch(/browser's side panel, next to the AWS Console/);
-    expect(quickTourStops('full', 'demo', 'sidebar')[4].body).toMatch(/browser's sidebar/);
-    expect(quickTourStops('full', 'demo', 'tab')[4].body).toMatch(/^Safari has no side panel/);
+    expect(tab[4].practiceConsole).toBeUndefined();
+    expect(quickTourStops('full', 'local', 'sidebar')[4].body).toMatch(/browser's sidebar/);
+    expect(quickTourStops('full', 'hosted', 'tab')[4].body).toMatch(/^Safari has no side panel/);
+  });
+
+  // Seen 24 Nov 2026: stop 3 promised "Every change waits for your OK" while Try it, a plain Ask and the demo Copilot's
+  // bucket finished with no approval card. Practice tasks are said to build nothing; real changes wait for an OK.
+  it('stop 3 says what waits for an OK and what doesn’t, in each build; stop 2 promises no more than the demo does', () => {
+    const [, ask, deploy] = quickTourStops('panel', 'demo', 'sidepanel');
+    expect(deploy.title).toBe('Real changes wait for your OK');
+    expect(deploy.title).not.toMatch(/every change/i);
+    expect(deploy.body).toMatch(/^In the demo, tasks are practice: they show the steps and build nothing\. A build in Deploy waits for your Approve\./);
+    const hosted = quickTourStops('panel', 'hosted', 'sidepanel');
+    expect(hosted[2].body).toMatch(/^Practice tasks like Try it build nothing\. Real changes wait for your OK in Deploy/);
+    expect(quickTourStops('full', 'local', 'sidepanel')[2].body).toMatch(/^Practice tasks like Try it build nothing\. .*until you approve it\.$/);
+    // The demo's Ask plays scripted examples; the hosted and local agents do what's typed.
+    expect(ask.body).toMatch(/shows you the steps\. The demo plays scripted examples; the hosted city does what you type\./);
+    expect(ask.body).not.toMatch(/does it while you watch/);
+    expect(hosted[1].body).toMatch(/does it while you watch/);
+    expect(quickTourStops('panel', 'local', 'sidepanel')[1].body).toMatch(/does it while you watch/);
+  });
+
+  it('stop 6 has other words once an account is linked (seen 24 Nov 2026: “once an account is linked” right after linking)', () => {
+    expect(quickTourStops('panel', 'demo', 'sidepanel')[5].body).toMatch(/once an account is linked/);
+    for (const build of ['demo', 'hosted'] as const) {
+      const linked = quickTourStops('full', build, 'sidepanel', 's3', true)[5].body;
+      expect(linked).toBe(FIRST_STEPS.tour.stops[5].linked);
+      expect(linked).toMatch(/^⋯ → My AWS, live draws your linked account's resources, costs and traffic\./);
+      expect(linked).not.toMatch(/once an account is linked/);
+    }
+    // Only stop 6 changes.
+    expect(quickTourStops('panel', 'demo', 'sidepanel', 's3', true).slice(0, 5)).toEqual(quickTourStops('panel', 'demo', 'sidepanel').slice(0, 5));
   });
 
   it('stop 1 points at S3 Lake, or a building already up when S3 Lake isn’t (its lot when none is)', () => {
@@ -442,6 +472,56 @@ describe('the card follows the page and folds when there’s no room', () => {
   });
 });
 
+// Seen 24 Nov 2026: the tab's stop 5 had no way to the Copilot (no switch in the tab, nothing in ⋯, no button).
+describe('the tab’s stop 5 in the demo: the practice console', () => {
+  const toStop5 = () => {
+    act(() => useCity.getState().setTourOpen(true));
+    for (let k = 0; k < 4; k++) fireEvent.click(within(card()).getByRole('button', { name: 'Next' }));
+    expect(within(card()).getByRole('heading').textContent).toBe(TITLES[4]);
+  };
+
+  it('offers “Try it in the practice console” (graphite), which starts the demo Copilot on a safe sample goal', async () => {
+    const stop = quickTourStops('full', 'demo', 'sidepanel')[4];
+    expect(stop.practiceConsole).toBe(true);
+    expect(stop.targets).toEqual([]);
+    expect(stop.body).toBe(FIRST_STEPS.tour.stops[4].demoTab);
+    // Safari's tab too: the practice console works from every surface in the demo.
+    expect(quickTourStops('full', 'demo', 'tab')[4].practiceConsole).toBe(true);
+    expect(quickTourStops('panel', 'demo', 'sidepanel')[4].practiceConsole).toBeUndefined();
+    render(<Tour layout="full" />);
+    toStop5();
+    const c = card();
+    const go = within(c).getByRole('button', { name: FIRST_STEPS.tour.consoleTry });
+    expect(go.className).not.toMatch(/primary/);
+    expect(c.querySelectorAll('.btn.primary')).toHaveLength(0);
+    fireEvent.click(go);
+    expect(rt.startConsoleCopilot).toHaveBeenCalledWith(FIRST_STEPS.tour.consoleGoal);
+    expect(FIRST_STEPS.tour.consoleGoal).toMatch(/^Create a bucket called [a-z0-9-]+$/);
+    expect(within(card()).queryByRole('button', { name: FIRST_STEPS.tour.consoleTry })).toBeNull();
+    expect(within(card()).getByRole('status').textContent).toBe(FIRST_STEPS.tour.consoleTried);
+    // The keys go to Next (never to <body>).
+    await act(() => new Promise((r) => requestAnimationFrame(() => r(undefined))));
+    expect(document.activeElement?.textContent).toBe('Next');
+    for (const f of [rt.submitPrompt, rt.startPracticeTask, rt.planDeploy]) expect(f).not.toHaveBeenCalled();
+  });
+
+  it('not in a hosted or local tab, nor in the side panel', () => {
+    for (const s of [{ backendKind: 'server', hosted: true }, { backendKind: 'server', hosted: false }]) {
+      useCity.setState(s as never);
+      const { unmount } = render(<Tour layout="full" />);
+      toStop5();
+      expect(within(card()).queryByRole('button', { name: FIRST_STEPS.tour.consoleTry })).toBeNull();
+      unmount();
+      act(() => useCity.getState().setTourOpen(false));
+    }
+    useCity.setState({ backendKind: 'mock', hosted: false } as never);
+    render(<Tour layout="panel" />);
+    toStop5();
+    expect(within(card()).queryByRole('button', { name: FIRST_STEPS.tour.consoleTry })).toBeNull();
+    expect(rt.startConsoleCopilot).not.toHaveBeenCalled();
+  });
+});
+
 describe('where it starts', () => {
   it('⋯ → How you play → Show the quick tour, any time (in the city, on the City tab)', () => {
     useCity.setState({ view: { name: 'world' } } as never);
@@ -503,7 +583,7 @@ describe('the three verify fixes', () => {
     (container.querySelector('.composer') as HTMLElement).getBoundingClientRect = () => ({ top: 500, left: 10, width: 300, height: 40, right: 310, bottom: 540, x: 10, y: 500, toJSON: () => ({}) });
     Object.defineProperty(navigator, 'webdriver', { configurable: true, get: () => false });
     fireEvent.focusIn(screen.getByLabelText('Ask'));
-    expect(screen.getByRole('dialog', { name: 'Ask for anything' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Ask for anything' }).textContent).toMatch(/shows you the steps\. The demo plays scripted examples\./);
     expect(readPref(TIP_ASK_KEY)).toBe('1');
     act(() => useCity.getState().playFirstSteps());
     expect(screen.queryByRole('dialog', { name: 'Ask for anything' })).toBeNull();

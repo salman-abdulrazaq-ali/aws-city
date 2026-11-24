@@ -3,7 +3,7 @@ import type { AwsNewsItem, Progress, ServerEvent } from '@/backend/contract';
 import { bus } from '@/state/bus';
 import { announce, stepLine } from '@/state/announce';
 import { agentName, isChatter, isDiscovered, openFindings, severityRank, taskRunning, tierOf, useCity, type Inventory } from '@/state/store';
-import { bubbleText, failedBubble } from '@/state/watch';
+import { bubbleText, doneBubble, failedBubble } from '@/state/watch';
 import { dueFor } from '@/state/srs';
 import { citizenLevel, levelName } from '@/state/citizens';
 import { CITIZENS, citizenById } from '@/world/citizens';
@@ -2257,9 +2257,10 @@ export class CityScene extends Phaser.Scene {
         const a = t && this.agents.get(t.agentId);
         this.tasks.delete(e.taskId);
         if (!a) return;
-        const xp = e.xp.reduce((n, x) => n + x.amount, 0);
-        // A task that didn't work says why (the server's result), not only "That didn't work…".
-        a.say(e.ok ? `Done! ${stars(xp)}` : failedBubble(e.result), { tone: e.ok ? 'done' : 'alert', caption: 'Task complete' });
+        // A task that didn't work says why (the server's result), not only "That didn't work…". One that did names the
+        // stars the store really paid (it handles task.done first): none past the daily cap (seen 24 Nov 2026: the
+        // Copilot's "Done! +20 ⭐" while nothing was paid).
+        a.say(e.ok ? doneBubble(useCity.getState().tasks[e.taskId]) : failedBubble(e.result), { tone: e.ok ? 'done' : 'alert', caption: 'Task complete' });
         a.pin(false);
         if (e.ok) {
           a.emote('jump', 1000);

@@ -93,6 +93,20 @@ describe('Watch it done', () => {
     expect(screen.getByText(/Link the practice account in Deploy first/)).toBeTruthy();
   });
 
+  // Seen 24 Nov 2026: typed words got holiday photos and Glacier after 90 days, with nothing said.
+  it('in the demo, says when its script didn’t follow the words typed (never for its own words, never hosted)', () => {
+    act(() => useCity.getState().addTask('t3', 'Store my photos and expire them after 30 days'));
+    act(() => useCity.getState().addTask('t4', 'Store my holiday photos cheaply'));
+    const { container, rerender } = render(<TaskCard task={useCity.getState().tasks.t3} />);
+    expect(container.querySelector('.task-scripted')?.textContent).toMatch(/^Demo: this is a scripted example, not your exact request\. The hosted city does what you type\.$/);
+    expect(container.querySelector('.watch-framing')?.textContent).toBe('Sally will take this on at S3 Lake. Watch Sally walk there.');
+    rerender(<TaskCard task={useCity.getState().tasks.t4} />);
+    expect(container.querySelector('.task-scripted')).toBeNull();
+    act(() => useCity.setState({ backendKind: 'server' }));
+    rerender(<TaskCard task={useCity.getState().tasks.t3} />);
+    expect(container.querySelector('.task-scripted')).toBeNull();
+  });
+
   it('an agent offers a job as a little story, and Watch it done sends it', () => {
     render(<AgentOffer serviceId="s3" ask="Got holiday photos?" />);
     expect(screen.getByText(/Sally the Angler/)).toBeTruthy();

@@ -3,7 +3,7 @@ import { planDeploy, submitPrompt } from '@/app/runtime';
 import { bus } from '@/state/bus';
 import { nextAction } from '@/state/next';
 import { agentName, useCity, type FeedItem, type TaskView } from '@/state/store';
-import { agentOffer, liveStep, paidLine, taskPhase, taskStory, thinkingLine, watchLine } from '@/state/watch';
+import { agentOffer, liveStep, paidLine, scriptedNote, taskPhase, taskStory, thinkingLine, watchLine } from '@/state/watch';
 import { quietCity } from '@/state/firstSteps';
 import { placeFor } from '@/world/places';
 import { feel } from './feedback';
@@ -55,6 +55,7 @@ export function TaskCard({ task, openTab, quiet = false }: { task: TaskView; ope
   const calls = task.calls ?? [];
   // Honest labels: the demo backend only pretends to call AWS.
   const demo = useCity((s) => s.backendKind === 'mock');
+  const scripted = scriptedNote(task, demo);
   const linked = useCity((s) => s.account.linked);
   const offline = useCity((s) => offlineReason(s.backendKind, s.backendStatus));
   const progress = useCity((s) => s.progress);
@@ -114,6 +115,8 @@ export function TaskCard({ task, openTab, quiet = false }: { task: TaskView; ope
         )}
       </div>
       <div className="task-prompt">“{task.prompt}”</div>
+      {/* The demo's script didn't follow these words: it says so (seen 24 Nov 2026: "expire after 30 days" played 90). */}
+      {scripted && <p className="muted small task-scripted">{scripted}</p>}
       {phase === 'framing' && (
         <p className="watch-framing">
           <Plain text={story.framing} /> {watchLine(task, story.who)}

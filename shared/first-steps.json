@@ -114,6 +114,9 @@
     "end": "End tour",
     "try": "Try it",
     "tried": "Sally is on it: watch her in the city, and her steps in the City tab. Practice: nothing real is made.",
+    "consoleTry": "Try it in the practice console",
+    "consoleGoal": "Create a bucket called city-photos",
+    "consoleTried": "The practice console opens in a new tab: watch the Console Copilot fill in the form, then press Create bucket yourself. Nothing there touches AWS.",
     "done": "Start exploring",
     "stops": [
       {
@@ -124,14 +127,16 @@
       {
         "id": "ask",
         "title": "Ask in plain words",
-        "body": "Type what you want, like \"Store my holiday photos cheaply\". The right agent walks over and does it while you watch."
+        "body": "Type what you want, like \"Store my holiday photos cheaply\", and the right agent walks over and shows you the steps. The demo plays scripted examples; the hosted city does what you type.",
+        "hosted": "Type what you want, like \"Store my holiday photos cheaply\". The right agent walks over and does it while you watch.",
+        "local": "Type what you want, like \"Store my holiday photos cheaply\". The right agent walks over and does it while you watch."
       },
       {
         "id": "deploy",
-        "title": "Every change waits for your OK",
-        "body": "Agents propose, you approve in Deploy. Try it with the practice account: nothing real is made.",
-        "hosted": "Agents propose, you approve in Deploy. Link your own account with a role you install; every write needs your OK and your authenticator.",
-        "local": "Agents propose, you approve in Deploy. Nothing changes in your AWS account without your OK."
+        "title": "Real changes wait for your OK",
+        "body": "In the demo, tasks are practice: they show the steps and build nothing. A build in Deploy waits for your Approve. Try one with the practice account: nothing real is made.",
+        "hosted": "Practice tasks like Try it build nothing. Real changes wait for your OK in Deploy: link your own account with a role you install; every write needs your Approve and your authenticator.",
+        "local": "Practice tasks like Try it build nothing. Real changes wait for your OK in Deploy: nothing changes in your AWS account until you approve it."
       },
       {
         "id": "learn",
@@ -143,12 +148,14 @@
         "title": "Beside your console",
         "body": "Open this panel next to the AWS Console. The Lookout reads the page you're on; the Console Copilot fills in forms and leaves every press that commits to you.",
         "tab": "The same helpers work in the browser's {surface}, next to the AWS Console: the Lookout reads the page you're on, and the Console Copilot fills in forms.",
+        "demoTab": "In the demo, try it from here: the practice console looks like the AWS Console and nothing in it touches AWS. The Console Copilot fills in the form and leaves the press that commits to you.",
         "safari": "Safari has no side panel, so the Lookout and the Console Copilot can't sit beside the AWS Console. Ask in plain words here instead."
       },
       {
         "id": "more",
         "title": "Your account as a map",
-        "body": "⋯ → My AWS, live draws your real resources, costs and traffic once an account is linked. ⋯ also has Simple mode and the first steps."
+        "body": "⋯ → My AWS, live draws your real resources, costs and traffic once an account is linked. ⋯ also has Simple mode and the first steps.",
+        "linked": "⋯ → My AWS, live draws your linked account's resources, costs and traffic. ⋯ also has Simple mode and the first steps."
       }
     ]
   },

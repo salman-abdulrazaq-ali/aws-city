@@ -10,6 +10,7 @@ import { SERVICES, matchText, serviceById, servicesIn, type DistrictId } from '@
 import { cardPlace, placeFor } from '@/world/places';
 import { QUESTS } from '@/world/content';
 import { checkExplain, checkKeywords, EXPLAIN_MARK, explainFeedback, explainService } from '@/state/explain';
+import { followsScript, nameIn } from '@/state/watch';
 import { ALL_TASKS } from '@/world/clients';
 import { isPracticeTemplate, playPracticeTask } from './practiceTasks';
 import { PRACTICE_PREFIX } from './ServerBackend';
@@ -123,6 +124,30 @@ function genericScript(serviceId: string): MockScript {
     ],
     result: p?.blurb ?? 'Done.',
   };
+}
+
+/** What a demo script makes, by service: a name typed in the request ("a table called orders") goes on it. */
+const MADE: Record<string, { kind: string; aws: string }> = {
+  s3: { kind: 'bucket', aws: 's3:CreateBucket' },
+  dynamodb: { kind: 'table', aws: 'dynamodb:CreateTable' },
+  sqs: { kind: 'queue', aws: 'sqs:CreateQueue' },
+};
+
+/**
+ * The demo's script for a request: the hand-written one only for the words it was written for (`followsScript`), else
+ * the building's generic one, which claims nothing it wasn't asked (seen 24 Nov 2026: "expire after 30 days" played
+ * holiday.jpg and Glacier after 90 days, "a table called orders" an unnamed one), making the bucket, table or queue under
+ * the name typed. The task card says it's a scripted example (`scriptedNote`, src/ui/ActivityFeed.tsx).
+ */
+export function scriptFor(serviceId: string, prompt: string): MockScript {
+  if (followsScript(serviceId, prompt)) return SCRIPTS[serviceId] ?? genericScript(serviceId);
+  const generic = genericScript(serviceId);
+  const typed = nameIn(prompt);
+  const made = MADE[serviceId];
+  if (!typed || !made) return generic;
+  // Bucket names are lowercase.
+  const name = serviceId === 's3' ? typed.toLowerCase() : typed;
+  return { steps: [{ text: `Making the ${made.kind} “${name}”`, aws: made.aws }, ...generic.steps.slice(1)], result: `The ${made.kind} “${name}” is ready. ${generic.result}` };
 }
 
 /** Agents talking among themselves (shared/dialogue.json). */
@@ -384,7 +409,7 @@ export class MockBackend implements AgentBackend {
     void (async () => {
       const serviceId = matchText(prompt) ?? context.serviceId ?? 'bedrock';
       const place = placeFor(serviceId);
-      const script = SCRIPTS[serviceId] ?? genericScript(serviceId);
+      const script = scriptFor(serviceId, prompt);
 
       await this.work('concierge', 'bedrock', 'InvokeModel — routing your request', 900);
       this.emit({ type: 'agent.message', from: 'concierge', to: 'user', text: `Sounds like a job for ${place?.agentName ?? serviceId}!` });
@@ -410,8 +435,9 @@ export class MockBackend implements AgentBackend {
       for (let i = 0; i < script.steps.length; i++) {
         const step = script.steps[i];
         index++;
-        // Memory: agents skip steps the player has already been through on this kind of task.
-        const memKey = `${serviceId}:${i}`;
+        // Memory: agents skip steps the player has already been through on this kind of task (by its words: a generic
+        // script's step isn't the hand-written one at the same place, and a bucket named again is new).
+        const memKey = `${serviceId}:${step.text}`;
         if (this.remembered.has(memKey) && i < script.steps.length - 1) {
           this.emit({ type: 'task.step', taskId, index, text: `${step.text} (you know this — skipping)`, status: 'skipped' });
           if (i === 1 && helperStep) this.emit({ type: 'task.step', taskId, index: ++index, text: `${helperStep} (you know this — skipping)`, status: 'skipped' });

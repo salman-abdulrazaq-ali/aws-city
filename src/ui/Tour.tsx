@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { startPracticeTask, type Layout } from '@/app/runtime';
+import { startConsoleCopilot, startPracticeTask, type Layout } from '@/app/runtime';
 import { SURFACE, SURFACE_NAME, type Surface } from '@/app/surface';
 import { announce } from '@/state/announce';
 import { bus } from '@/state/bus';
@@ -35,6 +35,12 @@ export interface TourStop {
   tab?: 'home';
   /** Stop 2's "Try it": Sally's practice task (local in every build, never a model or AWS). */
   tryIt?: boolean;
+  /**
+   * Stop 5 in the demo's tab: "Try it in the practice console" starts the demo's Console Copilot on the practice console
+   * (practice.html, from every surface; the tab has no Copilot switch). Never in a hosted or local tab: there the helpers
+   * need the side panel beside a real console.
+   */
+  practiceConsole?: boolean;
 }
 
 /** ⋯, the HUD's menu button. */
@@ -70,27 +76,34 @@ const KEEP_CLEAR: Record<string, string[]> = {
 export const ALWAYS_CLEAR = ['.tabs', '.hud'];
 
 /**
- * The six stops for this surface and build: a stop's body is its build's or layout's own where the copy has one. Stop 1
- * points at `building` (tourBuilding: S3 Lake, or a building already up when S3 Lake isn't).
+ * The six stops for this surface and build: a stop's body is its build's or layout's own where the copy has one, and
+ * its `linked` words once an account is linked (seen 24 Nov 2026: "…once an account is linked" right after linking).
+ * Stop 1 points at `building` (tourBuilding: S3 Lake, or a building already up when S3 Lake isn't).
  */
-export function quickTourStops(layout: Layout, build: TourBuild, surface: Surface = SURFACE, building = 's3'): TourStop[] {
+export function quickTourStops(layout: Layout, build: TourBuild, surface: Surface = SURFACE, building = 's3', linked = false): TourStop[] {
   return FIRST_STEPS.tour.stops.map((c) => {
     let body = c.body;
     if (build === 'hosted' && c.hosted) body = c.hosted;
     if (build === 'local' && c.local) body = c.local;
-    if (layout === 'full' && c.tab) body = surface === 'tab' && c.safari ? c.safari : fill(c.tab, { surface: SURFACE_NAME[surface] });
+    // The demo's practice console works from every surface (Safari's tab too): the stop offers it instead.
+    const practiceConsole = layout === 'full' && build === 'demo' && !!c.demoTab;
+    if (practiceConsole) body = c.demoTab!;
+    else if (layout === 'full' && c.tab) body = surface === 'tab' && c.safari ? c.safari : fill(c.tab, { surface: SURFACE_NAME[surface] });
+    if (linked && c.linked) body = c.linked;
     const tryIt = c.id === 'ask';
     return {
       id: c.id,
       title: c.title,
       body,
-      targets: TARGETS[c.id]?.(layout, building) ?? [],
+      // The practice console's stop rings nothing (no switch in the tab, and ⋯ doesn't hold it): the card stands docked.
+      targets: practiceConsole ? [] : (TARGETS[c.id]?.(layout, building) ?? []),
       keepClear: KEEP_CLEAR[c.id] ?? [],
       // The panel's map is where Sally walks: the card folds rather than stand over it.
       keepClearTried: tryIt ? ['.task .watch-btn', '.task', ...(layout === 'panel' ? ['.stage'] : [])] : undefined,
       // The switch stands on the City tab only (seen 24 Nov 2026: from Learn, stop 5 ringed the box instead).
       tab: c.id === 'console' && layout === 'panel' ? 'home' : undefined,
       tryIt,
+      ...(practiceConsole ? { practiceConsole } : {}),
     };
   });
 }
@@ -309,8 +322,11 @@ export function Tour({ layout }: { layout: Layout }) {
   const build = useCity((s): TourBuild => (s.backendKind === 'mock' ? 'demo' : s.hosted ? 'hosted' : 'local'));
   const shown = useCity((s) => s.view.name === 'city' && !s.celebration);
   const building = useCity((s) => tourBuilding(s.progress.cities?.[s.cityRegion]?.landmarks));
+  const linked = useCity((s) => s.account.linked);
   const [i, setI] = useState(0);
   const [tried, setTried] = useState(false);
+  /** Stop 5's practice console was opened from the card (the demo's tab). */
+  const [consoleTried, setConsoleTried] = useState(false);
   const [rect, setRect] = useState<Rect>();
   const [pos, setPos] = useState<CoachSpot>();
   const card = useRef<HTMLDivElement>(null);
@@ -320,7 +336,7 @@ export function Tour({ layout }: { layout: Layout }) {
   const sizes = useRef<{ card: Size; pill: Size }>({ card: { w: 320, h: 200 }, pill: { w: 260, h: 44 } });
   /** Sally's task card was brought into the panel's view once after Try it. */
   const taskShown = useRef(false);
-  const stops = quickTourStops(layout, build, SURFACE, building);
+  const stops = quickTourStops(layout, build, SURFACE, building, linked);
   const stop = stops[Math.min(i, stops.length - 1)];
   const last = i === stops.length - 1;
   const live = open && shown;
@@ -331,6 +347,7 @@ export function Tour({ layout }: { layout: Layout }) {
     setOpen(false);
     setI(0);
     setTried(false);
+    setConsoleTried(false);
     if (!inCard) return;
     const back = opener.current instanceof HTMLElement && opener.current.isConnected ? opener.current : document.getElementById('city-tabpanel');
     back?.focus({ preventScroll: true });
@@ -377,7 +394,8 @@ export function Tour({ layout }: { layout: Layout }) {
   const mode = pos?.mode;
   useLayoutEffect(() => {
     if (!live) return;
-    const targets = targetKey.split('|');
+    // A stop with no target (the demo tab's practice console) docks: no empty selector is asked for.
+    const targets = targetKey ? targetKey.split('|') : [];
     const keep = keepKey.split('|');
     let frame = 0;
     const place = () => {
@@ -443,6 +461,14 @@ export function Tour({ layout }: { layout: Layout }) {
     requestAnimationFrame(() => card.current?.querySelector<HTMLButtonElement>('[data-next]')?.focus({ preventScroll: true }));
     bus.emit('flyTo', { id: `agent:${FIRST_STEPS.task.agentId}` });
   };
+  // The demo's tab: the Console Copilot on the practice console, with a safe sample goal (it opens in a new tab; the
+  // Copilot fills the form and hands the Create press back). Graphite: stop 5 has no amber button.
+  const tryConsole = () => {
+    if (consoleTried) return;
+    setConsoleTried(true);
+    void startConsoleCopilot(FIRST_STEPS.tour.consoleGoal);
+    requestAnimationFrame(() => card.current?.querySelector<HTMLButtonElement>('[data-next]')?.focus({ preventScroll: true }));
+  };
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -491,6 +517,18 @@ export function Tour({ layout }: { layout: Layout }) {
             {t.tried}
           </p>
         )}
+        {stop.practiceConsole && !pill && !consoleTried && (
+          <p>
+            <button className="btn" data-console onClick={tryConsole}>
+              {t.consoleTry}
+            </button>
+          </p>
+        )}
+        {stop.practiceConsole && consoleTried && (
+          <p className={`tour-tried${pill ? ' sr-only' : ''}`} role="status">
+            {t.consoleTried}
+          </p>
+        )}
         <div className="tour-foot">
           {pill ? (
             <span className="tour-pill-n">{fill(t.label, { n: i + 1, of: stops.length })}</span>
@@ -523,11 +561,15 @@ export function Tour({ layout }: { layout: Layout }) {
 // ── Coach tips: one card, once each, when the thing it explains first shows up (instead of more tour steps) ──
 
 type TipId = 'ask' | 'copilot' | 'rank' | 'workshop';
-const TIPS: Record<TipId, { key: string; title: string; body: (layout: Layout) => string; target: string }> = {
+const TIPS: Record<TipId, { key: string; title: string; body: (layout: Layout, demo: boolean) => string; target: string }> = {
   ask: {
     key: TIP_ASK_KEY,
     title: 'Ask for anything',
-    body: () => 'Say it in plain words, like “Store my holiday photos cheaply”, and the right agent walks over and does it.',
+    // The demo plays scripted examples, so it promises the steps, not the words (seen 24 Nov 2026).
+    body: (_, demo) =>
+      demo
+        ? 'Say it in plain words, like “Store my holiday photos cheaply”, and the right agent walks over and shows you the steps. The demo plays scripted examples.'
+        : 'Say it in plain words, like “Store my holiday photos cheaply”, and the right agent walks over and does it.',
     target: '.composer',
   },
   copilot: {
@@ -586,6 +628,7 @@ export function CoachTips({ layout }: { layout: Layout }) {
   const { graduated, active: onPath } = useFirstSteps();
   // Never over a celebration card (graduation's included): the tip comes once it closes.
   const celebrating = useCity((s) => !!s.celebration);
+  const demo = useCity((s) => s.backendKind === 'mock');
   const [tip, setTip] = useState<TipId>();
   const [rect, setRect] = useState<Rect>();
   const showing = useRef<TipId | undefined>(undefined);
@@ -653,7 +696,7 @@ export function CoachTips({ layout }: { layout: Layout }) {
   return (
     <div className="coach-tip" role="dialog" aria-labelledby="coach-title" style={{ top, left }}>
       <b id="coach-title">{t.title}</b>
-      <p>{t.body(layout)}</p>
+      <p>{t.body(layout, demo)}</p>
       {/* Graphite: the screen's one amber button stays the task's (the To-do's, the guide's). */}
       <button className="btn tiny" onClick={() => setTip(undefined)}>
         Got it

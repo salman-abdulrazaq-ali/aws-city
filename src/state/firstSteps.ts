@@ -148,7 +148,11 @@ export interface FirstStepsCopy {
   resume: string;
   menu: { play: string; replay: string; tour: string };
   hud: { steps: string };
-  /** The quick tour (src/ui/Tour.tsx, DESIGN-tutorial §5): six stops; a stop's `hosted`/`local`/`tab`/`safari` replace its body there. */
+  /**
+   * The quick tour (src/ui/Tour.tsx, DESIGN-tutorial §5): six stops; a stop's `hosted`/`local`/`tab`/`safari` replace its
+   * body there, `demoTab` the demo's tab (stop 5: the practice console, `consoleTry` starts its Copilot on `consoleGoal`)
+   * and `linked` its body once an account is linked.
+   */
   tour: {
     label: string;
     next: string;
@@ -156,8 +160,11 @@ export interface FirstStepsCopy {
     end: string;
     try: string;
     tried: string;
+    consoleTry: string;
+    consoleGoal: string;
+    consoleTried: string;
     done: string;
-    stops: { id: string; title: string; body: string; hosted?: string; local?: string; tab?: string; safari?: string }[];
+    stops: { id: string; title: string; body: string; hosted?: string; local?: string; tab?: string; demoTab?: string; safari?: string; linked?: string }[];
   };
   q2: { title: string; intro: string };
 }
