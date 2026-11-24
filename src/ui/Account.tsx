@@ -165,6 +165,23 @@ export function FixesOn({ region }: { region: string }) {
   );
 }
 
+/** The player's AWS CLI profile for their own terminal (prefs.awsProfile): one box, shared by every one-command step. */
+export function AwsProfileInput({ placeholder = 'e.g. city-047 (leave empty in CloudShell)' }: { placeholder?: string }) {
+  const profile = useCity((s) => s.prefs.awsProfile);
+  return (
+    <label className="row aws-profile">
+      <span className="label">Your AWS CLI profile</span>
+      <input
+        value={profile ?? ''}
+        placeholder={placeholder}
+        onChange={(e) => useCity.getState().setPref('awsProfile', AWS_PROFILE_NAME.test(e.target.value.trim()) ? e.target.value.trim() : undefined)}
+        spellCheck={false}
+        autoCapitalize="off"
+      />
+    </label>
+  );
+}
+
 /**
  * "Let the city change things you made" (asked for on 23 Nov 2026), in the linked account's card: Off by default, which
  * is today's rule (only what the city built). The switch lives in the player's own AWS account (the AWSCity stack's
@@ -225,16 +242,7 @@ export function CleanupSwitch({ region }: { region: string }) {
             <ol className="account-steps cleanup-steps" aria-label={`${verb} “${CLEANUP_SWITCH}”`}>
               <li>
                 Open Terminal (or CloudShell) signed in to account <b>{account.accountId ? accountTitle(account.accountId) : 'the linked one'}</b>.
-                <label className="row aws-profile">
-                  <span className="label">Your AWS CLI profile</span>
-                  <input
-                    value={profile ?? ''}
-                    placeholder="e.g. city-047 (leave empty in CloudShell)"
-                    onChange={(e) => useCity.getState().setPref('awsProfile', AWS_PROFILE_NAME.test(e.target.value.trim()) ? e.target.value.trim() : undefined)}
-                    spellCheck={false}
-                    autoCapitalize="off"
-                  />
-                </label>
+                <AwsProfileInput />
               </li>
               <li>
                 {command ? (

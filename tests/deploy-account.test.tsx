@@ -285,16 +285,38 @@ describe('a linked account (v2.19)', () => {
     const { container } = render(<DeployPanel />);
     // Plain words: glossary terms inside it are their own buttons, so the note is read as a whole.
     // Seen 24 Nov 2026: reconnecting needs the old stack gone first (it trusts the old link), and the card says so.
-    expect(container.querySelector('.stack-left')!.textContent).toMatch(/Disconnected\. Your AWSCity stack in Europe \(Ireland\) still trusts the old link\. To connect again, delete it first/);
-    expect(container.querySelector('.stack-left')!.textContent).toMatch(/To stop AWS City for good, delete it too\./);
+    expect(container.querySelector('.stack-left')!.textContent).toMatch(/Disconnected\. Your AWSCity stack in Europe \(Ireland\) stays in your account, still trusting the old link\. To connect again: reconnect it in step 2 \(one command\), or delete it and start fresh\./);
     fireEvent.click(screen.getByRole('button', { name: 'Open the AWSCity stack ↗' }));
     expect(rt.openUrl).toHaveBeenCalledWith(stacksUrl('eu-west-1'));
   });
 
-  it('linking again after a Disconnect, step 2 says the old stack must be deleted first', () => {
-    useCity.setState({ account: { linked: false, stackLeft: 'us-west-2', wantsLink: true, linkUrl: 'https://x.example/#/stacks/quickcreate?param_ConnectsPlayer=P', externalId: 'e' } });
+  // Asked for on 24 Nov 2026: after a Disconnect, reconnect the stack you have (one command) or delete it and start fresh.
+  const LINK = `https://us-west-2.console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/quickcreate?templateURL=${encodeURIComponent('https://t.s3.eu-west-2.amazonaws.com/player-role/v6.yaml')}&stackName=AWSCity&param_ExternalId=abcdefghijklmnop1234&param_ConnectsPlayer=Player%20u1&param_AllowCleanup=true`;
+  it('linking again after a Disconnect: Reconnect the stack you have (one command, then Done) or Delete it and start fresh', () => {
+    useCity.setState({ prefs: { ...useCity.getState().prefs, awsProfile: 'city-047' }, account: { linked: false, stackLeft: 'us-west-2', wantsLink: true, linkRegion: 'us-west-2', linkUrl: LINK, externalId: 'abcdefghijklmnop1234', allowCleanup: true } });
     render(<DeployPanel />);
-    expect(screen.getByRole('note').textContent).toBe('Delete the old AWSCity stack in US West (Oregon) first: a new one can’t be made while it’s there.');
+    const choice = screen.getByRole('group', { name: 'Your AWSCity stack in US West (Oregon)' });
+    expect(within(choice).getByRole('button', { name: '🔁 Reconnect the stack you have' }).getAttribute('aria-pressed')).toBe('true');
+    const steps = screen.getByRole('list', { name: 'Reconnect the AWSCity stack you have' });
+    const cmd = within(steps).getByText(/update-stack/).textContent!;
+    expect(cmd).toBe(
+      'aws cloudformation update-stack --region us-west-2 --stack-name AWSCity --profile city-047 --template-url https://t.s3.eu-west-2.amazonaws.com/player-role/v6.yaml --capabilities CAPABILITY_NAMED_IAM --parameters ParameterKey=ExternalId,ParameterValue=abcdefghijklmnop1234 "ParameterKey=ConnectsPlayer,ParameterValue=Player u1" ParameterKey=AllowFixes,ParameterValue=false ParameterKey=AllowCleanup,ParameterValue=true && aws cloudformation wait stack-update-complete --region us-west-2 --stack-name AWSCity --profile city-047',
+    );
+    // Start fresh: delete it first, then the usual create.
+    fireEvent.click(within(choice).getByRole('button', { name: '🧹 Delete it and start fresh' }));
+    expect(screen.getByRole('note').textContent).toMatch(/^Delete the old AWSCity stack in US West \(Oregon\) first \(Delete, then wait for DELETE_COMPLETE\)/);
+    expect(screen.getByRole('button', { name: 'Open CloudFormation ↗' })).toBeTruthy();
+    // Back to Reconnect: Done moves on to the account number (step 3).
+    fireEvent.click(within(choice).getByRole('button', { name: '🔁 Reconnect the stack you have' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Done: it’s updated' }));
+    expect(screen.queryByRole('list', { name: 'Reconnect the AWSCity stack you have' })).toBeNull();
+  });
+
+  it('without a Disconnect here, reconnecting a stack from before is offered folded', () => {
+    useCity.setState({ account: { linked: false, wantsLink: true, linkRegion: 'us-west-2', linkUrl: LINK, externalId: 'abcdefghijklmnop1234' } });
+    render(<DeployPanel />);
+    expect(screen.queryByRole('group', { name: /Your AWSCity stack in/ })).toBeNull();
+    expect(screen.getByText(/Already have an AWSCity stack in .* from before\?/)).toBeTruthy();
   });
 
   it('the local server has no Disconnect (it reads the developer’s own account)', () => {

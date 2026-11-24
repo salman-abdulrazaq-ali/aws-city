@@ -2,7 +2,7 @@
 // never showed in My AWS (which reads the linked account). The city reads which account a console page is in and warns.
 import { describe, expect, it } from 'vitest';
 import { consoleAccount } from '@/console/consoleAccount';
-import { accountName, accountTitle, cleanupCommand, switchRoleUrl } from '@/state/account';
+import { accountName, accountTitle, cleanupCommand, reconnectCommand, switchRoleUrl } from '@/state/account';
 
 const userInfo = (arn: string, times = 1) => {
   let v = JSON.stringify({ arn, alias: 'x', username: 'salman-admin', keybase: 'k', issuer: 'https://signin.aws.amazon.com/', signinType: 'PUBLIC' });
@@ -81,5 +81,33 @@ describe('the one command that turns the switch on or off', () => {
     expect(cleanupCommand({ region: 'us-west-2', roleVersion: 5 }, true)).toBeUndefined();
     expect(cleanupCommand({ region: 'us-west-2; rm -rf /', roleVersion: 6 }, true)).toBeUndefined();
     expect(cleanupCommand({ region: 'us-west-2', roleVersion: 4, templateUrl: T }, true, 'x"; rm -rf ~')).toBeUndefined();
+  });
+});
+
+// Asked for on 24 Nov 2026: after a Disconnect, point the stack you have at the new link in one command.
+describe('reconnecting the AWSCity stack you have', () => {
+  const link = (over: Record<string, string> = {}) => {
+    const q = new URLSearchParams({ templateURL: 'https://t.s3.eu-west-2.amazonaws.com/player-role/v6.yaml', stackName: 'AWSCity', param_ExternalId: 'abcdefghijklmnop1234', param_ConnectsPlayer: 'Player u1', ...over });
+    return `https://us-west-2.console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/quickcreate?${q.toString()}`;
+  };
+  const base = { linkUrl: link(), externalId: 'abcdefghijklmnop1234', linkRegion: 'us-west-2' };
+  it('uses the new link’s ExternalId, name and template, and the boxes ticked for it', () => {
+    const cmd = reconnectCommand({ ...base, allowFixes: true, allowCleanup: false })!;
+    expect(cmd).toContain('--template-url https://t.s3.eu-west-2.amazonaws.com/player-role/v6.yaml');
+    expect(cmd).toContain('ParameterKey=ExternalId,ParameterValue=abcdefghijklmnop1234');
+    expect(cmd).toContain('"ParameterKey=ConnectsPlayer,ParameterValue=Player u1"');
+    expect(cmd).toContain('ParameterKey=AllowFixes,ParameterValue=true ParameterKey=AllowCleanup,ParameterValue=false');
+    expect(cmd).toContain('&& aws cloudformation wait stack-update-complete --region us-west-2 --stack-name AWSCity');
+    expect(cmd).not.toContain('--profile');
+    expect(reconnectCommand(base, 'city-047')!.match(/--profile city-047/g)).toHaveLength(2);
+  });
+  it('makes no command from anything the city didn’t make', () => {
+    expect(reconnectCommand({ ...base, externalId: 'short' })).toBeUndefined();
+    expect(reconnectCommand({ ...base, externalId: 'abc def ghi jkl mno' })).toBeUndefined();
+    expect(reconnectCommand({ ...base, linkRegion: 'us-west-2; rm' })).toBeUndefined();
+    expect(reconnectCommand({ ...base, linkUrl: link({ templateURL: 'https://evil.example.com/t.yaml' }) })).toBeUndefined();
+    expect(reconnectCommand({ ...base, linkUrl: link({ param_ConnectsPlayer: 'x"; rm -rf ~' }) })).toBeUndefined();
+    expect(reconnectCommand({ externalId: 'abcdefghijklmnop1234', linkRegion: 'us-west-2' })).toBeUndefined();
+    expect(reconnectCommand(base, 'x; rm -rf ~')).not.toContain('--profile');
   });
 });

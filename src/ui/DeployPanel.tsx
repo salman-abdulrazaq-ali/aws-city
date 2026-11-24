@@ -27,6 +27,7 @@ import {
 import {
   accountLabel,
   accountTitle,
+  reconnectCommand,
   DEFAULT_CONSOLE_ROLE,
   connectsPlayer,
   defaultLinkRegion,
@@ -50,7 +51,7 @@ import { TEMPLATES } from '@/world/content';
 import { serviceById } from '@/world/taxonomy';
 import { TemplateView } from './TemplateView';
 import { offered, perUnit, pricesFor } from '@/world/regions';
-import { CleanupSwitch, DeleteConfirm, FixesOn, RoleUpdate, StackLink } from './Account';
+import { AwsProfileInput, CleanupSwitch, DeleteConfirm, FixesOn, RoleUpdate, StackLink } from './Account';
 import { useCopy } from './feedback';
 import { costLine, offlineReason } from './logic';
 import { usePending } from './usePending';
@@ -87,6 +88,41 @@ export { accountLabel } from '@/state/account';
  * Switch role into the linked account, the console then opening in its Region (seen 23 Nov 2026: the console and
  * CloudShell were still in another account, so nothing made there showed). The role name is remembered (prefs).
  */
+/**
+ * Reconnect the AWSCity stack the player already has to the new setup link: one command, then Done (asked for on 24 Nov
+ * 2026). Disconnect forgets the link's ExternalId, so the stack must be told the new one (reconnectCommand).
+ */
+function ReconnectStack({ onDone }: { onDone: () => void }) {
+  const account = useCity((s) => s.account);
+  const profile = useCity((s) => s.prefs.awsProfile);
+  const [copied, copy] = useCopy();
+  const command = reconnectCommand(account, profile);
+  const where = account.stackLeft ?? account.linkRegion ?? account.region;
+  if (!command) return <p className="muted small">Get your setup link above first: the command is made from it.</p>;
+  return (
+    <ol className="account-steps reconnect-steps" aria-label="Reconnect the AWSCity stack you have">
+      <li>
+        Open Terminal (or CloudShell) signed in to the AWS account that has your AWSCity stack{where ? ` (${regionName(where)})` : ''}.
+        <AwsProfileInput />
+      </li>
+      <li>
+        Paste this and press Enter. It points your stack at this new link and takes about a minute:
+        <code className="workshop-cmd">{command}</code>
+        <button className="btn tiny" onClick={() => copy(command)}>
+          {copied ? 'Copied ✓' : 'Copy the command'}
+        </button>
+      </li>
+      <li>
+        When the prompt comes back with no error, press{' '}
+        <button className="btn tiny primary" onClick={onDone}>
+          Done: it’s updated
+        </button>{' '}
+        then type your account number below.
+      </li>
+    </ol>
+  );
+}
+
 function SwitchRoleLine() {
   const role = useCity((s) => s.prefs.consoleRole) ?? DEFAULT_CONSOLE_ROLE;
   return (
@@ -334,6 +370,8 @@ export function DeployPanel() {
   const [role, setRole] = useState('');
   /** Step 2 done: the player says the AWSCity stack is created, so step 3 (the account number) opens. */
   const [stackMade, setStackMade] = useState(false);
+  // Linking again after a Disconnect: reconnect the AWSCity stack still in the account, or delete it and start fresh.
+  const [stackPath, setStackPath] = useState<'reconnect' | 'fresh'>('reconnect');
   const [linkCopied, copyLink] = useCopy();
   const where = linkRegion(account.linkUrl);
   const findings = useCity((s) => s.findings);
@@ -478,11 +516,6 @@ export function DeployPanel() {
             <Plain text="A CloudFormation stack makes one IAM role. Only AWS City’s server can use it, with the ExternalId in your setup link. It reads your account and builds only small things the city made, each after you approve it." />
           </p>
           <RolePermissions />
-          {account.stackLeft && (
-            <p className="field-error" role="note">
-              Delete the old AWSCity stack in {regionName(account.stackLeft)} first: a new one can’t be made while it’s there.
-            </p>
-          )}
           <label className="check-row">
             <input
               type="checkbox"
@@ -521,6 +554,27 @@ export function DeployPanel() {
               The stack page will say <b>ConnectsPlayer: {linkFor}</b>. Don’t create the stack if that isn’t you.
             </p>
           )}
+          {/* Asked for on 24 Nov 2026: after a Disconnect, reconnect the stack you have, or delete it and start fresh. */}
+          {account.stackLeft && kind !== 'mock' && (
+            <div className="seg stack-path" role="group" aria-label={`Your AWSCity stack in ${regionName(account.stackLeft)}`}>
+              <button aria-pressed={stackPath === 'reconnect'} onClick={() => setStackPath('reconnect')}>
+                🔁 Reconnect the stack you have
+              </button>
+              <button aria-pressed={stackPath === 'fresh'} onClick={() => setStackPath('fresh')}>
+                🧹 Delete it and start fresh
+              </button>
+            </div>
+          )}
+          {account.stackLeft && kind !== 'mock' && stackPath === 'reconnect' ? (
+            <ReconnectStack onDone={() => setStackMade(true)} />
+          ) : (
+          <>
+          {account.stackLeft && kind !== 'mock' && (
+            <div className="field-error" role="note">
+              Delete the old AWSCity stack in {regionName(account.stackLeft)} first (Delete, then wait for DELETE_COMPLETE): a new one can’t be made while it’s there.{' '}
+              <StackLink region={account.stackLeft} />
+            </div>
+          )}
           <b className="checklist-title">What the console will ask</b>
           <ol className="how account-steps link-checklist" aria-label="What the console will ask">
             <li>
@@ -558,6 +612,14 @@ export function DeployPanel() {
             </button>
           </div>
           {kind !== 'mock' && <p className="muted">Signed in to AWS in another browser? Copy the link and open it there.</p>}
+          </>
+          )}
+          {!account.stackLeft && kind !== 'mock' && account.linkUrl && (
+            <details className="why">
+              <summary>Already have an AWSCity stack in {setupRegionName} from before?</summary>
+              <ReconnectStack onDone={() => setStackMade(true)} />
+            </details>
+          )}
           <p className="muted small">This link works for a day. After that, get a new one: the role you made keeps working.</p>
           <p className="muted">
             Hosting AWS City yourself? Use a different AWS account from the one it runs in. The city refuses that one, so it can never act inside the account
@@ -781,7 +843,7 @@ export function DeployPanel() {
                   {/* Seen 24 Nov 2026: reconnecting failed, because the old stack trusts the old link (Disconnect forgets its
                       ExternalId) and its name is taken; "to remove it too" read as optional. */}
                   <Plain
-                    text={`Disconnected. Your AWSCity stack in ${regionName(account.stackLeft)} still trusts the old link. To connect again, delete it first in CloudFormation (Stacks, then AWSCity, then Delete; wait for DELETE_COMPLETE), then create a new one in step 2. To stop AWS City for good, delete it too.`}
+                    text={`Disconnected. Your AWSCity stack in ${regionName(account.stackLeft)} stays in your account, still trusting the old link. To connect again: reconnect it in step 2 (one command), or delete it and start fresh. To stop AWS City for good, delete it (Stacks, then AWSCity, then Delete).`}
                   />
                 </p>
                 <StackLink region={account.stackLeft} />

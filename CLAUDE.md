@@ -419,8 +419,11 @@ When a change touches a decision, update its entry and run its Proof.
   offers "Update your AWS City role (vN → vM)" when `roleVersion < latestRoleVersion` (steps, the template address, the
   ConnectsPlayer name to type, which comes with a fresh setup link, and the stacks page), "Use another Region or account"
   and "Disconnect" (asked first, its words in `--ink-soft`, ≥ 4.5:1 on the red tint; hosted and the demo, never the local server; afterwards it says the AWSCity
-  stack in that Region still trusts the old link, so connecting again means deleting it first, and step 2 says so while
-  linking: Disconnect forgets the ExternalId, and the stack's name is taken; seen 24 Nov 2026). "Check again" (hosted, under "Turn small fixes on") is `account.recheck` (`recheckAccount`): the
+  stack in that Region stays, still trusting the old link: Disconnect forgets the ExternalId and the stack's name is
+  taken, so linking again, step 2 offers 🔁 Reconnect the stack you have (one command, `reconnectCommand` in
+  `src/state/account.ts`: `update-stack` on the link's template with its ExternalId, ConnectsPlayer and the boxes ticked,
+  then wait; `ReconnectStack`, `src/ui/DeployPanel.tsx`) or 🧹 Delete it and start fresh; without a Disconnect here the
+  same command is folded under "Already have an AWSCity stack … from before?"; asked for on 24 Nov 2026). "Check again" (hosted, under "Turn small fixes on") is `account.recheck` (`recheckAccount`): the
   role is asked again whether it allows fixes, read-only. The role update ends with "I've updated the stack"
   (`confirmRoleUpdate`: a fresh link, then `account.verify {updated: true}`), and its card says the city goes by the version
   installed from its link (it can't read the stack). The local server shows the restart hint instead of the CloudFormation
