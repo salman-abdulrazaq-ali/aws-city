@@ -18,7 +18,7 @@ RUN cd server && npm run build:bundle
 # node:24-slim runtime carried Debian's perl, glibc, zlib, pam, apt and util-linux). The server is one bundled file
 # with no child processes. Pinned by digest (multi-arch index); runs as uid 65532 (nonroot); ECS adds a read-only
 # root filesystem. The image's ENTRYPOINT is /nodejs/bin/node.
-FROM gcr.io/distroless/nodejs24-debian13:nonroot@sha256:6abfcb367ebc291572c774c1592a986be2ab26a2486f73093401327495a5962a
+FROM gcr.io/distroless/nodejs24-debian13:nonroot@sha256:675c532423b908f9e56f9d60a4e62309b63cd2a3175acb90a46b96f7ee68e121
 ENV NODE_ENV=production AWS_CITY_MODE=hosted HOST=0.0.0.0 PORT=8787 LOG_FORMAT=json
 WORKDIR /app
 COPY --from=build /app/server/dist ./dist
